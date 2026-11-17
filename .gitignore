@@ -1,0 +1,28 @@
+# Private, real e-mails used only for local checks. Never commit these.
+fixtures-private/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+
+# Misc
+*.log
+.env

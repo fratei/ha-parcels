@@ -1,0 +1,46 @@
+[project]
+name = "ha-parcels"
+version = "0.1.0"
+description = "Parcels for Home Assistant: delivery tracking from shipping e-mails."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.14.2"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+extend-exclude = ["frontend", "custom_components/parcels/frontend"]
+
+[tool.ruff.lint]
+select = [
+  "ASYNC",
+  "B",
+  "C4",
+  "E",
+  "F",
+  "G",
+  "I",
+  "LOG",
+  "PIE",
+  "PT",
+  "RUF",
+  "SIM",
+  "UP",
+  "W",
+]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["custom_components.parcels"]
+combine-as-imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-p no:respx"
+pythonpath = ["."]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:backoff",
+]

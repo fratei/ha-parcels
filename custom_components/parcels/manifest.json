@@ -1,0 +1,14 @@
+{
+  "domain": "parcels",
+  "name": "Parcels",
+  "after_dependencies": ["mobile_app", "seventeentrack"],
+  "codeowners": ["@fratei"],
+  "config_flow": true,
+  "dependencies": ["application_credentials", "frontend", "http"],
+  "documentation": "https://github.com/fratei/ha-parcels",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/fratei/ha-parcels/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
