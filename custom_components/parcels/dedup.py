@@ -332,24 +332,38 @@ def _normalise(origin: Origin) -> None:
 
 def _record_orders(
     data: ParcelsData,
-    origin: Origin,
-    merchant: str | None,
-    placed: datetime | None,
+    parcel: Parcel,
     now: datetime,
+    origin_id: str | None = None,
+    placed: datetime | None = None,
 ) -> None:
-    merchant = origin.merchant or merchant
-    for number in origin.order_numbers:
-        if not (key := order_key(merchant, number)):
-            continue
-        if (order := data.orders.get(key)) is None:
-            data.orders[key] = Order(
-                key=key, number=number, merchant=merchant, placed_at=placed, created=now
-            )
-            continue
-        if placed and (order.placed_at is None or placed < order.placed_at):
-            order.placed_at = placed
-        if merchant and not order.merchant:
-            order.merchant = merchant
+    """Make sure every order of a parcel has a record.
+
+    A short order number only has a key once the merchant is known, which can
+    come from a later e-mail or from the user, so every change that can set
+    the merchant records the parcel's orders again. ``placed`` is the order
+    date given by the e-mail of ``origin_id``.
+    """
+    fallback = parcel.state.merchant
+    for origin in parcel.origins.values():
+        merchant = origin.merchant or fallback
+        when = placed if origin.id == origin_id else None
+        for number in origin.order_numbers:
+            if not (key := order_key(merchant, number)):
+                continue
+            if (order := data.orders.get(key)) is None:
+                data.orders[key] = Order(
+                    key=key,
+                    number=number,
+                    merchant=merchant,
+                    placed_at=when,
+                    created=now,
+                )
+                continue
+            if when and (order.placed_at is None or when < order.placed_at):
+                order.placed_at = when
+            if merchant and not order.merchant:
+                order.merchant = merchant
 
 
 def apply_contribution(
@@ -446,7 +460,7 @@ def apply_contribution(
     if parcel.archived is not None and not parcel.state.terminal:
         # News about an archived parcel that isn't finished brings it back.
         parcel.archived = None
-    _record_orders(data, origin, parcel.state.merchant, contribution.order_placed, now)
+    _record_orders(data, parcel, now, origin.id, contribution.order_placed)
     return Applied(
         parcel_id=parcel.id, created=created, merged=merged, auto_merged=reason
     )
@@ -471,6 +485,7 @@ def merge_parcels(
             target.auto_merged = other.auto_merged
         del data.parcels[other.id]
     target.touch(now)
+    _record_orders(data, target, now)
     return target
 
 
@@ -511,6 +526,8 @@ def split_parcel(
     data.parcels[new.id] = new
     parcel.touch(now)
     new.touch(now)
+    _record_orders(data, parcel, now)
+    _record_orders(data, new, now)
     return new
 
 
@@ -565,6 +582,7 @@ def remove_message(data: ParcelsData, message_hash: str, now: datetime) -> set[s
             parcel.auto_merged = None
         if parcel.origins:
             parcel.touch(now)
+            _record_orders(data, parcel, now)
         else:
             del data.parcels[parcel.id]
     return affected
@@ -648,6 +666,7 @@ def update_parcel(
         }
         if same:
             merge_parcels(data, parcel_id, same, now)
+    _record_orders(data, parcel, now)
     return parcel
 
 

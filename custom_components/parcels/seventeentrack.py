@@ -272,12 +272,13 @@ class SeventeenTrackSync:
         except Exception as err:
             self._failure("get_packages", err)
             return
+        # Failed adds and archives below stay visible until the next refresh.
+        self.last_error = None
         stats = _Stats()
         changed = await self._async_add_new(entry_id, packages, now, stats)
         changed |= self._update_statuses(packages, now, stats)
         changed |= await self._async_archive(entry_id, packages, now, stats)
         self.last_refresh = now
-        self.last_error = None
         if stats.added or stats.updated or stats.archived:
             _LOGGER.debug(
                 "17TRACK: added %d, updated %d, archived %d packages",

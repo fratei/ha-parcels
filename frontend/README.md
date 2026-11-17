@@ -31,6 +31,7 @@ Node 24 or later. Run these from this folder:
 ```sh
 npm ci             # install the pinned dependencies
 npm run typecheck  # tsc --noEmit (strict)
+npm run lint       # oxlint, correctness rules; warnings fail
 npm test           # node --test, unit tests of the pure logic in src/
 npm run build      # writes ../custom_components/parcels/frontend/parcels-cards.js
 ```

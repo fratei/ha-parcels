@@ -81,8 +81,8 @@ Python API, which isn't recorded. The e-mail text then stays in memory only
 1. Run Ollama on the Home Assistant host itself. Parcels refuses any other
    host, and also refuses the host's own LAN address because it can't tell
    it apart from another machine. Two setups work:
-   - an Ollama add-on on Home Assistant OS, reached over the internal
-     `172.30.32.0/23` network;
+   - the [Ollama app](https://github.com/fratei/ha-apps) on Home Assistant
+     OS, reached by its hostname over the internal `172.30.32.0/23` network;
    - Ollama on the same machine at `http://localhost:11434`.
 2. Pull the candidate models: `qwen3:4b-instruct`, `gemma4:e4b` and
    `gemma4:12b`. Cloud models (tags ending in `cloud`) are refused.

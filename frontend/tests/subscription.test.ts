@@ -68,6 +68,8 @@ class FakeConnection implements HassConnection {
   }
 
   fire(event: ConnectionEvent): void {
+    // Copy: a listener may remove itself while it's being called.
+    // oxlint-disable-next-line unicorn/no-useless-spread
     for (const listener of [...(this.handlers.get(event) ?? [])]) {
       listener();
     }

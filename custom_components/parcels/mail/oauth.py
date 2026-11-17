@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -13,7 +15,7 @@ from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from ..const import CONF_ADDRESS, CONF_PROVIDER, PROVIDER_GOOGLE, PROVIDER_MICROSOFT
-from . import MailClient, TokenGetter
+from . import REQUEST_TIMEOUT, MailClient, TokenGetter
 from .errors import MailAuthError, MailServerError
 from .gmail import GmailClient
 from .graph import GraphClient
@@ -41,12 +43,15 @@ def token_getter(oauth_session: config_entry_oauth2_flow.OAuth2Session) -> Token
     """Return a token source that refreshes the entry's token when needed.
 
     A refused refresh raises MailAuthError (Home Assistant has then already
-    started reauthentication); other failures raise MailServerError.
+    started reauthentication); other failures, and a refresh that takes
+    longer than a mail request may, raise MailServerError.
     """
 
     async def async_get_token() -> str:
         try:
-            await oauth_session.async_ensure_token_valid()
+            # Home Assistant leaves the refresh's timeout to the caller.
+            async with asyncio.timeout(REQUEST_TIMEOUT):
+                await oauth_session.async_ensure_token_valid()
         except OAuth2TokenRequestReauthError as err:
             raise MailAuthError("the sign-in was refused; sign in again") from err
         except (OAuth2TokenRequestBaseError, aiohttp.ClientError, TimeoutError) as err:

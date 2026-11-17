@@ -3,7 +3,7 @@
 E-mail text may only be read by a model that runs on the Home Assistant
 host itself. An AI task entity passes when it belongs to the Ollama
 integration, its subentry selects a model that isn't an Ollama cloud model,
-and the Ollama server's host is loopback, ``localhost`` or an add-on on the
+and the Ollama server's host is loopback, ``localhost`` or an app on the
 Supervisor's internal network (172.30.32.0/23). Every other entity is
 refused with a reason that the config flow shows as ``ai_<reason>``.
 """
@@ -44,7 +44,7 @@ REASONS: tuple[str, ...] = (
     REASON_UNRESOLVABLE,
 )
 
-# Add-ons such as the Ollama add-on run on this Supervisor network.
+# Apps (formerly add-ons) such as the Ollama app run on this Supervisor network.
 SUPERVISOR_NETWORK = ipaddress.ip_network("172.30.32.0/23")
 
 

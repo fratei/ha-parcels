@@ -65,6 +65,7 @@ from .models import (
 from .parsers.senders import organizational_domain
 
 if TYPE_CHECKING:
+    from .ai import Validation
     from .engine import ParcelsEngine
     from .parsers.base import MailMessage, ParseResult
 
@@ -106,6 +107,11 @@ def error_location(err: BaseException) -> str:
         return type(err).__name__
     code = tb.tb_frame.f_code
     return f"{type(err).__name__} in {code.co_name}:{tb.tb_lineno}"
+
+
+def _stats_cutoff() -> str:
+    """Return the oldest day the counters keep, in Home Assistant's time zone."""
+    return (dt_util.now().date() - timedelta(days=STATS_DAYS)).isoformat()
 
 
 class AIWorker:
@@ -153,32 +159,57 @@ class AIWorker:
 
     def today(self) -> dict[str, int]:
         """Return today's counters, in Home Assistant's time zone."""
-        stats = self.engine.data.ai.get("stats")
-        if not isinstance(stats, dict):
-            stats = self.engine.data.ai["stats"] = {}
-        key = dt_util.now().date().isoformat()
-        day = stats.get(key)
-        if not isinstance(day, dict):
-            day = stats[key] = {}
-            cutoff = (dt_util.now().date() - timedelta(days=STATS_DAYS)).isoformat()
-            for old in [k for k in stats if k < cutoff]:
-                del stats[old]
+        day = self._day("stats")
         for name in STAT_KEYS:
             day.setdefault(name, 0)
         return day
 
+    def _day(self, store: str) -> dict[str, Any]:
+        """Return today's entry in a per-day store; a new day drops old ones."""
+        days = self.engine.data.ai.get(store)
+        if not isinstance(days, dict):
+            days = self.engine.data.ai[store] = {}
+        key = dt_util.now().date().isoformat()
+        day = days.get(key)
+        if not isinstance(day, dict):
+            day = days[key] = {}
+            cutoff = _stats_cutoff()
+            for old in [k for k in days if k < cutoff]:
+                del days[old]
+        return day
+
+    def _recent(self, store: str) -> list[dict[str, Any]]:
+        """Return the days of a per-day store within the last STATS_DAYS."""
+        days = self.engine.data.ai.get(store)
+        if not isinstance(days, dict):
+            return []
+        cutoff = _stats_cutoff()
+        return [
+            day for key, day in days.items() if key >= cutoff and isinstance(day, dict)
+        ]
+
     def shadow_totals(self) -> tuple[int, int]:
         """Return how often the AI agreed and disagreed with the parsers."""
         agree = disagree = 0
-        for day in (self.engine.data.ai.get("stats") or {}).values():
-            if isinstance(day, dict):
-                agree += int(day.get("agree", 0))
-                disagree += int(day.get("disagree", 0))
+        for day in self._recent("stats"):
+            agree += int(day.get("agree", 0))
+            disagree += int(day.get("disagree", 0))
         return agree, disagree
 
     def _count(self, name: str) -> None:
         self.today()[name] += 1
         self.engine.async_schedule_save()
+
+    def _count_call(self, started: float, *, shadow: bool) -> None:
+        """Count a call that reached the AI task, and how long it took."""
+        self._count("calls")
+        if shadow:
+            self._count("shadow")
+        timing = self._day("timing")
+        timing["calls"] = int(timing.get("calls", 0)) + 1
+        timing["seconds"] = float(timing.get("seconds", 0.0)) + max(
+            self.hass.loop.time() - started, 0.0
+        )
 
     # -- Lifecycle --------------------------------------------------------
 
@@ -537,9 +568,8 @@ class AIWorker:
         entity_id = engine.ai_entity
         if entity_id is None:
             return
-        self._count("calls")
         try:
-            validation = await async_extract(self.hass, entity_id, message, engine.tz)
+            validation = await self._async_extract(entity_id, message)
         except AIRefused as err:
             self._last_error = f"refused:{err.reason}"
             self._raise_issue(ISSUE_AI_REFUSED, reason=err.reason)
@@ -573,8 +603,36 @@ class AIWorker:
         if not self._current(entry) or (record := self._record(entry)) is None:
             return
         self._decide(
-            entry, record, message, validation.result, now, trusted=verdict.verified
+            entry,
+            record,
+            message,
+            validation.result,
+            now,
+            trusted=verdict.verified,
+            errors=validation.errors,
         )
+
+    async def _async_extract(
+        self, entity_id: str, message: MailMessage, *, shadow: bool = False
+    ) -> Validation:
+        """Ask the AI task to read an e-mail; count the calls that reached it."""
+        started = self.hass.loop.time()
+        try:
+            validation = await async_extract(
+                self.hass, entity_id, message, self.engine.tz
+            )
+        except AIRefused:
+            raise
+        except AIUnavailable:
+            # An AI task that is down was never called.
+            if self._entity_available():
+                self._count_call(started, shadow=shadow)
+            raise
+        except AIError:
+            self._count_call(started, shadow=shadow)
+            raise
+        self._count_call(started, shadow=shadow)
+        return validation
 
     def _decide(
         self,
@@ -585,8 +643,13 @@ class AIWorker:
         now: datetime,
         *,
         trusted: bool,
+        errors: tuple[str, ...] = (),
     ) -> None:
-        """Apply, suggest, filter or review the AI's reading of an e-mail."""
+        """Apply, suggest, filter or review the AI's reading of an e-mail.
+
+        ``errors`` are the checks the answer failed; its other values are
+        still offered for review.
+        """
         engine = self.engine
         if result is None or result.kind is MailKind.UNKNOWN:
             self._to_review(entry, now, reason=REASON_UNKNOWN_FORMAT)
@@ -616,11 +679,13 @@ class AIWorker:
             self._count("applied")
             engine.async_changed()
             return
-        self._count("suggested")
+        if errors:
+            _LOGGER.debug("The AI answer failed checks: %s", ", ".join(errors))
+        self._count("rejected" if errors else "suggested")
         self._to_review(
             entry,
             now,
-            reason=REASON_AI_SUGGESTION,
+            reason=REASON_AI_REJECTED if errors else REASON_AI_SUGGESTION,
             source=Source.AI,
             suggestion=engine.prefill(
                 suggestion_from_result(result), message.sender_domain
@@ -645,10 +710,8 @@ class AIWorker:
         entity_id = engine.ai_entity
         if entity_id is None or not (verdict.verified and is_confident(parsed)):
             return
-        self._count("calls")
-        self._count("shadow")
         try:
-            validation = await async_extract(self.hass, entity_id, message, engine.tz)
+            validation = await self._async_extract(entity_id, message, shadow=True)
         except AIRefused as err:
             self._last_error = f"refused:{err.reason}"
             self._raise_issue(ISSUE_AI_REFUSED, reason=err.reason)
@@ -692,9 +755,17 @@ class AIWorker:
     # -- Diagnostics ------------------------------------------------------
 
     def diagnostics(self) -> dict[str, Any]:
-        """Return the queue state and counters, without e-mail details."""
+        """Return the queue state and counters, without e-mail details.
+
+        ``totals``, ``average_seconds`` and ``agreement_rate`` cover the last
+        ``STATS_DAYS`` days.
+        """
         ai = self.engine.data.ai
         agree, disagree = self.shadow_totals()
+        days = self._recent("stats")
+        timing = self._recent("timing")
+        timed = sum(int(day.get("calls", 0)) for day in timing)
+        seconds = sum(float(day.get("seconds", 0.0)) for day in timing)
         return {
             "configured": bool(self.engine.ai_entity),
             "mode": self.engine.ai_mode.value,
@@ -707,6 +778,13 @@ class AIWorker:
             "shadow_candidates": len(self._shadow()),
             "shadow_agree": agree,
             "shadow_disagree": disagree,
+            "agreement_rate": (
+                round(agree / (agree + disagree), 2) if agree + disagree else None
+            ),
+            "totals": {
+                name: sum(int(day.get(name, 0)) for day in days) for name in STAT_KEYS
+            },
+            "average_seconds": round(seconds / timed, 1) if timed else None,
             "stats": dict(ai.get("stats") or {}),
             "last_error": self._last_error,
         }

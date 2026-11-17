@@ -572,6 +572,41 @@ def test_update_parcel() -> None:
     assert merged.state.carrier == "dpd"
 
 
+def test_short_order_recorded_once_merchant_known() -> None:
+    """A short order number gets its record when the merchant turns up later."""
+    data = ParcelsData()
+    edited = apply_contribution(
+        data,
+        contribution(
+            "msg:a#0", carrier="ups", number="1Z999AA10123456784", orders=["1042"]
+        ),
+        T0,
+    )
+    mailed = apply_contribution(
+        data, contribution("msg:b#0", carrier="dpd", number=DPD, orders=["77"]), T0
+    )
+    assert not data.orders
+
+    update_parcel(data, edited.parcel_id, {"merchant": "Loja Exemplo"}, at(hours=1))
+    apply_contribution(
+        data,
+        contribution(
+            "msg:c#0",
+            kind=MailKind.IN_TRANSIT,
+            time=at(hours=2),
+            carrier="dpd",
+            number=DPD,
+            merchant="Example Shop",
+        ),
+        at(hours=2),
+    )
+    assert set(data.orders) == {"ord:lojaexemplo:1042", "ord:exampleshop:77"}
+    assert order_parcels(data, "ord:lojaexemplo:1042") == [
+        data.parcels[edited.parcel_id]
+    ]
+    assert order_parcels(data, "ord:exampleshop:77") == [data.parcels[mailed.parcel_id]]
+
+
 def test_update_window_with_existing_estimate() -> None:
     """Changing only the time window keeps the date."""
     data = ParcelsData()

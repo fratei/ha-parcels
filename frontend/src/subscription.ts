@@ -49,6 +49,8 @@ function notify(listener: SnapshotListener, state: SnapshotState): void {
 
 function setState(entry: Entry, state: SnapshotState): void {
   entry.state = state;
+  // Copy: a listener may unsubscribe while it's being notified.
+  // oxlint-disable-next-line unicorn/no-useless-spread
   for (const listener of [...entry.listeners.values()]) {
     notify(listener, state);
   }

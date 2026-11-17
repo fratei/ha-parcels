@@ -1,0 +1,1032 @@
+"""Tests for the 17TRACK sync.
+
+The core ``seventeentrack`` integration isn't installed in the tests, so a
+mock integration registers its three services and keeps its packages in
+memory. All tracking numbers are synthetic.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Coroutine
+from datetime import UTC, date, datetime, timedelta
+import logging
+import re
+from typing import Any
+
+from freezegun.api import FrozenDateTimeFactory
+from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntry, ConfigFlow
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
+import pytest
+from pytest_homeassistant.common import (
+    MockConfigEntry,
+    MockModule,
+    async_fire_time_changed,
+    mock_integration,
+    mock_platform,
+)
+
+from custom_components.parcels.const import CONF_SEVENTEENTRACK, MailKind, ParcelStatus
+from custom_components.parcels.dedup import (
+    apply_contribution,
+    archive_parcel,
+    mark_delivered,
+    merge_parcels,
+    update_parcel,
+)
+from custom_components.parcels.engine import ParcelsEngine
+from custom_components.parcels.models import Parcel, ParcelEvent, Source, dt_to_str
+from custom_components.parcels.parsers.base import Eta
+from custom_components.parcels.parsers.tracking import s10_check_digit
+from custom_components.parcels.seventeentrack import (
+    ADD_RETRIES,
+    ADD_RETRY_DELAY,
+    MAX_ADDS,
+    MAX_HISTORY,
+    NOT_FOUND_ARCHIVE,
+    SEVENTEENTRACK_DOMAIN,
+    SeventeenTrackSync,
+    friendly_name,
+    map_status,
+    origin_id,
+)
+
+from .common import add_hub, async_setup_parcels
+from .factories import contribution
+
+NOW = "2026-11-17 10:00:00+00:00"
+NOW_DT = datetime(2026, 11, 17, 10, 0, tzinfo=UTC)
+NOW_ISO = dt_to_str(NOW_DT)
+TODAY = date(2026, 11, 17)
+LISBON = "Europe/Lisbon"
+
+
+def s10(serial: int) -> str:
+    """Return a valid CTT number for an 8-digit serial."""
+    digits = f"{serial:08d}"
+    return f"RR{digits}{s10_check_digit(digits)}PT"
+
+
+CTT = s10(10000001)
+OTHER = s10(10000002)
+LEGACY = "RR123456785PT"
+UPS = "1Z9W8R371125836041"
+AMAZON = "TBA123456789012"
+
+
+class FakeSeventeenTrack:
+    """The services of the core 17TRACK integration, with packages in memory.
+
+    Set ``errors`` to make a service fail, ``response`` to replace what
+    get_packages returns, and ``show_archived`` to list archived packages too,
+    like 17TRACK's "Show archived packages" option.
+    """
+
+    def __init__(self) -> None:
+        """Start without packages."""
+        self.entry_id = ""
+        self.packages: dict[str, dict[str, Any]] = {}
+        self.archived: dict[str, dict[str, Any]] = {}
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.errors: dict[str, Exception] = {}
+        self.response: dict[str, Any] | None = None
+        self.show_archived = False
+
+    def put(
+        self,
+        number: str,
+        status: str = "In Transit",
+        *,
+        info: str = "",
+        location: str = "",
+        timestamp: str | None = None,
+        name: str | None = None,
+    ) -> None:
+        """Add or update a package; ``name=None`` keeps its friendly name."""
+        old = self.packages.get(number, {})
+        package: dict[str, Any] = {
+            "destination_country": "Portugal",
+            "origin_country": "Portugal",
+            "package_type": "Registered Parcel",
+            "tracking_info_language": "Unknown",
+            "tracking_number": number,
+            "location": location,
+            "status": status,
+            "info_text": info,
+            "friendly_name": old.get("friendly_name") if name is None else name,
+        }
+        if timestamp is not None:
+            package["timestamp"] = timestamp
+        self.packages[number] = package
+
+    def numbers(self, service: str) -> list[str]:
+        """Return the tracking numbers sent to a service, in order."""
+        return [
+            data["package_tracking_number"]
+            for name, data in self.calls
+            if name == service
+        ]
+
+    def count(self, service: str) -> int:
+        """Return how often a service was called."""
+        return sum(1 for name, _ in self.calls if name == service)
+
+    async def _async_handle(self, call: ServiceCall) -> ServiceResponse:
+        """Record a service call and answer it like 17TRACK."""
+        data = dict(call.data)
+        self.calls.append((call.service, data))
+        if (error := self.errors.get(call.service)) is not None:
+            raise error
+        if call.service == "get_packages":
+            if self.response is not None:
+                return self.response
+            listed = [*self.packages.values()]
+            if self.show_archived:
+                listed += self.archived.values()
+            return {"packages": [dict(package) for package in listed]}
+        number = data["package_tracking_number"]
+        if call.service == "add_package":
+            self.put(number, "Not Found", name=data["package_friendly_name"])
+        else:
+            self.archived[number] = self.packages.pop(number)
+        return None
+
+    async def async_setup_entry(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Register the services of the entry."""
+        self.entry_id = entry.entry_id
+        for service in ("add_package", "archive_package"):
+            hass.services.async_register(
+                SEVENTEENTRACK_DOMAIN, service, self._async_handle
+            )
+        hass.services.async_register(
+            SEVENTEENTRACK_DOMAIN,
+            "get_packages",
+            self._async_handle,
+            supports_response=SupportsResponse.ONLY,
+        )
+
+    async def async_unload_entry(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Unload the entry."""
+
+
+@pytest.fixture(autouse=True)
+async def lisbon(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Run the tests on 17 November 2026 at 10:00, in Lisbon."""
+    freezer.move_to(NOW)
+    await hass.config.async_set_time_zone(LISBON)
+
+
+class FakeFlow(ConfigFlow):
+    """The config flow of the mocked 17TRACK integration."""
+
+    VERSION = 1
+
+
+@pytest.fixture
+async def track(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> FakeSeventeenTrack:
+    """Load a 17TRACK entry backed by the fake services."""
+    fake = FakeSeventeenTrack()
+    monkeypatch.setitem(config_entries.HANDLERS, SEVENTEENTRACK_DOMAIN, FakeFlow)
+    mock_integration(
+        hass,
+        MockModule(
+            SEVENTEENTRACK_DOMAIN,
+            async_setup_entry=fake.async_setup_entry,
+            async_unload_entry=fake.async_unload_entry,
+        ),
+    )
+    mock_platform(hass, f"{SEVENTEENTRACK_DOMAIN}.config_flow", None)
+    entry = MockConfigEntry(domain=SEVENTEENTRACK_DOMAIN, title="17TRACK")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return fake
+
+
+@pytest.fixture
+async def engine(hass: HomeAssistant, track: FakeSeventeenTrack) -> ParcelsEngine:
+    """Load the hub, with 17TRACK on."""
+    add_hub(hass)
+    return await async_setup_parcels(hass)
+
+
+@pytest.fixture
+async def tracker(engine: ParcelsEngine) -> SeventeenTrackSync:
+    """Return the hub's 17TRACK sync without its timer: the test refreshes it."""
+    tracker = engine.tracker
+    assert tracker is not None
+    await tracker.async_stop()
+    return tracker
+
+
+@pytest.fixture
+def refreshes(
+    engine: ParcelsEngine, monkeypatch: pytest.MonkeyPatch
+) -> list[asyncio.Task[Any]]:
+    """Collect the refreshes that the 17TRACK timer starts."""
+    tasks: list[asyncio.Task[Any]] = []
+    create = engine.async_create_task
+
+    def capture(coro: Coroutine[Any, Any, Any], name: str) -> asyncio.Task[Any]:
+        """Start the task as usual and keep it."""
+        task = create(coro, name)
+        tasks.append(task)
+        return task
+
+    monkeypatch.setattr(engine, "async_create_task", capture)
+    return tasks
+
+
+async def advance(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    refreshes: list[asyncio.Task[Any]],
+    delay: timedelta,
+) -> int:
+    """Move the clock, run what became due and return how many refreshes ran."""
+    freezer.tick(delay)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    count = len(refreshes)
+    await asyncio.gather(*refreshes)
+    refreshes.clear()
+    return count
+
+
+def add_parcel(
+    engine: ParcelsEngine,
+    name: str,
+    number: str | None,
+    *,
+    carrier: str | None = None,
+    kind: MailKind = MailKind.SHIPPED,
+    private: bool = False,
+    eta: Eta | None = None,
+    age: timedelta = timedelta(hours=1),
+) -> Parcel:
+    """Record a shipping e-mail about one parcel, received ``age`` ago."""
+    now = dt_util.utcnow()
+    applied = apply_contribution(
+        engine.data,
+        contribution(
+            f"msg:{name}#0",
+            kind=kind,
+            time=now - age,
+            carrier=carrier,
+            number=number,
+            eta=eta,
+            private=private,
+        ),
+        now,
+    )
+    engine.async_changed()
+    assert applied.parcel_id is not None
+    return engine.data.parcels[applied.parcel_id]
+
+
+def records(engine: ParcelsEngine) -> dict[str, dict[str, Any]]:
+    """Return the stored 17TRACK records by tracking number."""
+    return engine.data.seventeentrack.get("packages", {})
+
+
+def failures(engine: ParcelsEngine) -> dict[str, dict[str, Any]]:
+    """Return the stored failed adds by tracking number."""
+    return engine.data.seventeentrack.get("failed", {})
+
+
+def news(engine: ParcelsEngine, parcel_id: str, number: str) -> list[ParcelEvent]:
+    """Return the events that 17TRACK gave a parcel about a number."""
+    return [
+        event
+        for event in engine.data.parcels[parcel_id].events
+        if event.origin == origin_id(number)
+    ]
+
+
+def status(engine: ParcelsEngine, parcel_id: str) -> ParcelStatus:
+    """Return the current status of a parcel."""
+    return engine.data.parcels[parcel_id].state.status
+
+
+def get_call(track: FakeSeventeenTrack) -> tuple[str, dict[str, Any]]:
+    """Return the expected get_packages call."""
+    return ("get_packages", {"config_entry_id": track.entry_id})
+
+
+def add_call(
+    track: FakeSeventeenTrack, number: str, parcel: Parcel
+) -> tuple[str, dict[str, Any]]:
+    """Return the expected add_package call for a parcel's number."""
+    return (
+        "add_package",
+        {
+            "config_entry_id": track.entry_id,
+            "package_tracking_number": number,
+            "package_friendly_name": friendly_name(parcel.id),
+        },
+    )
+
+
+def archive_call(track: FakeSeventeenTrack, number: str) -> tuple[str, dict[str, Any]]:
+    """Return the expected archive_package call for a number."""
+    return (
+        "archive_package",
+        {"config_entry_id": track.entry_id, "package_tracking_number": number},
+    )
+
+
+def logged_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the warnings that the 17TRACK sync logged."""
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "custom_components.parcels.seventeentrack"
+        and record.levelno >= logging.WARNING
+    ]
+
+
+@pytest.mark.parametrize(
+    ("package_status", "info", "expected"),
+    [
+        ("In Transit", None, ParcelStatus.IN_TRANSIT),
+        ("In Transit", "Centro operacional 3", ParcelStatus.IN_TRANSIT),
+        ("In Transit", "Em distribuição", ParcelStatus.OUT_FOR_DELIVERY),
+        ("In Transit", "En reparto", ParcelStatus.OUT_FOR_DELIVERY),
+        ("In Transit", "Aguarda levantamento na loja", ParcelStatus.READY_FOR_PICKUP),
+        ("Alert", "Devolvido ao remetente", ParcelStatus.RETURNED),
+        ("Alert", "Out for delivery", ParcelStatus.OUT_FOR_DELIVERY),
+        ("Alert", "Morada incompleta", ParcelStatus.EXCEPTION),
+        ("Undelivered", "Tentativa de entrega sem sucesso", ParcelStatus.ATTEMPTED),
+        ("Undelivered", "Destinatário ausente", ParcelStatus.ATTEMPTED),
+        ("Ready to be picked up", None, ParcelStatus.READY_FOR_PICKUP),
+        ("ready_to_be_picked_up", None, ParcelStatus.READY_FOR_PICKUP),
+        ("Delivered", "Em distribuição", ParcelStatus.DELIVERED),
+        ("Returned", None, ParcelStatus.RETURNED),
+        ("Not Found", "Em distribuição", None),
+        ("Expired", None, None),
+        ("Unknown", None, None),
+        (None, None, None),
+    ],
+)
+async def test_map_status(
+    package_status: str | None, info: str | None, expected: ParcelStatus | None
+) -> None:
+    """The carrier's text refines vague statuses, never a final one."""
+    assert map_status(package_status, info) is expected
+
+
+async def test_adds_the_numbers_of_active_parcels(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """Only active, public parcels with a full non-Amazon number are added."""
+    ctt = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    ups = add_parcel(engine, "ups", UPS, carrier="ups")
+    add_parcel(engine, "amazon", AMAZON)
+    add_parcel(engine, "amazon-carrier", "AZ2611170001PT", carrier="amazon")
+    add_parcel(engine, "private", s10(10000003), carrier="ctt", private=True)
+    add_parcel(engine, "delivered", s10(10000004), kind=MailKind.DELIVERED)
+    add_parcel(engine, "short", "AB12345")
+    add_parcel(engine, "none", None)
+    archived = add_parcel(engine, "archived", s10(10000005), carrier="ctt")
+    archive_parcel(engine.data, archived.id, dt_util.utcnow())
+
+    await tracker.async_refresh()
+
+    assert track.calls == [
+        get_call(track),
+        add_call(track, CTT, ctt),
+        add_call(track, UPS, ups),
+    ]
+    for _, data in track.calls[1:]:
+        assert re.fullmatch(r"parcels-[0-9a-f]{6}", data["package_friendly_name"])
+    assert records(engine) == {
+        CTT: {"parcel": ctt.id, "own": True, "added": NOW_ISO},
+        UPS: {"parcel": ups.id, "own": True, "added": NOW_ISO},
+    }
+    diagnostics = tracker.diagnostics()
+    assert diagnostics == {
+        "enabled": True,
+        "available": True,
+        "tracked": 2,
+        "archived": 0,
+        "failed": 0,
+        "last_refresh": NOW_ISO,
+        "last_error": None,
+    }
+    assert CTT not in str(diagnostics)
+    assert UPS not in str(diagnostics)
+
+    track.calls.clear()
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track)]
+
+
+async def test_adopts_packages_already_in_17track(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """Existing packages are followed, but only the ones Parcels named are archived."""
+    ours = add_parcel(engine, "ours", CTT, carrier="ctt")
+    theirs = add_parcel(engine, "theirs", OTHER, carrier="ctt")
+    track.put(CTT, name="parcels-abcdef")
+    track.put(OTHER, name="Sapatilhas")
+
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track)]
+    assert records(engine)[CTT]["own"] is True
+    assert records(engine)[OTHER]["own"] is False
+    assert "added" not in records(engine)[CTT]
+    assert status(engine, ours.id) is ParcelStatus.IN_TRANSIT
+    assert status(engine, theirs.id) is ParcelStatus.IN_TRANSIT
+
+    for number in (CTT, OTHER):
+        track.put(number, "Delivered", timestamp="2026-11-17T09:50:00+00:00")
+    track.calls.clear()
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track), archive_call(track, CTT)]
+    assert status(engine, ours.id) is ParcelStatus.DELIVERED
+    assert status(engine, theirs.id) is ParcelStatus.DELIVERED
+    assert records(engine)[CTT]["archived"] == NOW_ISO
+    assert "archived" not in records(engine)[OTHER]
+    assert tracker.diagnostics()["tracked"] == 1
+    assert tracker.diagnostics()["archived"] == 1
+
+    track.calls.clear()
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track)]
+
+    del engine.data.parcels[theirs.id]
+    engine.async_changed()
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track)] * 2
+    assert set(records(engine)) == {CTT}
+
+
+async def test_statuses_become_events(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """New statuses become events of a 17TRACK origin; repeats add nothing."""
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    track.put(CTT, info="Em distribuição", timestamp="2026-11-17T09:45:00+00:00")
+
+    await tracker.async_refresh()
+
+    out = datetime(2026, 11, 17, 9, 45, tzinfo=UTC)
+    assert status(engine, parcel.id) is ParcelStatus.OUT_FOR_DELIVERY
+    origin = engine.data.parcels[parcel.id].origins[origin_id(CTT)]
+    assert origin.source is Source.SEVENTEENTRACK
+    assert origin.label == "17TRACK"
+    assert origin.carrier == "ctt"
+    assert origin.tracking_number == CTT
+    assert origin.time == out
+    events = news(engine, parcel.id, CTT)
+    assert [(e.status, e.label, e.time, e.source) for e in events] == [
+        (ParcelStatus.OUT_FOR_DELIVERY, "Em distribuição", out, Source.SEVENTEENTRACK)
+    ]
+    assert records(engine)[CTT]["status"] == "in_transit"
+    assert records(engine)[CTT]["history"] == [
+        {
+            "status": "out_for_delivery",
+            "info": "Em distribuição",
+            "at": dt_to_str(out),
+            "time": dt_to_str(out),
+        }
+    ]
+
+    await tracker.async_refresh()
+
+    assert len(records(engine)[CTT]["history"]) == 1
+    assert news(engine, parcel.id, CTT) == events
+
+    track.put(CTT, "Delivered", timestamp="2026-11-17T09:58:00+00:00")
+    await tracker.async_refresh()
+
+    assert status(engine, parcel.id) is ParcelStatus.DELIVERED
+    assert [e.status for e in news(engine, parcel.id, CTT)] == [
+        ParcelStatus.OUT_FOR_DELIVERY,
+        ParcelStatus.DELIVERED,
+    ]
+    assert track.numbers("archive_package") == [CTT]
+    assert records(engine)[CTT]["archived"] == NOW_ISO
+    assert tracker.diagnostics()["archived"] == 1
+
+    track.show_archived = True
+    track.archived[CTT].update(
+        info_text="Entregue", timestamp="2026-11-17T09:59:00+00:00"
+    )
+    await tracker.async_refresh()
+
+    assert len(news(engine, parcel.id, CTT)) == 2
+    assert track.numbers("archive_package") == [CTT]
+
+
+async def test_archived_parcels_get_no_news(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """News doesn't bring back a parcel the user archived; it leaves 17TRACK."""
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    archive_parcel(engine.data, parcel.id, dt_util.utcnow())
+    engine.async_changed()
+    track.put(CTT, info="Em distribuição")
+
+    await tracker.async_refresh()
+
+    assert engine.data.parcels[parcel.id].archived is not None
+    assert news(engine, parcel.id, CTT) == []
+    assert track.numbers("archive_package") == [CTT]
+    assert records(engine)[CTT]["archived"] == NOW_ISO
+
+
+@pytest.mark.parametrize(
+    ("package", "zone", "info", "at"),
+    [
+        ({"location": "Centro de Lisboa"}, LISBON, "Centro de Lisboa", None),
+        (
+            {"info": " Centro\n operacional   3 ", "location": "Lisboa"},
+            LISBON,
+            "Centro operacional 3",
+            None,
+        ),
+        ({"info": "x" * 200}, LISBON, "x" * 159 + "…", None),
+        (
+            {"timestamp": "2026-11-17T09:30:00+00:00"},
+            LISBON,
+            None,
+            "2026-11-17T09:30:00+00:00",
+        ),
+        (
+            {"timestamp": "2026-11-17T08:00:00"},
+            "Atlantic/Azores",
+            None,
+            "2026-11-17T09:00:00+00:00",
+        ),
+        ({"timestamp": "2026-11-18T09:00:00+00:00"}, LISBON, None, NOW_ISO),
+        ({"timestamp": "soon"}, LISBON, None, None),
+    ],
+    ids=["location", "whitespace", "long", "timestamp", "naive", "future", "invalid"],
+)
+async def test_package_text_and_time(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    package: dict[str, str],
+    zone: str,
+    info: str | None,
+    at: str | None,
+) -> None:
+    """The carrier's text is tidied; times are local and never in the future."""
+    await hass.config.async_set_time_zone(zone)
+    add_parcel(engine, "ctt", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    track.put(CTT, **package)
+
+    await tracker.async_refresh()
+    await tracker.async_refresh()
+
+    assert records(engine)[CTT]["history"] == [
+        {"status": "in_transit", "info": info, "at": at, "time": at or NOW_ISO}
+    ]
+
+
+async def test_history_keeps_the_last_statuses(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """Only the last ten statuses are kept, and they are the parcel's events."""
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    await tracker.async_refresh()
+
+    for index in range(MAX_HISTORY + 2):
+        track.put(CTT, info=f"Centro {index}")
+        await tracker.async_refresh()
+
+    expected = [f"Centro {index}" for index in range(2, MAX_HISTORY + 2)]
+    assert [entry["info"] for entry in records(engine)[CTT]["history"]] == expected
+    assert [event.label for event in news(engine, parcel.id, CTT)] == expected
+
+
+async def test_unknown_stored_status_is_skipped(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """A stored status that Parcels doesn't know adds no event."""
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    records(engine)[CTT]["history"] = [
+        {"status": "teleported", "info": None, "at": None, "time": NOW_ISO}
+    ]
+    track.put(CTT)
+
+    await tracker.async_refresh()
+
+    assert len(records(engine)[CTT]["history"]) == 2
+    assert [event.status for event in news(engine, parcel.id, CTT)] == [
+        ParcelStatus.IN_TRANSIT
+    ]
+
+
+async def test_failed_add_is_retried_later(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed add stays visible, without the error text, and is retried later."""
+    add_parcel(engine, "ctt", CTT, carrier="ctt")
+    track.errors["add_package"] = HomeAssistantError(f"{CTT} refused")
+
+    await tracker.async_refresh()
+
+    assert tracker.last_error == "add_package: HomeAssistantError"
+    assert tracker.last_refresh == NOW_DT
+    assert logged_warnings(caplog) == [
+        "17TRACK add_package failed (HomeAssistantError)"
+    ]
+    assert "refused" not in caplog.text
+    assert CTT not in caplog.text
+    assert records(engine) == {}
+    assert failures(engine) == {
+        CTT: {"count": 1, "retry": dt_to_str(NOW_DT + ADD_RETRY_DELAY)}
+    }
+    assert tracker.diagnostics()["failed"] == 1
+
+    del track.errors["add_package"]
+    freezer.tick(ADD_RETRY_DELAY - timedelta(minutes=1))
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == [CTT]
+    assert tracker.last_error is None
+
+    freezer.tick(timedelta(minutes=1))
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == [CTT, CTT]
+    assert failures(engine) == {}
+    assert records(engine)[CTT]["added"] == dt_to_str(NOW_DT + ADD_RETRY_DELAY)
+
+
+async def test_add_gives_up_after_three_failures(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """After three failed adds the number isn't tried again until it's forgotten."""
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    track.errors["add_package"] = HomeAssistantError("refused")
+
+    await tracker.async_refresh()
+    for count in range(1, ADD_RETRIES):
+        freezer.tick(ADD_RETRY_DELAY * count)
+        await tracker.async_refresh()
+
+    assert failures(engine)[CTT]["count"] == ADD_RETRIES
+
+    freezer.tick(ADD_RETRY_DELAY * ADD_RETRIES)
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == [CTT] * ADD_RETRIES
+
+    mark_delivered(engine.data, parcel.id, dt_util.utcnow())
+    engine.async_changed()
+    await tracker.async_refresh()
+
+    assert failures(engine) == {}
+    assert track.numbers("add_package") == [CTT] * ADD_RETRIES
+
+
+async def test_adds_at_most_ten_numbers_per_refresh(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """A long backlog is added over several refreshes."""
+    numbers = [s10(10000001 + index) for index in range(MAX_ADDS + 2)]
+    for index, number in enumerate(numbers):
+        add_parcel(engine, f"parcel{index}", number, carrier="ctt")
+
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == numbers[:MAX_ADDS]
+
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == numbers
+
+
+async def test_unreadable_packages_skip_the_refresh(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """When get_packages fails nothing else is tried until the next refresh."""
+    add_parcel(engine, "ctt", CTT, carrier="ctt")
+    track.errors["get_packages"] = HomeAssistantError("unavailable")
+
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track)]
+    assert tracker.last_error == "get_packages: HomeAssistantError"
+    assert tracker.last_refresh is None
+    assert records(engine) == {}
+
+    del track.errors["get_packages"]
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == [CTT]
+    assert tracker.last_error is None
+    assert tracker.last_refresh == NOW_DT
+
+
+async def test_odd_package_lists(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """Entries without a number are skipped; numbers are normalised."""
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    track.response = {
+        "packages": [
+            None,
+            "x",
+            {"tracking_number": ""},
+            {"tracking_number": None},
+            {
+                "tracking_number": " rr 100 000 017 pt ",
+                "status": "In Transit",
+                "friendly_name": "Sapatilhas",
+            },
+        ]
+    }
+
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track)]
+    assert records(engine)[CTT]["own"] is False
+    assert status(engine, parcel.id) is ParcelStatus.IN_TRANSIT
+
+    for response in ({"packages": None}, {}):
+        track.response = response
+        await tracker.async_refresh()
+
+        assert CTT in records(engine)
+        assert tracker.last_error is None
+    assert track.calls == [get_call(track)] * 3
+
+
+async def test_failed_archive_is_retried(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """A failed archive stays visible and is tried again on the next refresh."""
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    track.put(CTT, "Delivered", timestamp="2026-11-17T09:50:00+00:00")
+    track.errors["archive_package"] = HomeAssistantError("refused")
+
+    await tracker.async_refresh()
+
+    assert status(engine, parcel.id) is ParcelStatus.DELIVERED
+    assert tracker.last_error == "archive_package: HomeAssistantError"
+    assert "archived" not in records(engine)[CTT]
+
+    del track.errors["archive_package"]
+    await tracker.async_refresh()
+
+    assert track.numbers("archive_package") == [CTT, CTT]
+    assert records(engine)[CTT]["archived"] == NOW_ISO
+    assert tracker.last_error is None
+
+
+async def test_numbers_17track_cannot_find_are_archived(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A number still not found after two weeks is archived and not added again."""
+    add_parcel(engine, "ctt", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    await tracker.async_refresh()
+
+    assert records(engine)[CTT]["status"] == "not_found"
+
+    freezer.tick(NOT_FOUND_ARCHIVE - timedelta(days=1))
+    await tracker.async_refresh()
+
+    assert track.numbers("archive_package") == []
+
+    freezer.tick(timedelta(days=1))
+    await tracker.async_refresh()
+
+    assert track.numbers("archive_package") == [CTT]
+    assert records(engine)[CTT]["archived"] == dt_to_str(NOW_DT + NOT_FOUND_ARCHIVE)
+
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == [CTT]
+
+
+async def test_corrected_number_replaces_the_old_one(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """When the user corrects the number, the old package and its news go."""
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    track.put(CTT)
+    await tracker.async_refresh()
+
+    assert status(engine, parcel.id) is ParcelStatus.IN_TRANSIT
+
+    update_parcel(engine.data, parcel.id, {"tracking_number": OTHER}, dt_util.utcnow())
+    engine.async_changed()
+    track.calls.clear()
+    await tracker.async_refresh()
+
+    assert track.calls == [
+        get_call(track),
+        add_call(track, OTHER, parcel),
+        archive_call(track, CTT),
+    ]
+    assert set(records(engine)) == {OTHER}
+    assert origin_id(CTT) not in engine.data.parcels[parcel.id].origins
+    assert news(engine, parcel.id, CTT) == []
+    assert status(engine, parcel.id) is ParcelStatus.SHIPPED
+
+
+async def test_merged_parcels_keep_their_current_number(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """After a merge the record follows the parcel and the other number goes."""
+    first = add_parcel(engine, "first", LEGACY, carrier="ctt", age=timedelta(hours=2))
+    second = add_parcel(engine, "second", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    track.put(LEGACY)
+    track.put(CTT)
+    await tracker.async_refresh()
+
+    merge_parcels(engine.data, first.id, [second.id], dt_util.utcnow())
+    engine.async_changed()
+    track.calls.clear()
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track), archive_call(track, LEGACY)]
+    assert set(records(engine)) == {CTT}
+    assert records(engine)[CTT]["parcel"] == first.id
+    merged = engine.data.parcels[first.id]
+    assert merged.state.tracking_number == CTT
+    assert [oid for oid in merged.origins if oid.startswith("17t:")] == [origin_id(CTT)]
+    assert news(engine, first.id, LEGACY) == []
+    assert len(news(engine, first.id, CTT)) == 1
+
+
+async def test_private_and_deleted_parcels_are_archived(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """Numbers of private or deleted parcels leave 17TRACK."""
+    hidden = add_parcel(engine, "hidden", CTT, carrier="ctt")
+    gone = add_parcel(engine, "gone", OTHER, carrier="ctt")
+    await tracker.async_refresh()
+
+    update_parcel(engine.data, hidden.id, {"private": True}, dt_util.utcnow())
+    del engine.data.parcels[gone.id]
+    engine.async_changed()
+    track.calls.clear()
+    await tracker.async_refresh()
+
+    assert track.calls == [
+        get_call(track),
+        archive_call(track, CTT),
+        archive_call(track, OTHER),
+    ]
+    assert records(engine) == {
+        CTT: {
+            "parcel": hidden.id,
+            "own": True,
+            "added": NOW_ISO,
+            "status": "not_found",
+            "archived": NOW_ISO,
+        }
+    }
+    assert tracker.diagnostics()["tracked"] == 0
+    assert tracker.diagnostics()["archived"] == 1
+
+    del engine.data.parcels[hidden.id]
+    engine.async_changed()
+    track.calls.clear()
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track)]
+    assert records(engine) == {}
+
+
+async def test_refresh_schedule(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    track: FakeSeventeenTrack,
+    refreshes: list[asyncio.Task[Any]],
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A minute after the start, then every 30 minutes, or 10 on delivery day."""
+    assert await advance(hass, freezer, refreshes, timedelta(seconds=50)) == 0
+    assert await advance(hass, freezer, refreshes, timedelta(seconds=11)) == 1
+    assert track.calls == [get_call(track)]
+
+    assert await advance(hass, freezer, refreshes, timedelta(minutes=29)) == 0
+    add_parcel(engine, "today", CTT, carrier="ctt", eta=Eta(start=TODAY, end=TODAY))
+    assert await advance(hass, freezer, refreshes, timedelta(minutes=2)) == 1
+    assert track.numbers("add_package") == [CTT]
+
+    assert await advance(hass, freezer, refreshes, timedelta(minutes=9)) == 0
+    assert await advance(hass, freezer, refreshes, timedelta(minutes=2)) == 1
+    assert track.count("get_packages") == 3
+
+
+async def test_options_turn_the_sync_off_and_on(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    track: FakeSeventeenTrack,
+    refreshes: list[asyncio.Task[Any]],
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Turning 17TRACK off stops the refreshes; turning it on refreshes soon."""
+    tracker = engine.tracker
+    assert tracker is not None
+    hub = engine.entry
+
+    hass.config_entries.async_update_entry(
+        hub, options={**hub.options, CONF_SEVENTEENTRACK: False}
+    )
+    await hass.async_block_till_done()
+
+    assert await advance(hass, freezer, refreshes, timedelta(minutes=31)) == 0
+    await tracker.async_refresh()
+    assert await advance(hass, freezer, refreshes, timedelta(minutes=31)) == 0
+    assert track.calls == []
+
+    hass.config_entries.async_update_entry(
+        hub, options={**hub.options, CONF_SEVENTEENTRACK: True}
+    )
+    await hass.async_block_till_done()
+
+    assert await advance(hass, freezer, refreshes, timedelta(seconds=3)) == 0
+    assert await advance(hass, freezer, refreshes, timedelta(seconds=3)) == 1
+    assert track.calls == [get_call(track)]
+
+    # A refresh is already planned: options changes don't bring it forward.
+    tracker.reconfigure()
+    assert await advance(hass, freezer, refreshes, timedelta(seconds=10)) == 0
+
+    await tracker.async_stop()
+    tracker.reconfigure()
+    assert await advance(hass, freezer, refreshes, timedelta(minutes=31)) == 0
+    assert track.calls == [get_call(track)]
+
+
+async def test_nothing_without_the_integration(hass: HomeAssistant) -> None:
+    """Without a loaded 17TRACK entry the sync does nothing."""
+    add_hub(hass)
+    engine = await async_setup_parcels(hass)
+    tracker = engine.tracker
+    assert tracker is not None
+    await tracker.async_stop()
+    add_parcel(engine, "ctt", CTT, carrier="ctt")
+
+    await tracker.async_refresh()
+
+    assert tracker.diagnostics() == {
+        "enabled": True,
+        "available": False,
+        "tracked": 0,
+        "archived": 0,
+        "failed": 0,
+        "last_refresh": None,
+        "last_error": None,
+    }
+
+
+async def test_nothing_when_turned_off(
+    hass: HomeAssistant, track: FakeSeventeenTrack
+) -> None:
+    """With 17TRACK off in the options no number is sent."""
+    add_hub(hass, **{CONF_SEVENTEENTRACK: False})
+    engine = await async_setup_parcels(hass)
+    tracker = engine.tracker
+    assert tracker is not None
+    add_parcel(engine, "ctt", CTT, carrier="ctt")
+
+    await tracker.async_refresh()
+
+    assert track.calls == []
+    assert tracker.diagnostics()["enabled"] is False
+    assert tracker.diagnostics()["available"] is False
+    assert records(engine) == {}
