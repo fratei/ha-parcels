@@ -144,13 +144,27 @@ registrations cost nothing.
 2. Set up the **Google Auth Platform** (the OAuth consent screen) with the
    audience **External**, and under **Data Access** add the scope
    `https://www.googleapis.com/auth/gmail.readonly`.
-3. Under **Clients**, create an OAuth client of type **Web application** with
+3. Google requires an application home page and a privacy policy link before
+   you can publish. Under **Branding**, use the values from Home Assistant's
+   own
+   [Google Mail instructions](https://www.home-assistant.io/integrations/google_mail/)
+   and select **Save**:
+   - Under **App domain**, enter `https://home-assistant.io` as the
+     **Application home page**, the **Application privacy policy link** and
+     the **Application terms of service link**.
+   - Under **Authorized domains**, add `home-assistant.io`. This also covers
+     the redirect URI on `my.home-assistant.io`.
+   - Don't upload a logo. On a published app, a logo needs Google's brand
+     verification, and only verified apps show their logo and name anyway.
+4. Under **Clients**, create an OAuth client of type **Web application** with
    the authorized redirect URI `https://my.home-assistant.io/redirect/oauth`,
    and copy its client ID and secret.
-4. Under **Audience**, select **Publish app** to move it to **In production**.
-   While it's in testing, Google signs Parcels out every 7 days. You don't
-   need Google's verification for your own use: when you sign in, Google says
-   it hasn't verified the app; select **Advanced** and continue.
+5. Publish the app, or Google signs Parcels out every 7 days: under
+   **Audience**, select **Publish app**. Google notes that the app needs
+   verification; select **Confirm** without submitting it for verification,
+   and don't select **Verify branding** either. Your own use needs neither.
+   The status changes to **In production**. When you sign in, Google says it
+   hasn't verified the app; select **Advanced** and continue.
 
 ### 3. Add the application credentials
 
