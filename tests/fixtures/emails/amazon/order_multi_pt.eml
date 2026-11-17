@@ -1,0 +1,227 @@
+Return-Path: <20261117081542a1b2c3@bounces.amazon.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.es header.s=sel1amz header.b=gKycGuYC;
+       dkim=pass header.i=@amazonses.com header.s=ug7nbtf4 header.b=gKycGuYC;
+       spf=pass (google.com: domain of 20261117081542a1b2c3@bounces.amazon.es designates 192.0.2.42 as permitted sender) smtp.mailfrom=20261117081542a1b2c3@bounces.amazon.es;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.es
+Received: from a48-2.smtp-out.eu-west-1.amazonses.com (a48-2.smtp-out.eu-west-1.amazonses.com. [192.0.2.42])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Tue, 17 Nov 2026 08:15:42 +0000
+From: "Amazon.es" <auto-confirm@amazon.es>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Encomendado=3A_=22Cafeteira_de_c=C3=A1psulas_compacta?=
+ =?utf-8?q?=2E=2E=2E=22_e_mais_2_artigos?=
+Date: Tue, 17 Nov 2026 08:15:42 +0000
+Message-ID: <010201920261117081542.order-multi-pt-000000@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Amazon.es
+As suas encomendas | A sua conta
+
+Ol=C3=A1 Alex,
+
+Obrigado pela sua encomenda!
+
+A sua encomenda vai chegar em 2 entregas.
+
+Encomenda n.=C2=BA 406-5839271-0042817
+
+Entrega 1 de 2
+
+Chegada:
+quinta-feira, 19 de novembro
+
+Cafeteira de c=C3=A1psulas compacta, 1 litro, preta
+Quantidade: 1
+https://www.amazon.es/gp/r.html?C=3D02T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:2026111602a1b2c3d4e5f601&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.es%2Fdp%2FB0BX4R7T2K%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=3DQ=
+ZXWTGBHJKL0PQ5RS01&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+C=C3=A1psulas de caf=C3=A9 intenso, pack de 50
+Quantidade: 1
+https://www.amazon.es/gp/r.html?C=3D02T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:2026111602a1b2c3d4e5f602&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.es%2Fdp%2FB09Q2W8LZN%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=3DQ=
+ZXWTGBHJKL0PQ5RS02&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Entrega 2 de 2
+
+Chegada:
+segunda-feira, 23 de novembro
+
+Moinho de caf=C3=A9 manual em a=C3=A7o inoxid=C3=A1vel
+Quantidade: 1
+https://www.amazon.es/gp/r.html?C=3D02T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:2026111602a1b2c3d4e5f603&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.es%2Fdp%2FB0CK3M9V5P%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=3DQ=
+ZXWTGBHJKL0PQ5RS03&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Total da encomenda: 84,97 =E2=82=AC
+
+Morada de entrega Alex Doe, Rua Exemplo 1, 1000-001 Lisboa
+
+Ver detalhes da encomenda: https://www.amazon.es/gp/r.html?C=3D02T7Q9X1M4K8=
+B&K=3D1V3JZ9Q7R2XW5&M=3Durn:rtn:msg:2026111602a1b2c3d4e5f604&R=3D3HXK2P8Q5N=
+7MZ&T=3DC&U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fgp%2Fyour-account%2Forder-detai=
+ls%2Fref%3Dpe_2848631_123456789_TE_SIMP_od%3Fie%3DUTF8%26orderID%3D406-5839=
+271-0042817&H=3DQZXWTGBHJKL0PQ5RS04&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Este e-mail foi enviado a partir de um endere=C3=A7o que apenas envia notif=
+ica=C3=A7=C3=B5es e n=C3=A3o aceita mensagens. N=C3=A3o responda a esta men=
+sagem.
+
+Aviso de privacidade
+
+=C2=A9 2026 Amazon.com, Inc. ou as suas afiliadas. Todos os direitos reserv=
+ados.
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"pt">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DUTF-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1.=
+0">
+<title>Amazon.es</title>
+<style type=3D"text/css">
+body { margin: 0; padding: 0; background-color: #ffffff; }
+table { border-collapse: collapse; }
+.container { width: 600px; font-family: Arial, Helvetica, sans-serif; color=
+: #0f1111; }
+.h1 { font-size: 20px; font-weight: bold; margin: 16px 0 8px; }
+.h2 { font-size: 16px; font-weight: bold; margin: 16px 0 8px; color: #067d6=
+2; }
+.kv td { padding: 2px 8px 2px 0; font-size: 14px; }
+.button { background-color: #ffd814; border-radius: 20px; color: #0f1111;
+  padding: 8px 18px; text-decoration: none; display: inline-block; }
+.item td { vertical-align: top; padding: 8px 8px 8px 0; font-size: 14px; }
+.nav a { color: #0f1111; font-size: 13px; text-decoration: none; }
+.footer { font-size: 11px; color: #565959; padding-top: 24px; }
+</style>
+</head>
+<body>
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0"><tr>
+<td align=3D"center">
+<table role=3D"presentation" class=3D"container" width=3D"600" cellpadding=
+=3D"0"
+ cellspacing=3D"0">
+<tr><td class=3D"header"><a href=3D"https://www.amazon.es/gp/r.html?C=3D02T=
+7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111602a1b2c3d4e5f6=
+06&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fre=
+f%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0PQ5RS06&amp;ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ"><img
+ src=3D"https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo.=
+_CB485934981_.png"
+ alt=3D"Amazon.es" width=3D"98" height=3D"30" border=3D"0"></a></td>
+<td class=3D"nav" align=3D"right"><a href=3D"https://www.amazon.es/gp/r.htm=
+l?C=3D02T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111602a1b=
+2c3d4e5f607&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazo=
+n.es%2Fgp%2Fcss%2Forder-history%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&a=
+mp;H=3DQZXWTGBHJKL0PQ5RS07&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>As suas encomendas</a> | <a href=3D"https://www.amazon.es/gp/r.html?C=3D02=
+T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111602a1b2c3d4e5f=
+608&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fg=
+p%2Fcss%2Fhomepage.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQ=
+ZXWTGBHJKL0PQ5RS08&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>A sua conta</a></td></tr>
+<tr><td class=3D"content" colspan=3D"2">
+<p>Ol=C3=A1 Alex,</p>
+<h1 class=3D"h1">Obrigado pela sua encomenda!</h1>
+<p>A sua encomenda vai chegar em 2 entregas.</p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Encomenda n.=C2=BA</td><td class=3D"v"><b>406-583927=
+1-0042817</b></td></tr></table>
+<h2 class=3D"h2">Entrega 1 de 2</h2>
+<div class=3D"eta"><span class=3D"label">Chegada:</span><br><span class=3D"=
+value"><b>quinta-feira, 19 de novembro</b></span></div>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D02T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111602a1b2c3=
+d4e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB0BX4R7T2K%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJK=
+L0PQ5RS01&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https://=
+m.media-amazon.com/images/I/41X4R7T2L._SS142_.jpg" alt=3D"Cafeteira de c=C3=
+=A1psulas compacta, 1 litro, preta" width=3D"90" height=3D"90" border=3D"0"=
+></a></td><td class=3D"desc"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D02T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111602a1b2c3=
+d4e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB0BX4R7T2K%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJK=
+L0PQ5RS01&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Cafeteira de c=C3=A1=
+psulas compacta, 1 litro, preta</a><br><span>Quantidade: 1</span></td></tr>=
+</table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D02T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111602a1b2c3=
+d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB09Q2W8LZN%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJK=
+L0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https://=
+m.media-amazon.com/images/I/41Q2W8LZL._SS142_.jpg" alt=3D"C=C3=A1psulas de =
+caf=C3=A9 intenso, pack de 50" width=3D"90" height=3D"90" border=3D"0"></a>=
+</td><td class=3D"desc"><a href=3D"https://www.amazon.es/gp/r.html?C=3D02T7=
+Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111602a1b2c3d4e5f60=
+2&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fdp%=
+2FB09Q2W8LZN%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJKL0PQ5RS=
+02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">C=C3=A1psulas de caf=C3=A9 =
+intenso, pack de 50</a><br><span>Quantidade: 1</span></td></tr></table>
+<h2 class=3D"h2">Entrega 2 de 2</h2>
+<div class=3D"eta"><span class=3D"label">Chegada:</span><br><span class=3D"=
+value"><b>segunda-feira, 23 de novembro</b></span></div>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D02T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111602a1b2c3=
+d4e5f603&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB0CK3M9V5P%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJK=
+L0PQ5RS03&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https://=
+m.media-amazon.com/images/I/41K3M9V5L._SS142_.jpg" alt=3D"Moinho de caf=C3=
+=A9 manual em a=C3=A7o inoxid=C3=A1vel" width=3D"90" height=3D"90" border=
+=3D"0"></a></td><td class=3D"desc"><a href=3D"https://www.amazon.es/gp/r.ht=
+ml?C=3D02T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111602a1=
+b2c3d4e5f603&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amaz=
+on.es%2Fdp%2FB0CK3M9V5P%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTG=
+BHJKL0PQ5RS03&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Moinho de caf=C3=
+=A9 manual em a=C3=A7o inoxid=C3=A1vel</a><br><span>Quantidade: 1</span></t=
+d></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Total da encomenda:</td><td class=3D"v"><b>84,97 =E2=
+=82=AC</b></td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Morada de entrega</td><td class=3D"v"><b>Alex Doe, R=
+ua Exemplo 1, 1000-001 Lisboa</b></td></tr></table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.es/gp/r.htm=
+l?C=3D02T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111602a1b=
+2c3d4e5f604&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazo=
+n.es%2Fgp%2Fyour-account%2Forder-details%2Fref%3Dpe_2848631_123456789_TE_SI=
+MP_od%3Fie%3DUTF8%26orderID%3D406-5839271-0042817&amp;H=3DQZXWTGBHJKL0PQ5RS=
+04&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Ver detalhes da encomenda</=
+a></p>
+</td></tr>
+<tr><td class=3D"footer" colspan=3D"2">
+<p>Este e-mail foi enviado a partir de um endere=C3=A7o que apenas envia no=
+tifica=C3=A7=C3=B5es e n=C3=A3o aceita mensagens. N=C3=A3o responda a esta =
+mensagem.</p>
+<p><a href=3D"https://www.amazon.es/gp/r.html?C=3D02T7Q9X1M4K8B&amp;K=3D1V3=
+JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111602a1b2c3d4e5f605&amp;R=3D3HXK2P8Q5N7=
+MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fgp%2Fhelp%2Fcustomer%2Fd=
+isplay.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0P=
+Q5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Aviso de privacidade</a=
+></p>
+<p>=C2=A9 2026 Amazon.com, Inc. ou as suas afiliadas. Todos os direitos res=
+ervados.</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

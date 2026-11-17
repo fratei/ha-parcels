@@ -1,0 +1,225 @@
+Return-Path: <20261116140327a1b2c3@bounces.amazon.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.com header.s=sel1amz header.b=JcvEXq9S;
+       dkim=pass header.i=@amazonses.com header.s=ug7nbtf4 header.b=gKycGuYC;
+       spf=pass (google.com: domain of 20261116140327a1b2c3@bounces.amazon.com designates 192.0.2.43 as permitted sender) smtp.mailfrom=20261116140327a1b2c3@bounces.amazon.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.com
+Received: from a48-3.smtp-out.eu-west-1.amazonses.com (a48-3.smtp-out.eu-west-1.amazonses.com. [192.0.2.43])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Mon, 16 Nov 2026 14:03:27 -0800
+From: "Amazon.com" <auto-confirm@amazon.com>
+To: Alex Doe <alex@example.com>
+Subject: Ordered: "Stainless Steel Insulated Water Bottle..." and 1 more item
+Date: Mon, 16 Nov 2026 14:03:27 -0800
+Message-ID: <010201920261116140327.order-en-us-000000@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Amazon.com
+Your Orders | Your Account
+
+Hello Alex,
+
+Thanks for your order, Alex!
+
+We'll send a confirmation when your items ship.
+
+Arriving Friday, November 20
+
+Order # 112-4839201-5938472
+
+Stainless Steel Insulated Water Bottle, 32 oz, Matte Black
+Quantity: 1
+https://www.amazon.com/gp/r.html?C=3D03T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Dur=
+n:rtn:msg:2026111603a1b2c3d4e5f601&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%=
+2Fwww.amazon.com%2Fdp%2FB0BRX8K4M2%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=
+=3DQZXWTGBHJKL0PQ5RS01&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Silicone Straw Lid Replacement, 2 Pack
+Quantity: 1
+https://www.amazon.com/gp/r.html?C=3D03T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Dur=
+n:rtn:msg:2026111603a1b2c3d4e5f602&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%=
+2Fwww.amazon.com%2Fdp%2FB0C1N7Q3XW%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=
+=3DQZXWTGBHJKL0PQ5RS02&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Order Total: $34.98
+
+View or edit order: https://www.amazon.com/gp/r.html?C=3D03T7Q9X1M4K8B&K=3D=
+1V3JZ9Q7R2XW5&M=3Durn:rtn:msg:2026111603a1b2c3d4e5f603&R=3D3HXK2P8Q5N7MZ&T=
+=3DC&U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fgp%2Fyour-account%2Forder-details%2=
+Fref%3Dpe_2848631_123456789_TE_SIMP_od%3Fie%3DUTF8%26orderID%3D112-4839201-=
+5938472&H=3DQZXWTGBHJKL0PQ5RS03&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Top picks for you
+
+Collapsible Silicone Water Bottle, 20 oz
+https://www.amazon.com/gp/r.html?C=3D03T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Dur=
+n:rtn:msg:2026111603a1b2c3d4e5f604&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%=
+2Fwww.amazon.com%2Fdp%2FB0BT9X2K7Q%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=
+=3DQZXWTGBHJKL0PQ5RS04&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Reusable Glass Straws with Cleaning Brush, 6 Pack
+https://www.amazon.com/gp/r.html?C=3D03T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Dur=
+n:rtn:msg:2026111603a1b2c3d4e5f605&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%=
+2Fwww.amazon.com%2Fdp%2FB0CJ4W8N5R%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=
+=3DQZXWTGBHJKL0PQ5RS05&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+This email was sent from a notification-only address that cannot accept inc=
+oming email. Please do not reply to this message.
+
+Privacy Notice
+
+=C2=A9 2026 Amazon.com, Inc. or its affiliates. All rights reserved.
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"en">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DUTF-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1.=
+0">
+<title>Amazon.com</title>
+<style type=3D"text/css">
+body { margin: 0; padding: 0; background-color: #ffffff; }
+table { border-collapse: collapse; }
+.container { width: 600px; font-family: Arial, Helvetica, sans-serif; color=
+: #0f1111; }
+.h1 { font-size: 20px; font-weight: bold; margin: 16px 0 8px; }
+.h2 { font-size: 16px; font-weight: bold; margin: 16px 0 8px; color: #067d6=
+2; }
+.kv td { padding: 2px 8px 2px 0; font-size: 14px; }
+.button { background-color: #ffd814; border-radius: 20px; color: #0f1111;
+  padding: 8px 18px; text-decoration: none; display: inline-block; }
+.item td { vertical-align: top; padding: 8px 8px 8px 0; font-size: 14px; }
+.nav a { color: #0f1111; font-size: 13px; text-decoration: none; }
+.footer { font-size: 11px; color: #565959; padding-top: 24px; }
+</style>
+</head>
+<body>
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0"><tr>
+<td align=3D"center">
+<table role=3D"presentation" class=3D"container" width=3D"600" cellpadding=
+=3D"0"
+ cellspacing=3D"0">
+<tr><td class=3D"header"><a href=3D"https://www.amazon.com/gp/r.html?C=3D03=
+T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1b2c3d4e5f=
+607&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2F=
+ref%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0PQ5RS07&amp;ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ"><img
+ src=3D"https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo.=
+_CB485934981_.png"
+ alt=3D"Amazon.com" width=3D"98" height=3D"30" border=3D"0"></a></td>
+<td class=3D"nav" align=3D"right"><a href=3D"https://www.amazon.com/gp/r.ht=
+ml?C=3D03T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1=
+b2c3d4e5f608&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amaz=
+on.com%2Fgp%2Fcss%2Forder-history%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ=
+&amp;H=3DQZXWTGBHJKL0PQ5RS08&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Your Orders</a> | <a href=3D"https://www.amazon.com/gp/r.html?C=3D03T7Q9X1=
+M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1b2c3d4e5f609&am=
+p;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fgp%2Fc=
+ss%2Fhomepage.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTG=
+BHJKL0PQ5RS09&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Your Account</a></td></tr>
+<tr><td class=3D"content" colspan=3D"2">
+<p>Hello Alex,</p>
+<h1 class=3D"h1">Thanks for your order, Alex!</h1>
+<p>We'll send a confirmation when your items ship.</p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Arriving</td><td class=3D"v"><b>Friday, November 20<=
+/b></td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Order #</td><td class=3D"v"><b>112-4839201-5938472</=
+b></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.com/gp/r.html?=
+C=3D03T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1b2c=
+3d4e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.=
+com%2Fdp%2FB0BRX8K4M2%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBH=
+JKL0PQ5RS01&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https:=
+//m.media-amazon.com/images/I/41RX8K4ML._SS142_.jpg" alt=3D"Stainless Steel=
+ Insulated Water Bottle, 32 oz, Matte Black" width=3D"90" height=3D"90" bor=
+der=3D"0"></a></td><td class=3D"desc"><a href=3D"https://www.amazon.com/gp/=
+r.html?C=3D03T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:20261116=
+03a1b2c3d4e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.=
+amazon.com%2Fdp%2FB0BRX8K4M2%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQ=
+ZXWTGBHJKL0PQ5RS01&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Stainless S=
+teel Insulated Water Bottle, 32 oz, Matte Black</a><br><span>Quantity: 1</s=
+pan></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.com/gp/r.html?=
+C=3D03T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1b2c=
+3d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.=
+com%2Fdp%2FB0C1N7Q3XW%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBH=
+JKL0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https:=
+//m.media-amazon.com/images/I/411N7Q3XL._SS142_.jpg" alt=3D"Silicone Straw =
+Lid Replacement, 2 Pack" width=3D"90" height=3D"90" border=3D"0"></a></td><=
+td class=3D"desc"><a href=3D"https://www.amazon.com/gp/r.html?C=3D03T7Q9X1M=
+4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1b2c3d4e5f602&amp=
+;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fdp%2FB0=
+C1N7Q3XW%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJKL0PQ5RS02&a=
+mp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Silicone Straw Lid Replacement,=
+ 2 Pack</a><br><span>Quantity: 1</span></td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Order Total:</td><td class=3D"v"><b>$34.98</b></td><=
+/tr></table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.com/gp/r.ht=
+ml?C=3D03T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1=
+b2c3d4e5f603&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amaz=
+on.com%2Fgp%2Fyour-account%2Forder-details%2Fref%3Dpe_2848631_123456789_TE_=
+SIMP_od%3Fie%3DUTF8%26orderID%3D112-4839201-5938472&amp;H=3DQZXWTGBHJKL0PQ5=
+RS03&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">View or edit order</a></p>
+<h2 class=3D"h2">Top picks for you</h2>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.com/gp/r.html?=
+C=3D03T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1b2c=
+3d4e5f604&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.=
+com%2Fdp%2FB0BT9X2K7Q%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBH=
+JKL0PQ5RS04&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https:=
+//m.media-amazon.com/images/I/41T9X2K7L._SS142_.jpg" alt=3D"Collapsible Sil=
+icone Water Bottle, 20 oz" width=3D"90" height=3D"90" border=3D"0"></a></td=
+><td class=3D"desc"><a href=3D"https://www.amazon.com/gp/r.html?C=3D03T7Q9X=
+1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1b2c3d4e5f604&a=
+mp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fdp%2F=
+B0BT9X2K7Q%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJKL0PQ5RS04=
+&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Collapsible Silicone Water Bo=
+ttle, 20 oz</a></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.com/gp/r.html?=
+C=3D03T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1b2c=
+3d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.=
+com%2Fdp%2FB0CJ4W8N5R%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBH=
+JKL0PQ5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https:=
+//m.media-amazon.com/images/I/41J4W8N5L._SS142_.jpg" alt=3D"Reusable Glass =
+Straws with Cleaning Brush, 6 Pack" width=3D"90" height=3D"90" border=3D"0"=
+></a></td><td class=3D"desc"><a href=3D"https://www.amazon.com/gp/r.html?C=
+=3D03T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1b2c3=
+d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.c=
+om%2Fdp%2FB0CJ4W8N5R%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJ=
+KL0PQ5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Reusable Glass Stra=
+ws with Cleaning Brush, 6 Pack</a></td></tr></table>
+</td></tr>
+<tr><td class=3D"footer" colspan=3D"2">
+<p>This email was sent from a notification-only address that cannot accept =
+incoming email. Please do not reply to this message.</p>
+<p><a href=3D"https://www.amazon.com/gp/r.html?C=3D03T7Q9X1M4K8B&amp;K=3D1V=
+3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111603a1b2c3d4e5f606&amp;R=3D3HXK2P8Q5N=
+7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fgp%2Fhelp%2Fcustomer%2=
+Fdisplay.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL=
+0PQ5RS06&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Privacy Notice</a></p>
+<p>=C2=A9 2026 Amazon.com, Inc. or its affiliates. All rights reserved.</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

@@ -1,0 +1,142 @@
+Return-Path: <bounces+61234507@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@winkel-voorbeeld.nl header.s=shopify2 header.b=3210zyxw;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234507@shopifyemail.com designates 198.51.100.17 as permitted sender) smtp.mailfrom=bounces+61234507@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=winkel-voorbeeld.nl
+Received: from o27.ptr4120.shopifyemail.com (o27.ptr4120.shopifyemail.com. [198.51.100.17])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Tue, 17 Nov 2026 19:58:03 +0100
+From: Winkel Voorbeeld <info@winkel-voorbeeld.nl>
+To: Alex Doe <alex@example.com>
+Subject: Bestelling #5610 bevestigd
+Date: Tue, 17 Nov 2026 19:58:03 +0100
+Message-ID: <b653a44420db5_20261117195803@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Winkel Voorbeeld
+Bestelling #5610
+
+Bedankt voor je aankoop!
+
+Hoi Alex, we maken je bestelling klaar voor verzending. We laten het je wet=
+en zodra we hem versturen.
+
+Bekijk je bestelling: https://winkel-voorbeeld.nl/61234567890/orders/4f2b7d=
+4187cd9d4d27d4c17775bfe908/authenticate?key=3D0cedbca55aefce45942eb5c827339=
+1cc
+of Bezoek onze winkel: https://winkel-voorbeeld.nl/
+
+Besteloverzicht
+
+Plantenpot van terracotta, 18 cm =C3=97 2
+=E2=82=AC 31,90
+Gieter van gegalvaniseerd staal =C3=97 1
+=E2=82=AC 24,95
+
+Subtotaal =E2=82=AC 56,85
+Verzending =E2=82=AC 4,95
+Totaal =E2=82=AC 61,80 EUR
+
+Klantinformatie
+
+Verzendadres
+Alex Doe
+Voorbeeldstraat 1
+1011 AB Amsterdam
+Nederland
+
+Verzendmethode
+Standaard verzending (PostNL)
+
+Als je vragen hebt, beantwoord dan deze e-mail of neem contact met ons op v=
+ia info@winkel-voorbeeld.nl
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"nl">
+<head>
+<title>Bestelling #5610 bevestigd</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://winkel-voorbeeld.nl/">Winkel Voorbeeld</a></h1></td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Bestell=
+ing #5610</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Bedankt voor je aankoop!</h2>
+<p>Hoi Alex, we maken je bestelling klaar voor verzending. We laten het je =
+weten zodra we hem versturen.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://winkel-voorbeeld.nl/61234567890/orders/4f2b7d4187cd9d4d27d4c17775bfe908=
+/authenticate?key=3D0cedbca55aefce45942eb5c8273391cc" class=3D"button__text=
+">Bekijk je bestelling</a></td></tr></table><table class=3D"link secondary-=
+action-cell"><tr><td class=3D"link__cell">of <a href=3D"https://winkel-voor=
+beeld.nl/" class=3D"link__text"><span class=3D'arrow'>&rarr;</span> Bezoek =
+onze winkel</a></td></tr></table></td></tr></table>
+<h3 class=3D"h3">Besteloverzicht</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/a7fcad0aa1_compact_cropped.jpg" alt=3D"Plantenpot v=
+an terracotta, 18 cm" width=3D"60" height=3D"60" class=3D"order-list__produ=
+ct-image"></td><td class=3D"order-list__product-description-cell"><span cla=
+ss=3D"order-list__item-title">Plantenpot van terracotta, 18 cm&nbsp;&times;=
+&nbsp;2</span></td><td class=3D"order-list__price-cell"><p class=3D"order-l=
+ist__item-price">=E2=82=AC 31,90</p></td></tr></table></td></tr><tr class=
+=3D"order-list__item"><td class=3D"order-list__item__cell"><table><tr><td><=
+img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/products/a6e70b=
+066b_compact_cropped.jpg" alt=3D"Gieter van gegalvaniseerd staal" width=3D"=
+60" height=3D"60" class=3D"order-list__product-image"></td><td class=3D"ord=
+er-list__product-description-cell"><span class=3D"order-list__item-title">G=
+ieter van gegalvaniseerd staal&nbsp;&times;&nbsp;1</span></td><td class=3D"=
+order-list__price-cell"><p class=3D"order-list__item-price">=E2=82=AC 24,95=
+</p></td></tr></table></td></tr></table>
+<table class=3D"row subtotal-lines"><tr><td><table class=3D"row"><tr class=
+=3D"subtotal-line"><td class=3D"subtotal-line__title"><p><span>Subtotaal</s=
+pan></p></td><td class=3D"subtotal-line__value"><strong>=E2=82=AC 56,85</st=
+rong></td></tr><tr class=3D"subtotal-line"><td class=3D"subtotal-line__titl=
+e"><p><span>Verzending</span></p></td><td class=3D"subtotal-line__value"><s=
+trong>=E2=82=AC 4,95</strong></td></tr><tr class=3D"subtotal-line"><td clas=
+s=3D"subtotal-line__title"><p><span>Totaal</span></p></td><td class=3D"subt=
+otal-line__value"><strong>=E2=82=AC 61,80 EUR</strong></td></tr></table></t=
+d></tr></table>
+<h3>Klantinformatie</h3><table class=3D"row"><tr><td class=3D"customer-info=
+__item"><h4>Verzendadres</h4><p>Alex Doe<br>Voorbeeldstraat 1<br>1011 AB Am=
+sterdam<br>Nederland</p></td></tr><tr><td class=3D"customer-info__item"><h4=
+>Verzendmethode</h4><p>Standaard verzending (PostNL)</p></td></tr></table>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">Als je vragen hebt, beantwoord dan deze e-=
+mail of neem contact met ons op via <a href=3D"mailto:info@winkel-voorbeeld=
+.nl">info@winkel-voorbeeld.nl</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

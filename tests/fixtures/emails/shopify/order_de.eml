@@ -1,0 +1,143 @@
+Return-Path: <bounces+61234504@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@beispiel-laden.de header.s=shopify2 header.b=nS7mR6lQ;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234504@shopifyemail.com designates 198.51.100.14 as permitted sender) smtp.mailfrom=bounces+61234504@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=beispiel-laden.de
+Received: from o24.ptr4120.shopifyemail.com (o24.ptr4120.shopifyemail.com. [198.51.100.14])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Mon, 16 Nov 2026 09:15:42 +0100
+From: Beispiel Laden <kontakt@beispiel-laden.de>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Bestellung_=231203_best=C3=A4tigt?=
+Date: Mon, 16 Nov 2026 09:15:42 +0100
+Message-ID: <c14bfd4fe5868_20261116091542@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Beispiel Laden
+Bestellung #1203
+
+Vielen Dank f=C3=BCr Ihren Einkauf!
+
+Hallo Alex, wir bereiten Ihre Bestellung f=C3=BCr den Versand vor. Wir bena=
+chrichtigen Sie, sobald sie verschickt wurde.
+
+Bestellung anzeigen: https://beispiel-laden.de/61234567890/orders/d17715b57=
+50cd2f79ffa02f17eab923a/authenticate?key=3Df8298913d00bce426ed95714f574fe3a
+oder Besuchen Sie unseren Shop: https://beispiel-laden.de/
+
+Bestell=C3=BCbersicht
+
+Schneidebrett aus Eichenholz =C3=97 1
+Gro=C3=9F
+39,90 =E2=82=AC
+Leinen-Geschirrtuch, 2er-Set =C3=97 1
+14,90 =E2=82=AC
+
+Zwischensumme 54,80 =E2=82=AC
+Versand 4,90 =E2=82=AC
+Gesamt 59,70 =E2=82=AC EUR
+
+Kundeninformationen
+
+Lieferadresse
+Alex Doe
+Beispielstra=C3=9Fe 1
+10115 Berlin
+Deutschland
+
+Versandart
+Standardversand (DPD)
+
+Wenn Sie Fragen haben, antworten Sie auf diese E-Mail oder kontaktieren Sie=
+ uns unter kontakt@beispiel-laden.de
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"de">
+<head>
+<title>Bestellung #1203 best=C3=A4tigt</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://beispiel-laden.de/">Beispiel Laden</a></h1></td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Bestell=
+ung #1203</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Vielen Dank f=C3=BCr Ihren Einkauf!</h2>
+<p>Hallo Alex, wir bereiten Ihre Bestellung f=C3=BCr den Versand vor. Wir b=
+enachrichtigen Sie, sobald sie verschickt wurde.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://beispiel-laden.de/61234567890/orders/d17715b5750cd2f79ffa02f17eab923a/a=
+uthenticate?key=3Df8298913d00bce426ed95714f574fe3a" class=3D"button__text">=
+Bestellung anzeigen</a></td></tr></table><table class=3D"link secondary-act=
+ion-cell"><tr><td class=3D"link__cell">oder <a href=3D"https://beispiel-lad=
+en.de/" class=3D"link__text"><span class=3D'arrow'>&rarr;</span> Besuchen S=
+ie unseren Shop</a></td></tr></table></td></tr></table>
+<h3 class=3D"h3">Bestell=C3=BCbersicht</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/29f198baee_compact_cropped.jpg" alt=3D"Schneidebret=
+t aus Eichenholz" width=3D"60" height=3D"60" class=3D"order-list__product-i=
+mage"></td><td class=3D"order-list__product-description-cell"><span class=
+=3D"order-list__item-title">Schneidebrett aus Eichenholz&nbsp;&times;&nbsp;=
+1</span><br><span class=3D"order-list__item-variant">Gro=C3=9F</span></td><=
+td class=3D"order-list__price-cell"><p class=3D"order-list__item-price">39,=
+90 =E2=82=AC</p></td></tr></table></td></tr><tr class=3D"order-list__item">=
+<td class=3D"order-list__item__cell"><table><tr><td><img src=3D"https://cdn=
+.shopify.com/s/files/1/0612/3456/7890/products/a3fbb7e0d6_compact_cropped.j=
+pg" alt=3D"Leinen-Geschirrtuch, 2er-Set" width=3D"60" height=3D"60" class=
+=3D"order-list__product-image"></td><td class=3D"order-list__product-descri=
+ption-cell"><span class=3D"order-list__item-title">Leinen-Geschirrtuch, 2er=
+-Set&nbsp;&times;&nbsp;1</span></td><td class=3D"order-list__price-cell"><p=
+ class=3D"order-list__item-price">14,90 =E2=82=AC</p></td></tr></table></td=
+></tr></table>
+<table class=3D"row subtotal-lines"><tr><td><table class=3D"row"><tr class=
+=3D"subtotal-line"><td class=3D"subtotal-line__title"><p><span>Zwischensumm=
+e</span></p></td><td class=3D"subtotal-line__value"><strong>54,80 =E2=82=AC=
+</strong></td></tr><tr class=3D"subtotal-line"><td class=3D"subtotal-line__=
+title"><p><span>Versand</span></p></td><td class=3D"subtotal-line__value"><=
+strong>4,90 =E2=82=AC</strong></td></tr><tr class=3D"subtotal-line"><td cla=
+ss=3D"subtotal-line__title"><p><span>Gesamt</span></p></td><td class=3D"sub=
+total-line__value"><strong>59,70 =E2=82=AC EUR</strong></td></tr></table></=
+td></tr></table>
+<h3>Kundeninformationen</h3><table class=3D"row"><tr><td class=3D"customer-=
+info__item"><h4>Lieferadresse</h4><p>Alex Doe<br>Beispielstra=C3=9Fe 1<br>1=
+0115 Berlin<br>Deutschland</p></td></tr><tr><td class=3D"customer-info__ite=
+m"><h4>Versandart</h4><p>Standardversand (DPD)</p></td></tr></table>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">Wenn Sie Fragen haben, antworten Sie auf d=
+iese E-Mail oder kontaktieren Sie uns unter <a href=3D"mailto:kontakt@beisp=
+iel-laden.de">kontakt@beispiel-laden.de</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

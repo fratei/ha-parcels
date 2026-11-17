@@ -1,0 +1,108 @@
+Return-Path: <bounces+61234501@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@loja-exemplo.pt header.s=shopify2 header.b=r6Lap4JY;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234501@shopifyemail.com designates 198.51.100.11 as permitted sender) smtp.mailfrom=bounces+61234501@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=loja-exemplo.pt
+Received: from o21.ptr4120.shopifyemail.com (o21.ptr4120.shopifyemail.com. [198.51.100.11])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Thu, 19 Nov 2026 08:12:44 +0000
+From: Loja Exemplo <loja@loja-exemplo.pt>
+To: Alex Doe <alex@example.com>
+Subject: Um envio da encomenda #1008 saiu para entrega
+Date: Thu, 19 Nov 2026 08:12:44 +0000
+Message-ID: <71113a58d0e1d_20261119081244@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Loja Exemplo
+Encomenda #1008
+
+A sua encomenda saiu para entrega
+
+A sua encomenda saiu para entrega. Acompanhe o envio para ver o estado da e=
+ntrega.
+
+Acompanhar envio: https://appserver.ctt.pt/CustomerArea/PublicArea_Detail?O=
+bjectCodeInput=3DLA908172638PT&SearchInput=3DLA908172638PT
+ou Visite a nossa loja: https://loja-exemplo.pt/
+
+N=C3=BAmero de seguimento CTT: LA908172638PT
+
+Artigos neste envio
+
+Vela arom=C3=A1tica de soja, baunilha =C3=97 1
+200 g
+
+Se tiver alguma quest=C3=A3o, responda a este e-mail ou contacte-nos atrav=
+=C3=A9s de loja@loja-exemplo.pt
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"pt">
+<head>
+<title>Um envio da encomenda #1008 saiu para entrega</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://loja-exemplo.pt/">Loja Exemplo</a></h1></td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Encomen=
+da #1008</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">A sua encomenda saiu para entrega</h2>
+<p>A sua encomenda saiu para entrega. Acompanhe o envio para ver o estado d=
+a entrega.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://appserver.ctt.pt/CustomerArea/PublicArea_Detail?ObjectCodeInput=3DLA908=
+172638PT&amp;SearchInput=3DLA908172638PT" class=3D"button__text">Acompanhar=
+ envio</a></td></tr></table><table class=3D"link secondary-action-cell"><tr=
+><td class=3D"link__cell">ou <a href=3D"https://loja-exemplo.pt/" class=3D"=
+link__text"><span class=3D'arrow'>&rarr;</span> Visite a nossa loja</a></td=
+></tr></table></td></tr></table>
+<p class=3D"disclaimer__subtext">N=C3=BAmero de seguimento CTT: <a href=3D"=
+https://appserver.ctt.pt/CustomerArea/PublicArea_Detail?ObjectCodeInput=3DL=
+A908172638PT&amp;SearchInput=3DLA908172638PT">LA908172638PT</a></p>
+<h3 class=3D"h3">Artigos neste envio</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/3702e2f78c_compact_cropped.jpg" alt=3D"Vela arom=C3=
+=A1tica de soja, baunilha" width=3D"60" height=3D"60" class=3D"order-list__=
+product-image"></td><td class=3D"order-list__product-description-cell"><spa=
+n class=3D"order-list__item-title">Vela arom=C3=A1tica de soja, baunilha&nb=
+sp;&times;&nbsp;1</span><br><span class=3D"order-list__item-variant">200 g<=
+/span></td></tr></table></td></tr></table>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">Se tiver alguma quest=C3=A3o, responda a e=
+ste e-mail ou contacte-nos atrav=C3=A9s de <a href=3D"mailto:loja@loja-exem=
+plo.pt">loja@loja-exemplo.pt</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

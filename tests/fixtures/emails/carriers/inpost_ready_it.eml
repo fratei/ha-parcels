@@ -1,0 +1,83 @@
+Return-Path: <bounce-cc49865131@bounces.inpost.it>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@inpost.it header.s=sel1 header.b=c45ded46;
+       spf=pass (google.com: domain of bounce-cc49865131@bounces.inpost.it
+ designates 192.0.2.153 as permitted sender) smtp.mailfrom=bounce-cc49865131@bounces.inpost.it;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=inpost.it
+From: InPost <noreply@inpost.it>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Il_tuo_pacco_=C3=A8_pronto_per_il_ritiro_nel_Locker_InPos?=
+ =?utf-8?q?t?=
+Date: Tue, 17 Nov 2026 09:10:00 +0100
+Message-ID: <20261117081000.dcc6@mail.example.com>
+MIME-Version: 1.0
+Content-Language: it-IT
+Content-Type: multipart/alternative; boundary="b1_f39d616f9b2d"
+
+--b1_f39d616f9b2d
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+InPost
+
+Il tuo pacco ti aspetta
+
+Ciao Alex,
+
+il tuo pacco di Zalando ti aspetta nel Locker InPost. Puoi ritirarlo entro il 21/11/2026.
+
+Numero di spedizione: 602937500284163957201923
+
+Locker: Locker InPost MIL123M
+
+Indirizzo: Via Esempio 1, 20121 Milano
+
+Codice di ritiro: 284716
+
+Per aprire il locker usa l'app InPost oppure inserisci il codice di ritiro e il tuo numero di telefono sullo schermo.
+
+Traccia il pacco [https://inpost.it/trova-il-tuo-pacco?number=602937500284163957201923]
+
+InPost Italia S.r.l. · Via Esempio 1, 20121 Milano
+
+Privacy [https://inpost.it/privacy]
+
+--b1_f39d616f9b2d
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Il tuo pacco ti aspetta</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#ffcd00}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ffcd00;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://inpost.pt/sites/default/files/logo-inpost.png" alt="InPost" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Il tuo pacco ti aspetta</h1>
+<p>Ciao Alex,</p>
+<p>il tuo pacco di <strong>Zalando</strong> ti aspetta nel Locker InPost. Puoi ritirarlo entro il 21/11/2026.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Numero di spedizione</td><td class="value">602937500284163957201923</td></tr>
+<tr><td class="label">Locker</td><td class="value">Locker InPost MIL123M</td></tr>
+<tr><td class="label">Indirizzo</td><td class="value">Via Esempio 1, 20121 Milano</td></tr>
+<tr><td class="label">Codice di ritiro</td><td class="value">284716</td></tr>
+</table>
+<p>Per aprire il locker usa l'app InPost oppure inserisci il codice di ritiro e il tuo numero di telefono sullo schermo.</p>
+<p style="text-align:center"><a class="button" href="https://inpost.it/trova-il-tuo-pacco?number=602937500284163957201923">Traccia il pacco</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>InPost Italia S.r.l. · Via Esempio 1, 20121 Milano</p>
+<p><a href="https://inpost.it/privacy">Privacy</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_f39d616f9b2d--

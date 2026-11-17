@@ -1,0 +1,73 @@
+Return-Path: <bounce-084c7ea9c5@bounces.vinted.co.uk>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@vinted.co.uk header.s=sel1 header.b=50aa8006;
+       spf=pass (google.com: domain of bounce-084c7ea9c5@bounces.vinted.co.uk
+ designates 192.0.2.163 as permitted sender) smtp.mailfrom=bounce-084c7ea9c5@bounces.vinted.co.uk;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=vinted.co.uk
+From: Vinted <no-reply@vinted.co.uk>
+To: Alex Doe <alex@example.com>
+Subject: You've collected your parcel
+Date: Tue, 17 Nov 2026 17:05:00 +0000
+Message-ID: <20261117170500.07d6@mail.example.com>
+MIME-Version: 1.0
+Content-Language: en-GB
+Content-Type: multipart/alternative; boundary="b1_4986dbb17ab3"
+
+--b1_4986dbb17ab3
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Vinted
+
+Parcel collected
+
+Hi Alex,
+
+Your parcel was collected from the Vinted Go locker on 17/11/2026 at 16:58.
+
+Please check your item and let us know in the app within 2 days if anything is wrong.
+
+Tracking number: 1704829163057314
+
+Locker: Vinted Go London Example
+
+Vinted, UAB · Exemplo g. 1, Vilnius
+
+Privacy policy [https://www.vinted.co.uk/privacy-policy]
+
+--b1_4986dbb17ab3
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parcel collected</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#007782}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#007782;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://static.vinted.com/assets/logo.png" alt="Vinted" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Parcel collected</h1>
+<p>Hi Alex,</p>
+<p>Your parcel was collected from the Vinted Go locker on 17/11/2026 at 16:58.</p>
+<p>Please check your item and let us know in the app within 2 days if anything is wrong.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Tracking number</td><td class="value">1704829163057314</td></tr>
+<tr><td class="label">Locker</td><td class="value">Vinted Go London Example</td></tr>
+</table>
+</td></tr>
+<tr><td class="foot">
+<p>Vinted, UAB · Exemplo g. 1, Vilnius</p>
+<p><a href="https://www.vinted.co.uk/privacy-policy">Privacy policy</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_4986dbb17ab3--

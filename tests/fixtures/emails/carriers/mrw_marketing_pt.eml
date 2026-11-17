@@ -1,0 +1,68 @@
+Return-Path: <bounce-5ec51c36b7@bounces.mrw.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@mrw.pt header.s=sel1 header.b=673e5bd8;
+       spf=pass (google.com: domain of bounce-5ec51c36b7@bounces.mrw.pt
+ designates 192.0.2.54 as permitted sender) smtp.mailfrom=bounce-5ec51c36b7@bounces.mrw.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=mrw.pt
+From: MRW Portugal <novidades@mrw.pt>
+To: Alex Doe <alex@example.com>
+Subject: Black Friday MRW: envie com 25% de desconto
+Date: Mon, 16 Nov 2026 09:45:00 +0000
+Message-ID: <20261116094500.285e@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_82d4a7064f31"
+
+--b1_82d4a7064f31
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+MRW
+
+Black Friday: os seus envios com 25% de desconto
+
+Olá Alex,
+
+Até 30 de novembro, envie as suas encomendas para todo o país com 25% de desconto em qualquer agência MRW.
+
+Recolhemos em sua casa e entregamos em 24 horas.
+
+Ver a oferta [https://www.mrw.pt/campanhas/black-friday?utm_source=newsletter]
+
+MRW Portugal · Rua Exemplo 1, 1000-001 Lisboa
+
+Não quer receber mais e-mails? Cancelar subscrição [https://www.mrw.pt/newsletter/cancelar?id=a1b2c3]
+
+--b1_82d4a7064f31
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Black Friday MRW</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#e2001a}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#e2001a;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.mrw.pt/img/logo-mrw.png" alt="MRW" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Black Friday: os seus envios com 25% de desconto</h1>
+<p>Olá Alex,</p>
+<p>Até 30 de novembro, envie as suas encomendas para todo o país com 25% de desconto em qualquer agência MRW.</p>
+<p>Recolhemos em sua casa e entregamos em 24 horas.</p>
+<p style="text-align:center"><a class="button" href="https://www.mrw.pt/campanhas/black-friday?utm_source=newsletter">Ver a oferta</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>MRW Portugal · Rua Exemplo 1, 1000-001 Lisboa</p>
+<p>Não quer receber mais e-mails? <a href="https://www.mrw.pt/newsletter/cancelar?id=a1b2c3">Cancelar subscrição</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_82d4a7064f31--

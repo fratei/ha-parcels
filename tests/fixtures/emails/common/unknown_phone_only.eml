@@ -1,0 +1,37 @@
+Return-Path: <geral@servicos-exemplo.example>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@servicos-exemplo.example header.s=mail header.b=QmFzZTY0;
+       spf=pass (google.com: domain of geral@servicos-exemplo.example designates 192.0.2.60 as permitted sender) smtp.mailfrom=geral@servicos-exemplo.example;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=servicos-exemplo.example
+Received: from smtp.servicos-exemplo.example (smtp.servicos-exemplo.example. [192.0.2.60])
+        by mx.google.com with ESMTPS id a1si1234567wra.101.2026.11.17
+        for <alex@example.com>;
+        Tue, 17 Nov 2026 03:05:40 -0800 (PST)
+From: =?UTF-8?Q?Servi=C3=A7os_Exemplo?= <geral@servicos-exemplo.example>
+To: Alex Doe <alex@example.com>
+Subject: =?UTF-8?Q?A_sua_encomenda_est=C3=A1_a_caminho?=
+Date: Tue, 17 Nov 2026 11:05:00 +0000
+Message-ID: <20261117110500.77@smtp.servicos-exemplo.example>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Olá Alex,
+
+A sua encomenda está a caminho.
+Para qualquer questão ligue 912 345 678, +351 210 000 000 ou 912345678 (dias úteis, 9h-18h).
+NIF 123456789 · Rua Exemplo 1, 1000-001 Lisboa
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><body>
+<p>Olá Alex,</p>
+<p>A sua encomenda está a caminho.</p>
+<p>Para qualquer questão ligue 912 345 678, +351 210 000 000 ou 912345678 (dias úteis, 9h-18h).</p>
+<p>NIF 123456789 · Rua Exemplo 1, 1000-001 Lisboa</p>
+</body></html>
+--=_parcels_b1--

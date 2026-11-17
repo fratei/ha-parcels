@@ -1,0 +1,43 @@
+Return-Path: <bounces@pccomponentes.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@pccomponentes.com header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@pccomponentes.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@pccomponentes.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=pccomponentes.com
+From: PcComponentes <noreply@pccomponentes.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Tu_pedido_41207719_ya_est=C3=A1_en_camino?=
+Date: Tue, 17 Nov 2026 17:45:00 +0100
+Message-ID: <20261117174500.es02@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es
+Content-Type: multipart/alternative; boundary="=_parcels_ai_es02"
+
+--=_parcels_ai_es02
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+¡Hola, Alex!
+Tu pedido 41207719 ha salido de nuestro almacén.
+Producto: Teclado mecánico Logitech G413 SE
+Transportista: Correos
+Número de seguimiento: PQ5F4X0712345670128007
+Lo recibirás entre el 19 y el 20 de noviembre.
+Seguir mi envío: https://www.correos.es/es/es/herramientas/localizador/envios/detalle?tracking-number=PQ5F4X0712345670128007
+--=_parcels_ai_es02
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"><title>Tu pedido 41207719 ya está en camino</title></head>
+<body>
+<p>¡Hola, Alex!</p>
+<p>Tu pedido 41207719 ha salido de nuestro almacén.</p>
+<p>Producto: Teclado mecánico Logitech G413 SE</p>
+<p>Transportista: Correos</p>
+<p>Número de seguimiento: PQ5F4X0712345670128007</p>
+<p>Lo recibirás entre el 19 y el 20 de noviembre.</p>
+<p><a href="https://www.correos.es/es/es/herramientas/localizador/envios/detalle?tracking-number=PQ5F4X0712345670128007">Seguir mi envío</a></p>
+</body>
+</html>
+--=_parcels_ai_es02--

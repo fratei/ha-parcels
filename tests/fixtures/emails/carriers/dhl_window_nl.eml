@@ -1,0 +1,79 @@
+Return-Path: <bounce-a12bcbc84f@bounces.dhl.nl>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dhl.nl header.s=sel1 header.b=a679e41d;
+       spf=pass (google.com: domain of bounce-a12bcbc84f@bounces.dhl.nl
+ designates 192.0.2.18 as permitted sender) smtp.mailfrom=bounce-a12bcbc84f@bounces.dhl.nl;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dhl.nl
+From: DHL Parcel <noreply@dhl.nl>
+To: Alex Doe <alex@example.com>
+Subject: Je pakket van HEMA wordt vandaag bezorgd
+Date: Tue, 17 Nov 2026 08:30:00 +0100
+Message-ID: <20261117073000.d68a@mail.example.com>
+MIME-Version: 1.0
+Content-Language: nl-NL
+Content-Type: multipart/alternative; boundary="b1_89658877b2ce"
+
+--b1_89658877b2ce
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DHL
+
+Je pakket komt vandaag
+
+Hoi Alex,
+
+Je pakket van HEMA wordt vandaag tussen 17:30 en 20:30 bezorgd.
+
+Trackingcode: JVGL0626380815294716
+
+Afzender: HEMA
+
+Bezorgmoment: dinsdag 17 november, 17:30 - 20:30
+
+Komt het niet uit? Kies een ander moment of een DHL ServicePoint in de buurt.
+
+Volg je pakket [https://my.dhlparcel.nl/home/tracktrace/JVGL0626380815294716]
+
+DHL Parcel · Voorbeeldstraat 1, 1011 AB Amsterdam
+
+Privacy [https://www.dhlparcel.nl/nl/privacy]
+
+--b1_89658877b2ce
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Je pakket komt vandaag</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#ffcc00}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ffcc00;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.dhl.de/content/dam/images/logo-dhl.png" alt="DHL" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Je pakket komt vandaag</h1>
+<p>Hoi Alex,</p>
+<p>Je pakket van <strong>HEMA</strong> wordt vandaag tussen 17:30 en 20:30 bezorgd.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Trackingcode</td><td class="value">JVGL0626380815294716</td></tr>
+<tr><td class="label">Afzender</td><td class="value">HEMA</td></tr>
+<tr><td class="label">Bezorgmoment</td><td class="value">dinsdag 17 november, 17:30 - 20:30</td></tr>
+</table>
+<p>Komt het niet uit? Kies een ander moment of een DHL ServicePoint in de buurt.</p>
+<p style="text-align:center"><a class="button" href="https://my.dhlparcel.nl/home/tracktrace/JVGL0626380815294716">Volg je pakket</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>DHL Parcel · Voorbeeldstraat 1, 1011 AB Amsterdam</p>
+<p><a href="https://www.dhlparcel.nl/nl/privacy">Privacy</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_89658877b2ce--

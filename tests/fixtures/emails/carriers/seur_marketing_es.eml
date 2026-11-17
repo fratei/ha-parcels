@@ -1,0 +1,75 @@
+Return-Path: <bounce-2dc1715bb8@bounces.seur.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@seur.com header.s=sel1 header.b=fa5d8008;
+       spf=pass (google.com: domain of bounce-2dc1715bb8@bounces.seur.com
+ designates 192.0.2.187 as permitted sender) smtp.mailfrom=bounce-2dc1715bb8@bounces.seur.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=seur.com
+From: SEUR <noticias@seur.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Black_Friday=3A_env=C3=ADa_tus_paquetes_con_un_25=25_de_d?=
+ =?utf-8?q?escuento?=
+Date: Mon, 16 Nov 2026 11:00:00 +0100
+Message-ID: <20261116100000.db6c@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_5b6a326af6cd"
+
+--b1_5b6a326af6cd
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SEUR
+
+Este Black Friday, envía más por menos
+
+Hola Alex,
+
+Envía tus paquetes desde cualquier punto Pickup con un 25% de descuento hasta el 30 de noviembre.
+
+Y recuerda: con la app de SEUR puedes recibir tus compras donde y cuando quieras.
+
+Ver oferta [https://www.seur.com/es/black-friday?utm_source=newsletter]
+
+SEUR, S.A. · Calle Ejemplo 1, 28001 Madrid
+
+Este correo se ha enviado de forma automática; por favor, no respondas.
+
+Política de privacidad [https://www.seur.com/es/politica-de-privacidad] · Ayuda [https://www.seur.com/es/ayuda] · Atención al cliente: +34 900 000 000
+
+Si no quieres recibir más comunicaciones, date de baja [https://www.seur.com/es/newsletter/baja?id=a1b2c3].
+
+--b1_5b6a326af6cd
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Black Friday SEUR</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#00a3d8}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#00a3d8;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.seur.com/img/logo-seur.png" alt="SEUR" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Este Black Friday, envía más por menos</h1>
+<p>Hola Alex,</p>
+<p>Envía tus paquetes desde cualquier punto Pickup con un 25% de descuento hasta el 30 de noviembre.</p>
+<p>Y recuerda: con la app de SEUR puedes recibir tus compras donde y cuando quieras.</p>
+<p style="text-align:center"><a class="button" href="https://www.seur.com/es/black-friday?utm_source=newsletter">Ver oferta</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>SEUR, S.A. · Calle Ejemplo 1, 28001 Madrid</p>
+<p>Este correo se ha enviado de forma automática; por favor, no respondas.</p>
+<p><a href="https://www.seur.com/es/politica-de-privacidad">Política de privacidad</a> · <a href="https://www.seur.com/es/ayuda">Ayuda</a> · Atención al cliente: +34 900 000 000</p>
+<p>Si no quieres recibir más comunicaciones, <a href="https://www.seur.com/es/newsletter/baja?id=a1b2c3">date de baja</a>.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_5b6a326af6cd--

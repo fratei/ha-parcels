@@ -1,0 +1,80 @@
+Return-Path: <bounce-6@email.shop.app>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@shop.app header.s=s1 header.b=VYbehknq;
+       spf=pass (google.com: domain of bounce-6@email.shop.app designates 203.0.113.16 as permitted sender) smtp.mailfrom=bounce-6@email.shop.app;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=shop.app
+Received: from o6.email.shop.app (o6.email.shop.app. [203.0.113.16])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Wed, 18 Nov 2026 19:02:14 +0100
+From: Shop <noreply@shop.app>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Il_tuo_ordine_da_Negozio_Esempio_=C3=A8_stato_spedito?=
+Date: Wed, 18 Nov 2026 19:02:14 +0100
+Message-ID: <c29c229220654dcfccdf.20261118190214@email.shop.app>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Shop
+
+Il tuo ordine da Negozio Esempio =C3=A8 stato spedito
+
+Ordine #4530
+
+Corriere: GLS
+
+Numero di tracciamento: 61234567890
+
+Macinacaff=C3=A8 manuale in acciaio =C3=97 1
+
+Segui nell'app Shop: https://shop.app/orders/337f8009120e1effbad8814f?utm_s=
+ource=3Dshop_email
+
+Informativa sulla privacy: https://shop.app/privacy
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"it">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1">
+<title>Il tuo ordine da Negozio Esempio =C3=A8 stato spedito</title>
+</head>
+<body style=3D"margin:0;background:#f5f5f5">
+<table class=3D"wrapper" width=3D"100%"><tr><td align=3D"center">
+<table class=3D"header"><tr><td>
+<a href=3D"https://shop.app/"><img src=3D"https://cdn.shopify.com/shopifycl=
+oud/shop/assets/shop-logo-email.png" alt=3D"Shop" width=3D"72" height=3D"30=
+"></a>
+</td></tr></table>
+<table class=3D"card"><tr><td>
+<h2 class=3D"h2">Il tuo ordine da Negozio Esempio =C3=A8 stato spedito</h2>
+<p>Ordine #4530</p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Corriere:</td><td class=3D"v"><b>GLS</b></td></tr></=
+table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Numero di tracciamento:</td><td class=3D"v"><b>61234=
+567890</b></td></tr></table>
+<table class=3D"item"><tr><td><img src=3D"https://cdn.shopify.com/s/files/1=
+/0598/7654/3210/products/e22fd7d0.jpg" alt=3D"Macinacaff=C3=A8 manuale in a=
+cciaio" width=3D"64" height=3D"64"></td><td><p class=3D"item-title">Macinac=
+aff=C3=A8 manuale in acciaio &times; 1</p></td></tr></table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://shop.app/orders/337f80=
+09120e1effbad8814f?utm_source=3Dshop_email">Segui nell'app Shop</a></p>
+</td></tr></table>
+<table class=3D"footer"><tr><td>
+<p><a href=3D"https://shop.app/privacy">Informativa sulla privacy</a></p>
+</td></tr></table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

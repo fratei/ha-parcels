@@ -1,0 +1,85 @@
+Return-Path: <bounce-175208a29d@bounces.ups.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ups.com header.s=sel1 header.b=e3392f02;
+       spf=pass (google.com: domain of bounce-175208a29d@bounces.ups.com
+ designates 192.0.2.14 as permitted sender) smtp.mailfrom=bounce-175208a29d@bounces.ups.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ups.com
+From: UPS <mcinfo@ups.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Mise_=C3=A0_jour_UPS_=3A_colis_disponible_pour_retrait?=
+Date: Tue, 17 Nov 2026 10:22:00 +0100
+Message-ID: <20261117092200.2cd0@mail.example.com>
+MIME-Version: 1.0
+Content-Language: fr-FR
+Content-Type: multipart/alternative; boundary="b1_59ee8163b418"
+
+--b1_59ee8163b418
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+UPS
+
+Votre colis vous attend
+
+Bonjour Alex Doe,
+
+Votre colis est arrivé au point UPS Access Point™ indiqué ci-dessous et peut être retiré jusqu'au 24/11/2026.
+
+Numéro de suivi: 1Z9W8R371125836041
+
+Expéditeur: Sephora
+
+UPS Access Point: Librairie Exemple
+
+Adresse: 1 Rue Exemple, 69001 Lyon
+
+Pour retirer votre colis, présentez une pièce d'identité officielle avec photo.
+
+Suivre mon colis [https://www.ups.com/track?loc=fr_FR&tracknum=1Z9W8R371125836041&requester=ST/trackdetails]
+
+© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.
+
+Avis de confidentialité [https://www.ups.com/us/en/support/shipping-support/legal-terms-conditions/privacy-notice.page]
+
+Do not reply to this e-mail. UPS will not receive your reply.
+
+--b1_59ee8163b418
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mise à jour UPS</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#351c15}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#351c15;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.ups.com/assets/resources/images/UPS_logo.svg" alt="UPS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Votre colis vous attend</h1>
+<p>Bonjour Alex Doe,</p>
+<p>Votre colis est arrivé au point UPS Access Point™ indiqué ci-dessous et peut être retiré jusqu'au 24/11/2026.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Numéro de suivi</td><td class="value">1Z9W8R371125836041</td></tr>
+<tr><td class="label">Expéditeur</td><td class="value">Sephora</td></tr>
+<tr><td class="label">UPS Access Point</td><td class="value">Librairie Exemple</td></tr>
+<tr><td class="label">Adresse</td><td class="value">1 Rue Exemple, 69001 Lyon</td></tr>
+</table>
+<p>Pour retirer votre colis, présentez une pièce d'identité officielle avec photo.</p>
+<p style="text-align:center"><a class="button" href="https://www.ups.com/track?loc=fr_FR&tracknum=1Z9W8R371125836041&requester=ST/trackdetails">Suivre mon colis</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.</p>
+<p><a href="https://www.ups.com/us/en/support/shipping-support/legal-terms-conditions/privacy-notice.page">Avis de confidentialité</a></p>
+<p>Do not reply to this e-mail. UPS will not receive your reply.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_59ee8163b418--

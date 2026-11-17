@@ -1,0 +1,80 @@
+Return-Path: <bounce-9e8aafd854@bounces.nacex.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@nacex.pt header.s=sel1 header.b=eedccee6;
+       spf=pass (google.com: domain of bounce-9e8aafd854@bounces.nacex.pt
+ designates 192.0.2.24 as permitted sender) smtp.mailfrom=bounce-9e8aafd854@bounces.nacex.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=nacex.pt
+From: NACEX <noreply@nacex.pt>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?A_sua_encomenda_j=C3=A1_est=C3=A1_dispon=C3=ADvel_na_NACE?=
+ =?utf-8?q?X=2Eshop?=
+Date: Tue, 17 Nov 2026 16:10:00 +0000
+Message-ID: <20261117161000.3089@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_7088d4276753"
+
+--b1_7088d4276753
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+NACEX
+
+Já pode recolher a sua encomenda
+
+Olá Alex Doe,
+
+A sua encomenda da Primark já está disponível na NACEX.shop indicada. Para a recolher, apresente o código de recolha e um documento de identificação.
+
+N.º de expedição: 2834/71520953
+
+NACEX.shop: Papelaria Exemplo
+
+Morada: Rua Exemplo 1, 4000-001 Porto
+
+Código de recolha: 739214
+
+Disponível até: 01/12/2026
+
+NACEX Portugal · Rua Exemplo 1, 4000-001 Porto
+
+Privacidade [https://www.nacex.pt/privacidade]
+
+--b1_7088d4276753
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encomenda disponível</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#004b93}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#004b93;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.nacex.es/img/logo-nacex.png" alt="NACEX" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Já pode recolher a sua encomenda</h1>
+<p>Olá Alex Doe,</p>
+<p>A sua encomenda da <strong>Primark</strong> já está disponível na NACEX.shop indicada. Para a recolher, apresente o código de recolha e um documento de identificação.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">N.º de expedição</td><td class="value">2834/71520953</td></tr>
+<tr><td class="label">NACEX.shop</td><td class="value">Papelaria Exemplo</td></tr>
+<tr><td class="label">Morada</td><td class="value">Rua Exemplo 1, 4000-001 Porto</td></tr>
+<tr><td class="label">Código de recolha</td><td class="value">739214</td></tr>
+<tr><td class="label">Disponível até</td><td class="value">01/12/2026</td></tr>
+</table>
+</td></tr>
+<tr><td class="foot">
+<p>NACEX Portugal · Rua Exemplo 1, 4000-001 Porto</p>
+<p><a href="https://www.nacex.pt/privacidade">Privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_7088d4276753--

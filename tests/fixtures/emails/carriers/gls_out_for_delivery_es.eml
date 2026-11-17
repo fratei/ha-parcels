@@ -1,0 +1,79 @@
+Return-Path: <bounce-20b88205a3@bounces.gls-spain.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@gls-spain.es header.s=sel1 header.b=ae6dc813;
+       spf=pass (google.com: domain of bounce-20b88205a3@bounces.gls-spain.es
+ designates 192.0.2.196 as permitted sender) smtp.mailfrom=bounce-20b88205a3@bounces.gls-spain.es;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=gls-spain.es
+From: GLS Spain <noreply@gls-spain.es>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Tu_env=C3=ADo_GLS_est=C3=A1_en_reparto?=
+Date: Tue, 17 Nov 2026 08:55:00 +0100
+Message-ID: <20261117075500.e474@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_01f05d08f6f4"
+
+--b1_01f05d08f6f4
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+GLS
+
+Tu envío está en reparto
+
+Hola Alex Doe,
+
+Tu envío de Pull&Bear está en reparto y llegará hoy entre las 16:00 y las 18:00.
+
+Número de envío: 620417393351
+
+Remitente: Pull&Bear
+
+Franja horaria: 16:00 - 18:00
+
+¿No vas a estar? Puedes cambiar la entrega a un GLS ParcelShop desde el enlace de seguimiento.
+
+Seguir envío [https://www.gls-spain.es/es/seguimiento-envios/?match=620417393351]
+
+GLS Spain · Calle Ejemplo 1, 28001 Madrid
+
+Privacidad [https://www.gls-spain.es/es/privacidad]
+
+--b1_01f05d08f6f4
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tu envío está en reparto</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#061ab1}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#061ab1;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://gls-group.com/images/gls-logo.png" alt="GLS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Tu envío está en reparto</h1>
+<p>Hola Alex Doe,</p>
+<p>Tu envío de <strong>Pull&amp;Bear</strong> está en reparto y llegará hoy entre las 16:00 y las 18:00.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Número de envío</td><td class="value">620417393351</td></tr>
+<tr><td class="label">Remitente</td><td class="value">Pull&amp;Bear</td></tr>
+<tr><td class="label">Franja horaria</td><td class="value">16:00 - 18:00</td></tr>
+</table>
+<p>¿No vas a estar? Puedes cambiar la entrega a un GLS ParcelShop desde el enlace de seguimiento.</p>
+<p style="text-align:center"><a class="button" href="https://www.gls-spain.es/es/seguimiento-envios/?match=620417393351">Seguir envío</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>GLS Spain · Calle Ejemplo 1, 28001 Madrid</p>
+<p><a href="https://www.gls-spain.es/es/privacidad">Privacidad</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_01f05d08f6f4--

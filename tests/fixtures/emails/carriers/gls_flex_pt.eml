@@ -1,0 +1,79 @@
+Return-Path: <bounce-e645701f81@bounces.gls-portugal.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@gls-portugal.pt header.s=sel1 header.b=7742b9a0;
+       spf=pass (google.com: domain of bounce-e645701f81@bounces.gls-portugal.pt
+ designates 192.0.2.236 as permitted sender) smtp.mailfrom=bounce-e645701f81@bounces.gls-portugal.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=gls-portugal.pt
+From: GLS Portugal <noreply@gls-portugal.pt>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?A_sua_encomenda_GLS_ser=C3=A1_entregue_hoje?=
+Date: Tue, 17 Nov 2026 08:05:00 +0000
+Message-ID: <20261117080501.f124@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_6aba6cea6880"
+
+--b1_6aba6cea6880
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+GLS
+
+A sua encomenda chega hoje
+
+Olá Alex Doe,
+
+A sua encomenda da Wook será entregue hoje, 17/11/2026, entre as 10:00 e as 12:00.
+
+Número da encomenda: 620417393436
+
+Remetente: Wook
+
+Janela horária: 10:00 - 12:00
+
+Não vai estar em casa? Com o FlexDeliveryService pode escolher outro dia de entrega ou receber a encomenda num GLS ParcelShop.
+
+Alterar entrega [https://gls-group.com/PT/pt/seguir-encomenda?match=620417393436]
+
+GLS Portugal · Rua Exemplo 1, 1000-001 Lisboa
+
+Privacidade [https://gls-group.com/PT/pt/privacidade]
+
+--b1_6aba6cea6880
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A sua encomenda chega hoje</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#061ab1}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#061ab1;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://gls-group.com/images/gls-logo.png" alt="GLS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>A sua encomenda chega hoje</h1>
+<p>Olá Alex Doe,</p>
+<p>A sua encomenda da <strong>Wook</strong> será entregue hoje, 17/11/2026, entre as 10:00 e as 12:00.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Número da encomenda</td><td class="value">620417393436</td></tr>
+<tr><td class="label">Remetente</td><td class="value">Wook</td></tr>
+<tr><td class="label">Janela horária</td><td class="value">10:00 - 12:00</td></tr>
+</table>
+<p>Não vai estar em casa? Com o FlexDeliveryService pode escolher outro dia de entrega ou receber a encomenda num GLS ParcelShop.</p>
+<p style="text-align:center"><a class="button" href="https://gls-group.com/PT/pt/seguir-encomenda?match=620417393436">Alterar entrega</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>GLS Portugal · Rua Exemplo 1, 1000-001 Lisboa</p>
+<p><a href="https://gls-group.com/PT/pt/privacidade">Privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_6aba6cea6880--

@@ -1,0 +1,43 @@
+Return-Path: <bounces@fnac.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@fnac.com header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@fnac.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@fnac.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fnac.com
+From: Fnac <noreply@fnac.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?b?Vm90cmUgY29tbWFuZGUgbsKwIDI2MTExODA0NTcgYSDDqXTDqSBleHDDqWRpw6ll?=
+Date: Wed, 18 Nov 2026 11:50:00 +0100
+Message-ID: <20261118115000.fr01@mail.example.com>
+MIME-Version: 1.0
+Content-Language: fr
+Content-Type: multipart/alternative; boundary="=_parcels_ai_fr01"
+
+--=_parcels_ai_fr01
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bonjour Alex,
+Votre commande n° 2611180457 a été expédiée.
+Article : Casque sans fil Bose QuietComfort 45
+Transporteur : Colissimo
+Numéro de suivi : 6A20481937564
+Livraison prévue le mardi 24 novembre.
+Suivre mon colis: https://www.laposte.fr/outils/suivre-vos-envois?code=6A20481937564
+--=_parcels_ai_fr01
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Votre commande n° 2611180457 a été expédiée</title></head>
+<body>
+<p>Bonjour Alex,</p>
+<p>Votre commande n° 2611180457 a été expédiée.</p>
+<p>Article : Casque sans fil Bose QuietComfort 45</p>
+<p>Transporteur : Colissimo</p>
+<p>Numéro de suivi : 6A20481937564</p>
+<p>Livraison prévue le mardi 24 novembre.</p>
+<p><a href="https://www.laposte.fr/outils/suivre-vos-envois?code=6A20481937564">Suivre mon colis</a></p>
+</body>
+</html>
+--=_parcels_ai_fr01--

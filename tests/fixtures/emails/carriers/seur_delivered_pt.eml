@@ -1,0 +1,82 @@
+Return-Path: <bounce-9489a2fc4a@bounces.seur.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@seur.com header.s=sel1 header.b=b052f5d9;
+       spf=pass (google.com: domain of bounce-9489a2fc4a@bounces.seur.com
+ designates 192.0.2.148 as permitted sender) smtp.mailfrom=bounce-9489a2fc4a@bounces.seur.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=seur.com
+From: SEUR <notificacoes@seur.com>
+To: Alex Doe <alex@example.com>
+Subject: O seu envio foi entregue
+Date: Tue, 17 Nov 2026 12:52:00 +0000
+Message-ID: <20261117125200.2a5d@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_53de60094885"
+
+--b1_53de60094885
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SEUR
+
+Envio entregue
+
+Olá Alex Doe,
+
+O seu envio 0628174555 foi entregue hoje às 12:47.
+
+N.º de expedição: 0628174555
+
+Data de entrega: 17/11/2026 12:47
+
+Entregue a: Alex Doe
+
+Obrigado por escolher a SEUR.
+
+Ver detalhes [https://www.seur.com/livetracking/?segOnlineIdentificador=0628174555&segOnlineIdioma=pt]
+
+SEUR · Rua Exemplo 1, 1000-001 Lisboa
+
+Esta mensagem foi enviada automaticamente; por favor, não responda.
+
+Política de privacidade [https://www.seur.com/pt/politica-de-privacidade]
+
+--b1_53de60094885
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Envio entregue</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#00a3d8}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#00a3d8;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.seur.com/img/logo-seur.png" alt="SEUR" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Envio entregue</h1>
+<p>Olá Alex Doe,</p>
+<p>O seu envio 0628174555 foi entregue hoje às 12:47.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">N.º de expedição</td><td class="value">0628174555</td></tr>
+<tr><td class="label">Data de entrega</td><td class="value">17/11/2026 12:47</td></tr>
+<tr><td class="label">Entregue a</td><td class="value">Alex Doe</td></tr>
+</table>
+<p>Obrigado por escolher a SEUR.</p>
+<p style="text-align:center"><a class="button" href="https://www.seur.com/livetracking/?segOnlineIdentificador=0628174555&segOnlineIdioma=pt">Ver detalhes</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>SEUR · Rua Exemplo 1, 1000-001 Lisboa</p>
+<p>Esta mensagem foi enviada automaticamente; por favor, não responda.</p>
+<p><a href="https://www.seur.com/pt/politica-de-privacidade">Política de privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_53de60094885--

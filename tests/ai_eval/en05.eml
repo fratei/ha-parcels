@@ -1,0 +1,43 @@
+Return-Path: <bounces@example-tea.example>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@example-tea.example header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@example-tea.example designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@example-tea.example;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=example-tea.example
+From: Example Tea Co <orders@example-tea.example>
+To: Alex Doe <alex@example.com>
+Subject: Order #EX-20931 confirmed
+Date: Mon, 16 Nov 2026 19:05:00 +0000
+Message-ID: <20261116190500.en05@mail.example.com>
+MIME-Version: 1.0
+Content-Language: en
+Content-Type: multipart/alternative; boundary="=_parcels_ai_en05"
+
+--=_parcels_ai_en05
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hi Alex,
+Thanks for your order #EX-20931. We're packing it now.
+Earl Grey loose leaf tea 250g × 2 — £13.00
+Ceramic teapot 1L × 1 — £24.00
+Delivery: Royal Mail Tracked 48, expected Tuesday 24 November.
+We'll e-mail you the tracking number when your order ships.
+View your order: https://shop.example-tea.example/account/orders
+--=_parcels_ai_en05
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Order #EX-20931 confirmed</title></head>
+<body>
+<p>Hi Alex,</p>
+<p>Thanks for your order #EX-20931. We're packing it now.</p>
+<p>Earl Grey loose leaf tea 250g × 2 — £13.00</p>
+<p>Ceramic teapot 1L × 1 — £24.00</p>
+<p>Delivery: Royal Mail Tracked 48, expected Tuesday 24 November.</p>
+<p>We'll e-mail you the tracking number when your order ships.</p>
+<p><a href="https://shop.example-tea.example/account/orders">View your order</a></p>
+</body>
+</html>
+--=_parcels_ai_en05--

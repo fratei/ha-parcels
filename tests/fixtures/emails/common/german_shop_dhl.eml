@@ -1,0 +1,44 @@
+Return-Path: <bounce@news.beispielshop.example>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@beispielshop.example header.s=s1 header.b=QmFzZTY0;
+       spf=pass (google.com: domain of bounce@news.beispielshop.example designates 192.0.2.40 as permitted sender) smtp.mailfrom=bounce@news.beispielshop.example;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=beispielshop.example
+Received: from news.beispielshop.example (news.beispielshop.example. [192.0.2.40])
+        by mx.google.com with ESMTPS id a1si1234567wra.101.2026.11.17
+        for <alex@example.com>;
+        Tue, 17 Nov 2026 02:30:11 -0800 (PST)
+From: "Beispiel Shop | Versand" <versand@beispielshop.example>
+To: Alex Doe <alex@example.com>
+Subject: Ihre Bestellung Nr. 100234 ist unterwegs
+Date: Tue, 17 Nov 2026 11:30:00 +0100
+Message-ID: <20261117103000.100234@news.beispielshop.example>
+Content-Language: de-DE
+Content-Transfer-Encoding: 8bit
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hallo Alex Doe,
+
+gute Nachrichten: Ihre Bestellung Nr. 100234 wurde heute an DHL übergeben.
+Voraussichtliche Zustellung: Donnerstag, 19.11.2026
+
+Sendung verfolgen: https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=00340434161094015902
+
+Beispiel Shop GmbH · Musterstraße 1 · 12345 Musterstadt · USt-IdNr. DE123456789 · Tel. +49 30 1234567
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><meta charset="utf-8"><style>.f{font-size:11px}</style></head>
+<body>
+<p>Hallo Alex Doe,</p>
+<p>gute Nachrichten: Ihre Bestellung Nr. 100234 wurde heute an DHL übergeben.</p>
+<p>Voraussichtliche Zustellung: <b>Donnerstag, 19.11.2026</b></p>
+<p><a href="https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=00340434161094015902">Sendung verfolgen</a></p>
+<p class="f">Beispiel Shop GmbH · Musterstraße 1 · 12345 Musterstadt · USt-IdNr. DE123456789 · Tel. +49 30 1234567</p>
+</body></html>
+--=_parcels_b1--

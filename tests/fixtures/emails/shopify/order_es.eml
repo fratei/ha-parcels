@@ -1,0 +1,150 @@
+Return-Path: <bounces+61234502@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@tienda-ejemplo.es header.s=shopify2 header.b=IScmw6GQ;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234502@shopifyemail.com designates 198.51.100.12 as permitted sender) smtp.mailfrom=bounces+61234502@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=tienda-ejemplo.es
+Received: from o22.ptr4120.shopifyemail.com (o22.ptr4120.shopifyemail.com. [198.51.100.12])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Mon, 16 Nov 2026 18:05:51 +0100
+From: Tienda Ejemplo <hola@tienda-ejemplo.es>
+To: Alex Doe <alex@example.com>
+Subject: Pedido #2047 confirmado
+Date: Mon, 16 Nov 2026 18:05:51 +0100
+Message-ID: <87cdaa855027b_20261116180551@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Tienda Ejemplo
+Pedido #2047
+
+=C2=A1Gracias por tu compra!
+
+Hola, Alex: estamos preparando tu pedido para el env=C3=ADo. Te avisaremos =
+cuando lo enviemos.
+
+Ver tu pedido: https://tienda-ejemplo.es/61234567890/orders/7c2ad44dbf05f13=
+275830ada40dd1723/authenticate?key=3D94dd6b33581f0813f36499277e342eb9
+o Visita nuestra tienda: https://tienda-ejemplo.es/
+
+Entrega estimada: jueves, 19 de noviembre
+
+Resumen del pedido
+
+Taza de cer=C3=A1mica esmaltada =C3=97 2
+Azul
+25,00 =E2=82=AC
+Plato llano de gres =C3=97 4
+26 cm
+48,00 =E2=82=AC
+
+Subtotal 73,00 =E2=82=AC
+Env=C3=ADo 4,95 =E2=82=AC
+Total 77,95 =E2=82=AC EUR
+
+Informaci=C3=B3n del cliente
+
+Direcci=C3=B3n de env=C3=ADo
+Alex Doe
+Calle Ejemplo 1
+28001 Madrid
+Espa=C3=B1a
+
+M=C3=A9todo de env=C3=ADo
+Env=C3=ADo est=C3=A1ndar (DPD)
+
+Si tienes alguna pregunta, responde a este correo electr=C3=B3nico o cont=
+=C3=A1ctanos en hola@tienda-ejemplo.es
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"es">
+<head>
+<title>Pedido #2047 confirmado</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://tienda-ejemplo.es/">Tienda Ejemplo</a></h1></td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Pedido =
+#2047</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">=C2=A1Gracias por tu compra!</h2>
+<p>Hola, Alex: estamos preparando tu pedido para el env=C3=ADo. Te avisarem=
+os cuando lo enviemos.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://tienda-ejemplo.es/61234567890/orders/7c2ad44dbf05f13275830ada40dd1723/a=
+uthenticate?key=3D94dd6b33581f0813f36499277e342eb9" class=3D"button__text">=
+Ver tu pedido</a></td></tr></table><table class=3D"link secondary-action-ce=
+ll"><tr><td class=3D"link__cell">o <a href=3D"https://tienda-ejemplo.es/" c=
+lass=3D"link__text"><span class=3D'arrow'>&rarr;</span> Visita nuestra tien=
+da</a></td></tr></table></td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Entrega estimada:</td><td class=3D"v"><b>jueves, 19 =
+de noviembre</b></td></tr></table>
+<h3 class=3D"h3">Resumen del pedido</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/175c4088ab_compact_cropped.jpg" alt=3D"Taza de cer=
+=C3=A1mica esmaltada" width=3D"60" height=3D"60" class=3D"order-list__produ=
+ct-image"></td><td class=3D"order-list__product-description-cell"><span cla=
+ss=3D"order-list__item-title">Taza de cer=C3=A1mica esmaltada&nbsp;&times;&=
+nbsp;2</span><br><span class=3D"order-list__item-variant">Azul</span></td><=
+td class=3D"order-list__price-cell"><p class=3D"order-list__item-price">25,=
+00 =E2=82=AC</p></td></tr></table></td></tr><tr class=3D"order-list__item">=
+<td class=3D"order-list__item__cell"><table><tr><td><img src=3D"https://cdn=
+.shopify.com/s/files/1/0612/3456/7890/products/da470559b5_compact_cropped.j=
+pg" alt=3D"Plato llano de gres" width=3D"60" height=3D"60" class=3D"order-l=
+ist__product-image"></td><td class=3D"order-list__product-description-cell"=
+><span class=3D"order-list__item-title">Plato llano de gres&nbsp;&times;&nb=
+sp;4</span><br><span class=3D"order-list__item-variant">26 cm</span></td><t=
+d class=3D"order-list__price-cell"><p class=3D"order-list__item-price">48,0=
+0 =E2=82=AC</p></td></tr></table></td></tr></table>
+<table class=3D"row subtotal-lines"><tr><td><table class=3D"row"><tr class=
+=3D"subtotal-line"><td class=3D"subtotal-line__title"><p><span>Subtotal</sp=
+an></p></td><td class=3D"subtotal-line__value"><strong>73,00 =E2=82=AC</str=
+ong></td></tr><tr class=3D"subtotal-line"><td class=3D"subtotal-line__title=
+"><p><span>Env=C3=ADo</span></p></td><td class=3D"subtotal-line__value"><st=
+rong>4,95 =E2=82=AC</strong></td></tr><tr class=3D"subtotal-line"><td class=
+=3D"subtotal-line__title"><p><span>Total</span></p></td><td class=3D"subtot=
+al-line__value"><strong>77,95 =E2=82=AC EUR</strong></td></tr></table></td>=
+</tr></table>
+<h3>Informaci=C3=B3n del cliente</h3><table class=3D"row"><tr><td class=3D"=
+customer-info__item"><h4>Direcci=C3=B3n de env=C3=ADo</h4><p>Alex Doe<br>Ca=
+lle Ejemplo 1<br>28001 Madrid<br>Espa=C3=B1a</p></td></tr><tr><td class=3D"=
+customer-info__item"><h4>M=C3=A9todo de env=C3=ADo</h4><p>Env=C3=ADo est=C3=
+=A1ndar (DPD)</p></td></tr></table>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">Si tienes alguna pregunta, responde a este=
+ correo electr=C3=B3nico o cont=C3=A1ctanos en <a href=3D"mailto:hola@tiend=
+a-ejemplo.es">hola@tienda-ejemplo.es</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

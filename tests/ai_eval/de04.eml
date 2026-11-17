@@ -1,0 +1,41 @@
+Return-Path: <bounces@myhermes.de>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@myhermes.de header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@myhermes.de designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@myhermes.de;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=myhermes.de
+From: Hermes <noreply@myhermes.de>
+To: Alex Doe <alex@example.com>
+Subject: Dein Paket liegt im Hermes PaketShop bereit
+Date: Fri, 20 Nov 2026 10:05:00 +0100
+Message-ID: <20261120100500.de04@mail.example.com>
+MIME-Version: 1.0
+Content-Language: de
+Content-Type: multipart/alternative; boundary="=_parcels_ai_de04"
+
+--=_parcels_ai_de04
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hallo Alex,
+dein Paket 48210937561204 von Tchibo liegt zur Abholung bereit.
+Hermes PaketShop: Kiosk Beispiel, Beispielstraße 12, 10115 Berlin
+Abholcode: 4K7P9Q
+Bitte hole dein Paket bis zum 30.11.2026 ab und bring deinen Ausweis mit.
+Öffnungszeiten ansehen: https://www.myhermes.de/empfangen/sendungsverfolgung/
+--=_parcels_ai_de04
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="de">
+<head><meta charset="utf-8"><title>Dein Paket liegt im Hermes PaketShop bereit</title></head>
+<body>
+<p>Hallo Alex,</p>
+<p>dein Paket 48210937561204 von Tchibo liegt zur Abholung bereit.</p>
+<p>Hermes PaketShop: Kiosk Beispiel, Beispielstraße 12, 10115 Berlin</p>
+<p>Abholcode: 4K7P9Q</p>
+<p>Bitte hole dein Paket bis zum 30.11.2026 ab und bring deinen Ausweis mit.</p>
+<p><a href="https://www.myhermes.de/empfangen/sendungsverfolgung/">Öffnungszeiten ansehen</a></p>
+</body>
+</html>
+--=_parcels_ai_de04--

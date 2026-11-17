@@ -1,0 +1,41 @@
+Return-Path: <bounces@fedex.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@fedex.com header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@fedex.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@fedex.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fedex.com
+From: FedEx <trackingupdates@fedex.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?A_sua_encomenda_FedEx_est=C3=A1_em_distribui=C3=A7=C3=A3o?=
+Date: Thu, 19 Nov 2026 07:45:00 +0000
+Message-ID: <20261119074500.pt04@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt
+Content-Type: multipart/alternative; boundary="=_parcels_ai_pt04"
+
+--=_parcels_ai_pt04
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Olá Alex Doe,
+A sua encomenda com o número de seguimento 394817265035 está em distribuição.
+Entrega prevista: hoje, entre as 9h e as 13h.
+Enviado por: Loja Exemplo
+Morada de entrega: Rua Exemplo 1, 4000-001 Porto
+Ver o estado do envio: https://www.fedex.com/fedextrack/?tracknumbers=394817265035
+--=_parcels_ai_pt04
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"><title>A sua encomenda FedEx está em distribuição</title></head>
+<body>
+<p>Olá Alex Doe,</p>
+<p>A sua encomenda com o número de seguimento 394817265035 está em distribuição.</p>
+<p>Entrega prevista: hoje, entre as 9h e as 13h.</p>
+<p>Enviado por: Loja Exemplo</p>
+<p>Morada de entrega: Rua Exemplo 1, 4000-001 Porto</p>
+<p><a href="https://www.fedex.com/fedextrack/?tracknumbers=394817265035">Ver o estado do envio</a></p>
+</body>
+</html>
+--=_parcels_ai_pt04--

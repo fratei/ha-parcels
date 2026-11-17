@@ -1,0 +1,39 @@
+Return-Path: <bounces@chronopost.fr>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@chronopost.fr header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@chronopost.fr designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@chronopost.fr;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=chronopost.fr
+From: Chronopost <noreply@chronopost.fr>
+To: Alex Doe <alex@example.com>
+Subject: Nous n'avons pas pu livrer votre colis
+Date: Thu, 19 Nov 2026 18:05:00 +0100
+Message-ID: <20261119180500.fr03@mail.example.com>
+MIME-Version: 1.0
+Content-Language: fr
+Content-Type: multipart/alternative; boundary="=_parcels_ai_fr03"
+
+--=_parcels_ai_fr03
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bonjour Alex,
+Nous sommes passés aujourd'hui pour livrer votre colis EE618273045FR, mais vous étiez absent.
+Expéditeur : Boulanger
+Nouvelle livraison : vendredi 20/11 entre 8h et 13h.
+Modifier ma livraison: https://www.chronopost.fr/tracking-no-cms/suivi-page?listeNumerosLT=EE618273045FR
+--=_parcels_ai_fr03
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Nous n'avons pas pu livrer votre colis</title></head>
+<body>
+<p>Bonjour Alex,</p>
+<p>Nous sommes passés aujourd'hui pour livrer votre colis EE618273045FR, mais vous étiez absent.</p>
+<p>Expéditeur : Boulanger</p>
+<p>Nouvelle livraison : vendredi 20/11 entre 8h et 13h.</p>
+<p><a href="https://www.chronopost.fr/tracking-no-cms/suivi-page?listeNumerosLT=EE618273045FR">Modifier ma livraison</a></p>
+</body>
+</html>
+--=_parcels_ai_fr03--

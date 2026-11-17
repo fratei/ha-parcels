@@ -1,0 +1,74 @@
+Return-Path: <bounce-d754820615@bounces.email.ups.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@email.ups.com header.s=sel1 header.b=813ec9d4;
+       spf=pass (google.com: domain of bounce-d754820615@bounces.email.ups.com
+ designates 192.0.2.106 as permitted sender) smtp.mailfrom=bounce-d754820615@bounces.email.ups.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=email.ups.com
+From: UPS <ups@email.ups.com>
+To: Alex Doe <alex@example.com>
+Subject: Ship more this holiday season with UPS
+Date: Mon, 16 Nov 2026 15:00:00 +0000
+Message-ID: <20261116150000.b35b@mail.example.com>
+MIME-Version: 1.0
+Content-Language: en-GB
+Content-Type: multipart/alternative; boundary="b1_99f531811784"
+
+--b1_99f531811784
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+UPS
+
+Holiday shipping made easy
+
+Hello Alex,
+
+Save up to 30% on international shipping when you open a free UPS account today.
+
+Drop off your packages at more than 40,000 UPS Access Point locations.
+
+Open an account [https://www.ups.com/pt/en/business-solutions?utm_source=email]
+
+© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.
+
+Privacy Notice [https://www.ups.com/us/en/support/shipping-support/legal-terms-conditions/privacy-notice.page]
+
+Do not reply to this e-mail. UPS will not receive your reply.
+
+To stop receiving these e-mails, unsubscribe [https://www.ups.com/unsubscribe?id=a1b2c3].
+
+--b1_99f531811784
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holiday shipping with UPS</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#351c15}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#351c15;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.ups.com/assets/resources/images/UPS_logo.svg" alt="UPS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Holiday shipping made easy</h1>
+<p>Hello Alex,</p>
+<p>Save up to 30% on international shipping when you open a free UPS account today.</p>
+<p>Drop off your packages at more than 40,000 UPS Access Point locations.</p>
+<p style="text-align:center"><a class="button" href="https://www.ups.com/pt/en/business-solutions?utm_source=email">Open an account</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.</p>
+<p><a href="https://www.ups.com/us/en/support/shipping-support/legal-terms-conditions/privacy-notice.page">Privacy Notice</a></p>
+<p>Do not reply to this e-mail. UPS will not receive your reply.</p>
+<p>To stop receiving these e-mails, <a href="https://www.ups.com/unsubscribe?id=a1b2c3">unsubscribe</a>.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_99f531811784--

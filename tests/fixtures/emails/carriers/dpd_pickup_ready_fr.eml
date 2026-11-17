@@ -1,0 +1,82 @@
+Return-Path: <bounce-80378ff1e2@bounces.dpd.fr>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dpd.fr header.s=sel1 header.b=b7ce45ed;
+       spf=pass (google.com: domain of bounce-80378ff1e2@bounces.dpd.fr
+ designates 192.0.2.165 as permitted sender) smtp.mailfrom=bounce-80378ff1e2@bounces.dpd.fr;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dpd.fr
+From: DPD France <noreply@dpd.fr>
+To: Alex Doe <alex@example.com>
+Subject: Votre colis vous attend dans votre Relais Pickup
+Date: Tue, 17 Nov 2026 11:15:00 +0100
+Message-ID: <20261117101500.5e4c@mail.example.com>
+MIME-Version: 1.0
+Content-Language: fr-FR
+Content-Type: multipart/alternative; boundary="b1_bcdbb69bd992"
+
+--b1_bcdbb69bd992
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DPD
+
+Votre colis est disponible
+
+Bonjour Alex Doe,
+
+Votre colis de Fnac n° 2501 8364 7291 05 est disponible dans votre Relais Pickup.
+
+Relais Pickup: Tabac Presse Exemple
+
+Adresse: 1 Rue Exemple, 75011 Paris
+
+Code de retrait: 735915
+
+À retirer avant le: 27/11/2026
+
+Présentez ce code et une pièce d'identité au commerçant. Sans retrait avant cette date, votre colis sera retourné à l'expéditeur.
+
+Voir le Relais Pickup [https://trace.dpd.fr/fr/trace/25018364729105]
+
+DPD France · 1 Rue Exemple, 75001 Paris
+
+Politique de confidentialité [https://www.dpd.com/fr/fr/politique-de-confidentialite/]
+
+--b1_bcdbb69bd992
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Votre colis est disponible</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#dc0032}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#dc0032;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.dpd.com/wp-content/themes/dpd/images/logo-dpd.png" alt="DPD" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Votre colis est disponible</h1>
+<p>Bonjour Alex Doe,</p>
+<p>Votre colis de <strong>Fnac</strong> n° 2501 8364 7291 05 est disponible dans votre Relais Pickup.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Relais Pickup</td><td class="value">Tabac Presse Exemple</td></tr>
+<tr><td class="label">Adresse</td><td class="value">1 Rue Exemple, 75011 Paris</td></tr>
+<tr><td class="label">Code de retrait</td><td class="value">735915</td></tr>
+<tr><td class="label">À retirer avant le</td><td class="value">27/11/2026</td></tr>
+</table>
+<p>Présentez ce code et une pièce d'identité au commerçant. Sans retrait avant cette date, votre colis sera retourné à l'expéditeur.</p>
+<p style="text-align:center"><a class="button" href="https://trace.dpd.fr/fr/trace/25018364729105">Voir le Relais Pickup</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>DPD France · 1 Rue Exemple, 75001 Paris</p>
+<p><a href="https://www.dpd.com/fr/fr/politique-de-confidentialite/">Politique de confidentialité</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_bcdbb69bd992--

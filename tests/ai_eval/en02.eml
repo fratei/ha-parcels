@@ -1,0 +1,41 @@
+Return-Path: <bounces@royalmail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@royalmail.com header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@royalmail.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@royalmail.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=royalmail.com
+From: Royal Mail <no-reply@royalmail.com>
+To: Alex Doe <alex@example.com>
+Subject: A fee is due on your item
+Date: Thu, 19 Nov 2026 08:00:00 +0000
+Message-ID: <20261119080000.en02@mail.example.com>
+MIME-Version: 1.0
+Content-Language: en
+Content-Type: multipart/alternative; boundary="=_parcels_ai_en02"
+
+--=_parcels_ai_en02
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Dear Alex Doe,
+Your item LX305718468CN from Example Gadgets Ltd is being held.
+Before we can deliver it, you need to pay a fee of £8.67. This covers import VAT and our handling fee.
+If the fee is not paid within 3 weeks, the item will be returned to the sender.
+Pay the fee: https://www.royalmail.com/receiving-mail/pay-a-fee?trackingNumber=LX305718468CN
+Royal Mail Group Ltd
+--=_parcels_ai_en02
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>A fee is due on your item</title></head>
+<body>
+<p>Dear Alex Doe,</p>
+<p>Your item LX305718468CN from Example Gadgets Ltd is being held.</p>
+<p>Before we can deliver it, you need to pay a fee of £8.67. This covers import VAT and our handling fee.</p>
+<p>If the fee is not paid within 3 weeks, the item will be returned to the sender.</p>
+<p><a href="https://www.royalmail.com/receiving-mail/pay-a-fee?trackingNumber=LX305718468CN">Pay the fee</a></p>
+<p>Royal Mail Group Ltd</p>
+</body>
+</html>
+--=_parcels_ai_en02--

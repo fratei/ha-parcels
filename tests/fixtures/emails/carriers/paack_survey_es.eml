@@ -1,0 +1,65 @@
+Return-Path: <bounce-feb6ba7a5e@bounces.paack.co>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paack.co header.s=sel1 header.b=61fee654;
+       spf=pass (google.com: domain of bounce-feb6ba7a5e@bounces.paack.co
+ designates 192.0.2.163 as permitted sender) smtp.mailfrom=bounce-feb6ba7a5e@bounces.paack.co;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paack.co
+From: Paack <no-reply@paack.co>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?=C2=BFQu=C3=A9_tal_fue_tu_experiencia_con_Paack=3F?=
+Date: Wed, 18 Nov 2026 10:00:00 +0100
+Message-ID: <20261118090000.d524@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_49d03a324489"
+
+--b1_49d03a324489
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Paack
+
+Tu opinión nos importa
+
+Hola Alex,
+
+Nos encantaría saber qué te pareció la entrega de tu último pedido.
+
+Responde a esta encuesta de 2 minutos y participa en el sorteo de una tarjeta regalo de 50 €.
+
+Responder a la encuesta [https://survey.paack.co/s/a1b2c3?utm_source=email]
+
+Paack Logistics · Calle Ejemplo 1, 08001 Barcelona
+
+--b1_49d03a324489
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tu opinión nos importa</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#2d2bd6}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#2d2bd6;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://assets.paack.co/email/logo-paack.png" alt="Paack" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Tu opinión nos importa</h1>
+<p>Hola Alex,</p>
+<p>Nos encantaría saber qué te pareció la entrega de tu último pedido.</p>
+<p>Responde a esta encuesta de 2 minutos y participa en el sorteo de una tarjeta regalo de 50 €.</p>
+<p style="text-align:center"><a class="button" href="https://survey.paack.co/s/a1b2c3?utm_source=email">Responder a la encuesta</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Paack Logistics · Calle Ejemplo 1, 08001 Barcelona</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_49d03a324489--

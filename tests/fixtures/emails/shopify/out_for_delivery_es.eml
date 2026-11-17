@@ -1,0 +1,108 @@
+Return-Path: <bounces+61234502@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@tienda-ejemplo.es header.s=shopify2 header.b=IScmw6GQ;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234502@shopifyemail.com designates 198.51.100.12 as permitted sender) smtp.mailfrom=bounces+61234502@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=tienda-ejemplo.es
+Received: from o22.ptr4120.shopifyemail.com (o22.ptr4120.shopifyemail.com. [198.51.100.12])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Thu, 19 Nov 2026 09:03:27 +0100
+From: Tienda Ejemplo <hola@tienda-ejemplo.es>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Un_env=C3=ADo_del_pedido_=232051_est=C3=A1_en_reparto?=
+Date: Thu, 19 Nov 2026 09:03:27 +0100
+Message-ID: <ba9adcd461403_20261119090327@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Tienda Ejemplo
+Pedido #2051
+
+Tu pedido est=C3=A1 en reparto
+
+Tu pedido est=C3=A1 en reparto. Sigue tu env=C3=ADo para ver el estado de l=
+a entrega.
+
+Seguir tu env=C3=ADo: https://www.correos.es/es/es/herramientas/localizador=
+/envios/detalle?tracking-number=3DPQ4B7C0712345670128001L
+o Visita nuestra tienda: https://tienda-ejemplo.es/
+
+N=C3=BAmero de seguimiento de Correos: PQ4B7C0712345670128001L
+
+Art=C3=ADculos de este env=C3=ADo
+
+Jarra de cer=C3=A1mica, 1 litro =C3=97 1
+Blanco
+
+Si tienes alguna pregunta, responde a este correo electr=C3=B3nico o cont=
+=C3=A1ctanos en hola@tienda-ejemplo.es
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"es">
+<head>
+<title>Un env=C3=ADo del pedido #2051 est=C3=A1 en reparto</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://tienda-ejemplo.es/">Tienda Ejemplo</a></h1></td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Pedido =
+#2051</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Tu pedido est=C3=A1 en reparto</h2>
+<p>Tu pedido est=C3=A1 en reparto. Sigue tu env=C3=ADo para ver el estado d=
+e la entrega.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://www.correos.es/es/es/herramientas/localizador/envios/detalle?tracking-n=
+umber=3DPQ4B7C0712345670128001L" class=3D"button__text">Seguir tu env=C3=AD=
+o</a></td></tr></table><table class=3D"link secondary-action-cell"><tr><td =
+class=3D"link__cell">o <a href=3D"https://tienda-ejemplo.es/" class=3D"link=
+__text"><span class=3D'arrow'>&rarr;</span> Visita nuestra tienda</a></td><=
+/tr></table></td></tr></table>
+<p class=3D"disclaimer__subtext">N=C3=BAmero de seguimiento de Correos: <a =
+href=3D"https://www.correos.es/es/es/herramientas/localizador/envios/detall=
+e?tracking-number=3DPQ4B7C0712345670128001L">PQ4B7C0712345670128001L</a></p>
+<h3 class=3D"h3">Art=C3=ADculos de este env=C3=ADo</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/ef039b50c5_compact_cropped.jpg" alt=3D"Jarra de cer=
+=C3=A1mica, 1 litro" width=3D"60" height=3D"60" class=3D"order-list__produc=
+t-image"></td><td class=3D"order-list__product-description-cell"><span clas=
+s=3D"order-list__item-title">Jarra de cer=C3=A1mica, 1 litro&nbsp;&times;&n=
+bsp;1</span><br><span class=3D"order-list__item-variant">Blanco</span></td>=
+</tr></table></td></tr></table>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">Si tienes alguna pregunta, responde a este=
+ correo electr=C3=B3nico o cont=C3=A1ctanos en <a href=3D"mailto:hola@tiend=
+a-ejemplo.es">hola@tienda-ejemplo.es</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

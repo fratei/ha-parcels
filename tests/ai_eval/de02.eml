@@ -1,0 +1,43 @@
+Return-Path: <bounces@beispiel-shop.example>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@beispiel-shop.example header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@beispiel-shop.example designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@beispiel-shop.example;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=beispiel-shop.example
+From: Beispiel-Shop <versand@beispiel-shop.example>
+To: Alex Doe <alex@example.com>
+Subject: Deine Bestellung 58213 ist unterwegs
+Date: Wed, 18 Nov 2026 15:00:00 +0100
+Message-ID: <20261118150000.de02@mail.example.com>
+MIME-Version: 1.0
+Content-Language: de
+Content-Type: multipart/alternative; boundary="=_parcels_ai_de02"
+
+--=_parcels_ai_de02
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hallo Alex,
+deine Bestellung 58213 wurde heute an DHL übergeben.
+Sendungsnummer: JJD149990200012345678
+Voraussichtliche Zustellung: Freitag, 20.11.
+Artikel: Kaffeemühle Hario Skerton Pro
+Sendung verfolgen: https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=JJD149990200012345678
+Beispiel-Shop GmbH, Beispielstraße 1, 10115 Berlin
+--=_parcels_ai_de02
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="de">
+<head><meta charset="utf-8"><title>Deine Bestellung 58213 ist unterwegs</title></head>
+<body>
+<p>Hallo Alex,</p>
+<p>deine Bestellung 58213 wurde heute an DHL übergeben.</p>
+<p>Sendungsnummer: JJD149990200012345678</p>
+<p>Voraussichtliche Zustellung: Freitag, 20.11.</p>
+<p>Artikel: Kaffeemühle Hario Skerton Pro</p>
+<p><a href="https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=JJD149990200012345678">Sendung verfolgen</a></p>
+<p>Beispiel-Shop GmbH, Beispielstraße 1, 10115 Berlin</p>
+</body>
+</html>
+--=_parcels_ai_de02--

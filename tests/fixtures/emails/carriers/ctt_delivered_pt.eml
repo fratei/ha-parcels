@@ -1,0 +1,82 @@
+Return-Path: <bounce-2cfaae6688@bounces.ctt.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ctt.pt header.s=sel1 header.b=bcbb13e2;
+       spf=pass (google.com: domain of bounce-2cfaae6688@bounces.ctt.pt
+ designates 192.0.2.183 as permitted sender) smtp.mailfrom=bounce-2cfaae6688@bounces.ctt.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ctt.pt
+From: CTT <notificacoes@ctt.pt>
+To: Alex Doe <alex@example.com>
+Subject: O seu objeto RL273849102PT foi entregue
+Date: Tue, 17 Nov 2026 11:47:10 +0000
+Message-ID: <20261117114710.a821@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_cfe9d1cd50b6"
+
+--b1_cfe9d1cd50b6
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CTT
+
+Objeto entregue
+
+Olá Alex Doe,
+
+Informamos que o seu objeto RL273849102PT foi entregue hoje às 11:42.
+
+N.º do objeto: RL273849102PT
+
+Data de entrega: 17-11-2026 11:42
+
+Local de entrega: Lisboa
+
+Obrigado por escolher os CTT.
+
+Ver detalhes [https://www.ctt.pt/feapl_2/app/open/objectSearch/objectSearch.jspx?objects=RL273849102PT]
+
+Esta mensagem foi gerada automaticamente. Por favor, não responda.
+
+CTT – Correios de Portugal, S.A. · Avenida Exemplo 1, 1000-001 Lisboa
+
+Política de privacidade [https://www.ctt.pt/home/politica-de-privacidade] · Ajuda [https://www.ctt.pt/ajuda] · Linha CTT: +351 210 000 000
+
+--b1_cfe9d1cd50b6
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Objeto entregue</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#df0024}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#df0024;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.ctt.pt/application/themes/images/logo-ctt.png" alt="CTT" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Objeto entregue</h1>
+<p>Olá Alex Doe,</p>
+<p>Informamos que o seu objeto <strong>RL273849102PT</strong> foi entregue hoje às 11:42.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">N.º do objeto</td><td class="value">RL273849102PT</td></tr>
+<tr><td class="label">Data de entrega</td><td class="value">17-11-2026 11:42</td></tr>
+<tr><td class="label">Local de entrega</td><td class="value">Lisboa</td></tr>
+</table>
+<p>Obrigado por escolher os CTT.</p>
+<p style="text-align:center"><a class="button" href="https://www.ctt.pt/feapl_2/app/open/objectSearch/objectSearch.jspx?objects=RL273849102PT">Ver detalhes</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Esta mensagem foi gerada automaticamente. Por favor, não responda.</p>
+<p>CTT – Correios de Portugal, S.A. · Avenida Exemplo 1, 1000-001 Lisboa</p>
+<p><a href="https://www.ctt.pt/home/politica-de-privacidade">Política de privacidade</a> · <a href="https://www.ctt.pt/ajuda">Ajuda</a> · Linha CTT: +351 210 000 000</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_cfe9d1cd50b6--

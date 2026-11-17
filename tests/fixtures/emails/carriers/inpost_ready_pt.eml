@@ -1,0 +1,83 @@
+Return-Path: <bounce-d0ed740aca@bounces.inpost.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@inpost.pt header.s=sel1 header.b=84748a4a;
+       spf=pass (google.com: domain of bounce-d0ed740aca@bounces.inpost.pt
+ designates 192.0.2.11 as permitted sender) smtp.mailfrom=bounce-d0ed740aca@bounces.inpost.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=inpost.pt
+From: InPost <noreply@inpost.pt>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?A_tua_encomenda_est=C3=A1_=C3=A0_tua_espera_no_Cacifo_InP?=
+ =?utf-8?q?ost?=
+Date: Tue, 17 Nov 2026 10:35:00 +0000
+Message-ID: <20261117103500.9440@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_3323ed9dc8c7"
+
+--b1_3323ed9dc8c7
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+InPost
+
+A tua encomenda já chegou!
+
+Olá Alex,
+
+A tua encomenda da Shein está à tua espera no Cacifo InPost. Tens até 20/11/2026 para a levantar.
+
+Número de envio: 602937500284163957201848
+
+Cacifo: Cacifo InPost LIS01M
+
+Morada: Rua Exemplo 1, 1000-001 Lisboa
+
+Código de recolha: 539128
+
+Para abrires o cacifo, usa a app InPost ou introduz o código de recolha e o teu número de telemóvel no ecrã do cacifo.
+
+Abrir na app [https://inpost.pt/seguimento?number=602937500284163957201848]
+
+InPost Portugal · Rua Exemplo 1, 1000-001 Lisboa
+
+Política de privacidade [https://inpost.pt/politica-de-privacidade]
+
+--b1_3323ed9dc8c7
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A tua encomenda chegou</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#ffcd00}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ffcd00;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://inpost.pt/sites/default/files/logo-inpost.png" alt="InPost" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>A tua encomenda já chegou!</h1>
+<p>Olá Alex,</p>
+<p>A tua encomenda da <strong>Shein</strong> está à tua espera no Cacifo InPost. Tens até 20/11/2026 para a levantar.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Número de envio</td><td class="value">602937500284163957201848</td></tr>
+<tr><td class="label">Cacifo</td><td class="value">Cacifo InPost LIS01M</td></tr>
+<tr><td class="label">Morada</td><td class="value">Rua Exemplo 1, 1000-001 Lisboa</td></tr>
+<tr><td class="label">Código de recolha</td><td class="value">539128</td></tr>
+</table>
+<p>Para abrires o cacifo, usa a app InPost ou introduz o código de recolha e o teu número de telemóvel no ecrã do cacifo.</p>
+<p style="text-align:center"><a class="button" href="https://inpost.pt/seguimento?number=602937500284163957201848">Abrir na app</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>InPost Portugal · Rua Exemplo 1, 1000-001 Lisboa</p>
+<p><a href="https://inpost.pt/politica-de-privacidade">Política de privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_3323ed9dc8c7--

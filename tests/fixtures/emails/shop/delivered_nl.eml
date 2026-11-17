@@ -1,0 +1,80 @@
+Return-Path: <bounce-7@email.shop.app>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@shop.app header.s=s1 header.b=VYbehknq;
+       spf=pass (google.com: domain of bounce-7@email.shop.app designates 203.0.113.17 as permitted sender) smtp.mailfrom=bounce-7@email.shop.app;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=shop.app
+Received: from o7.email.shop.app (o7.email.shop.app. [203.0.113.17])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Fri, 20 Nov 2026 15:45:58 +0100
+From: Shop <noreply@shop.app>
+To: Alex Doe <alex@example.com>
+Subject: Je bestelling van Winkel Voorbeeld is bezorgd
+Date: Fri, 20 Nov 2026 15:45:58 +0100
+Message-ID: <fb3781ada4758a370959.20261120154558@email.shop.app>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Shop
+
+Je bestelling van Winkel Voorbeeld is bezorgd
+
+Bestelling #5622
+
+Vervoerder: DHL
+
+Trackingnummer: JVGL06241736251840
+
+Hangplant in macram=C3=A9 hanger =C3=97 1
+
+Volgen in de Shop-app: https://shop.app/orders/88764a9d413022840b26e056?utm=
+_source=3Dshop_email
+
+Privacybeleid: https://shop.app/privacy
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"nl">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1">
+<title>Je bestelling van Winkel Voorbeeld is bezorgd</title>
+</head>
+<body style=3D"margin:0;background:#f5f5f5">
+<table class=3D"wrapper" width=3D"100%"><tr><td align=3D"center">
+<table class=3D"header"><tr><td>
+<a href=3D"https://shop.app/"><img src=3D"https://cdn.shopify.com/shopifycl=
+oud/shop/assets/shop-logo-email.png" alt=3D"Shop" width=3D"72" height=3D"30=
+"></a>
+</td></tr></table>
+<table class=3D"card"><tr><td>
+<h2 class=3D"h2">Je bestelling van Winkel Voorbeeld is bezorgd</h2>
+<p>Bestelling #5622</p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Vervoerder:</td><td class=3D"v"><b>DHL</b></td></tr>=
+</table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Trackingnummer:</td><td class=3D"v"><b>JVGL062417362=
+51840</b></td></tr></table>
+<table class=3D"item"><tr><td><img src=3D"https://cdn.shopify.com/s/files/1=
+/0598/7654/3210/products/3e1dab45.jpg" alt=3D"Hangplant in macram=C3=A9 han=
+ger" width=3D"64" height=3D"64"></td><td><p class=3D"item-title">Hangplant =
+in macram=C3=A9 hanger &times; 1</p></td></tr></table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://shop.app/orders/88764a=
+9d413022840b26e056?utm_source=3Dshop_email">Volgen in de Shop-app</a></p>
+</td></tr></table>
+<table class=3D"footer"><tr><td>
+<p><a href=3D"https://shop.app/privacy">Privacybeleid</a></p>
+</td></tr></table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

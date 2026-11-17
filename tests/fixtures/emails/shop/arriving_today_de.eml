@@ -1,0 +1,81 @@
+Return-Path: <bounce-4@email.shop.app>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@shop.app header.s=s1 header.b=VYbehknq;
+       spf=pass (google.com: domain of bounce-4@email.shop.app designates 203.0.113.14 as permitted sender) smtp.mailfrom=bounce-4@email.shop.app;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=shop.app
+Received: from o4.email.shop.app (o4.email.shop.app. [203.0.113.14])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Fri, 20 Nov 2026 07:20:45 +0100
+From: Shop <noreply@shop.app>
+To: Alex Doe <alex@example.com>
+Subject: Deine Bestellung von Beispiel Laden kommt heute an
+Date: Fri, 20 Nov 2026 07:20:45 +0100
+Message-ID: <e3de78f2e2d310dd8bb2.20261120072045@email.shop.app>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Shop
+
+Deine Bestellung von Beispiel Laden kommt heute an
+
+Bestellung #1215
+
+Versanddienstleister: DPD
+
+Sendungsnummer: 05212009845413
+
+Teekanne aus Gusseisen, 1,2 l =C3=97 1
+
+In der Shop-App verfolgen: https://shop.app/orders/67dfcff501b073c84a3eaaf3=
+?utm_source=3Dshop_email
+
+Datenschutzerkl=C3=A4rung: https://shop.app/privacy
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"de">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1">
+<title>Deine Bestellung von Beispiel Laden kommt heute an</title>
+</head>
+<body style=3D"margin:0;background:#f5f5f5">
+<table class=3D"wrapper" width=3D"100%"><tr><td align=3D"center">
+<table class=3D"header"><tr><td>
+<a href=3D"https://shop.app/"><img src=3D"https://cdn.shopify.com/shopifycl=
+oud/shop/assets/shop-logo-email.png" alt=3D"Shop" width=3D"72" height=3D"30=
+"></a>
+</td></tr></table>
+<table class=3D"card"><tr><td>
+<h2 class=3D"h2">Deine Bestellung von Beispiel Laden kommt heute an</h2>
+<p>Bestellung #1215</p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Versanddienstleister:</td><td class=3D"v"><b>DPD</b>=
+</td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Sendungsnummer:</td><td class=3D"v"><b>0521200984541=
+3</b></td></tr></table>
+<table class=3D"item"><tr><td><img src=3D"https://cdn.shopify.com/s/files/1=
+/0598/7654/3210/products/1e8ac737.jpg" alt=3D"Teekanne aus Gusseisen, 1,2 l=
+" width=3D"64" height=3D"64"></td><td><p class=3D"item-title">Teekanne aus =
+Gusseisen, 1,2 l &times; 1</p></td></tr></table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://shop.app/orders/67dfcf=
+f501b073c84a3eaaf3?utm_source=3Dshop_email">In der Shop-App verfolgen</a></=
+p>
+</td></tr></table>
+<table class=3D"footer"><tr><td>
+<p><a href=3D"https://shop.app/privacy">Datenschutzerkl=C3=A4rung</a></p>
+</td></tr></table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

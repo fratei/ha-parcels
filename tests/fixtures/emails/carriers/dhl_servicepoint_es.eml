@@ -1,0 +1,86 @@
+Return-Path: <bounce-d74641591d@bounces.dhl.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dhl.es header.s=sel1 header.b=7b4cb2da;
+       spf=pass (google.com: domain of bounce-d74641591d@bounces.dhl.es
+ designates 192.0.2.129 as permitted sender) smtp.mailfrom=bounce-d74641591d@bounces.dhl.es;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dhl.es
+From: DHL Express <noreply@dhl.es>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Tu_env=C3=ADo_DHL_est=C3=A1_disponible_para_recoger_en_un?=
+ =?utf-8?q?_DHL_ServicePoint?=
+Date: Tue, 17 Nov 2026 11:25:00 +0100
+Message-ID: <20261117102500.737b@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_ac65e4067440"
+
+--b1_ac65e4067440
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DHL
+
+Tu envío está listo para recoger
+
+Hola, Alex Doe:
+
+Tu envío de Massimo Dutti ya está disponible en el DHL ServicePoint que elegiste. Puedes recogerlo hasta el 24/11/2026.
+
+Número de envío: 6402951833
+
+Remitente: Massimo Dutti
+
+Punto de recogida: DHL ServicePoint Estanco Ejemplo
+
+Dirección: Calle Ejemplo 1, 28001 Madrid
+
+Horario: lunes a sábado, 09:00 - 20:00
+
+Para recogerlo, presenta tu documento de identidad y el número de envío.
+
+Ver el envío [https://www.dhl.com/es-es/home/tracking.html?tracking-id=6402951833]
+
+DHL Express Spain, S.L.U. · Calle Ejemplo 1, 28001 Madrid
+
+Aviso de privacidad [https://www.dhl.com/es-es/home/footer/privacy-notice.html]
+
+--b1_ac65e4067440
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tu envío te espera</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#ffcc00}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ffcc00;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.dhl.de/content/dam/images/logo-dhl.png" alt="DHL" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Tu envío está listo para recoger</h1>
+<p>Hola, Alex Doe:</p>
+<p>Tu envío de <strong>Massimo Dutti</strong> ya está disponible en el DHL ServicePoint que elegiste. Puedes recogerlo hasta el 24/11/2026.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Número de envío</td><td class="value">6402951833</td></tr>
+<tr><td class="label">Remitente</td><td class="value">Massimo Dutti</td></tr>
+<tr><td class="label">Punto de recogida</td><td class="value">DHL ServicePoint Estanco Ejemplo</td></tr>
+<tr><td class="label">Dirección</td><td class="value">Calle Ejemplo 1, 28001 Madrid</td></tr>
+<tr><td class="label">Horario</td><td class="value">lunes a sábado, 09:00 - 20:00</td></tr>
+</table>
+<p>Para recogerlo, presenta tu documento de identidad y el número de envío.</p>
+<p style="text-align:center"><a class="button" href="https://www.dhl.com/es-es/home/tracking.html?tracking-id=6402951833">Ver el envío</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>DHL Express Spain, S.L.U. · Calle Ejemplo 1, 28001 Madrid</p>
+<p><a href="https://www.dhl.com/es-es/home/footer/privacy-notice.html">Aviso de privacidad</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_ac65e4067440--

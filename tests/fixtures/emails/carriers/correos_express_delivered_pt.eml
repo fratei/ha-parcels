@@ -1,0 +1,79 @@
+Return-Path: <bounce-1b869a54a0@bounces.correosexpress.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@correosexpress.com header.s=sel1 header.b=1c81826a;
+       spf=pass (google.com: domain of bounce-1b869a54a0@bounces.correosexpress.com
+ designates 192.0.2.226 as permitted sender) smtp.mailfrom=bounce-1b869a54a0@bounces.correosexpress.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=correosexpress.com
+From: Correos Express <notificacoes@correosexpress.com>
+To: Alex Doe <alex@example.com>
+Subject: O seu envio foi entregue
+Date: Tue, 17 Nov 2026 15:31:00 +0000
+Message-ID: <20261117153100.1ebc@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_59c6672b2e94"
+
+--b1_59c6672b2e94
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CEX
+
+Envio entregue
+
+Olá Alex Doe,
+
+O seu envio n.º 3230004517823972 foi entregue hoje às 15:20.
+
+N.º de envio: 3230004517823972
+
+Data de entrega: 17/11/2026
+
+Hora: 15:20
+
+Recebido por: Alex Doe
+
+Obrigado por confiar na Correos Express Portugal.
+
+Correos Express Portugal, S.A. · Rua Exemplo 1, 1000-001 Lisboa
+
+Privacidade [https://www.correosexpress.pt/privacidade]
+
+--b1_59c6672b2e94
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Envio entregue</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#ffcc00}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ffcc00;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.correosexpress.com/img/logo-correos-express.png" alt="CEX" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Envio entregue</h1>
+<p>Olá Alex Doe,</p>
+<p>O seu envio n.º 3230004517823972 foi entregue hoje às 15:20.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">N.º de envio</td><td class="value">3230004517823972</td></tr>
+<tr><td class="label">Data de entrega</td><td class="value">17/11/2026</td></tr>
+<tr><td class="label">Hora</td><td class="value">15:20</td></tr>
+<tr><td class="label">Recebido por</td><td class="value">Alex Doe</td></tr>
+</table>
+<p>Obrigado por confiar na Correos Express Portugal.</p>
+</td></tr>
+<tr><td class="foot">
+<p>Correos Express Portugal, S.A. · Rua Exemplo 1, 1000-001 Lisboa</p>
+<p><a href="https://www.correosexpress.pt/privacidade">Privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_59c6672b2e94--

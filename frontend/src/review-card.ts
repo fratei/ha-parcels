@@ -1,0 +1,849 @@
+/** parcels-review-card: e-mails that need an administrator's decision, and the filtered ones. */
+import {
+  css,
+  html,
+  nothing,
+  type CSSResultGroup,
+  type PropertyDeclarations,
+  type PropertyValues,
+  type TemplateResult,
+} from "lit";
+import { live } from "lit/directives/live.js";
+import { repeat } from "lit/directives/repeat.js";
+import { callParcelsCommand } from "./api.ts";
+import { ParcelsCardBase, focusIsLost } from "./base-card.ts";
+import { CARRIER_NAMES, carrierOptions } from "./carriers.ts";
+import { cardTitle, reviewCardConfig, type ReviewCardConfig } from "./config.ts";
+import { parseInstant } from "./dates.ts";
+import { errorMessage } from "./errors.ts";
+import { formatDateRange, formatDateTime, formatWindow } from "./format.ts";
+import {
+  dateProblem,
+  formToSuggestion,
+  suggestionToForm,
+  type FormProblem,
+  type SuggestionForm,
+} from "./forms.ts";
+import { carrierLabel, kindLabel, reasonLabel } from "./labels.ts";
+import { etaRange } from "./parcels.ts";
+import { defineElement, registerCard } from "./register.ts";
+import { KIND_LABELS, STRINGS, fmt } from "./strings.ts";
+import { baseStyles } from "./styles.ts";
+import type { FilteredItem, ReviewItem, Snapshot, Suggestion } from "./types.ts";
+
+type Tab = "review" | "filtered";
+
+const TABS: readonly Tab[] = ["review", "filtered"];
+
+/** Kinds that can't be accepted as a parcel; offered only when the suggestion has them. */
+const UNACCEPTABLE_KINDS = new Set(["not_parcel", "unknown"]);
+
+const EXPECTED_FORMAT: Intl.DateTimeFormatOptions = {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+};
+
+function receivedTime(item: { received: string | null; created: string }): number {
+  return parseInstant(item.received ?? item.created) ?? -Infinity;
+}
+
+function newestFirst<T extends { id: string; received: string | null; created: string }>(
+  items: readonly T[],
+): T[] {
+  return [...items].sort(
+    (a, b) => receivedTime(b) - receivedTime(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+}
+
+function withoutKey<K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> {
+  if (!map.has(key)) {
+    return map;
+  }
+  const copy = new Map(map);
+  copy.delete(key);
+  return copy;
+}
+
+export class ParcelsReviewCard extends ParcelsCardBase {
+  static override properties: PropertyDeclarations = {
+    _config: { state: true },
+    _tab: { state: true },
+    _editing: { state: true },
+    _editForm: { state: true },
+    _editProblem: { state: true },
+    _busyItems: { state: true },
+    _itemErrors: { state: true },
+  };
+
+  static override styles: CSSResultGroup = [
+    baseStyles,
+    css`
+      .tabs {
+        display: flex;
+        gap: 4px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+      }
+      .tab {
+        min-height: 44px;
+        padding: 0 12px;
+        border: none;
+        border-bottom: 2px solid transparent;
+        background: none;
+        color: var(--secondary-text-color, #727272);
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      .tab:hover {
+        color: var(--primary-text-color, #212121);
+      }
+      .tab[aria-selected="true"] {
+        border-bottom-color: var(--primary-color, #03a9f4);
+        color: var(--primary-color, #03a9f4);
+      }
+      .panel {
+        padding: 12px 16px 16px;
+      }
+      .panel:focus-visible {
+        outline-offset: -2px;
+      }
+      .items {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .item {
+        padding: 12px;
+        border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+        border-radius: 12px;
+      }
+      .item:focus-visible {
+        outline-offset: 0;
+      }
+      .item-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.875rem;
+        color: var(--secondary-text-color, #727272);
+        overflow-wrap: anywhere;
+      }
+      .sender {
+        font-weight: 500;
+        color: var(--primary-text-color, #212121);
+      }
+      .subject {
+        margin: 4px 0 0;
+        font-size: 1rem;
+        font-weight: 500;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
+      .meta {
+        margin: 4px 0 0;
+        font-size: 0.8125rem;
+        color: var(--secondary-text-color, #727272);
+        overflow-wrap: anywhere;
+      }
+      .block {
+        display: block;
+      }
+      .section-label {
+        margin: 12px 0 4px;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: var(--secondary-text-color, #727272);
+      }
+      .facts {
+        display: grid;
+        grid-template-columns: minmax(6rem, max-content) minmax(0, 1fr);
+        gap: 4px 12px;
+        margin: 0;
+        font-size: 0.875rem;
+      }
+      .facts dt {
+        color: var(--secondary-text-color, #727272);
+      }
+      .facts dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      .facts ul {
+        margin: 0;
+        padding-inline-start: 18px;
+      }
+      .edit-form {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-top: 12px;
+      }
+      .edit-form .alert {
+        margin: 0;
+      }
+      .filtered-hint {
+        margin-bottom: 12px;
+      }
+    `,
+  ];
+
+  /** Home Assistant keeps the card connected while it's hidden, so it can show itself again. */
+  readonly connectedWhileHidden = true;
+
+  declare private _config: ReviewCardConfig;
+  declare private _tab: Tab;
+  /** The review item being edited (one at a time). */
+  declare private _editing: string | null;
+  declare private _editForm: SuggestionForm;
+  declare private _editProblem: FormProblem | null;
+  /** Items with a command running. */
+  declare private _busyItems: ReadonlySet<string>;
+  /** The last failed command of each item. */
+  declare private _itemErrors: ReadonlyMap<string, string>;
+
+  /** The focused item before the current render, to move focus on when it's gone. */
+  private _focusedItem: { id: string; index: number } | null = null;
+  private _listCache: { snapshot: Snapshot; review: ReviewItem[]; filtered: FilteredItem[] } | null =
+    null;
+
+  constructor() {
+    super();
+    this._config = reviewCardConfig({});
+    this._tab = "review";
+    this._editing = null;
+    this._editForm = suggestionToForm(null);
+    this._editProblem = null;
+    this._busyItems = new Set();
+    this._itemErrors = new Map();
+  }
+
+  static getStubConfig(): Record<string, unknown> {
+    return {};
+  }
+
+  setConfig(config: unknown): void {
+    this._config = reviewCardConfig(config);
+  }
+
+  getCardSize(): number {
+    if (!this._visible()) {
+      return 0;
+    }
+    const lists = this._lists();
+    if (!lists) {
+      return 3;
+    }
+    const items = this._tab === "review" ? lists.review.length : lists.filtered.length;
+    return 2 + 2 * Math.max(1, items);
+  }
+
+  getGridOptions(): Record<string, unknown> {
+    return { columns: 12, rows: "auto", min_columns: 6 };
+  }
+
+  protected override hassChanged(): void {
+    this._syncVisibility();
+  }
+
+  /** Only administrators see the card; before the first snapshot, their Home Assistant role decides. */
+  private _visible(): boolean {
+    const snapshot = this.snapshot;
+    return snapshot ? snapshot.settings.user_is_admin : this.hass?.user?.is_admin === true;
+  }
+
+  private _syncVisibility(): void {
+    const hidden = !this._visible();
+    if (this.hidden === hidden) {
+      return;
+    }
+    this.hidden = hidden;
+    this.dispatchEvent(
+      new CustomEvent("card-visibility-changed", {
+        bubbles: true,
+        composed: true,
+        detail: { value: !hidden },
+      }),
+    );
+  }
+
+  private _lists(): { review: ReviewItem[]; filtered: FilteredItem[] } | null {
+    const snapshot = this.snapshot;
+    if (!snapshot) {
+      return null;
+    }
+    if (this._listCache?.snapshot !== snapshot) {
+      this._listCache = {
+        snapshot,
+        review: newestFirst(snapshot.review),
+        filtered: newestFirst(snapshot.filtered),
+      };
+    }
+    return this._listCache;
+  }
+
+  protected override willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    const active = this.shadowRoot?.activeElement;
+    const item = active instanceof HTMLElement ? active.closest<HTMLElement>("[data-item-id]") : null;
+    if (item) {
+      const items = [...this.renderRoot.querySelectorAll<HTMLElement>("[data-item-id]")].filter(
+        (element) => !element.closest("[hidden]"),
+      );
+      this._focusedItem = { id: item.dataset.itemId ?? "", index: items.indexOf(item) };
+    } else {
+      this._focusedItem = null;
+    }
+    const lists = this._lists();
+    if (lists) {
+      // Forget the edits and errors of items that are gone.
+      const ids = new Set([...lists.review, ...lists.filtered].map((entry) => entry.id));
+      if (this._editing !== null && !ids.has(this._editing)) {
+        this._editing = null;
+        this._editProblem = null;
+      }
+      for (const id of this._itemErrors.keys()) {
+        if (!ids.has(id)) {
+          this._itemErrors = withoutKey(this._itemErrors, id);
+        }
+      }
+    }
+  }
+
+  protected override updated(changed: PropertyValues): void {
+    super.updated(changed);
+    this._syncVisibility();
+    const focused = this._focusedItem;
+    this._focusedItem = null;
+    if (!focused || this.shadowRoot?.activeElement || !focusIsLost()) {
+      return;
+    }
+    // The focused item was handled (or re-rendered): focus it, or the one now in its place.
+    const panel = this.renderRoot.querySelector<HTMLElement>(`#panel-${this._tab}`);
+    const items = [...(panel?.querySelectorAll<HTMLElement>("[data-item-id]") ?? [])];
+    const target =
+      items.find((element) => element.dataset.itemId === focused.id) ??
+      items[Math.min(Math.max(focused.index, 0), items.length - 1)] ??
+      this.renderRoot.querySelector<HTMLElement>(`#tab-${this._tab}`);
+    target?.focus();
+  }
+
+  protected override render(): TemplateResult | typeof nothing {
+    if (!this._visible()) {
+      return nothing;
+    }
+    const lists = this._lists();
+    const title = cardTitle(this._config.title, STRINGS.defaultReviewTitle);
+    return html`<ha-card>
+      ${title ? html`<div class="header"><h2 class="title">${title}</h2></div>` : nothing}
+      ${this.renderBanners()}
+      ${lists
+        ? html`${this._renderTabs(lists.review.length, lists.filtered.length)}
+            <div
+              class="panel"
+              role="tabpanel"
+              id="panel-review"
+              aria-labelledby="tab-review"
+              tabindex="0"
+              ?hidden=${this._tab !== "review"}
+            >
+              ${this._renderReviewList(lists.review)}
+            </div>
+            <div
+              class="panel"
+              role="tabpanel"
+              id="panel-filtered"
+              aria-labelledby="tab-filtered"
+              tabindex="0"
+              ?hidden=${this._tab !== "filtered"}
+            >
+              ${this._renderFilteredList(lists.filtered)}
+            </div>`
+        : html`<div class="content">${this.renderLoading()}</div>`}
+    </ha-card>`;
+  }
+
+  private _renderTabs(reviewCount: number, filteredCount: number): TemplateResult {
+    const label = (tab: Tab): string =>
+      fmt(STRINGS.tabCount, {
+        label: tab === "review" ? STRINGS.tabReview : STRINGS.tabFiltered,
+        count: tab === "review" ? reviewCount : filteredCount,
+      });
+    return html`<div
+      class="tabs"
+      role="tablist"
+      aria-label=${STRINGS.reviewTabs}
+      @keydown=${this._onTabKeyDown}
+    >
+      ${TABS.map((tab) => {
+        const selected = this._tab === tab;
+        return html`<button
+          type="button"
+          class="tab"
+          role="tab"
+          id="tab-${tab}"
+          data-tab=${tab}
+          aria-selected=${selected ? "true" : "false"}
+          aria-controls="panel-${tab}"
+          tabindex=${selected ? "0" : "-1"}
+          @click=${this._onTabClick}
+        >
+          ${label(tab)}
+        </button>`;
+      })}
+    </div>`;
+  }
+
+  private _renderReviewList(items: readonly ReviewItem[]): TemplateResult {
+    if (!items.length) {
+      return html`<p class="empty">${STRINGS.emptyReview}</p>`;
+    }
+    return html`<div class="items">
+      ${repeat(
+        items,
+        (item) => item.id,
+        (item, index) => this._renderReviewItem(item, index),
+      )}
+    </div>`;
+  }
+
+  private _renderFilteredList(items: readonly FilteredItem[]): TemplateResult {
+    return html`<p class="hint filtered-hint">${STRINGS.filteredHint}</p>
+      ${items.length
+        ? html`<div class="items">
+            ${repeat(
+              items,
+              (item) => item.id,
+              (item, index) => this._renderFilteredItem(item, index),
+            )}
+          </div>`
+        : html`<p class="empty">${STRINGS.emptyFiltered}</p>`}`;
+  }
+
+  private _renderHead(
+    item: { sender: string; sender_domain: string; subject: string },
+    subjectId: string,
+    badge: TemplateResult | typeof nothing = nothing,
+  ): TemplateResult {
+    return html`<div class="item-head">
+        <span class="sender">${item.sender || item.sender_domain}</span>${badge}
+      </div>
+      <h3 class="subject" id=${subjectId}>${item.subject.trim() || STRINGS.noSubject}</h3>`;
+  }
+
+  private _renderError(itemId: string): TemplateResult | typeof nothing {
+    const error = this._itemErrors.get(itemId);
+    return error
+      ? html`<div class="alert error" role="alert">
+          <ha-icon icon="mdi:alert-circle-outline" aria-hidden="true"></ha-icon>
+          <span class="grow">${error}</span>
+        </div>`
+      : nothing;
+  }
+
+  private _renderReviewItem(item: ReviewItem, index: number): TemplateResult {
+    const locale = this.locale;
+    const busy = this._busyItems.has(item.id);
+    const editing = this._editing === item.id;
+    const subjectId = `review-subject-${index}`;
+    const received = item.received ?? item.created;
+    const reason = reasonLabel(item.reason);
+    const meta = [
+      received ? fmt(STRINGS.receivedOn, { date: formatDateTime(received, locale) }) : "",
+      item.mailbox_owner ? fmt(STRINGS.mailboxOf, { owner: item.mailbox_owner }) : "",
+      reason ? fmt(STRINGS.reasonIs, { reason }) : "",
+    ].filter(Boolean);
+    const badge =
+      item.source === "ai"
+        ? html`<span class="badge ai" title=${STRINGS.aiSuggestionLabel}>
+            ${STRINGS.aiBadge}<span class="sr-only">, ${STRINGS.aiSuggestionLabel}</span>
+          </span>`
+        : nothing;
+    return html`<article
+      class="item"
+      tabindex="-1"
+      data-item-id=${item.id}
+      aria-labelledby=${subjectId}
+      aria-busy=${busy ? "true" : "false"}
+    >
+      ${this._renderHead(item, subjectId, badge)}
+      ${meta.length ? html`<p class="meta">${meta.join(" · ")}</p>` : nothing}
+      ${item.authenticated
+        ? nothing
+        : html`<div class="alert warning">
+            <ha-icon icon="mdi:shield-alert-outline" aria-hidden="true"></ha-icon>
+            <span class="grow">
+              <strong class="block">${STRINGS.unverifiedSender}</strong>
+              ${STRINGS.unverifiedSenderHint}
+            </span>
+          </div>`}
+      ${editing ? this._renderEditForm(item, busy) : this._renderSuggestion(item.suggestion)}
+      ${this._renderError(item.id)} ${editing ? nothing : this._renderReviewActions(item, busy)}
+    </article>`;
+  }
+
+  private _renderSuggestion(suggestion: Suggestion | null): TemplateResult {
+    if (!suggestion) {
+      return html`<p class="hint section-label">${STRINGS.noSuggestion}</p>`;
+    }
+    const locale = this.locale;
+    const eta = etaRange(suggestion);
+    const rows: Array<[string, string | TemplateResult | null]> = [
+      [STRINGS.fieldKind, kindLabel(suggestion.kind) || null],
+      [STRINGS.fieldMerchant, suggestion.merchant],
+      [STRINGS.fieldCarrier, carrierLabel({ carrier: suggestion.carrier, carrier_name: null })],
+      [STRINGS.fieldTrackingNumbers, suggestion.tracking_numbers.join(", ") || null],
+      [STRINGS.fieldOrderNumbers, suggestion.order_numbers.join(", ") || null],
+      [STRINGS.expected, eta ? formatDateRange(eta.start, eta.end, locale, EXPECTED_FORMAT) : null],
+      [STRINGS.timeWindow, formatWindow(suggestion.window_start, suggestion.window_end, locale)],
+      [STRINGS.pickupPoint, suggestion.pickup_point],
+      [STRINGS.pickupCode, suggestion.pickup_code],
+      [
+        STRINGS.items,
+        suggestion.items.length
+          ? html`<ul>
+              ${suggestion.items.map((entry) => html`<li>${entry}</li>`)}
+            </ul>`
+          : null,
+      ],
+    ];
+    return html`<p class="section-label">${STRINGS.suggestion}</p>
+      <dl class="facts">
+        ${rows
+          .filter(([, value]) => value !== null && value !== "")
+          .map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}
+      </dl>`;
+  }
+
+  private _renderReviewActions(item: ReviewItem, busy: boolean): TemplateResult {
+    const disabled = busy ? "true" : "false";
+    const domain = item.sender_domain || item.sender;
+    return html`<div class="row-actions">
+      ${item.suggestion
+        ? html`<button
+            type="button"
+            class="btn primary"
+            aria-disabled=${disabled}
+            @click=${() => this._accept(item)}
+          >
+            ${STRINGS.accept}
+          </button>`
+        : nothing}
+      <button
+        type="button"
+        class="btn"
+        data-edit
+        aria-disabled=${disabled}
+        @click=${() => this._startEdit(item)}
+      >
+        ${STRINGS.edit}
+      </button>
+      <button
+        type="button"
+        class="btn"
+        aria-disabled=${disabled}
+        @click=${() => this._command(item.id, "review/dismiss", { review_id: item.id })}
+      >
+        ${STRINGS.dismiss}
+      </button>
+      <button
+        type="button"
+        class="btn"
+        title=${fmt(STRINGS.trustSenderHint, { domain })}
+        aria-disabled=${disabled}
+        @click=${() => this._command(item.id, "review/trust_sender", { review_id: item.id })}
+      >
+        ${STRINGS.trustSender}
+      </button>
+      <button
+        type="button"
+        class="btn danger"
+        title=${fmt(STRINGS.ignoreSenderHint, { domain })}
+        aria-disabled=${disabled}
+        @click=${() => this._command(item.id, "review/ignore_sender", { review_id: item.id })}
+      >
+        ${STRINGS.ignoreSender}
+      </button>
+    </div>`;
+  }
+
+  private _renderEditForm(item: ReviewItem, busy: boolean): TemplateResult {
+    const form = this._editForm;
+    const problem = this._editProblem;
+    const kinds = Object.keys(KIND_LABELS).filter(
+      (kind) => !UNACCEPTABLE_KINDS.has(kind) || kind === form.kind,
+    );
+    if (!kinds.includes(form.kind)) {
+      kinds.unshift(form.kind);
+    }
+    const carriers = carrierOptions();
+    if (form.carrier && !Object.hasOwn(CARRIER_NAMES, form.carrier)) {
+      carriers.unshift({ id: form.carrier, name: form.carrier });
+    }
+    const text = (
+      name: keyof SuggestionForm,
+      label: string,
+      type: "text" | "date" | "time" = "text",
+      hintId?: string,
+    ): TemplateResult => {
+      const invalid = problem?.field === name;
+      const describedBy = [invalid ? "edit-error" : "", hintId ?? ""].filter(Boolean).join(" ");
+      return html`<label class="field">
+        <span class="field-label">${label}</span>
+        <input
+          type=${type}
+          name=${name}
+          autocomplete="off"
+          .value=${live(form[name])}
+          aria-invalid=${invalid ? "true" : "false"}
+          aria-describedby=${describedBy || nothing}
+          @input=${this._onEditInput}
+        />
+      </label>`;
+    };
+    return html`<form id="edit-form" class="edit-form" novalidate @submit=${this._submitEdit}>
+      <div class="form-grid">
+        <label class="field">
+          <span class="field-label">${STRINGS.fieldKind}</span>
+          <select name="kind" data-first @change=${this._onEditInput}>
+            ${kinds.map(
+              (kind) =>
+                html`<option value=${kind} ?selected=${kind === form.kind}>
+                  ${kindLabel(kind) || kind}
+                </option>`,
+            )}
+          </select>
+        </label>
+        ${text("merchant", STRINGS.fieldMerchant)}
+        <label class="field">
+          <span class="field-label">${STRINGS.fieldCarrier}</span>
+          <select name="carrier" @change=${this._onEditInput}>
+            <option value="" ?selected=${form.carrier === ""}>${STRINGS.carrierUnknown}</option>
+            ${carriers.map(
+              (carrier) =>
+                html`<option value=${carrier.id} ?selected=${carrier.id === form.carrier}>
+                  ${carrier.name}
+                </option>`,
+            )}
+          </select>
+        </label>
+        <div class="field">
+          ${text("tracking_numbers", STRINGS.fieldTrackingNumbers, "text", "edit-hint-tracking")}
+          <p class="hint" id="edit-hint-tracking">${STRINGS.hintList}</p>
+        </div>
+        <div class="field">
+          ${text("order_numbers", STRINGS.fieldOrderNumbers, "text", "edit-hint-orders")}
+          <p class="hint" id="edit-hint-orders">${STRINGS.hintList}</p>
+        </div>
+        ${text("eta_start", STRINGS.fieldEtaStart, "date")}
+        ${text("eta_end", STRINGS.fieldEtaEnd, "date")}
+        ${text("window_start", STRINGS.fieldWindowStart, "time")}
+        ${text("window_end", STRINGS.fieldWindowEnd, "time")}
+        ${text("pickup_point", STRINGS.fieldPickupPoint)}
+        ${text("pickup_code", STRINGS.fieldPickupCode)}
+        <label class="field wide">
+          <span class="field-label">${STRINGS.fieldItems}</span>
+          <textarea
+            name="items"
+            rows="3"
+            .value=${live(form.items)}
+            aria-describedby="edit-hint-items"
+            @input=${this._onEditInput}
+          ></textarea>
+          <span class="hint" id="edit-hint-items">${STRINGS.hintItems}</span>
+        </label>
+      </div>
+      ${problem
+        ? html`<div class="alert error" id="edit-error" role="alert">
+            <span class="grow">${problem.message}</span>
+          </div>`
+        : nothing}
+      <div class="row-actions">
+        <button type="submit" class="btn primary" aria-disabled=${busy ? "true" : "false"}>
+          ${STRINGS.acceptWithChanges}
+        </button>
+        <button type="button" class="btn" @click=${() => this._cancelEdit(item.id)}>
+          ${STRINGS.cancel}
+        </button>
+      </div>
+    </form>`;
+  }
+
+  private _renderFilteredItem(item: FilteredItem, index: number): TemplateResult {
+    const subjectId = `filtered-subject-${index}`;
+    const received = item.received ?? item.created;
+    const busy = this._busyItems.has(item.id);
+    return html`<article
+      class="item"
+      tabindex="-1"
+      data-item-id=${item.id}
+      aria-labelledby=${subjectId}
+      aria-busy=${busy ? "true" : "false"}
+    >
+      ${this._renderHead(item, subjectId)}
+      ${received
+        ? html`<p class="meta">
+            ${fmt(STRINGS.receivedOn, { date: formatDateTime(received, this.locale) })}
+          </p>`
+        : nothing}
+      ${this._renderError(item.id)}
+      <div class="row-actions">
+        <button
+          type="button"
+          class="btn"
+          aria-disabled=${busy ? "true" : "false"}
+          @click=${() => this._command(item.id, "review/restore", { filtered_id: item.id })}
+        >
+          ${STRINGS.restore}
+        </button>
+      </div>
+    </article>`;
+  }
+
+  private _selectTab(tab: Tab, focus: boolean): void {
+    this._tab = tab;
+    if (focus) {
+      void this.updateComplete.then(() =>
+        this.renderRoot.querySelector<HTMLElement>(`#tab-${tab}`)?.focus(),
+      );
+    }
+  }
+
+  private _onTabClick(event: MouseEvent): void {
+    const tab = (event.currentTarget as HTMLElement).dataset.tab as Tab;
+    this._selectTab(tab, false);
+  }
+
+  private _onTabKeyDown(event: KeyboardEvent): void {
+    const current = TABS.indexOf(this._tab);
+    const rtl = getComputedStyle(event.currentTarget as HTMLElement).direction === "rtl";
+    let next: number;
+    switch (event.key) {
+      case "ArrowRight":
+        next = current + (rtl ? -1 : 1);
+        break;
+      case "ArrowLeft":
+        next = current + (rtl ? 1 : -1);
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = TABS.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    const tab = TABS[(next + TABS.length) % TABS.length];
+    if (tab) {
+      this._selectTab(tab, true);
+    }
+  }
+
+  private _focusInItem(itemId: string, selector: string): void {
+    void this.updateComplete.then(() => {
+      const item = this.renderRoot.querySelector<HTMLElement>(
+        `[data-item-id="${CSS.escape(itemId)}"]`,
+      );
+      (item?.querySelector<HTMLElement>(selector) ?? item)?.focus();
+    });
+  }
+
+  private _startEdit(item: ReviewItem): void {
+    if (this._busyItems.has(item.id)) {
+      return;
+    }
+    this._editing = item.id;
+    this._editForm = suggestionToForm(item.suggestion);
+    this._editProblem = null;
+    this._itemErrors = withoutKey(this._itemErrors, item.id);
+    this._focusInItem(item.id, "[data-first]");
+  }
+
+  private _cancelEdit(itemId: string): void {
+    this._editing = null;
+    this._editProblem = null;
+    this._focusInItem(itemId, "[data-edit]");
+  }
+
+  private _onEditInput(event: Event): void {
+    const input = event.currentTarget as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+    const name = input.name as keyof SuggestionForm;
+    this._editForm = { ...this._editForm, [name]: input.value };
+    this._editProblem = null;
+  }
+
+  private _submitEdit(event: Event): void {
+    event.preventDefault();
+    const itemId = this._editing;
+    if (itemId === null || this._busyItems.has(itemId)) {
+      return;
+    }
+    const problem = dateProblem(this._editForm);
+    if (problem) {
+      this._editProblem = problem;
+      this._focusInItem(itemId, `[name="${problem.field}"]`);
+      return;
+    }
+    void this._command(
+      itemId,
+      "review/accept",
+      { review_id: itemId, overrides: formToSuggestion(this._editForm) },
+      () => {
+        if (this._editing === itemId) {
+          this._editing = null;
+        }
+      },
+    );
+  }
+
+  private _accept(item: ReviewItem): void {
+    void this._command(item.id, "review/accept", { review_id: item.id });
+  }
+
+  /** Sends a review command for one item; its error shows on the item (or the card once it's gone). */
+  private async _command(
+    itemId: string,
+    command: string,
+    data: Record<string, unknown>,
+    onSuccess?: () => void,
+  ): Promise<void> {
+    const hass = this.hass;
+    if (!hass || this._busyItems.has(itemId)) {
+      return;
+    }
+    this._busyItems = new Set([...this._busyItems, itemId]);
+    this._itemErrors = withoutKey(this._itemErrors, itemId);
+    try {
+      await callParcelsCommand(hass, command, data);
+      onSuccess?.();
+    } catch (error) {
+      const message = fmt(STRINGS.actionFailed, { message: errorMessage(error) });
+      const lists = this._lists();
+      const stillThere = [...(lists?.review ?? []), ...(lists?.filtered ?? [])].some(
+        (entry) => entry.id === itemId,
+      );
+      if (stillThere) {
+        this._itemErrors = new Map([...this._itemErrors, [itemId, message]]);
+      } else {
+        this.showActionError(message);
+      }
+    } finally {
+      const busy = new Set(this._busyItems);
+      busy.delete(itemId);
+      this._busyItems = busy;
+    }
+  }
+}
+
+defineElement("parcels-review-card", ParcelsReviewCard);
+registerCard("parcels-review-card", STRINGS.reviewCardName, STRINGS.reviewCardDescription);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "parcels-review-card": ParcelsReviewCard;
+  }
+}

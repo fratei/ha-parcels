@@ -1,0 +1,187 @@
+add:
+  fields:
+    tracking_number:
+      required: true
+      example: "1Z999AA10123456784"
+      selector:
+        text:
+    carrier:
+      selector:
+        select:
+          translation_key: carrier
+          mode: dropdown
+          options: &carriers
+            - amazon
+            - asendia
+            - bpost
+            - brt
+            - cainiao
+            - chronopost
+            - colissimo
+            - correos
+            - correos_express
+            - ctt
+            - ctt_expresso
+            - deutsche_post
+            - dhl
+            - dpd
+            - evri
+            - fedex
+            - gls
+            - hermes
+            - inpost
+            - la_poste
+            - mondial_relay
+            - mrw
+            - nacex
+            - paack
+            - postnl
+            - poste_italiane
+            - royal_mail
+            - sda
+            - seur
+            - tnt
+            - ups
+            - usps
+            - vinted_go
+            - yunexpress
+            - other
+    merchant:
+      selector:
+        text:
+    private:
+      default: false
+      selector:
+        boolean:
+
+update:
+  fields:
+    parcel_id:
+      required: true
+      selector:
+        text:
+    tracking_number:
+      selector:
+        text:
+    carrier:
+      selector:
+        select:
+          translation_key: carrier
+          mode: dropdown
+          options: *carriers
+    merchant:
+      selector:
+        text:
+    eta_start:
+      selector:
+        date:
+    eta_end:
+      selector:
+        date:
+    window_start:
+      selector:
+        time:
+    window_end:
+      selector:
+        time:
+    pickup_point:
+      selector:
+        text:
+    pickup_code:
+      selector:
+        text:
+    private:
+      selector:
+        boolean:
+    confirm:
+      selector:
+        boolean:
+    confirm_merge:
+      selector:
+        boolean:
+
+mark_delivered:
+  fields:
+    parcel_id:
+      required: true
+      selector:
+        text:
+
+archive:
+  fields:
+    parcel_id:
+      required: true
+      selector:
+        text:
+
+undo_merge:
+  fields:
+    parcel_id:
+      required: true
+      selector:
+        text:
+
+merge:
+  fields:
+    parcel_ids:
+      required: true
+      selector:
+        text:
+          multiple: true
+
+split:
+  fields:
+    parcel_id:
+      required: true
+      selector:
+        text:
+    origins:
+      required: true
+      selector:
+        text:
+          multiple: true
+
+refresh:
+
+reprocess:
+  fields:
+    parcel_id:
+      selector:
+        text:
+    review_id:
+      selector:
+        text:
+    filtered_id:
+      selector:
+        text:
+    use_ai:
+      default: false
+      selector:
+        boolean:
+
+trust_sender:
+  fields:
+    domain:
+      example: "example.com"
+      selector:
+        text:
+    review_id:
+      selector:
+        text:
+
+ignore_sender:
+  fields:
+    domain:
+      example: "example.com"
+      selector:
+        text:
+    review_id:
+      selector:
+        text:
+
+test_live_activity:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: mobile_app

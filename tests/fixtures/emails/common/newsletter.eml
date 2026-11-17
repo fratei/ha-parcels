@@ -1,0 +1,41 @@
+Return-Path: <news@moda-exemplo.example>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@moda-exemplo.example header.s=mail header.b=QmFzZTY0;
+       spf=pass (google.com: domain of news@moda-exemplo.example designates 192.0.2.80 as permitted sender) smtp.mailfrom=news@moda-exemplo.example;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=moda-exemplo.example
+Received: from mta.moda-exemplo.example (mta.moda-exemplo.example. [192.0.2.80])
+        by mx.google.com with ESMTPS id a1si1234567wra.101.2026.11.17
+        for <alex@example.com>;
+        Tue, 17 Nov 2026 04:00:00 -0800 (PST)
+From: Moda Exemplo <news@moda-exemplo.example>
+To: Alex Doe <alex@example.com>
+Subject: =?UTF-8?Q?Black_Friday:_portes_gr=C3=A1tis_em_todas_as_encomendas!?=
+Date: Tue, 17 Nov 2026 12:00:00 +0000
+Message-ID: <20261117120000.bf@mta.moda-exemplo.example>
+List-Id: Moda Exemplo Newsletter <newsletter.moda-exemplo.example>
+List-Unsubscribe: <https://moda-exemplo.example/unsubscribe?u=1234567890123>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Até 50% de desconto em toda a loja!
+Portes grátis em encomendas acima de 30 €. Encomende já com o código BF2026.
+Casaco de lã 59,99 € · Botas 89,90 €
+Válido até 30/11/2026.
+Anular subscrição: https://moda-exemplo.example/unsubscribe?u=1234567890123
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><body>
+<h1>Até 50% de desconto em toda a loja!</h1>
+<p>Portes grátis em encomendas acima de 30&nbsp;€. Encomende já com o código <b>BF2026</b>.</p>
+<table><tr><td>Casaco de lã</td><td>59,99 €</td></tr><tr><td>Botas</td><td>89,90 €</td></tr></table>
+<p><a href="https://moda-exemplo.example/black-friday?utm_source=newsletter&amp;utm_campaign=bf2026&amp;id=1234567890123">Comprar agora</a></p>
+<p>Válido até 30/11/2026.</p>
+<p><a href="https://moda-exemplo.example/unsubscribe?u=1234567890123">Anular subscrição</a></p>
+</body></html>
+--=_parcels_b1--

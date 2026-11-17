@@ -1,0 +1,146 @@
+Return-Path: <bounces+61234503@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@example-outfitters.co.uk header.s=shopify2 header.b=kyCQes6K;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234503@shopifyemail.com designates 198.51.100.13 as permitted sender) smtp.mailfrom=bounces+61234503@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=example-outfitters.co.uk
+Received: from o23.ptr4120.shopifyemail.com (o23.ptr4120.shopifyemail.com. [198.51.100.13])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Sun, 15 Nov 2026 20:31:17 +0000
+From: Example Outfitters <hello@example-outfitters.co.uk>
+To: Alex Doe <alex@example.com>
+Subject: Order #1052 confirmed
+Date: Sun, 15 Nov 2026 20:31:17 +0000
+Message-ID: <d206f7f43df7a_20261115203117@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Example Outfitters
+Order #1052
+
+Thank you for your purchase!
+
+Hi Alex, we're getting your order ready to be shipped. We will notify you w=
+hen it has been sent.
+
+View your order: https://example-outfitters.co.uk/61234567890/orders/b6d0ba=
+a74f454a18caeea029d8916e8f/authenticate?key=3Dc4fc74260ad72502f91aefd9cc1bb=
+143
+or Visit our store: https://example-outfitters.co.uk/
+
+Order summary
+
+Merino Wool Beanie =C3=97 1
+Charcoal
+=C2=A324.00
+Waxed Cotton Jacket =C3=97 1
+M / Olive
+=C2=A3145.00
+
+Subtotal =C2=A3169.00
+Shipping =C2=A30.00
+Total =C2=A3169.00 GBP
+
+Customer information
+
+Shipping address
+Alex Doe
+1 Example Road
+Exampleton EX1 2AB
+United Kingdom
+
+Shipping method
+Standard Shipping (UPS)
+
+If you have any questions, reply to this email or contact us at hello@examp=
+le-outfitters.co.uk
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"en">
+<head>
+<title>Order #1052 confirmed</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://example-outfitters.co.uk/">Example Outfitters</a></h1></=
+td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Order #=
+1052</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Thank you for your purchase!</h2>
+<p>Hi Alex, we're getting your order ready to be shipped. We will notify yo=
+u when it has been sent.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://example-outfitters.co.uk/61234567890/orders/b6d0baa74f454a18caeea029d89=
+16e8f/authenticate?key=3Dc4fc74260ad72502f91aefd9cc1bb143" class=3D"button_=
+_text">View your order</a></td></tr></table><table class=3D"link secondary-=
+action-cell"><tr><td class=3D"link__cell">or <a href=3D"https://example-out=
+fitters.co.uk/" class=3D"link__text"><span class=3D'arrow'>&rarr;</span> Vi=
+sit our store</a></td></tr></table></td></tr></table>
+<h3 class=3D"h3">Order summary</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/a3105afea0_compact_cropped.jpg" alt=3D"Merino Wool =
+Beanie" width=3D"60" height=3D"60" class=3D"order-list__product-image"></td=
+><td class=3D"order-list__product-description-cell"><span class=3D"order-li=
+st__item-title">Merino Wool Beanie&nbsp;&times;&nbsp;1</span><br><span clas=
+s=3D"order-list__item-variant">Charcoal</span></td><td class=3D"order-list_=
+_price-cell"><p class=3D"order-list__item-price">=C2=A324.00</p></td></tr><=
+/table></td></tr><tr class=3D"order-list__item"><td class=3D"order-list__it=
+em__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/0612=
+/3456/7890/products/59fdf7c912_compact_cropped.jpg" alt=3D"Waxed Cotton Jac=
+ket" width=3D"60" height=3D"60" class=3D"order-list__product-image"></td><t=
+d class=3D"order-list__product-description-cell"><span class=3D"order-list_=
+_item-title">Waxed Cotton Jacket&nbsp;&times;&nbsp;1</span><br><span class=
+=3D"order-list__item-variant">M / Olive</span></td><td class=3D"order-list_=
+_price-cell"><p class=3D"order-list__item-price">=C2=A3145.00</p></td></tr>=
+</table></td></tr></table>
+<table class=3D"row subtotal-lines"><tr><td><table class=3D"row"><tr class=
+=3D"subtotal-line"><td class=3D"subtotal-line__title"><p><span>Subtotal</sp=
+an></p></td><td class=3D"subtotal-line__value"><strong>=C2=A3169.00</strong=
+></td></tr><tr class=3D"subtotal-line"><td class=3D"subtotal-line__title"><=
+p><span>Shipping</span></p></td><td class=3D"subtotal-line__value"><strong>=
+=C2=A30.00</strong></td></tr><tr class=3D"subtotal-line"><td class=3D"subto=
+tal-line__title"><p><span>Total</span></p></td><td class=3D"subtotal-line__=
+value"><strong>=C2=A3169.00 GBP</strong></td></tr></table></td></tr></table>
+<h3>Customer information</h3><table class=3D"row"><tr><td class=3D"customer=
+-info__item"><h4>Shipping address</h4><p>Alex Doe<br>1 Example Road<br>Exam=
+pleton EX1 2AB<br>United Kingdom</p></td></tr><tr><td class=3D"customer-inf=
+o__item"><h4>Shipping method</h4><p>Standard Shipping (UPS)</p></td></tr></=
+table>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">If you have any questions, reply to this e=
+mail or contact us at <a href=3D"mailto:hello@example-outfitters.co.uk">hel=
+lo@example-outfitters.co.uk</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

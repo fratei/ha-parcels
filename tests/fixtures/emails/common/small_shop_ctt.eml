@@ -1,0 +1,65 @@
+Return-Path: <bounces+1042@mail.loja-exemplo.example>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@loja-exemplo.example header.s=mail header.b=QmFzZTY0;
+       spf=pass (google.com: domain of bounces+1042@mail.loja-exemplo.example designates 192.0.2.25 as permitted sender) smtp.mailfrom=bounces+1042@mail.loja-exemplo.example;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=loja-exemplo.example
+Received: from mail.loja-exemplo.example (mail.loja-exemplo.example. [192.0.2.25])
+        by mx.google.com with ESMTPS id a1si1234567wra.101.2026.11.17
+        for <alex@example.com>;
+        Tue, 17 Nov 2026 01:12:03 -0800 (PST)
+From: Loja Exemplo <encomendas@loja-exemplo.example>
+To: Alex Doe <alex@example.com>
+Subject: =?UTF-8?Q?A_sua_encomenda_n.=C2=BA_1042_foi_enviada?=
+Date: Tue, 17 Nov 2026 09:12:00 +0000
+Message-ID: <20261117091200.1042@mail.loja-exemplo.example>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Ol=C3=A1 Alex,
+
+A sua encomenda n.=C2=BA 1042 foi enviada por CTT.
+N=C3=BAmero de objeto: RR123456785PT
+Entrega prevista: quinta-feira, 19 de novembro
+
+Seguir encomenda: https://www.ctt.pt/feapl_2/app/open/objectSearch/objectSe=
+arch.jspx?objects=3DRR123456785PT
+
+Encomendado em 16/11/2026. Total: 24,90 =E2=82=AC
+D=C3=BAvidas? Ligue 210 000 000 ou escreva para apoio@loja-exemplo.example.
+Loja Exemplo, Rua Exemplo 1, 1000-001 Lisboa
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"pt">
+<head><meta charset=3D"utf-8"><title>Encomenda enviada</title>
+<style>p { color: #333333; margin: 0 0 12px; }</style></head>
+<body>
+<table role=3D"presentation" width=3D"100%"><tr><td>
+<img src=3D"https://cdn.loja-exemplo.example/logo.png" alt=3D"Loja Exemplo"=
+ width=3D"120">
+<h1>A sua encomenda est&aacute; a caminho!</h1>
+<p>Ol&aacute; Alex,</p>
+<p>A sua encomenda n.&ordm; 1042 foi enviada por CTT.</p>
+<table>
+<tr><td>N&uacute;mero de objeto:</td><td><strong>RR123456785PT</strong></td=
+></tr>
+<tr><td>Entrega prevista:</td><td>quinta-feira, 19 de novembro</td></tr>
+</table>
+<p><a href=3D"https://www.ctt.pt/feapl_2/app/open/objectSearch/objectSearch=
+.jspx?objects=3DRR123456785PT">Seguir encomenda</a></p>
+<p>Encomendado em 16/11/2026. Total: 24,90&nbsp;&euro;</p>
+<p>D&uacute;vidas? Ligue <a href=3D"tel:+351210000000">210 000 000</a> ou e=
+screva para <a href=3D"mailto:apoio@loja-exemplo.example">apoio@loja-exempl=
+o.example</a>.</p>
+<p>Loja Exemplo, Rua Exemplo 1, 1000-001 Lisboa</p>
+<script>window.trackOpen && window.trackOpen("1042");</script>
+</td></tr></table>
+</body>
+</html>
+--=_parcels_b1--

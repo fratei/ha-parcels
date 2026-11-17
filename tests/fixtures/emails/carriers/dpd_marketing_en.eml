@@ -1,0 +1,65 @@
+Return-Path: <bounce-c2abf0ce33@bounces.dpd.co.uk>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dpd.co.uk header.s=sel1 header.b=53aef110;
+       spf=pass (google.com: domain of bounce-c2abf0ce33@bounces.dpd.co.uk
+ designates 192.0.2.58 as permitted sender) smtp.mailfrom=bounce-c2abf0ce33@bounces.dpd.co.uk;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dpd.co.uk
+From: DPD <news@dpd.co.uk>
+To: Alex Doe <alex@example.com>
+Subject: Save 20% on your next parcel with DPD
+Date: Mon, 16 Nov 2026 12:00:00 +0000
+Message-ID: <20261116120000.db0c@mail.example.com>
+MIME-Version: 1.0
+Content-Language: en-GB
+Content-Type: multipart/alternative; boundary="b1_8edc836378c1"
+
+--b1_8edc836378c1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DPD
+
+Sending gifts this Christmas?
+
+Hi Alex,
+
+Book your collection online and save 20% on every parcel sent before 15 December. Or drop it off at one of over 6,000 DPD Pickup shops.
+
+Send a parcel [https://sendmypa.dpd.co.uk/?utm_source=newsletter]
+
+DPD Group UK Ltd · 1 Example Road, London
+
+Don't want these e-mails? Unsubscribe [https://www.dpd.co.uk/unsubscribe?id=a1b2c3].
+
+--b1_8edc836378c1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Save 20% with DPD</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#dc0032}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#dc0032;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.dpd.com/wp-content/themes/dpd/images/logo-dpd.png" alt="DPD" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Sending gifts this Christmas?</h1>
+<p>Hi Alex,</p>
+<p>Book your collection online and save 20% on every parcel sent before 15 December. Or drop it off at one of over 6,000 DPD Pickup shops.</p>
+<p style="text-align:center"><a class="button" href="https://sendmypa.dpd.co.uk/?utm_source=newsletter">Send a parcel</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>DPD Group UK Ltd · 1 Example Road, London</p>
+<p>Don't want these e-mails? <a href="https://www.dpd.co.uk/unsubscribe?id=a1b2c3">Unsubscribe</a>.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_8edc836378c1--

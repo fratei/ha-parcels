@@ -1,0 +1,166 @@
+Return-Path: <20261119074812a1b2c3@bounces.amazon.de>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.de header.s=sel1amz header.b=zOnCb0Po;
+       dkim=pass header.i=@amazonses.com header.s=ug7nbtf4 header.b=gKycGuYC;
+       spf=pass (google.com: domain of 20261119074812a1b2c3@bounces.amazon.de designates 192.0.2.53 as permitted sender) smtp.mailfrom=20261119074812a1b2c3@bounces.amazon.de;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.de
+Received: from a48-13.smtp-out.eu-west-1.amazonses.com (a48-13.smtp-out.eu-west-1.amazonses.com. [192.0.2.53])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Thu, 19 Nov 2026 07:48:12 +0100
+From: "Amazon.de" <versandbestaetigung@amazon.de>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Lieferung_versp=C3=A4tet=3A_=E2=80=9EWasserkocher_aus_E?=
+ =?utf-8?q?delstahl=2C_1=2C7_Liter=2E=2E=2E=E2=80=9C?=
+Date: Thu, 19 Nov 2026 07:48:12 +0100
+Message-ID: <010201920261119074812.delayed-de-000000@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Amazon.de
+Meine Bestellungen | Mein Konto
+
+Hallo Alex,
+
+Ihre Lieferung versp=C3=A4tet sich.
+
+Es tut uns leid, Ihr Paket kommt sp=C3=A4ter als geplant.
+
+Neue voraussichtliche Zustellung:
+Samstag, 21. November
+
+Urspr=C3=BCngliche voraussichtliche Zustellung: Donnerstag, 19. November
+
+Sendung verfolgen: https://www.amazon.de/gp/r.html?C=3D13T7Q9X1M4K8B&K=3D1V=
+3JZ9Q7R2XW5&M=3Durn:rtn:msg:2026111613a1b2c3d4e5f601&R=3D3HXK2P8Q5N7MZ&T=3D=
+C&U=3Dhttps%3A%2F%2Fwww.amazon.de%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_2=
+848631_123456789_TE_SIMP_typ%3F_encoding%3DUTF8%26orderId%3D303-1029384-756=
+4738%26shipmentId%3DRj4MxB7qT%26packageIndex%3D0&H=3DQZXWTGBHJKL0PQ5RS01&re=
+f_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Bestellnr. 303-1029384-7564738
+
+Wasserkocher aus Edelstahl, 1,7 Liter, 2200 W
+Menge: 1
+https://www.amazon.de/gp/r.html?C=3D13T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:2026111613a1b2c3d4e5f602&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.de%2Fdp%2FB0B5T9W3KN%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=3DQ=
+ZXWTGBHJKL0PQ5RS02&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Diese E-Mail wurde von einer Adresse gesendet, die keine eingehenden E-Mail=
+s empfangen kann. Bitte antworten Sie nicht auf diese Nachricht.
+
+Datenschutzerkl=C3=A4rung
+
+=C2=A9 2026 Amazon.com, Inc. oder Tochtergesellschaften. Alle Rechte vorbeh=
+alten.
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"de">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DUTF-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1.=
+0">
+<title>Amazon.de</title>
+<style type=3D"text/css">
+body { margin: 0; padding: 0; background-color: #ffffff; }
+table { border-collapse: collapse; }
+.container { width: 600px; font-family: Arial, Helvetica, sans-serif; color=
+: #0f1111; }
+.h1 { font-size: 20px; font-weight: bold; margin: 16px 0 8px; }
+.h2 { font-size: 16px; font-weight: bold; margin: 16px 0 8px; color: #067d6=
+2; }
+.kv td { padding: 2px 8px 2px 0; font-size: 14px; }
+.button { background-color: #ffd814; border-radius: 20px; color: #0f1111;
+  padding: 8px 18px; text-decoration: none; display: inline-block; }
+.item td { vertical-align: top; padding: 8px 8px 8px 0; font-size: 14px; }
+.nav a { color: #0f1111; font-size: 13px; text-decoration: none; }
+.footer { font-size: 11px; color: #565959; padding-top: 24px; }
+</style>
+</head>
+<body>
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0"><tr>
+<td align=3D"center">
+<table role=3D"presentation" class=3D"container" width=3D"600" cellpadding=
+=3D"0"
+ cellspacing=3D"0">
+<tr><td class=3D"header"><a href=3D"https://www.amazon.de/gp/r.html?C=3D13T=
+7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111613a1b2c3d4e5f6=
+04&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.de%2Fre=
+f%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0PQ5RS04&amp;ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ"><img
+ src=3D"https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo.=
+_CB485934981_.png"
+ alt=3D"Amazon.de" width=3D"98" height=3D"30" border=3D"0"></a></td>
+<td class=3D"nav" align=3D"right"><a href=3D"https://www.amazon.de/gp/r.htm=
+l?C=3D13T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111613a1b=
+2c3d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazo=
+n.de%2Fgp%2Fcss%2Forder-history%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&a=
+mp;H=3DQZXWTGBHJKL0PQ5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Meine Bestellungen</a> | <a href=3D"https://www.amazon.de/gp/r.html?C=3D13=
+T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111613a1b2c3d4e5f=
+606&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.de%2Fg=
+p%2Fcss%2Fhomepage.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQ=
+ZXWTGBHJKL0PQ5RS06&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Mein Konto</a></td></tr>
+<tr><td class=3D"content" colspan=3D"2">
+<p>Hallo Alex,</p>
+<h1 class=3D"h1">Ihre Lieferung versp=C3=A4tet sich.</h1>
+<p>Es tut uns leid, Ihr Paket kommt sp=C3=A4ter als geplant.</p>
+<div class=3D"eta"><span class=3D"label">Neue voraussichtliche Zustellung:<=
+/span><br><span class=3D"value"><b>Samstag, 21. November</b></span></div>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Urspr=C3=BCngliche voraussichtliche Zustellung:</td>=
+<td class=3D"v"><b>Donnerstag, 19. November</b></td></tr></table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.de/gp/r.htm=
+l?C=3D13T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111613a1b=
+2c3d4e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazo=
+n.de%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_2848631_123456789_TE_SIMP_typ%=
+3F_encoding%3DUTF8%26orderId%3D303-1029384-7564738%26shipmentId%3DRj4MxB7qT=
+%26packageIndex%3D0&amp;H=3DQZXWTGBHJKL0PQ5RS01&amp;ref_=3Dpe_2848631_12345=
+6789_TE_SIMP_typ">Sendung verfolgen</a></p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Bestellnr.</td><td class=3D"v"><b>303-1029384-756473=
+8</b></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.de/gp/r.html?C=
+=3D13T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111613a1b2c3=
+d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.d=
+e%2Fdp%2FB0B5T9W3KN%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJK=
+L0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https://=
+m.media-amazon.com/images/I/415T9W3KL._SS142_.jpg" alt=3D"Wasserkocher aus =
+Edelstahl, 1,7 Liter, 2200 W" width=3D"90" height=3D"90" border=3D"0"></a><=
+/td><td class=3D"desc"><a href=3D"https://www.amazon.de/gp/r.html?C=3D13T7Q=
+9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111613a1b2c3d4e5f602=
+&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.de%2Fdp%2=
+FB0B5T9W3KN%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJKL0PQ5RS0=
+2&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Wasserkocher aus Edelstahl, =
+1,7 Liter, 2200 W</a><br><span>Menge: 1</span></td></tr></table>
+</td></tr>
+<tr><td class=3D"footer" colspan=3D"2">
+<p>Diese E-Mail wurde von einer Adresse gesendet, die keine eingehenden E-M=
+ails empfangen kann. Bitte antworten Sie nicht auf diese Nachricht.</p>
+<p><a href=3D"https://www.amazon.de/gp/r.html?C=3D13T7Q9X1M4K8B&amp;K=3D1V3=
+JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111613a1b2c3d4e5f603&amp;R=3D3HXK2P8Q5N7=
+MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.de%2Fgp%2Fhelp%2Fcustomer%2Fd=
+isplay.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0P=
+Q5RS03&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Datenschutzerkl=C3=A4ru=
+ng</a></p>
+<p>=C2=A9 2026 Amazon.com, Inc. oder Tochtergesellschaften. Alle Rechte vor=
+behalten.</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

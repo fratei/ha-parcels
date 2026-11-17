@@ -1,0 +1,79 @@
+Return-Path: <bounce-e7559ab61a@bounces.dpd.nl>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dpd.nl header.s=sel1 header.b=66a178d8;
+       spf=pass (google.com: domain of bounce-e7559ab61a@bounces.dpd.nl
+ designates 192.0.2.145 as permitted sender) smtp.mailfrom=bounce-e7559ab61a@bounces.dpd.nl;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dpd.nl
+From: DPD Nederland <noreply@dpd.nl>
+To: Alex Doe <alex@example.com>
+Subject: Je pakket van Coolblue wordt vandaag bezorgd
+Date: Tue, 17 Nov 2026 07:58:00 +0100
+Message-ID: <20261117065800.c6a7@mail.example.com>
+MIME-Version: 1.0
+Content-Language: nl-NL
+Content-Type: multipart/alternative; boundary="b1_afb38f6c664c"
+
+--b1_afb38f6c664c
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DPD
+
+Je pakket komt vandaag
+
+Hallo Alex Doe,
+
+Goed nieuws! Je pakket van Coolblue wordt vandaag tussen 15:15 en 16:15 bezorgd.
+
+Pakketnummer: 0574 3829 1650 47
+
+Afzender: Coolblue
+
+Tijdvak: 15:15 - 16:15
+
+Ben je niet thuis? Kies een andere dag of laat je pakket bezorgen bij een DPD Pickup Parcelshop.
+
+Volg je pakket [https://tracking.dpd.de/status/nl_NL/parcel/05743829165047]
+
+DPD Nederland B.V. · Voorbeeldstraat 1, 1011 AB Amsterdam
+
+Privacyverklaring [https://www.dpd.com/nl/nl/privacy/]
+
+--b1_afb38f6c664c
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Je pakket komt vandaag</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#dc0032}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#dc0032;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.dpd.com/wp-content/themes/dpd/images/logo-dpd.png" alt="DPD" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Je pakket komt vandaag</h1>
+<p>Hallo Alex Doe,</p>
+<p>Goed nieuws! Je pakket van <strong>Coolblue</strong> wordt vandaag tussen 15:15 en 16:15 bezorgd.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Pakketnummer</td><td class="value">0574 3829 1650 47</td></tr>
+<tr><td class="label">Afzender</td><td class="value">Coolblue</td></tr>
+<tr><td class="label">Tijdvak</td><td class="value">15:15 - 16:15</td></tr>
+</table>
+<p>Ben je niet thuis? Kies een andere dag of laat je pakket bezorgen bij een DPD Pickup Parcelshop.</p>
+<p style="text-align:center"><a class="button" href="https://tracking.dpd.de/status/nl_NL/parcel/05743829165047">Volg je pakket</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>DPD Nederland B.V. · Voorbeeldstraat 1, 1011 AB Amsterdam</p>
+<p><a href="https://www.dpd.com/nl/nl/privacy/">Privacyverklaring</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_afb38f6c664c--

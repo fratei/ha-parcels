@@ -1,0 +1,83 @@
+Return-Path: <bounce-21955d0ce1@bounces.vinted.fr>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@vinted.fr header.s=sel1 header.b=cf2b06a1;
+       spf=pass (google.com: domain of bounce-21955d0ce1@bounces.vinted.fr
+ designates 192.0.2.133 as permitted sender) smtp.mailfrom=bounce-21955d0ce1@bounces.vinted.fr;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=vinted.fr
+From: Vinted <no-reply@vinted.fr>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Ton_colis_est_pr=C3=AAt_=C3=A0_=C3=AAtre_retir=C3=A9_au_c?=
+ =?utf-8?q?asier_Vinted_Go?=
+Date: Tue, 17 Nov 2026 14:20:00 +0100
+Message-ID: <20261117132000.6360@mail.example.com>
+MIME-Version: 1.0
+Content-Language: fr-FR
+Content-Type: multipart/alternative; boundary="b1_320d52da070d"
+
+--b1_320d52da070d
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Vinted
+
+Ton colis est arrivé
+
+Bonjour Alex,
+
+Ton colis est prêt à être retiré au casier Vinted Go. Tu as jusqu'au 24/11/2026 pour le récupérer.
+
+Numéro de suivi: 1704829163057281
+
+Casier: Vinted Go Paris Exemple
+
+Adresse: 1 Rue Exemple, 75011 Paris
+
+Code de retrait: 718293
+
+Pour ouvrir le casier, scanne le code QR dans l'app Vinted ou saisis le code de retrait sur l'écran.
+
+Suivre mon colis [https://www.vinted.fr/shipments/tracking?tracking_code=1704829163057281]
+
+Vinted, UAB · Exemplo g. 1, Vilnius
+
+Politique de confidentialité [https://www.vinted.fr/privacy-policy]
+
+--b1_320d52da070d
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ton colis est arrivé</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#007782}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#007782;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://static.vinted.com/assets/logo.png" alt="Vinted" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Ton colis est arrivé</h1>
+<p>Bonjour Alex,</p>
+<p>Ton colis est prêt à être retiré au casier Vinted Go. Tu as jusqu'au 24/11/2026 pour le récupérer.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Numéro de suivi</td><td class="value">1704829163057281</td></tr>
+<tr><td class="label">Casier</td><td class="value">Vinted Go Paris Exemple</td></tr>
+<tr><td class="label">Adresse</td><td class="value">1 Rue Exemple, 75011 Paris</td></tr>
+<tr><td class="label">Code de retrait</td><td class="value">718293</td></tr>
+</table>
+<p>Pour ouvrir le casier, scanne le code QR dans l'app Vinted ou saisis le code de retrait sur l'écran.</p>
+<p style="text-align:center"><a class="button" href="https://www.vinted.fr/shipments/tracking?tracking_code=1704829163057281">Suivre mon colis</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Vinted, UAB · Exemplo g. 1, Vilnius</p>
+<p><a href="https://www.vinted.fr/privacy-policy">Politique de confidentialité</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_320d52da070d--

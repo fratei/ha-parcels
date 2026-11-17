@@ -1,0 +1,49 @@
+Return-Path: <bounces@worten.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@worten.pt header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@worten.pt designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@worten.pt;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=worten.pt
+From: Worten <noreply@worten.pt>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Recebemos_a_sua_encomenda_n=2E=C2=BA_7012345678?=
+Date: Tue, 17 Nov 2026 10:24:00 +0000
+Message-ID: <20261117102400.pt01@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt
+Content-Type: multipart/alternative; boundary="=_parcels_ai_pt01"
+
+--=_parcels_ai_pt01
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Olá Alex,
+Obrigado pela sua compra! Recebemos a sua encomenda n.º 7012345678 e já a estamos a preparar.
+Resumo da encomenda:
+1 x Auriculares Bluetooth Sony WH-CH520 — 49,99 €
+1 x Carregador USB-C 65W Anker — 39,99 €
+Total: 89,98 €
+Entrega prevista entre 20/11 e 24/11.
+Morada de entrega: Alex Doe, Rua Exemplo 1, 1000-001 Lisboa
+Ver a minha encomenda: https://www.worten.pt/minha-conta/encomendas
+Obrigado por escolher a Worten.
+--=_parcels_ai_pt01
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"><title>Recebemos a sua encomenda n.º 7012345678</title></head>
+<body>
+<p>Olá Alex,</p>
+<p>Obrigado pela sua compra! Recebemos a sua encomenda n.º 7012345678 e já a estamos a preparar.</p>
+<p>Resumo da encomenda:</p>
+<p>1 x Auriculares Bluetooth Sony WH-CH520 — 49,99 €</p>
+<p>1 x Carregador USB-C 65W Anker — 39,99 €</p>
+<p>Total: 89,98 €</p>
+<p>Entrega prevista entre 20/11 e 24/11.</p>
+<p>Morada de entrega: Alex Doe, Rua Exemplo 1, 1000-001 Lisboa</p>
+<p><a href="https://www.worten.pt/minha-conta/encomendas">Ver a minha encomenda</a></p>
+<p>Obrigado por escolher a Worten.</p>
+</body>
+</html>
+--=_parcels_ai_pt01--

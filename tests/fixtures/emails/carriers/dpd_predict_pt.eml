@@ -1,0 +1,79 @@
+Return-Path: <bounce-2300b4c221@bounces.dpd.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dpd.pt header.s=sel1 header.b=b89f7218;
+       spf=pass (google.com: domain of bounce-2300b4c221@bounces.dpd.pt
+ designates 192.0.2.9 as permitted sender) smtp.mailfrom=bounce-2300b4c221@bounces.dpd.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dpd.pt
+From: DPD Portugal <noreply@dpd.pt>
+To: Alex Doe <alex@example.com>
+Subject: A sua encomenda DPD chega hoje entre as 13:00 e as 14:00
+Date: Tue, 17 Nov 2026 08:03:00 +0000
+Message-ID: <20261117080300.ae53@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_9f8a599b7238"
+
+--b1_9f8a599b7238
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DPD
+
+A sua encomenda chega hoje
+
+Olá Alex Doe,
+
+A sua encomenda da Zalando será entregue hoje, 17/11/2026, entre as 13:00 e as 14:00.
+
+N.º da encomenda: 0534 6718 2904 12
+
+Remetente: Zalando
+
+Janela horária: 13:00 - 14:00
+
+Não vai estar em casa? Pode alterar a entrega para outro dia ou para um DPD Pickup point perto de si.
+
+Alterar entrega [https://www.dpd.com/pt/pt/mydpd/my-parcels/track?parcelNumber=05346718290412]
+
+DPD Portugal · Rua Exemplo 1, 1000-001 Lisboa · +351 210 000 000
+
+Política de privacidade [https://www.dpd.com/pt/pt/politica-de-privacidade/]
+
+--b1_9f8a599b7238
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A sua encomenda chega hoje</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#dc0032}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#dc0032;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.dpd.com/wp-content/themes/dpd/images/logo-dpd.png" alt="DPD" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>A sua encomenda chega hoje</h1>
+<p>Olá Alex Doe,</p>
+<p>A sua encomenda da <strong>Zalando</strong> será entregue hoje, 17/11/2026, entre as 13:00 e as 14:00.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">N.º da encomenda</td><td class="value">0534 6718 2904 12</td></tr>
+<tr><td class="label">Remetente</td><td class="value">Zalando</td></tr>
+<tr><td class="label">Janela horária</td><td class="value">13:00 - 14:00</td></tr>
+</table>
+<p>Não vai estar em casa? Pode alterar a entrega para outro dia ou para um DPD Pickup point perto de si.</p>
+<p style="text-align:center"><a class="button" href="https://www.dpd.com/pt/pt/mydpd/my-parcels/track?parcelNumber=05346718290412">Alterar entrega</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>DPD Portugal · Rua Exemplo 1, 1000-001 Lisboa · +351 210 000 000</p>
+<p><a href="https://www.dpd.com/pt/pt/politica-de-privacidade/">Política de privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_9f8a599b7238--

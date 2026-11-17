@@ -1,0 +1,80 @@
+Return-Path: <bounce-3f93a1cfba@bounces.dhl.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dhl.pt header.s=sel1 header.b=e0125bf6;
+       spf=pass (google.com: domain of bounce-3f93a1cfba@bounces.dhl.pt
+ designates 192.0.2.130 as permitted sender) smtp.mailfrom=bounce-3f93a1cfba@bounces.dhl.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dhl.pt
+From: DHL Express Portugal <noreply@dhl.pt>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?DHL_On_Demand_Delivery=3A_o_seu_envio_5830164723_ser?=
+ =?utf-8?q?=C3=A1_entregue_hoje?=
+Date: Tue, 17 Nov 2026 07:50:00 +0000
+Message-ID: <20261117075000.289a@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_daeed588f269"
+
+--b1_daeed588f269
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DHL
+
+O seu envio será entregue hoje
+
+Olá Alex Doe,
+
+O seu envio da Farfetch está em distribuição e será entregue hoje, terça-feira, 17 de novembro de 2026, entre as 09:00 e as 13:00.
+
+Número de guia: 5830164723
+
+Expedidor: Farfetch
+
+Janela de entrega: 09:00 - 13:00
+
+Não vai estar em casa? Com o On Demand Delivery pode escolher outro dia ou pedir a entrega num DHL Service Point.
+
+Gerir entrega [https://www.dhl.com/pt-pt/home/tracking.html?tracking-id=5830164723&submit=1]
+
+DHL Express Portugal · Rua Exemplo 1, 1000-001 Lisboa
+
+Aviso de privacidade [https://www.dhl.com/pt-pt/home/footer/privacy-notice.html]
+
+--b1_daeed588f269
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DHL On Demand Delivery</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#ffcc00}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ffcc00;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.dhl.de/content/dam/images/logo-dhl.png" alt="DHL" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>O seu envio será entregue hoje</h1>
+<p>Olá Alex Doe,</p>
+<p>O seu envio da <strong>Farfetch</strong> está em distribuição e será entregue hoje, terça-feira, 17 de novembro de 2026, entre as 09:00 e as 13:00.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Número de guia</td><td class="value">5830164723</td></tr>
+<tr><td class="label">Expedidor</td><td class="value">Farfetch</td></tr>
+<tr><td class="label">Janela de entrega</td><td class="value">09:00 - 13:00</td></tr>
+</table>
+<p>Não vai estar em casa? Com o On Demand Delivery pode escolher outro dia ou pedir a entrega num DHL Service Point.</p>
+<p style="text-align:center"><a class="button" href="https://www.dhl.com/pt-pt/home/tracking.html?tracking-id=5830164723&submit=1">Gerir entrega</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>DHL Express Portugal · Rua Exemplo 1, 1000-001 Lisboa</p>
+<p><a href="https://www.dhl.com/pt-pt/home/footer/privacy-notice.html">Aviso de privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_daeed588f269--

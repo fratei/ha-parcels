@@ -1,0 +1,114 @@
+Return-Path: <bounces+61234505@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@boutique-exemple.fr header.s=shopify2 header.b=r6Lap4JY;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234505@shopifyemail.com designates 198.51.100.15 as permitted sender) smtp.mailfrom=bounces+61234505@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=boutique-exemple.fr
+Received: from o25.ptr4120.shopifyemail.com (o25.ptr4120.shopifyemail.com. [198.51.100.15])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Wed, 18 Nov 2026 10:05:37 +0100
+From: Boutique Exemple <contact@boutique-exemple.fr>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Une_exp=C3=A9dition_de_la_commande_=233310_est_en_route?=
+Date: Wed, 18 Nov 2026 10:05:37 +0100
+Message-ID: <32719f19c8c8d_20261118100537@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Boutique Exemple
+Commande #3310
+
+Votre commande est en route
+
+Votre commande est en route. Suivez votre envoi pour conna=C3=AEtre le stat=
+ut de la livraison.
+
+Suivre votre envoi: https://www.laposte.fr/outils/suivre-vos-envois?code=3D=
+CP718304267FR
+ou Visitez notre boutique: https://boutique-exemple.fr/
+
+Num=C3=A9ro de suivi Colissimo : CP718304267FR
+
+Articles de cet envoi
+
+Carnet en papier recycl=C3=A9 A5 =C3=97 3
+Pointill=C3=A9
+Stylo plume en laiton =C3=97 1
+
+Si vous avez des questions, r=C3=A9pondez =C3=A0 cet e-mail ou contactez-no=
+us =C3=A0 contact@boutique-exemple.fr
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"fr">
+<head>
+<title>Une exp=C3=A9dition de la commande #3310 est en route</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://boutique-exemple.fr/">Boutique Exemple</a></h1></td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Command=
+e #3310</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Votre commande est en route</h2>
+<p>Votre commande est en route. Suivez votre envoi pour conna=C3=AEtre le s=
+tatut de la livraison.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://www.laposte.fr/outils/suivre-vos-envois?code=3DCP718304267FR" class=3D"=
+button__text">Suivre votre envoi</a></td></tr></table><table class=3D"link =
+secondary-action-cell"><tr><td class=3D"link__cell">ou <a href=3D"https://b=
+outique-exemple.fr/" class=3D"link__text"><span class=3D'arrow'>&rarr;</spa=
+n> Visitez notre boutique</a></td></tr></table></td></tr></table>
+<p class=3D"disclaimer__subtext">Num=C3=A9ro de suivi Colissimo : <a href=
+=3D"https://www.laposte.fr/outils/suivre-vos-envois?code=3DCP718304267FR">C=
+P718304267FR</a></p>
+<h3 class=3D"h3">Articles de cet envoi</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/c03ba2f271_compact_cropped.jpg" alt=3D"Carnet en pa=
+pier recycl=C3=A9 A5" width=3D"60" height=3D"60" class=3D"order-list__produ=
+ct-image"></td><td class=3D"order-list__product-description-cell"><span cla=
+ss=3D"order-list__item-title">Carnet en papier recycl=C3=A9 A5&nbsp;&times;=
+&nbsp;3</span><br><span class=3D"order-list__item-variant">Pointill=C3=A9</=
+span></td></tr></table></td></tr><tr class=3D"order-list__item"><td class=
+=3D"order-list__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.=
+com/s/files/1/0612/3456/7890/products/3892a0501b_compact_cropped.jpg" alt=
+=3D"Stylo plume en laiton" width=3D"60" height=3D"60" class=3D"order-list__=
+product-image"></td><td class=3D"order-list__product-description-cell"><spa=
+n class=3D"order-list__item-title">Stylo plume en laiton&nbsp;&times;&nbsp;=
+1</span></td></tr></table></td></tr></table>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">Si vous avez des questions, r=C3=A9pondez =
+=C3=A0 cet e-mail ou contactez-nous =C3=A0 <a href=3D"mailto:contact@boutiq=
+ue-exemple.fr">contact@boutique-exemple.fr</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

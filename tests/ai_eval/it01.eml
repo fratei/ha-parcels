@@ -1,0 +1,43 @@
+Return-Path: <bounces@negozio-esempio.example>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@negozio-esempio.example header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@negozio-esempio.example designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@negozio-esempio.example;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=negozio-esempio.example
+From: Negozio Esempio <ordini@negozio-esempio.example>
+To: Alex Doe <alex@example.com>
+Subject: Conferma dell'ordine n. 30482
+Date: Mon, 16 Nov 2026 10:10:00 +0100
+Message-ID: <20261116101000.it01@mail.example.com>
+MIME-Version: 1.0
+Content-Language: it
+Content-Type: multipart/alternative; boundary="=_parcels_ai_it01"
+
+--=_parcels_ai_it01
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Ciao Alex,
+grazie per il tuo ordine n. 30482 del 16/11/2026.
+Olio extravergine di oliva 1 l × 2 — 25,80 €
+Pasta di Gragnano IGP 500 g × 4 — 9,60 €
+Consegna prevista: 24-26 novembre
+Indirizzo di consegna: Alex Doe, Via Esempio 1, 00100 Roma
+Il mio ordine: https://www.negozio-esempio.example/account/ordini
+--=_parcels_ai_it01
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="it">
+<head><meta charset="utf-8"><title>Conferma dell'ordine n. 30482</title></head>
+<body>
+<p>Ciao Alex,</p>
+<p>grazie per il tuo ordine n. 30482 del 16/11/2026.</p>
+<p>Olio extravergine di oliva 1 l × 2 — 25,80 €</p>
+<p>Pasta di Gragnano IGP 500 g × 4 — 9,60 €</p>
+<p>Consegna prevista: 24-26 novembre</p>
+<p>Indirizzo di consegna: Alex Doe, Via Esempio 1, 00100 Roma</p>
+<p><a href="https://www.negozio-esempio.example/account/ordini">Il mio ordine</a></p>
+</body>
+</html>
+--=_parcels_ai_it01--

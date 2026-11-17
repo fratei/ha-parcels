@@ -1,0 +1,43 @@
+Return-Path: <bounces@boutique-exemple.example>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@boutique-exemple.example header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@boutique-exemple.example designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@boutique-exemple.example;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=boutique-exemple.example
+From: Boutique Exemple <contact@boutique-exemple.example>
+To: Alex Doe <alex@example.com>
+Subject: Votre demande de retour pour la commande BE-77812
+Date: Mon, 23 Nov 2026 09:30:00 +0100
+Message-ID: <20261123093000.fr04@mail.example.com>
+MIME-Version: 1.0
+Content-Language: fr
+Content-Type: multipart/alternative; boundary="=_parcels_ai_fr04"
+
+--=_parcels_ai_fr04
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bonjour Alex,
+Nous avons bien reçu votre demande de retour pour la commande n° BE-77812.
+Article retourné : Pull en laine mérinos
+Déposez votre colis dans un bureau de poste avant le 07/12/2026 avec l'étiquette Colissimo jointe.
+Numéro de suivi du retour : 6C98765432101
+Le remboursement sera effectué sous 10 jours après réception de l'article.
+Télécharger l'étiquette: https://www.boutique-exemple.example/retours/etiquette.pdf
+--=_parcels_ai_fr04
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Votre demande de retour pour la commande BE-77812</title></head>
+<body>
+<p>Bonjour Alex,</p>
+<p>Nous avons bien reçu votre demande de retour pour la commande n° BE-77812.</p>
+<p>Article retourné : Pull en laine mérinos</p>
+<p>Déposez votre colis dans un bureau de poste avant le 07/12/2026 avec l'étiquette Colissimo jointe.</p>
+<p>Numéro de suivi du retour : 6C98765432101</p>
+<p>Le remboursement sera effectué sous 10 jours après réception de l'article.</p>
+<p><a href="https://www.boutique-exemple.example/retours/etiquette.pdf">Télécharger l'étiquette</a></p>
+</body>
+</html>
+--=_parcels_ai_fr04--

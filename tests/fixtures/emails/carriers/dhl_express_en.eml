@@ -1,0 +1,82 @@
+Return-Path: <bounce-85dfffa792@bounces.dhl.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dhl.com header.s=sel1 header.b=0f232205;
+       spf=pass (google.com: domain of bounce-85dfffa792@bounces.dhl.com
+ designates 192.0.2.18 as permitted sender) smtp.mailfrom=bounce-85dfffa792@bounces.dhl.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dhl.com
+From: DHL Express <noreply@dhl.com>
+To: Alex Doe <alex@example.com>
+Subject: DHL On Demand Delivery: Your shipment 4716382591 is on its way
+Date: Tue, 17 Nov 2026 16:45:00 +0000
+Message-ID: <20261117164500.dfb1@mail.example.com>
+MIME-Version: 1.0
+Content-Language: en-GB
+Content-Type: multipart/alternative; boundary="b1_cf860e0cf737"
+
+--b1_cf860e0cf737
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DHL
+
+Your shipment is on its way
+
+Hello Alex Doe,
+
+Your shipment from Apple is on its way and is scheduled for delivery on Wednesday, 18 November 2026 between 09:00 and 12:00.
+
+Waybill number: 4716382591
+
+Shipper: Apple
+
+Estimated delivery: Wednesday, 18 November 2026
+
+Delivery window: 09:00 - 12:00
+
+Use On Demand Delivery to choose another day or to have your shipment delivered to a DHL Service Point.
+
+Manage delivery [https://www.dhl.com/gb-en/home/tracking.html?tracking-id=4716382591&submit=1]
+
+DHL Express · 1 Example Road, London
+
+Privacy notice [https://www.dhl.com/gb-en/home/footer/privacy-notice.html]
+
+--b1_cf860e0cf737
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DHL On Demand Delivery</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#ffcc00}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ffcc00;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.dhl.de/content/dam/images/logo-dhl.png" alt="DHL" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Your shipment is on its way</h1>
+<p>Hello Alex Doe,</p>
+<p>Your shipment from <strong>Apple</strong> is on its way and is scheduled for delivery on Wednesday, 18 November 2026 between 09:00 and 12:00.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Waybill number</td><td class="value">4716382591</td></tr>
+<tr><td class="label">Shipper</td><td class="value">Apple</td></tr>
+<tr><td class="label">Estimated delivery</td><td class="value">Wednesday, 18 November 2026</td></tr>
+<tr><td class="label">Delivery window</td><td class="value">09:00 - 12:00</td></tr>
+</table>
+<p>Use On Demand Delivery to choose another day or to have your shipment delivered to a DHL Service Point.</p>
+<p style="text-align:center"><a class="button" href="https://www.dhl.com/gb-en/home/tracking.html?tracking-id=4716382591&submit=1">Manage delivery</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>DHL Express · 1 Example Road, London</p>
+<p><a href="https://www.dhl.com/gb-en/home/footer/privacy-notice.html">Privacy notice</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_cf860e0cf737--

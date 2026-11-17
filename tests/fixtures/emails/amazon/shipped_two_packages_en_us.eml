@@ -1,0 +1,212 @@
+Return-Path: <20261117182251a1b2c3@bounces.amazon.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.com header.s=sel1amz header.b=JcvEXq9S;
+       dkim=pass header.i=@amazonses.com header.s=ug7nbtf4 header.b=gKycGuYC;
+       spf=pass (google.com: domain of 20261117182251a1b2c3@bounces.amazon.com designates 192.0.2.47 as permitted sender) smtp.mailfrom=20261117182251a1b2c3@bounces.amazon.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.com
+Received: from a48-7.smtp-out.eu-west-1.amazonses.com (a48-7.smtp-out.eu-west-1.amazonses.com. [192.0.2.47])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Tue, 17 Nov 2026 18:22:51 -0800
+From: "Amazon.com" <shipment-tracking@amazon.com>
+To: Alex Doe <alex@example.com>
+Subject: Shipped: "Hiking Boots, Waterproof, Men's Size 10..." and 1 more item
+Date: Tue, 17 Nov 2026 18:22:51 -0800
+Message-ID: <010201920261117182251.shipped-two-packages-en-us-000000@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Amazon.com
+Your Orders | Your Account
+
+Hello Alex,
+
+Your order has shipped in 2 packages.
+
+Order # 114-5938201-7362514
+
+Package 1 of 2
+
+Arriving:
+Thursday, November 19
+
+Track package: https://www.amazon.com/gp/r.html?C=3D07T7Q9X1M4K8B&K=3D1V3JZ=
+9Q7R2XW5&M=3Durn:rtn:msg:2026111607a1b2c3d4e5f601&R=3D3HXK2P8Q5N7MZ&T=3DC&U=
+=3Dhttps%3A%2F%2Fwww.amazon.com%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_284=
+8631_123456789_TE_SIMP_typ%3F_encoding%3DUTF8%26orderId%3D114-5938201-73625=
+14%26shipmentId%3DMx8RbQ2zL%26packageIndex%3D0&H=3DQZXWTGBHJKL0PQ5RS01&ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Hiking Boots, Waterproof, Men's Size 10
+Quantity: 1
+https://www.amazon.com/gp/r.html?C=3D07T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Dur=
+n:rtn:msg:2026111607a1b2c3d4e5f602&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%=
+2Fwww.amazon.com%2Fdp%2FB0C9P3L7XK%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=
+=3DQZXWTGBHJKL0PQ5RS02&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Package 2 of 2
+
+Arriving:
+Saturday, November 21
+
+Track package: https://www.amazon.com/gp/r.html?C=3D07T7Q9X1M4K8B&K=3D1V3JZ=
+9Q7R2XW5&M=3Durn:rtn:msg:2026111607a1b2c3d4e5f603&R=3D3HXK2P8Q5N7MZ&T=3DC&U=
+=3Dhttps%3A%2F%2Fwww.amazon.com%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_284=
+8631_123456789_TE_SIMP_typ%3F_encoding%3DUTF8%26orderId%3D114-5938201-73625=
+14%26shipmentId%3DNz3TcW6yH%26packageIndex%3D1&H=3DQZXWTGBHJKL0PQ5RS03&ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Merino Wool Hiking Socks, 3 Pairs
+Quantity: 1
+https://www.amazon.com/gp/r.html?C=3D07T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Dur=
+n:rtn:msg:2026111607a1b2c3d4e5f604&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%=
+2Fwww.amazon.com%2Fdp%2FB0B4K8R2WT%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=
+=3DQZXWTGBHJKL0PQ5RS04&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+View or edit order: https://www.amazon.com/gp/r.html?C=3D07T7Q9X1M4K8B&K=3D=
+1V3JZ9Q7R2XW5&M=3Durn:rtn:msg:2026111607a1b2c3d4e5f605&R=3D3HXK2P8Q5N7MZ&T=
+=3DC&U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fgp%2Fyour-account%2Forder-details%2=
+Fref%3Dpe_2848631_123456789_TE_SIMP_od%3Fie%3DUTF8%26orderID%3D114-5938201-=
+7362514&H=3DQZXWTGBHJKL0PQ5RS05&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+This email was sent from a notification-only address that cannot accept inc=
+oming email. Please do not reply to this message.
+
+Privacy Notice
+
+=C2=A9 2026 Amazon.com, Inc. or its affiliates. All rights reserved.
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"en">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DUTF-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1.=
+0">
+<title>Amazon.com</title>
+<style type=3D"text/css">
+body { margin: 0; padding: 0; background-color: #ffffff; }
+table { border-collapse: collapse; }
+.container { width: 600px; font-family: Arial, Helvetica, sans-serif; color=
+: #0f1111; }
+.h1 { font-size: 20px; font-weight: bold; margin: 16px 0 8px; }
+.h2 { font-size: 16px; font-weight: bold; margin: 16px 0 8px; color: #067d6=
+2; }
+.kv td { padding: 2px 8px 2px 0; font-size: 14px; }
+.button { background-color: #ffd814; border-radius: 20px; color: #0f1111;
+  padding: 8px 18px; text-decoration: none; display: inline-block; }
+.item td { vertical-align: top; padding: 8px 8px 8px 0; font-size: 14px; }
+.nav a { color: #0f1111; font-size: 13px; text-decoration: none; }
+.footer { font-size: 11px; color: #565959; padding-top: 24px; }
+</style>
+</head>
+<body>
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0"><tr>
+<td align=3D"center">
+<table role=3D"presentation" class=3D"container" width=3D"600" cellpadding=
+=3D"0"
+ cellspacing=3D"0">
+<tr><td class=3D"header"><a href=3D"https://www.amazon.com/gp/r.html?C=3D07=
+T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111607a1b2c3d4e5f=
+607&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2F=
+ref%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0PQ5RS07&amp;ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ"><img
+ src=3D"https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo.=
+_CB485934981_.png"
+ alt=3D"Amazon.com" width=3D"98" height=3D"30" border=3D"0"></a></td>
+<td class=3D"nav" align=3D"right"><a href=3D"https://www.amazon.com/gp/r.ht=
+ml?C=3D07T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111607a1=
+b2c3d4e5f608&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amaz=
+on.com%2Fgp%2Fcss%2Forder-history%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ=
+&amp;H=3DQZXWTGBHJKL0PQ5RS08&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Your Orders</a> | <a href=3D"https://www.amazon.com/gp/r.html?C=3D07T7Q9X1=
+M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111607a1b2c3d4e5f609&am=
+p;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fgp%2Fc=
+ss%2Fhomepage.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTG=
+BHJKL0PQ5RS09&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Your Account</a></td></tr>
+<tr><td class=3D"content" colspan=3D"2">
+<p>Hello Alex,</p>
+<h1 class=3D"h1">Your order has shipped in 2 packages.</h1>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Order #</td><td class=3D"v"><b>114-5938201-7362514</=
+b></td></tr></table>
+<h2 class=3D"h2">Package 1 of 2</h2>
+<div class=3D"eta"><span class=3D"label">Arriving:</span><br><span class=3D=
+"value"><b>Thursday, November 19</b></span></div>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.com/gp/r.ht=
+ml?C=3D07T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111607a1=
+b2c3d4e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amaz=
+on.com%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_2848631_123456789_TE_SIMP_ty=
+p%3F_encoding%3DUTF8%26orderId%3D114-5938201-7362514%26shipmentId%3DMx8RbQ2=
+zL%26packageIndex%3D0&amp;H=3DQZXWTGBHJKL0PQ5RS01&amp;ref_=3Dpe_2848631_123=
+456789_TE_SIMP_typ">Track package</a></p>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.com/gp/r.html?=
+C=3D07T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111607a1b2c=
+3d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.=
+com%2Fdp%2FB0C9P3L7XK%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBH=
+JKL0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https:=
+//m.media-amazon.com/images/I/419P3L7XL._SS142_.jpg" alt=3D"Hiking Boots, W=
+aterproof, Men&#x27;s Size 10" width=3D"90" height=3D"90" border=3D"0"></a>=
+</td><td class=3D"desc"><a href=3D"https://www.amazon.com/gp/r.html?C=3D07T=
+7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111607a1b2c3d4e5f6=
+02&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fd=
+p%2FB0C9P3L7XK%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJKL0PQ5=
+RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Hiking Boots, Waterproof,=
+ Men's Size 10</a><br><span>Quantity: 1</span></td></tr></table>
+<h2 class=3D"h2">Package 2 of 2</h2>
+<div class=3D"eta"><span class=3D"label">Arriving:</span><br><span class=3D=
+"value"><b>Saturday, November 21</b></span></div>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.com/gp/r.ht=
+ml?C=3D07T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111607a1=
+b2c3d4e5f603&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amaz=
+on.com%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_2848631_123456789_TE_SIMP_ty=
+p%3F_encoding%3DUTF8%26orderId%3D114-5938201-7362514%26shipmentId%3DNz3TcW6=
+yH%26packageIndex%3D1&amp;H=3DQZXWTGBHJKL0PQ5RS03&amp;ref_=3Dpe_2848631_123=
+456789_TE_SIMP_typ">Track package</a></p>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.com/gp/r.html?=
+C=3D07T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111607a1b2c=
+3d4e5f604&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.=
+com%2Fdp%2FB0B4K8R2WT%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBH=
+JKL0PQ5RS04&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https:=
+//m.media-amazon.com/images/I/414K8R2WL._SS142_.jpg" alt=3D"Merino Wool Hik=
+ing Socks, 3 Pairs" width=3D"90" height=3D"90" border=3D"0"></a></td><td cl=
+ass=3D"desc"><a href=3D"https://www.amazon.com/gp/r.html?C=3D07T7Q9X1M4K8B&=
+amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111607a1b2c3d4e5f604&amp;R=3D=
+3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fdp%2FB0B4K8R=
+2WT%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJKL0PQ5RS04&amp;re=
+f_=3Dpe_2848631_123456789_TE_SIMP_typ">Merino Wool Hiking Socks, 3 Pairs</a=
+><br><span>Quantity: 1</span></td></tr></table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.com/gp/r.ht=
+ml?C=3D07T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111607a1=
+b2c3d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amaz=
+on.com%2Fgp%2Fyour-account%2Forder-details%2Fref%3Dpe_2848631_123456789_TE_=
+SIMP_od%3Fie%3DUTF8%26orderID%3D114-5938201-7362514&amp;H=3DQZXWTGBHJKL0PQ5=
+RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">View or edit order</a></p>
+</td></tr>
+<tr><td class=3D"footer" colspan=3D"2">
+<p>This email was sent from a notification-only address that cannot accept =
+incoming email. Please do not reply to this message.</p>
+<p><a href=3D"https://www.amazon.com/gp/r.html?C=3D07T7Q9X1M4K8B&amp;K=3D1V=
+3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111607a1b2c3d4e5f606&amp;R=3D3HXK2P8Q5N=
+7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fgp%2Fhelp%2Fcustomer%2=
+Fdisplay.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL=
+0PQ5RS06&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Privacy Notice</a></p>
+<p>=C2=A9 2026 Amazon.com, Inc. or its affiliates. All rights reserved.</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

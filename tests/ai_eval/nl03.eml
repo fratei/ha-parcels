@@ -1,0 +1,41 @@
+Return-Path: <bounces@bol.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@bol.com header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@bol.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@bol.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=bol.com
+From: bol <nieuwsbrief@bol.com>
+To: Alex Doe <alex@example.com>
+Subject: Black Friday deals: tot 50% korting
+Date: Sat, 21 Nov 2026 08:00:00 +0100
+Message-ID: <20261121080000.nl03@mail.example.com>
+MIME-Version: 1.0
+Content-Language: nl
+Content-Type: multipart/alternative; boundary="=_parcels_ai_nl03"
+
+--=_parcels_ai_nl03
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hoi Alex,
+De Black Friday deals zijn begonnen!
+Tot 50% korting op elektronica, speelgoed en meer.
+Voor 23:59 besteld, morgen in huis.
+Bekijk alle deals: https://www.bol.com/nl/nl/m/black-friday/
+Afmelden: https://www.bol.com/nl/nl/account/nieuwsbrieven/
+--=_parcels_ai_nl03
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="nl">
+<head><meta charset="utf-8"><title>Black Friday deals: tot 50% korting</title></head>
+<body>
+<p>Hoi Alex,</p>
+<p>De Black Friday deals zijn begonnen!</p>
+<p>Tot 50% korting op elektronica, speelgoed en meer.</p>
+<p>Voor 23:59 besteld, morgen in huis.</p>
+<p><a href="https://www.bol.com/nl/nl/m/black-friday/">Bekijk alle deals</a></p>
+<p><a href="https://www.bol.com/nl/nl/account/nieuwsbrieven/">Afmelden</a></p>
+</body>
+</html>
+--=_parcels_ai_nl03--

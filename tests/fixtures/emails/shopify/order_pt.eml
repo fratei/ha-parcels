@@ -1,0 +1,144 @@
+Return-Path: <bounces+61234501@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@loja-exemplo.pt header.s=shopify2 header.b=r6Lap4JY;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234501@shopifyemail.com designates 198.51.100.11 as permitted sender) smtp.mailfrom=bounces+61234501@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=loja-exemplo.pt
+Received: from o21.ptr4120.shopifyemail.com (o21.ptr4120.shopifyemail.com. [198.51.100.11])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Mon, 16 Nov 2026 10:12:33 +0000
+From: Loja Exemplo <loja@loja-exemplo.pt>
+To: Alex Doe <alex@example.com>
+Subject: Encomenda #1001 confirmada
+Date: Mon, 16 Nov 2026 10:12:33 +0000
+Message-ID: <8710f8aa59849_20261116101233@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Loja Exemplo
+Encomenda #1001
+
+Obrigado pela sua compra!
+
+Ol=C3=A1 Alex, estamos a preparar a sua encomenda. Receber=C3=A1 uma notifi=
+ca=C3=A7=C3=A3o assim que a enviarmos.
+
+Ver a sua encomenda: https://loja-exemplo.pt/61234567890/orders/e5b3c45cb49=
+f0f6d65c1dc12a151862f/authenticate?key=3D6600e0c07ca387688f06ae08481da440
+ou Visite a nossa loja: https://loja-exemplo.pt/
+
+Resumo da encomenda
+
+Vela arom=C3=A1tica de soja, lavanda =C3=97 2
+200 g
+=E2=82=AC25,80
+Difusor de aromas em cer=C3=A2mica =C3=97 1
+=E2=82=AC19,90
+
+Subtotal =E2=82=AC45,70
+Envio =E2=82=AC3,90
+Total =E2=82=AC49,60 EUR
+
+Informa=C3=A7=C3=B5es do cliente
+
+Morada de envio
+Alex Doe
+Rua Exemplo 1
+1000-001 Lisboa
+Portugal
+
+M=C3=A9todo de envio
+Envio standard (CTT)
+
+Se tiver alguma quest=C3=A3o, responda a este e-mail ou contacte-nos atrav=
+=C3=A9s de loja@loja-exemplo.pt
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"pt">
+<head>
+<title>Encomenda #1001 confirmada</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://loja-exemplo.pt/">Loja Exemplo</a></h1></td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Encomen=
+da #1001</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Obrigado pela sua compra!</h2>
+<p>Ol=C3=A1 Alex, estamos a preparar a sua encomenda. Receber=C3=A1 uma not=
+ifica=C3=A7=C3=A3o assim que a enviarmos.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://loja-exemplo.pt/61234567890/orders/e5b3c45cb49f0f6d65c1dc12a151862f/aut=
+henticate?key=3D6600e0c07ca387688f06ae08481da440" class=3D"button__text">Ve=
+r a sua encomenda</a></td></tr></table><table class=3D"link secondary-actio=
+n-cell"><tr><td class=3D"link__cell">ou <a href=3D"https://loja-exemplo.pt/=
+" class=3D"link__text"><span class=3D'arrow'>&rarr;</span> Visite a nossa l=
+oja</a></td></tr></table></td></tr></table>
+<h3 class=3D"h3">Resumo da encomenda</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/3817064fc8_compact_cropped.jpg" alt=3D"Vela arom=C3=
+=A1tica de soja, lavanda" width=3D"60" height=3D"60" class=3D"order-list__p=
+roduct-image"></td><td class=3D"order-list__product-description-cell"><span=
+ class=3D"order-list__item-title">Vela arom=C3=A1tica de soja, lavanda&nbsp=
+;&times;&nbsp;2</span><br><span class=3D"order-list__item-variant">200 g</s=
+pan></td><td class=3D"order-list__price-cell"><p class=3D"order-list__item-=
+price">=E2=82=AC25,80</p></td></tr></table></td></tr><tr class=3D"order-lis=
+t__item"><td class=3D"order-list__item__cell"><table><tr><td><img src=3D"ht=
+tps://cdn.shopify.com/s/files/1/0612/3456/7890/products/a91ee16168_compact_=
+cropped.jpg" alt=3D"Difusor de aromas em cer=C3=A2mica" width=3D"60" height=
+=3D"60" class=3D"order-list__product-image"></td><td class=3D"order-list__p=
+roduct-description-cell"><span class=3D"order-list__item-title">Difusor de =
+aromas em cer=C3=A2mica&nbsp;&times;&nbsp;1</span></td><td class=3D"order-l=
+ist__price-cell"><p class=3D"order-list__item-price">=E2=82=AC19,90</p></td=
+></tr></table></td></tr></table>
+<table class=3D"row subtotal-lines"><tr><td><table class=3D"row"><tr class=
+=3D"subtotal-line"><td class=3D"subtotal-line__title"><p><span>Subtotal</sp=
+an></p></td><td class=3D"subtotal-line__value"><strong>=E2=82=AC45,70</stro=
+ng></td></tr><tr class=3D"subtotal-line"><td class=3D"subtotal-line__title"=
+><p><span>Envio</span></p></td><td class=3D"subtotal-line__value"><strong>=
+=E2=82=AC3,90</strong></td></tr><tr class=3D"subtotal-line"><td class=3D"su=
+btotal-line__title"><p><span>Total</span></p></td><td class=3D"subtotal-lin=
+e__value"><strong>=E2=82=AC49,60 EUR</strong></td></tr></table></td></tr></=
+table>
+<h3>Informa=C3=A7=C3=B5es do cliente</h3><table class=3D"row"><tr><td class=
+=3D"customer-info__item"><h4>Morada de envio</h4><p>Alex Doe<br>Rua Exemplo=
+ 1<br>1000-001 Lisboa<br>Portugal</p></td></tr><tr><td class=3D"customer-in=
+fo__item"><h4>M=C3=A9todo de envio</h4><p>Envio standard (CTT)</p></td></tr=
+></table>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">Se tiver alguma quest=C3=A3o, responda a e=
+ste e-mail ou contacte-nos atrav=C3=A9s de <a href=3D"mailto:loja@loja-exem=
+plo.pt">loja@loja-exemplo.pt</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

@@ -1,0 +1,47 @@
+Return-Path: <bounces@orders.temu.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@orders.temu.com header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@orders.temu.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@orders.temu.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=orders.temu.com
+From: Temu <transaction@orders.temu.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?A_sua_encomenda_est=C3=A1_a_caminho?=
+Date: Wed, 18 Nov 2026 14:30:00 +0000
+Message-ID: <20261118143000.pt03@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt
+Content-Type: multipart/alternative; boundary="=_parcels_ai_pt03"
+
+--=_parcels_ai_pt03
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Olá Alex,
+A sua encomenda PO-211-04838271537290817 está em trânsito.
+Transportadora: YunExpress
+Número de rastreio: YT2632100004567891
+Entrega estimada: 20-23 nov.
+Artigos na encomenda:
+Organizador de secretária em bambu
+Luzes LED de fada 10 m
+Acompanhar encomenda: https://www.temu.com/bgt_orders.html
+--=_parcels_ai_pt03
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"><title>A sua encomenda está a caminho</title></head>
+<body>
+<p>Olá Alex,</p>
+<p>A sua encomenda PO-211-04838271537290817 está em trânsito.</p>
+<p>Transportadora: YunExpress</p>
+<p>Número de rastreio: YT2632100004567891</p>
+<p>Entrega estimada: 20-23 nov.</p>
+<p>Artigos na encomenda:</p>
+<p>Organizador de secretária em bambu</p>
+<p>Luzes LED de fada 10 m</p>
+<p><a href="https://www.temu.com/bgt_orders.html">Acompanhar encomenda</a></p>
+</body>
+</html>
+--=_parcels_ai_pt03--

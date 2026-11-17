@@ -1,0 +1,45 @@
+Return-Path: <bounces@elcorteingles.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@elcorteingles.es header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@elcorteingles.es designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@elcorteingles.es;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=elcorteingles.es
+From: =?utf-8?q?El_Corte_Ingl=C3=A9s?= <noreply@elcorteingles.es>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Confirmaci=C3=B3n_de_tu_pedido_2511031234567?=
+Date: Mon, 16 Nov 2026 11:30:00 +0100
+Message-ID: <20261116113000.es01@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es
+Content-Type: multipart/alternative; boundary="=_parcels_ai_es01"
+
+--=_parcels_ai_es01
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hola, Alex:
+Gracias por tu compra. Hemos recibido tu pedido n.º 2511031234567.
+Productos:
+Robot aspirador Roborock Q7 — 1 ud. — 299,00 €
+Juego de 3 sartenes BRA Efficient — 1 ud. — 54,90 €
+Entrega estimada: martes, 24 de noviembre
+Dirección de entrega: Alex Doe, Calle Ejemplo 1, 28001 Madrid
+Consultar mi pedido: https://www.elcorteingles.es/mi-cuenta/pedidos/
+--=_parcels_ai_es01
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"><title>Confirmación de tu pedido 2511031234567</title></head>
+<body>
+<p>Hola, Alex:</p>
+<p>Gracias por tu compra. Hemos recibido tu pedido n.º 2511031234567.</p>
+<p>Productos:</p>
+<p>Robot aspirador Roborock Q7 — 1 ud. — 299,00 €</p>
+<p>Juego de 3 sartenes BRA Efficient — 1 ud. — 54,90 €</p>
+<p>Entrega estimada: martes, 24 de noviembre</p>
+<p>Dirección de entrega: Alex Doe, Calle Ejemplo 1, 28001 Madrid</p>
+<p><a href="https://www.elcorteingles.es/mi-cuenta/pedidos/">Consultar mi pedido</a></p>
+</body>
+</html>
+--=_parcels_ai_es01--

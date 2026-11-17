@@ -1,0 +1,76 @@
+Return-Path: <bounce-750b6cbe5e@bounces.mrw.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@mrw.pt header.s=sel1 header.b=0186357d;
+       spf=pass (google.com: domain of bounce-750b6cbe5e@bounces.mrw.pt
+ designates 192.0.2.130 as permitted sender) smtp.mailfrom=bounce-750b6cbe5e@bounces.mrw.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=mrw.pt
+From: MRW Portugal <notificacoes@mrw.pt>
+To: Alex Doe <alex@example.com>
+Subject: A sua encomenda foi entregue
+Date: Tue, 17 Nov 2026 09:50:00 +0000
+Message-ID: <20261117095000.d1fd@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_eb0e3383e7bb"
+
+--b1_eb0e3383e7bb
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+MRW
+
+Encomenda entregue
+
+Olá Alex Doe,
+
+A sua encomenda com o n.º de envio 07210/0517364 foi entregue hoje às 09:41.
+
+N.º de envio: 07210/0517364
+
+Data de entrega: 17/11/2026 09:41
+
+Recebido por: Alex Doe
+
+Obrigado por escolher a MRW.
+
+MRW Portugal · Rua Exemplo 1, 1000-001 Lisboa · +351 210 000 000
+
+Privacidade [https://www.mrw.pt/privacidade]
+
+--b1_eb0e3383e7bb
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encomenda entregue</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#e2001a}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#e2001a;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.mrw.es/img/logo-mrw.png" alt="MRW" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Encomenda entregue</h1>
+<p>Olá Alex Doe,</p>
+<p>A sua encomenda com o n.º de envio 07210/0517364 foi entregue hoje às 09:41.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">N.º de envio</td><td class="value">07210/0517364</td></tr>
+<tr><td class="label">Data de entrega</td><td class="value">17/11/2026 09:41</td></tr>
+<tr><td class="label">Recebido por</td><td class="value">Alex Doe</td></tr>
+</table>
+<p>Obrigado por escolher a MRW.</p>
+</td></tr>
+<tr><td class="foot">
+<p>MRW Portugal · Rua Exemplo 1, 1000-001 Lisboa · +351 210 000 000</p>
+<p><a href="https://www.mrw.pt/privacidade">Privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_eb0e3383e7bb--

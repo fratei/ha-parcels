@@ -1,0 +1,88 @@
+Return-Path: <bounce-71d6c63652@bounces.ctt.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ctt.pt header.s=sel1 header.b=01747a2c;
+       spf=pass (google.com: domain of bounce-71d6c63652@bounces.ctt.pt
+ designates 192.0.2.57 as permitted sender) smtp.mailfrom=bounce-71d6c63652@bounces.ctt.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ctt.pt
+From: CTT <notificacoes@ctt.pt>
+To: Alex Doe <alex@example.com>
+Subject: O seu objeto LZ731940285CN aguarda desalfandegamento
+Date: Tue, 17 Nov 2026 09:15:00 +0000
+Message-ID: <20261117091500.4f52@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_c01da25898b2"
+
+--b1_c01da25898b2
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CTT
+
+Objeto retido para desalfandegamento
+
+Olá Alex Doe,
+
+O seu objeto LZ731940285CN, proveniente da China, chegou a Portugal e aguarda desalfandegamento.
+
+Para darmos seguimento à entrega, aceda à área de desalfandegamento em ctt.pt, confirme os dados da encomenda e efetue o pagamento dos encargos.
+
+N.º do objeto: LZ731940285CN
+
+Origem: China
+
+IVA: 4,60 €
+
+Taxa de serviço: 2,15 €
+
+Total a pagar: 6,75 €
+
+Desalfandegar [https://www.ctt.pt/feapl_2/app/restricted/customs/customsList.jspx]
+
+Esta mensagem foi gerada automaticamente. Por favor, não responda.
+
+CTT – Correios de Portugal, S.A. · Avenida Exemplo 1, 1000-001 Lisboa
+
+Política de privacidade [https://www.ctt.pt/home/politica-de-privacidade] · Ajuda [https://www.ctt.pt/ajuda] · Linha CTT: +351 210 000 000
+
+--b1_c01da25898b2
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desalfandegamento</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#df0024}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#df0024;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.ctt.pt/application/themes/images/logo-ctt.png" alt="CTT" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Objeto retido para desalfandegamento</h1>
+<p>Olá Alex Doe,</p>
+<p>O seu objeto <strong>LZ731940285CN</strong>, proveniente da China, chegou a Portugal e aguarda desalfandegamento.</p>
+<p>Para darmos seguimento à entrega, aceda à área de desalfandegamento em ctt.pt, confirme os dados da encomenda e efetue o pagamento dos encargos.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">N.º do objeto</td><td class="value">LZ731940285CN</td></tr>
+<tr><td class="label">Origem</td><td class="value">China</td></tr>
+<tr><td class="label">IVA</td><td class="value">4,60 €</td></tr>
+<tr><td class="label">Taxa de serviço</td><td class="value">2,15 €</td></tr>
+<tr><td class="label">Total a pagar</td><td class="value">6,75 €</td></tr>
+</table>
+<p style="text-align:center"><a class="button" href="https://www.ctt.pt/feapl_2/app/restricted/customs/customsList.jspx">Desalfandegar</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Esta mensagem foi gerada automaticamente. Por favor, não responda.</p>
+<p>CTT – Correios de Portugal, S.A. · Avenida Exemplo 1, 1000-001 Lisboa</p>
+<p><a href="https://www.ctt.pt/home/politica-de-privacidade">Política de privacidade</a> · <a href="https://www.ctt.pt/ajuda">Ajuda</a> · Linha CTT: +351 210 000 000</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_c01da25898b2--

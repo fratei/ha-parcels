@@ -1,0 +1,45 @@
+Return-Path: <bounces@otto.de>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@otto.de header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@otto.de designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@otto.de;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=otto.de
+From: OTTO <service@otto.de>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Deine_Lieferung_verz=C3=B6gert_sich?=
+Date: Mon, 23 Nov 2026 08:15:00 +0100
+Message-ID: <20261123081500.de05@mail.example.com>
+MIME-Version: 1.0
+Content-Language: de
+Content-Type: multipart/alternative; boundary="=_parcels_ai_de05"
+
+--=_parcels_ai_de05
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hallo Alex,
+leider verzögert sich die Lieferung deiner Bestellung.
+Bestellnummer: 79345612
+Artikel: Staubsauger Bosch Serie 6
+Neuer Liefertermin: Donnerstag, 26.11.2026, zwischen 10:00 und 14:00 Uhr
+Versand mit Hermes, Sendungsnummer: 73019824561037
+Sendung verfolgen: https://www.myhermes.de/empfangen/sendungsverfolgung/sendungsinformation#73019824561037
+Wir entschuldigen uns für die Unannehmlichkeiten.
+--=_parcels_ai_de05
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="de">
+<head><meta charset="utf-8"><title>Deine Lieferung verzögert sich</title></head>
+<body>
+<p>Hallo Alex,</p>
+<p>leider verzögert sich die Lieferung deiner Bestellung.</p>
+<p>Bestellnummer: 79345612</p>
+<p>Artikel: Staubsauger Bosch Serie 6</p>
+<p>Neuer Liefertermin: Donnerstag, 26.11.2026, zwischen 10:00 und 14:00 Uhr</p>
+<p>Versand mit Hermes, Sendungsnummer: 73019824561037</p>
+<p><a href="https://www.myhermes.de/empfangen/sendungsverfolgung/sendungsinformation#73019824561037">Sendung verfolgen</a></p>
+<p>Wir entschuldigen uns für die Unannehmlichkeiten.</p>
+</body>
+</html>
+--=_parcels_ai_de05--

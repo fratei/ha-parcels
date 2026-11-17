@@ -1,0 +1,89 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "delivery_today": {
+        "default": "mdi:truck-delivery-outline",
+        "state": {
+          "on": "mdi:truck-delivery"
+        }
+      }
+    },
+    "calendar": {
+      "parcels": {
+        "default": "mdi:calendar-clock"
+      }
+    },
+    "sensor": {
+      "arriving_today": {
+        "default": "mdi:package-variant-closed"
+      },
+      "in_transit": {
+        "default": "mdi:truck-fast-outline"
+      },
+      "ready_for_pickup": {
+        "default": "mdi:store-marker-outline"
+      },
+      "delivered_today": {
+        "default": "mdi:package-variant-closed-check"
+      },
+      "ai_queue": {
+        "default": "mdi:robot-outline"
+      },
+      "last_sync": {
+        "default": "mdi:email-sync-outline"
+      }
+    },
+    "switch": {
+      "live_activities": {
+        "default": "mdi:cellphone-message",
+        "state": {
+          "off": "mdi:cellphone-message-off"
+        }
+      },
+      "daily_notification": {
+        "default": "mdi:bell-badge-outline",
+        "state": {
+          "off": "mdi:bell-off-outline"
+        }
+      }
+    }
+  },
+  "services": {
+    "add": {
+      "service": "mdi:package-variant-plus"
+    },
+    "update": {
+      "service": "mdi:package-variant-closed"
+    },
+    "mark_delivered": {
+      "service": "mdi:package-variant-closed-check"
+    },
+    "archive": {
+      "service": "mdi:archive-arrow-down-outline"
+    },
+    "undo_merge": {
+      "service": "mdi:call-split"
+    },
+    "merge": {
+      "service": "mdi:call-merge"
+    },
+    "split": {
+      "service": "mdi:call-split"
+    },
+    "refresh": {
+      "service": "mdi:refresh"
+    },
+    "reprocess": {
+      "service": "mdi:email-sync-outline"
+    },
+    "trust_sender": {
+      "service": "mdi:shield-check-outline"
+    },
+    "ignore_sender": {
+      "service": "mdi:email-remove-outline"
+    },
+    "test_live_activity": {
+      "service": "mdi:cellphone-message"
+    }
+  }
+}

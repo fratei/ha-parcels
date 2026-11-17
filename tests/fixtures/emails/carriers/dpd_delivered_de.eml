@@ -1,0 +1,93 @@
+Return-Path: <bounce-06a8182150@bounces.dpd.de>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dpd.de header.s=sel1 header.b=72f55ef4;
+       spf=pass (google.com: domain of bounce-06a8182150@bounces.dpd.de
+ designates 192.0.2.93 as permitted sender) smtp.mailfrom=bounce-06a8182150@bounces.dpd.de;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dpd.de
+From: DPD <noreply@dpd.de>
+To: Alex Doe <alex@example.com>
+Subject: Ihr DPD Paket wurde zugestellt
+Date: Tue, 17 Nov 2026 14:30:00 +0100
+Message-ID: <20261117133000.152d@mail.example.com>
+MIME-Version: 1.0
+Content-Language: de-DE
+Content-Type: multipart/alternative; boundary="b1_4bf690fbdf36"
+
+--b1_4bf690fbdf36
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+DPD
+
+Ihr Paket wurde zugestellt
+
+Hallo Alex Doe,
+
+Ihr Paket von Otto wurde am 17.11.2026 um 13:24 Uhr zugestellt.
+
+Paketnummer: 0190 6123 4567 89
+
+Absender: Otto
+
+Zustellort: Haust=C3=BCr
+
+Vielen Dank, dass Sie DPD gew=C3=A4hlt haben.
+
+Sendungsverlauf ansehen [https://tracking.dpd.de/status/de_DE/parcel/019061=
+23456789]
+
+DPD Deutschland GmbH =C2=B7 Beispielstra=C3=9Fe 1, 63741 Aschaffenburg
+
+Datenschutz [https://www.dpd.com/de/de/datenschutz/]
+
+--b1_4bf690fbdf36
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"de">
+<head>
+<meta charset=3D"utf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1">
+<title>Paket zugestellt</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-se=
+rif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{pa=
+dding:24px;background:#dc0032}.content{padding:24px}td.label{color:#666;pad=
+ding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;=
+padding:12px 24px;background:#dc0032;color:#fff;text-decoration:none;border=
+-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class=3D"wrap">
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0">
+<tr><td class=3D"head"><img src=3D"https://www.dpd.com/wp-content/themes/dp=
+d/images/logo-dpd.png" alt=3D"DPD" width=3D"120" height=3D"40"></td></tr>
+<tr><td class=3D"content">
+<h1>Ihr Paket wurde zugestellt</h1>
+<p>Hallo Alex Doe,</p>
+<p>Ihr Paket von <strong>Otto</strong> wurde am 17.11.2026 um 13:24 Uhr zug=
+estellt.</p>
+<table class=3D"details" role=3D"presentation" cellpadding=3D"0" cellspacin=
+g=3D"0">
+<tr><td class=3D"label">Paketnummer</td><td class=3D"value">0190 6123 4567 =
+89</td></tr>
+<tr><td class=3D"label">Absender</td><td class=3D"value">Otto</td></tr>
+<tr><td class=3D"label">Zustellort</td><td class=3D"value">Haust=C3=BCr</td=
+></tr>
+</table>
+<p>Vielen Dank, dass Sie DPD gew=C3=A4hlt haben.</p>
+<p style=3D"text-align:center"><a class=3D"button" href=3D"https://tracking=
+.dpd.de/status/de_DE/parcel/01906123456789">Sendungsverlauf ansehen</a></p>
+</td></tr>
+<tr><td class=3D"foot">
+<p>DPD Deutschland GmbH =C2=B7 Beispielstra=C3=9Fe 1, 63741 Aschaffenburg</=
+p>
+<p><a href=3D"https://www.dpd.com/de/de/datenschutz/">Datenschutz</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_4bf690fbdf36--

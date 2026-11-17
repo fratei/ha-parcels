@@ -63,6 +63,8 @@ DEFAULT_ITEM_NAMES: Final = False
 MESSAGE_HASH_RETENTION: Final = timedelta(days=120)
 FILTERED_RETENTION: Final = timedelta(days=14)
 REVIEW_RETENTION: Final = timedelta(days=30)
+# Parcels still open with no news for this long are archived as stale.
+STALE_ARCHIVE: Final = timedelta(days=30)
 
 
 class AIMode(StrEnum):
@@ -259,6 +261,7 @@ EVENT_DELIVERED: Final = "parcels_delivered"
 # Dispatcher signals
 SIGNAL_DATA_UPDATED: Final = "parcels_data_updated"
 SIGNAL_MAILBOX_UPDATED: Final = "parcels_mailbox_updated_{}"
+SIGNAL_AI_UPDATED: Final = "parcels_ai_updated"
 
 # Persistent notification
 PERSISTENT_NOTIFICATION_ID: Final = "parcels_today"
@@ -271,3 +274,13 @@ FRONTEND_SCRIPT: Final = "parcels-cards.js"
 ISSUE_AI_UNAVAILABLE: Final = "ai_unavailable"
 ISSUE_AI_REFUSED: Final = "ai_task_refused"
 ISSUE_PARSER_OUTDATED: Final = "parser_outdated_{}"
+
+# Why an e-mail is under "Needs review". Sender checks add their own reasons
+# (not_aligned, no_auth_header, untrusted_authserv).
+REASON_UNKNOWN_SENDER: Final = "unknown_sender"
+REASON_LOW_CONFIDENCE: Final = "low_confidence"
+REASON_UNKNOWN_FORMAT: Final = "unknown_format"
+REASON_RESTORED: Final = "restored"
+REASON_AI_SUGGESTION: Final = "ai_suggestion"
+REASON_AI_UNAVAILABLE: Final = "ai_unavailable"
+REASON_AI_REJECTED: Final = "ai_rejected"

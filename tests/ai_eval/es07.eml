@@ -1,0 +1,39 @@
+Return-Path: <bounces@pccomponentes.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@pccomponentes.com header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@pccomponentes.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@pccomponentes.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=pccomponentes.com
+From: PcComponentes <facturacion@pccomponentes.com>
+To: Alex Doe <alex@example.com>
+Subject: Tu factura FV-2026-0912345
+Date: Thu, 19 Nov 2026 12:00:00 +0100
+Message-ID: <20261119120000.es07@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es
+Content-Type: multipart/alternative; boundary="=_parcels_ai_es07"
+
+--=_parcels_ai_es07
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hola, Alex:
+Te enviamos la factura FV-2026-0912345 de tu pedido 41208833.
+Importe total: 129,90 € (IVA incluido)
+También puedes descargarla desde tu cuenta.
+Mis facturas: https://www.pccomponentes.com/usuarios/facturas
+--=_parcels_ai_es07
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"><title>Tu factura FV-2026-0912345</title></head>
+<body>
+<p>Hola, Alex:</p>
+<p>Te enviamos la factura FV-2026-0912345 de tu pedido 41208833.</p>
+<p>Importe total: 129,90 € (IVA incluido)</p>
+<p>También puedes descargarla desde tu cuenta.</p>
+<p><a href="https://www.pccomponentes.com/usuarios/facturas">Mis facturas</a></p>
+</body>
+</html>
+--=_parcels_ai_es07--

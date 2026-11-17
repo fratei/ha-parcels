@@ -1,0 +1,143 @@
+Return-Path: <bounces+61234506@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@negozio-esempio.it header.s=shopify2 header.b=fAfAfAfA;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234506@shopifyemail.com designates 198.51.100.16 as permitted sender) smtp.mailfrom=bounces+61234506@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=negozio-esempio.it
+Received: from o26.ptr4120.shopifyemail.com (o26.ptr4120.shopifyemail.com. [198.51.100.16])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Tue, 17 Nov 2026 08:33:12 +0100
+From: Negozio Esempio <info@negozio-esempio.it>
+To: Alex Doe <alex@example.com>
+Subject: Ordine #4521 confermato
+Date: Tue, 17 Nov 2026 08:33:12 +0100
+Message-ID: <3b19b36d10842_20261117083312@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Negozio Esempio
+Ordine #4521
+
+Grazie per il tuo acquisto!
+
+Ciao Alex, stiamo preparando il tuo ordine per la spedizione. Ti avviseremo=
+ non appena partir=C3=A0.
+
+Visualizza il tuo ordine: https://negozio-esempio.it/61234567890/orders/ea8=
+88187af9df90ffa3edbcd5e8e1ba4/authenticate?key=3De92c702813614aab46f557264b=
+602ded
+o Visita il nostro negozio: https://negozio-esempio.it/
+
+Riepilogo ordine
+
+Caff=C3=A8 in grani, miscela classica 1 kg =C3=97 1
+=E2=82=AC24,90
+Moka in alluminio, 6 tazze =C3=97 1
+=E2=82=AC32,00
+
+Subtotale =E2=82=AC56,90
+Spedizione =E2=82=AC6,90
+Totale =E2=82=AC63,80 EUR
+
+Informazioni cliente
+
+Indirizzo di spedizione
+Alex Doe
+Via Esempio 1
+20121 Milano
+Italia
+
+Metodo di spedizione
+Corriere espresso (UPS)
+
+Per qualsiasi domanda, rispondi a questa email o contattaci all'indirizzo i=
+nfo@negozio-esempio.it
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"it">
+<head>
+<title>Ordine #4521 confermato</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://negozio-esempio.it/">Negozio Esempio</a></h1></td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Ordine =
+#4521</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Grazie per il tuo acquisto!</h2>
+<p>Ciao Alex, stiamo preparando il tuo ordine per la spedizione. Ti avviser=
+emo non appena partir=C3=A0.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://negozio-esempio.it/61234567890/orders/ea888187af9df90ffa3edbcd5e8e1ba4/=
+authenticate?key=3De92c702813614aab46f557264b602ded" class=3D"button__text"=
+>Visualizza il tuo ordine</a></td></tr></table><table class=3D"link seconda=
+ry-action-cell"><tr><td class=3D"link__cell">o <a href=3D"https://negozio-e=
+sempio.it/" class=3D"link__text"><span class=3D'arrow'>&rarr;</span> Visita=
+ il nostro negozio</a></td></tr></table></td></tr></table>
+<h3 class=3D"h3">Riepilogo ordine</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/d3d0b2d956_compact_cropped.jpg" alt=3D"Caff=C3=A8 i=
+n grani, miscela classica 1 kg" width=3D"60" height=3D"60" class=3D"order-l=
+ist__product-image"></td><td class=3D"order-list__product-description-cell"=
+><span class=3D"order-list__item-title">Caff=C3=A8 in grani, miscela classi=
+ca 1 kg&nbsp;&times;&nbsp;1</span></td><td class=3D"order-list__price-cell"=
+><p class=3D"order-list__item-price">=E2=82=AC24,90</p></td></tr></table></=
+td></tr><tr class=3D"order-list__item"><td class=3D"order-list__item__cell"=
+><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/789=
+0/products/d210cd885d_compact_cropped.jpg" alt=3D"Moka in alluminio, 6 tazz=
+e" width=3D"60" height=3D"60" class=3D"order-list__product-image"></td><td =
+class=3D"order-list__product-description-cell"><span class=3D"order-list__i=
+tem-title">Moka in alluminio, 6 tazze&nbsp;&times;&nbsp;1</span></td><td cl=
+ass=3D"order-list__price-cell"><p class=3D"order-list__item-price">=E2=82=
+=AC32,00</p></td></tr></table></td></tr></table>
+<table class=3D"row subtotal-lines"><tr><td><table class=3D"row"><tr class=
+=3D"subtotal-line"><td class=3D"subtotal-line__title"><p><span>Subtotale</s=
+pan></p></td><td class=3D"subtotal-line__value"><strong>=E2=82=AC56,90</str=
+ong></td></tr><tr class=3D"subtotal-line"><td class=3D"subtotal-line__title=
+"><p><span>Spedizione</span></p></td><td class=3D"subtotal-line__value"><st=
+rong>=E2=82=AC6,90</strong></td></tr><tr class=3D"subtotal-line"><td class=
+=3D"subtotal-line__title"><p><span>Totale</span></p></td><td class=3D"subto=
+tal-line__value"><strong>=E2=82=AC63,80 EUR</strong></td></tr></table></td>=
+</tr></table>
+<h3>Informazioni cliente</h3><table class=3D"row"><tr><td class=3D"customer=
+-info__item"><h4>Indirizzo di spedizione</h4><p>Alex Doe<br>Via Esempio 1<b=
+r>20121 Milano<br>Italia</p></td></tr><tr><td class=3D"customer-info__item"=
+><h4>Metodo di spedizione</h4><p>Corriere espresso (UPS)</p></td></tr></tab=
+le>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">Per qualsiasi domanda, rispondi a questa e=
+mail o contattaci all'indirizzo <a href=3D"mailto:info@negozio-esempio.it">=
+info@negozio-esempio.it</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

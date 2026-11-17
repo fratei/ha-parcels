@@ -1,0 +1,45 @@
+Return-Path: <bounces@service-mail.zalando.de>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@service-mail.zalando.de header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@service-mail.zalando.de designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@service-mail.zalando.de;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=service-mail.zalando.de
+From: Zalando <info@service-mail.zalando.de>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Danke_f=C3=BCr_deine_Bestellung?=
+Date: Tue, 17 Nov 2026 13:40:00 +0100
+Message-ID: <20261117134000.de01@mail.example.com>
+MIME-Version: 1.0
+Content-Language: de
+Content-Type: multipart/alternative; boundary="=_parcels_ai_de01"
+
+--=_parcels_ai_de01
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hallo Alex,
+vielen Dank für deine Bestellung bei Zalando.
+Bestellnummer: 10105012345678
+Nike Air Max 90 – Größe 43 – 149,99 €
+Levi's 501 Jeans – W32/L32 – 109,95 €
+Voraussichtliche Lieferung: Mo., 23.11. – Di., 24.11.
+Lieferadresse: Alex Doe, Beispielstraße 1, 10115 Berlin
+Bestellung ansehen: https://www.zalando.de/myaccount/orders/
+--=_parcels_ai_de01
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="de">
+<head><meta charset="utf-8"><title>Danke für deine Bestellung</title></head>
+<body>
+<p>Hallo Alex,</p>
+<p>vielen Dank für deine Bestellung bei Zalando.</p>
+<p>Bestellnummer: 10105012345678</p>
+<p>Nike Air Max 90 – Größe 43 – 149,99 €</p>
+<p>Levi's 501 Jeans – W32/L32 – 109,95 €</p>
+<p>Voraussichtliche Lieferung: Mo., 23.11. – Di., 24.11.</p>
+<p>Lieferadresse: Alex Doe, Beispielstraße 1, 10115 Berlin</p>
+<p><a href="https://www.zalando.de/myaccount/orders/">Bestellung ansehen</a></p>
+</body>
+</html>
+--=_parcels_ai_de01--

@@ -1,0 +1,68 @@
+Return-Path: <bounce-b37440792b@bounces.paack.co>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paack.co header.s=sel1 header.b=0a9921ba;
+       spf=pass (google.com: domain of bounce-b37440792b@bounces.paack.co
+ designates 192.0.2.148 as permitted sender) smtp.mailfrom=bounce-b37440792b@bounces.paack.co;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paack.co
+From: Paack <no-reply@paack.co>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Tu_pedido_de_Zara_llegar=C3=A1_hoy?=
+Date: Tue, 17 Nov 2026 09:30:00 +0100
+Message-ID: <20261117083000.5e8c@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_92bb25a64f2a"
+
+--b1_92bb25a64f2a
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Paack
+
+¡Hoy es el día!
+
+Hola Alex,
+
+Tu pedido de Zara llegará hoy entre las 14:00 y las 16:00.
+
+Nuestro repartidor te avisará cuando esté cerca. Si no vas a estar en casa, puedes cambiar la entrega desde el enlace de seguimiento.
+
+Seguir mi pedido [https://track.paack.co/?tracking_number=PK7311804926&lang=es]
+
+Paack Logistics · Calle Ejemplo 1, 08001 Barcelona
+
+Política de privacidad [https://www.paack.co/privacy-policy]
+
+--b1_92bb25a64f2a
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tu pedido llega hoy</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#2b2bff}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#2b2bff;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://assets.paack.co/email/logo-paack.png" alt="Paack" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>¡Hoy es el día!</h1>
+<p>Hola Alex,</p>
+<p>Tu pedido de <strong>Zara</strong> llegará hoy entre las 14:00 y las 16:00.</p>
+<p>Nuestro repartidor te avisará cuando esté cerca. Si no vas a estar en casa, puedes cambiar la entrega desde el enlace de seguimiento.</p>
+<p style="text-align:center"><a class="button" href="https://track.paack.co/?tracking_number=PK7311804926&lang=es">Seguir mi pedido</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Paack Logistics · Calle Ejemplo 1, 08001 Barcelona</p>
+<p><a href="https://www.paack.co/privacy-policy">Política de privacidad</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_92bb25a64f2a--

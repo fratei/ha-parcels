@@ -1,0 +1,43 @@
+Return-Path: <bounces@tnt.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@tnt.com header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@tnt.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@tnt.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=tnt.com
+From: TNT <noreply@tnt.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?N=C3=A3o_conseguimos_entregar_a_sua_remessa?=
+Date: Thu, 19 Nov 2026 16:20:00 +0000
+Message-ID: <20261119162000.pt06@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt
+Content-Type: multipart/alternative; boundary="=_parcels_ai_pt06"
+
+--=_parcels_ai_pt06
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Olá Alex,
+Tentámos entregar hoje a sua remessa, mas não estava ninguém em casa.
+Número da remessa: 418327650
+Remetente: Jogos Exemplo, Lda.
+Nova tentativa: amanhã, 20/11, entre as 14h e as 18h.
+Se preferir, pode alterar a entrega no nosso site.
+Gerir a entrega: https://www.tnt.com/express/pt_pt/site/shipping-tools/tracking.html?searchType=con&cons=418327650
+--=_parcels_ai_pt06
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"><title>Não conseguimos entregar a sua remessa</title></head>
+<body>
+<p>Olá Alex,</p>
+<p>Tentámos entregar hoje a sua remessa, mas não estava ninguém em casa.</p>
+<p>Número da remessa: 418327650</p>
+<p>Remetente: Jogos Exemplo, Lda.</p>
+<p>Nova tentativa: amanhã, 20/11, entre as 14h e as 18h.</p>
+<p>Se preferir, pode alterar a entrega no nosso site.</p>
+<p><a href="https://www.tnt.com/express/pt_pt/site/shipping-tools/tracking.html?searchType=con&amp;cons=418327650">Gerir a entrega</a></p>
+</body>
+</html>
+--=_parcels_ai_pt06--

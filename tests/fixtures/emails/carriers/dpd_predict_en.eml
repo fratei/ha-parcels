@@ -1,0 +1,79 @@
+Return-Path: <bounce-8f7a9c8cb7@bounces.dpd.co.uk>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dpd.co.uk header.s=sel1 header.b=918e3ce3;
+       spf=pass (google.com: domain of bounce-8f7a9c8cb7@bounces.dpd.co.uk
+ designates 192.0.2.18 as permitted sender) smtp.mailfrom=bounce-8f7a9c8cb7@bounces.dpd.co.uk;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dpd.co.uk
+From: DPD <noreply@dpd.co.uk>
+To: Alex Doe <alex@example.com>
+Subject: Your parcel from ASOS will be delivered tomorrow
+Date: Tue, 17 Nov 2026 19:05:00 +0000
+Message-ID: <20261117190500.d948@mail.example.com>
+MIME-Version: 1.0
+Content-Language: en-GB
+Content-Type: multipart/alternative; boundary="b1_49b977bc879c"
+
+--b1_49b977bc879c
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DPD
+
+Your parcel is on its way
+
+Hi Alex,
+
+Good news! Your parcel from ASOS will be delivered tomorrow, Wednesday 18 November, between 10:24 and 11:24.
+
+Parcel number: 1550 2468 0135 79
+
+Delivery date: Wednesday, 18 November 2026
+
+Delivery window: 10:24 - 11:24
+
+Not going to be in? You can change your delivery to another day, leave it with a neighbour or send it to a DPD Pickup shop.
+
+Track your parcel [https://track.dpd.co.uk/parcels/15502468013579]
+
+DPD Group UK Ltd · 1 Example Road, London
+
+Privacy policy [https://www.dpd.co.uk/privacy-policy]
+
+--b1_49b977bc879c
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your parcel is on its way</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#dc0032}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#dc0032;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.dpd.com/wp-content/themes/dpd/images/logo-dpd.png" alt="DPD" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Your parcel is on its way</h1>
+<p>Hi Alex,</p>
+<p>Good news! Your parcel from <strong>ASOS</strong> will be delivered tomorrow, Wednesday 18 November, between 10:24 and 11:24.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Parcel number</td><td class="value">1550 2468 0135 79</td></tr>
+<tr><td class="label">Delivery date</td><td class="value">Wednesday, 18 November 2026</td></tr>
+<tr><td class="label">Delivery window</td><td class="value">10:24 - 11:24</td></tr>
+</table>
+<p>Not going to be in? You can change your delivery to another day, leave it with a neighbour or send it to a DPD Pickup shop.</p>
+<p style="text-align:center"><a class="button" href="https://track.dpd.co.uk/parcels/15502468013579">Track your parcel</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>DPD Group UK Ltd · 1 Example Road, London</p>
+<p><a href="https://www.dpd.co.uk/privacy-policy">Privacy policy</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_49b977bc879c--

@@ -1,0 +1,47 @@
+Return-Path: <bounces@fnac.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@fnac.pt header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@fnac.pt designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@fnac.pt;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=fnac.pt
+From: Fnac <noreply@fnac.pt>
+To: Alex Doe <alex@example.com>
+Subject: A sua encomenda 4821375 foi enviada
+Date: Wed, 18 Nov 2026 09:05:00 +0000
+Message-ID: <20261118090500.pt02@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt
+Content-Type: multipart/alternative; boundary="=_parcels_ai_pt02"
+
+--=_parcels_ai_pt02
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Olá Alex,
+Boas notícias: a sua encomenda já saiu do nosso armazém.
+N.º da encomenda: 4821375
+Artigo: Coluna portátil JBL Flip 6
+Transportadora: CTT
+Número de seguimento: RR482137560PT
+A sua encomenda chega entre quinta e sábado.
+Seguir a minha encomenda: https://www.ctt.pt/feapl_2/app/open/objectSearch/objectSearch.jspx?objects=RR482137560PT
+Obrigado por comprar na Fnac.
+--=_parcels_ai_pt02
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"><title>A sua encomenda 4821375 foi enviada</title></head>
+<body>
+<p>Olá Alex,</p>
+<p>Boas notícias: a sua encomenda já saiu do nosso armazém.</p>
+<p>N.º da encomenda: 4821375</p>
+<p>Artigo: Coluna portátil JBL Flip 6</p>
+<p>Transportadora: CTT</p>
+<p>Número de seguimento: RR482137560PT</p>
+<p>A sua encomenda chega entre quinta e sábado.</p>
+<p><a href="https://www.ctt.pt/feapl_2/app/open/objectSearch/objectSearch.jspx?objects=RR482137560PT">Seguir a minha encomenda</a></p>
+<p>Obrigado por comprar na Fnac.</p>
+</body>
+</html>
+--=_parcels_ai_pt02--

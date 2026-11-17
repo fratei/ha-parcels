@@ -1,0 +1,79 @@
+Return-Path: <bounce-8e02b0aa6d@bounces.dhl.de>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dhl.de header.s=sel1 header.b=93961738;
+       spf=pass (google.com: domain of bounce-8e02b0aa6d@bounces.dhl.de
+ designates 192.0.2.194 as permitted sender) smtp.mailfrom=bounce-8e02b0aa6d@bounces.dhl.de;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dhl.de
+From: DHL Paket <noreply@dhl.de>
+To: Alex Doe <alex@example.com>
+Subject: Ihre DHL Sendung kommt heute
+Date: Tue, 17 Nov 2026 07:12:00 +0100
+Message-ID: <20261117061200.8d45@mail.example.com>
+MIME-Version: 1.0
+Content-Language: de-DE
+Content-Type: multipart/alternative; boundary="b1_ff0e06f9ff67"
+
+--b1_ff0e06f9ff67
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DHL
+
+Ihre Sendung kommt heute
+
+Hallo Alex Doe,
+
+Ihre Sendung von Zalando kommt heute.
+
+Sendungsnummer: 00340434618273591202
+
+Absender: Zalando
+
+Zeitfenster: 10:30 - 13:30 Uhr
+
+Sie sind nicht zu Hause? Wählen Sie einen Ablageort oder einen Nachbarn, oder lassen Sie die Sendung an eine Packstation oder Filiale umleiten.
+
+Sendung verfolgen [https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=00340434618273591202]
+
+Deutsche Post AG · Beispielstraße 1, 53113 Bonn
+
+Datenschutz [https://www.dhl.de/de/toolbar/footer/datenschutz.html] · Diese E-Mail wurde automatisch erstellt.
+
+--b1_ff0e06f9ff67
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ihre Sendung kommt heute</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#ffcc00}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ffcc00;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.dhl.de/content/dam/images/logo-dhl.png" alt="DHL" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Ihre Sendung kommt heute</h1>
+<p>Hallo Alex Doe,</p>
+<p>Ihre Sendung von <strong>Zalando</strong> kommt heute.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Sendungsnummer</td><td class="value">00340434618273591202</td></tr>
+<tr><td class="label">Absender</td><td class="value">Zalando</td></tr>
+<tr><td class="label">Zeitfenster</td><td class="value">10:30 - 13:30 Uhr</td></tr>
+</table>
+<p>Sie sind nicht zu Hause? Wählen Sie einen Ablageort oder einen Nachbarn, oder lassen Sie die Sendung an eine Packstation oder Filiale umleiten.</p>
+<p style="text-align:center"><a class="button" href="https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=00340434618273591202">Sendung verfolgen</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Deutsche Post AG · Beispielstraße 1, 53113 Bonn</p>
+<p><a href="https://www.dhl.de/de/toolbar/footer/datenschutz.html">Datenschutz</a> · Diese E-Mail wurde automatisch erstellt.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_ff0e06f9ff67--

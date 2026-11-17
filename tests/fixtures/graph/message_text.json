@@ -1,0 +1,17 @@
+{
+  "id": "AAMkAGExampleMessageId0002AAA=",
+  "internetMessageId": "<20261117101500.1001@mail.example-store.example>",
+  "subject": "Your order #1001 is on its way",
+  "receivedDateTime": "2026-11-17T10:15:00Z",
+  "from": {
+    "emailAddress": {
+      "name": "Example Store",
+      "address": "orders@example-store.example"
+    }
+  },
+  "replyTo": [],
+  "body": {
+    "contentType": "text",
+    "content": "Hi Alex,\r\n\r\n\r\n\r\nYour order #1001 is on its way.\r\nTracking number: 1Z999AA10123456784\r\nTrack it here: https://www.ups.com/track?tracknum=1Z999AA10123456784.\r\n\r\nExample Store"
+  }
+}

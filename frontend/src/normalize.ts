@@ -1,0 +1,261 @@
+/**
+ * Defensive conversion of WebSocket payloads into the typed data contract, so a
+ * missing or malformed field can never break rendering.
+ */
+import { isYmd, localDateOf } from "./dates.ts";
+import type {
+  AiMode,
+  AutoMerged,
+  FilteredItem,
+  OrderInfo,
+  OriginInfo,
+  Parcel,
+  ParcelDetails,
+  ParcelSource,
+  ParcelStatus,
+  ReviewItem,
+  Settings,
+  Snapshot,
+  Suggestion,
+  TimelineEntry,
+} from "./types.ts";
+
+type Obj = Record<string, unknown>;
+
+function isObj(value: unknown): value is Obj {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function str(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function strs(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function id(value: unknown): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+function list<T>(value: unknown, convert: (item: unknown) => T | null): T[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const result: T[] = [];
+  for (const item of value) {
+    const converted = convert(item);
+    if (converted !== null) {
+      result.push(converted);
+    }
+  }
+  return result;
+}
+
+function source(value: unknown): ParcelSource {
+  return value === "ai" || value === "manual" || value === "seventeentrack" ? value : "parser";
+}
+
+function autoMerged(value: unknown): AutoMerged | null {
+  if (!isObj(value) || !id(value.origin)) {
+    return null;
+  }
+  return { origin: text(value.origin), at: text(value.at), reason: text(value.reason) };
+}
+
+export function normalizeParcel(raw: unknown): Parcel | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  const parcelId = id(raw.id);
+  if (!parcelId) {
+    return null;
+  }
+  return {
+    id: parcelId,
+    merchant: str(raw.merchant),
+    carrier: str(raw.carrier),
+    carrier_name: str(raw.carrier_name),
+    tracking_number: str(raw.tracking_number),
+    tracking_url: str(raw.tracking_url),
+    // Unknown statuses are kept as sent; the cards treat them like an active status.
+    status: text(raw.status) as ParcelStatus,
+    status_time: str(raw.status_time),
+    eta_start: str(raw.eta_start),
+    eta_end: str(raw.eta_end),
+    window_start: str(raw.window_start),
+    window_end: str(raw.window_end),
+    delivered_at: str(raw.delivered_at),
+    pickup_point: str(raw.pickup_point),
+    pickup_code: str(raw.pickup_code),
+    order_numbers: strs(raw.order_numbers),
+    items: strs(raw.items),
+    private: raw.private === true,
+    owners: strs(raw.owners),
+    source: source(raw.source),
+    ai: raw.ai === true,
+    auto_merged: autoMerged(raw.auto_merged),
+    provisional: raw.provisional === true,
+    archived: raw.archived === true,
+    origins: strs(raw.origins),
+    restricted: raw.restricted === true,
+  };
+}
+
+export function normalizeSuggestion(raw: unknown): Suggestion | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  return {
+    kind: text(raw.kind),
+    merchant: str(raw.merchant),
+    carrier: str(raw.carrier),
+    tracking_numbers: strs(raw.tracking_numbers),
+    order_numbers: strs(raw.order_numbers),
+    eta_start: str(raw.eta_start),
+    eta_end: str(raw.eta_end),
+    window_start: str(raw.window_start),
+    window_end: str(raw.window_end),
+    pickup_point: str(raw.pickup_point),
+    pickup_code: str(raw.pickup_code),
+    items: strs(raw.items),
+  };
+}
+
+export function normalizeReviewItem(raw: unknown): ReviewItem | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  const itemId = id(raw.id);
+  if (!itemId) {
+    return null;
+  }
+  return {
+    id: itemId,
+    created: text(raw.created),
+    received: str(raw.received),
+    sender: text(raw.sender),
+    sender_domain: text(raw.sender_domain),
+    subject: text(raw.subject),
+    mailbox_owner: str(raw.mailbox_owner),
+    reason: text(raw.reason),
+    authenticated: raw.authenticated === true,
+    source: raw.source === "ai" ? "ai" : "parser",
+    suggestion: normalizeSuggestion(raw.suggestion),
+  };
+}
+
+export function normalizeFilteredItem(raw: unknown): FilteredItem | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  const itemId = id(raw.id);
+  if (!itemId) {
+    return null;
+  }
+  return {
+    id: itemId,
+    created: text(raw.created),
+    received: str(raw.received),
+    sender: text(raw.sender),
+    sender_domain: text(raw.sender_domain),
+    subject: text(raw.subject),
+  };
+}
+
+function aiMode(value: unknown): AiMode {
+  return value === "suggest" || value === "auto" ? value : "off";
+}
+
+/**
+ * `now` is only used when the server didn't send `today` (it always should):
+ * then today is the current date in the server's time zone.
+ */
+export function normalizeSettings(raw: unknown, now: number = Date.now()): Settings {
+  const settings = isObj(raw) ? raw : {};
+  const timeZone = id(settings.time_zone) ?? "UTC";
+  const today = isYmd(settings.today)
+    ? settings.today
+    : (localDateOf(new Date(now).toISOString(), timeZone) ?? "1970-01-01");
+  return {
+    user_is_admin: settings.user_is_admin === true,
+    ai_enabled: settings.ai_enabled === true,
+    ai_mode: aiMode(settings.ai_mode),
+    dashboard_url: text(settings.dashboard_url),
+    seventeentrack: settings.seventeentrack === true,
+    time_zone: timeZone,
+    today,
+  };
+}
+
+export function normalizeSnapshot(raw: unknown, now: number = Date.now()): Snapshot {
+  const snapshot = isObj(raw) ? raw : {};
+  return {
+    parcels: list(snapshot.parcels, normalizeParcel),
+    review: list(snapshot.review, normalizeReviewItem),
+    filtered: list(snapshot.filtered, normalizeFilteredItem),
+    settings: normalizeSettings(snapshot.settings, now),
+  };
+}
+
+function timelineEntry(raw: unknown): TimelineEntry | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  return {
+    time: text(raw.time),
+    status: text(raw.status) as ParcelStatus,
+    source: source(raw.source),
+    label: text(raw.label),
+  };
+}
+
+function orderInfo(raw: unknown): OrderInfo | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  return {
+    id: text(raw.id),
+    merchant: str(raw.merchant),
+    number: text(raw.number),
+    placed_at: str(raw.placed_at),
+    parcel_ids: strs(raw.parcel_ids),
+  };
+}
+
+function originInfo(raw: unknown): OriginInfo | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  const originId = id(raw.id);
+  if (!originId) {
+    return null;
+  }
+  return {
+    id: originId,
+    label: text(raw.label),
+    source: source(raw.source),
+    time: str(raw.time),
+  };
+}
+
+/** Converts a `parcels/get` result; null when it has no usable parcel. */
+export function normalizeDetails(raw: unknown): ParcelDetails | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  const parcel = normalizeParcel(raw.parcel);
+  if (!parcel) {
+    return null;
+  }
+  return {
+    parcel,
+    timeline: list(raw.timeline, timelineEntry),
+    orders: list(raw.orders, orderInfo),
+    origins: list(raw.origins, originInfo),
+  };
+}

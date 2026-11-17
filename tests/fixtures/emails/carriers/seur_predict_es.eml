@@ -1,0 +1,85 @@
+Return-Path: <bounce-a9333218eb@bounces.seur.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@seur.com header.s=sel1 header.b=7512823b;
+       spf=pass (google.com: domain of bounce-a9333218eb@bounces.seur.com
+ designates 192.0.2.15 as permitted sender) smtp.mailfrom=bounce-a9333218eb@bounces.seur.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=seur.com
+From: SEUR <notificaciones@seur.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Tu_env=C3=ADo_de_PcComponentes_llega_hoy?=
+Date: Tue, 17 Nov 2026 08:12:00 +0100
+Message-ID: <20261117071200.7249@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_e1b1cd93016e"
+
+--b1_e1b1cd93016e
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SEUR
+
+¡Tu envío llega hoy!
+
+Hola Alex Doe,
+
+Tu envío de PcComponentes llegará hoy entre las 10:00 y las 14:00.
+
+Nº de expedición: 0628174539
+
+Remitente: PcComponentes
+
+Franja horaria: 10:00 - 14:00
+
+Dirección de entrega: Calle Ejemplo 1, 28001 Madrid
+
+¿No vas a estar en casa? Puedes cambiar el día o la dirección de entrega, o elegir un punto Pickup cercano.
+
+Gestionar mi envío [https://www.seur.com/livetracking/?segOnlineIdentificador=0628174539&segOnlineIdioma=es]
+
+SEUR, S.A. · Calle Ejemplo 1, 28001 Madrid
+
+Este correo se ha enviado de forma automática; por favor, no respondas.
+
+Política de privacidad [https://www.seur.com/es/politica-de-privacidad] · Ayuda [https://www.seur.com/es/ayuda] · Atención al cliente: +34 900 000 000
+
+--b1_e1b1cd93016e
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tu envío llega hoy</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#00a3d8}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#00a3d8;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.seur.com/img/logo-seur.png" alt="SEUR" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>¡Tu envío llega hoy!</h1>
+<p>Hola Alex Doe,</p>
+<p>Tu envío de <strong>PcComponentes</strong> llegará hoy entre las 10:00 y las 14:00.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Nº de expedición</td><td class="value">0628174539</td></tr>
+<tr><td class="label">Remitente</td><td class="value">PcComponentes</td></tr>
+<tr><td class="label">Franja horaria</td><td class="value">10:00 - 14:00</td></tr>
+<tr><td class="label">Dirección de entrega</td><td class="value">Calle Ejemplo 1, 28001 Madrid</td></tr>
+</table>
+<p>¿No vas a estar en casa? Puedes cambiar el día o la dirección de entrega, o elegir un punto Pickup cercano.</p>
+<p style="text-align:center"><a class="button" href="https://www.seur.com/livetracking/?segOnlineIdentificador=0628174539&segOnlineIdioma=es">Gestionar mi envío</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>SEUR, S.A. · Calle Ejemplo 1, 28001 Madrid</p>
+<p>Este correo se ha enviado de forma automática; por favor, no respondas.</p>
+<p><a href="https://www.seur.com/es/politica-de-privacidad">Política de privacidad</a> · <a href="https://www.seur.com/es/ayuda">Ayuda</a> · Atención al cliente: +34 900 000 000</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_e1b1cd93016e--

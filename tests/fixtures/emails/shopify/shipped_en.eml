@@ -1,0 +1,120 @@
+Return-Path: <bounces+61234503@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@example-outfitters.co.uk header.s=shopify2 header.b=kyCQes6K;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234503@shopifyemail.com designates 198.51.100.13 as permitted sender) smtp.mailfrom=bounces+61234503@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=example-outfitters.co.uk
+Received: from o23.ptr4120.shopifyemail.com (o23.ptr4120.shopifyemail.com. [198.51.100.13])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Mon, 16 Nov 2026 14:02:55 +0000
+From: Example Outfitters <hello@example-outfitters.co.uk>
+To: Alex Doe <alex@example.com>
+Subject: A shipment from order #1052 is on the way
+Date: Mon, 16 Nov 2026 14:02:55 +0000
+Message-ID: <f11f011d5d516_20261116140255@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Example Outfitters
+Order #1052
+
+Your order is on the way
+
+Your order is on the way. Track your shipment to see the delivery status.
+
+Track your shipment: https://www.ups.com/track?loc=3Den_GB&tracknum=3D1Z999=
+AA10123456784
+or Visit our store: https://example-outfitters.co.uk/
+
+UPS tracking number: 1Z999AA10123456784
+
+Estimated delivery: Thursday, 19 November
+
+Items in this shipment
+
+Merino Wool Beanie =C3=97 1
+Charcoal
+Waxed Cotton Jacket =C3=97 1
+M / Olive
+
+If you have any questions, reply to this email or contact us at hello@examp=
+le-outfitters.co.uk
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"en">
+<head>
+<title>A shipment from order #1052 is on the way</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://example-outfitters.co.uk/">Example Outfitters</a></h1></=
+td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Order #=
+1052</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Your order is on the way</h2>
+<p>Your order is on the way. Track your shipment to see the delivery status=
+.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://www.ups.com/track?loc=3Den_GB&amp;tracknum=3D1Z999AA10123456784" class=
+=3D"button__text">Track your shipment</a></td></tr></table><table class=3D"=
+link secondary-action-cell"><tr><td class=3D"link__cell">or <a href=3D"http=
+s://example-outfitters.co.uk/" class=3D"link__text"><span class=3D'arrow'>&=
+rarr;</span> Visit our store</a></td></tr></table></td></tr></table>
+<p class=3D"disclaimer__subtext">UPS tracking number: <a href=3D"https://ww=
+w.ups.com/track?loc=3Den_GB&amp;tracknum=3D1Z999AA10123456784">1Z999AA10123=
+456784</a></p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Estimated delivery:</td><td class=3D"v"><b>Thursday,=
+ 19 November</b></td></tr></table>
+<h3 class=3D"h3">Items in this shipment</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/a3105afea0_compact_cropped.jpg" alt=3D"Merino Wool =
+Beanie" width=3D"60" height=3D"60" class=3D"order-list__product-image"></td=
+><td class=3D"order-list__product-description-cell"><span class=3D"order-li=
+st__item-title">Merino Wool Beanie&nbsp;&times;&nbsp;1</span><br><span clas=
+s=3D"order-list__item-variant">Charcoal</span></td></tr></table></td></tr><=
+tr class=3D"order-list__item"><td class=3D"order-list__item__cell"><table><=
+tr><td><img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/product=
+s/59fdf7c912_compact_cropped.jpg" alt=3D"Waxed Cotton Jacket" width=3D"60" =
+height=3D"60" class=3D"order-list__product-image"></td><td class=3D"order-l=
+ist__product-description-cell"><span class=3D"order-list__item-title">Waxed=
+ Cotton Jacket&nbsp;&times;&nbsp;1</span><br><span class=3D"order-list__ite=
+m-variant">M / Olive</span></td></tr></table></td></tr></table>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">If you have any questions, reply to this e=
+mail or contact us at <a href=3D"mailto:hello@example-outfitters.co.uk">hel=
+lo@example-outfitters.co.uk</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

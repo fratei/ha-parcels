@@ -1,0 +1,91 @@
+Return-Path: <bounce-20053b0823@bounces.ups.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ups.com header.s=sel1 header.b=5a1fb59d;
+       spf=pass (google.com: domain of bounce-20053b0823@bounces.ups.com
+ designates 192.0.2.131 as permitted sender) smtp.mailfrom=bounce-20053b0823@bounces.ups.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ups.com
+From: UPS <mcinfo@ups.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Actualizaci=C3=B3n_de_UPS=3A_entrega_programada_para_hoy?=
+Date: Tue, 17 Nov 2026 08:20:00 +0100
+Message-ID: <20261117072000.5290@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_ee30b964959e"
+
+--b1_ee30b964959e
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+UPS
+
+Tu paquete tiene la entrega programada para hoy
+
+Hola, Alex Doe:
+
+Tu paquete de LEGO tiene la entrega programada para hoy.
+
+Fecha de entrega programada: Martes, 17/11/2026
+
+Franja horaria de entrega estimada: 12:00 - 15:30
+
+Enviado por: LEGO
+
+Número de seguimiento: 1Z6R3E520483719262
+
+Número de bultos: 1
+
+Enviar a: Alex Doe, Madrid, ES
+
+¿Quieres más control? Regístrate en UPS My Choice® para cambiar la fecha de entrega o enviar tu paquete a un UPS Access Point®.
+
+Seguir tu paquete [https://www.ups.com/track?loc=es_ES&tracknum=1Z6R3E520483719262&requester=ST/trackdetails]
+
+© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.
+
+Aviso de privacidad [https://www.ups.com/us/en/support/shipping-support/legal-terms-conditions/privacy-notice.page]
+
+Do not reply to this e-mail. UPS will not receive your reply.
+
+--b1_ee30b964959e
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Actualización de UPS</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#351c15}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#351c15;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.ups.com/assets/resources/images/UPS_logo.svg" alt="UPS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Tu paquete tiene la entrega programada para hoy</h1>
+<p>Hola, Alex Doe:</p>
+<p>Tu paquete de LEGO tiene la entrega programada para hoy.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Fecha de entrega programada</td><td class="value">Martes, 17/11/2026</td></tr>
+<tr><td class="label">Franja horaria de entrega estimada</td><td class="value">12:00 - 15:30</td></tr>
+<tr><td class="label">Enviado por</td><td class="value">LEGO</td></tr>
+<tr><td class="label">Número de seguimiento</td><td class="value">1Z6R3E520483719262</td></tr>
+<tr><td class="label">Número de bultos</td><td class="value">1</td></tr>
+<tr><td class="label">Enviar a</td><td class="value">Alex Doe, Madrid, ES</td></tr>
+</table>
+<p>¿Quieres más control? Regístrate en UPS My Choice® para cambiar la fecha de entrega o enviar tu paquete a un UPS Access Point®.</p>
+<p style="text-align:center"><a class="button" href="https://www.ups.com/track?loc=es_ES&tracknum=1Z6R3E520483719262&requester=ST/trackdetails">Seguir tu paquete</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.</p>
+<p><a href="https://www.ups.com/us/en/support/shipping-support/legal-terms-conditions/privacy-notice.page">Aviso de privacidad</a></p>
+<p>Do not reply to this e-mail. UPS will not receive your reply.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_ee30b964959e--

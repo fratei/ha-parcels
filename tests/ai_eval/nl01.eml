@@ -1,0 +1,45 @@
+Return-Path: <bounces@voorbeeldwinkel.example>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@voorbeeldwinkel.example header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@voorbeeldwinkel.example designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@voorbeeldwinkel.example;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=voorbeeldwinkel.example
+From: Voorbeeldwinkel <info@voorbeeldwinkel.example>
+To: Alex Doe <alex@example.com>
+Subject: Je bestelling 2026-11873 is verzonden
+Date: Wed, 18 Nov 2026 16:10:00 +0100
+Message-ID: <20261118161000.nl01@mail.example.com>
+MIME-Version: 1.0
+Content-Language: nl
+Content-Type: multipart/alternative; boundary="=_parcels_ai_nl01"
+
+--=_parcels_ai_nl01
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hoi Alex,
+Je bestelling 2026-11873 is vandaag verzonden met PostNL.
+Track & Trace: 3SVWBK0123456
+Verwachte bezorging: morgen tussen 13:15 en 15:45.
+In je pakket:
+Plantenbak van terracotta
+Gieter 1,5 liter
+Volg je pakket: https://jouw.postnl.nl/track-and-trace/3SVWBK0123456-NL-1011AB
+--=_parcels_ai_nl01
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="nl">
+<head><meta charset="utf-8"><title>Je bestelling 2026-11873 is verzonden</title></head>
+<body>
+<p>Hoi Alex,</p>
+<p>Je bestelling 2026-11873 is vandaag verzonden met PostNL.</p>
+<p>Track &amp; Trace: 3SVWBK0123456</p>
+<p>Verwachte bezorging: morgen tussen 13:15 en 15:45.</p>
+<p>In je pakket:</p>
+<p>Plantenbak van terracotta</p>
+<p>Gieter 1,5 liter</p>
+<p><a href="https://jouw.postnl.nl/track-and-trace/3SVWBK0123456-NL-1011AB">Volg je pakket</a></p>
+</body>
+</html>
+--=_parcels_ai_nl01--

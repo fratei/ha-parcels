@@ -1,0 +1,41 @@
+Return-Path: <bounces@notice.aliexpress.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@notice.aliexpress.com header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@notice.aliexpress.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@notice.aliexpress.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=notice.aliexpress.com
+From: AliExpress <transaction@notice.aliexpress.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?A_sua_encomenda_est=C3=A1_retida_na_alf=C3=A2ndega?=
+Date: Mon, 23 Nov 2026 08:40:00 +0000
+Message-ID: <20261123084000.pt08@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt
+Content-Type: multipart/alternative; boundary="=_parcels_ai_pt08"
+
+--=_parcels_ai_pt08
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Olá Alex,
+A sua encomenda N.º 8187654321098765 chegou a Portugal e aguarda o desalfandegamento.
+Número de seguimento: LP00648213759012
+Para libertar a encomenda, é necessário pagar o IVA de 4,62 € à transportadora.
+Artigo: Mini projetor portátil 1080p
+Ver detalhes: https://www.aliexpress.com/p/order/detail.html?orderId=8187654321098765
+--=_parcels_ai_pt08
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"><title>A sua encomenda está retida na alfândega</title></head>
+<body>
+<p>Olá Alex,</p>
+<p>A sua encomenda N.º 8187654321098765 chegou a Portugal e aguarda o desalfandegamento.</p>
+<p>Número de seguimento: LP00648213759012</p>
+<p>Para libertar a encomenda, é necessário pagar o IVA de 4,62 € à transportadora.</p>
+<p>Artigo: Mini projetor portátil 1080p</p>
+<p><a href="https://www.aliexpress.com/p/order/detail.html?orderId=8187654321098765">Ver detalhes</a></p>
+</body>
+</html>
+--=_parcels_ai_pt08--

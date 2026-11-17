@@ -1,0 +1,73 @@
+Return-Path: <bounce-8afeab595e@bounces.paack.co>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paack.co header.s=sel1 header.b=9b99d482;
+       spf=pass (google.com: domain of bounce-8afeab595e@bounces.paack.co
+ designates 192.0.2.61 as permitted sender) smtp.mailfrom=bounce-8afeab595e@bounces.paack.co;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paack.co
+From: Paack <no-reply@paack.co>
+To: Alex Doe <alex@example.com>
+Subject: A sua encomenda foi entregue
+Date: Tue, 17 Nov 2026 15:20:00 +0000
+Message-ID: <20261117152000.c2a0@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_0f9e34898268"
+
+--b1_0f9e34898268
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Paack
+
+Encomenda entregue
+
+Olá Alex,
+
+A sua encomenda da Zara foi entregue hoje às 15:12.
+
+Código de seguimento: PK7311805018
+
+Data de entrega: 17/11/2026 15:12
+
+Obrigado por confiar na Paack.
+
+Paack Logistics · Rua Exemplo 1, 1000-001 Lisboa
+
+Política de privacidade [https://www.paack.co/privacy-policy]
+
+--b1_0f9e34898268
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encomenda entregue</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#2b2bff}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#2b2bff;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://assets.paack.co/email/logo-paack.png" alt="Paack" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Encomenda entregue</h1>
+<p>Olá Alex,</p>
+<p>A sua encomenda da <strong>Zara</strong> foi entregue hoje às 15:12.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Código de seguimento</td><td class="value">PK7311805018</td></tr>
+<tr><td class="label">Data de entrega</td><td class="value">17/11/2026 15:12</td></tr>
+</table>
+<p>Obrigado por confiar na Paack.</p>
+</td></tr>
+<tr><td class="foot">
+<p>Paack Logistics · Rua Exemplo 1, 1000-001 Lisboa</p>
+<p><a href="https://www.paack.co/privacy-policy">Política de privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_0f9e34898268--

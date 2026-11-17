@@ -1,0 +1,82 @@
+Return-Path: <bounce-e0f0dce398@bounces.gls-group.eu>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@gls-group.eu header.s=sel1 header.b=a4da8836;
+       spf=pass (google.com: domain of bounce-e0f0dce398@bounces.gls-group.eu
+ designates 192.0.2.103 as permitted sender) smtp.mailfrom=bounce-e0f0dce398@bounces.gls-group.eu;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=gls-group.eu
+From: GLS Netherlands <noreply@gls-group.eu>
+To: Alex Doe <alex@example.com>
+Subject: Je pakket ligt klaar in de GLS ParcelShop
+Date: Tue, 17 Nov 2026 15:05:00 +0100
+Message-ID: <20261117140500.29c6@mail.example.com>
+MIME-Version: 1.0
+Content-Language: nl-NL
+Content-Type: multipart/alternative; boundary="b1_eb102816e161"
+
+--b1_eb102816e161
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+GLS
+
+Je pakket ligt klaar
+
+Beste Alex Doe,
+
+Je pakket van Wehkamp ligt klaar in de GLS ParcelShop. Neem een geldig legitimatiebewijs mee.
+
+Pakketnummer: 620417393191
+
+ParcelShop: Tabakszaak Voorbeeld
+
+Adres: Voorbeeldstraat 1, 1011 AB Amsterdam
+
+Openingstijden: ma-za 09:00 - 18:00
+
+Ophalen tot en met: 26-11-2026
+
+Bekijk de ParcelShop [https://gls-group.com/NL/nl/pakket-volgen?match=620417393191]
+
+GLS Netherlands B.V. · Voorbeeldstraat 1, 1011 AB Amsterdam
+
+Privacy [https://gls-group.com/NL/nl/privacy]
+
+--b1_eb102816e161
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Je pakket ligt klaar</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#061ab1}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#061ab1;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://gls-group.com/images/gls-logo.png" alt="GLS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Je pakket ligt klaar</h1>
+<p>Beste Alex Doe,</p>
+<p>Je pakket van <strong>Wehkamp</strong> ligt klaar in de GLS ParcelShop. Neem een geldig legitimatiebewijs mee.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Pakketnummer</td><td class="value">620417393191</td></tr>
+<tr><td class="label">ParcelShop</td><td class="value">Tabakszaak Voorbeeld</td></tr>
+<tr><td class="label">Adres</td><td class="value">Voorbeeldstraat 1, 1011 AB Amsterdam</td></tr>
+<tr><td class="label">Openingstijden</td><td class="value">ma-za 09:00 - 18:00</td></tr>
+<tr><td class="label">Ophalen tot en met</td><td class="value">26-11-2026</td></tr>
+</table>
+<p style="text-align:center"><a class="button" href="https://gls-group.com/NL/nl/pakket-volgen?match=620417393191">Bekijk de ParcelShop</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>GLS Netherlands B.V. · Voorbeeldstraat 1, 1011 AB Amsterdam</p>
+<p><a href="https://gls-group.com/NL/nl/privacy">Privacy</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_eb102816e161--

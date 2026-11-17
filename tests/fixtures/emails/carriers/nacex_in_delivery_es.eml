@@ -1,0 +1,79 @@
+Return-Path: <bounce-780af62abf@bounces.nacex.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@nacex.es header.s=sel1 header.b=e77af0b7;
+       spf=pass (google.com: domain of bounce-780af62abf@bounces.nacex.es
+ designates 192.0.2.169 as permitted sender) smtp.mailfrom=bounce-780af62abf@bounces.nacex.es;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=nacex.es
+From: NACEX <noreply@nacex.es>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Tu_env=C3=ADo_NACEX_est=C3=A1_en_reparto?=
+Date: Tue, 17 Nov 2026 09:05:00 +0100
+Message-ID: <20261117080500.0961@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_342d4c2f49e8"
+
+--b1_342d4c2f49e8
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+NACEX
+
+Tu envío está en reparto
+
+Hola Alex Doe,
+
+Tu envío de Mango está en reparto y será entregado hoy.
+
+Expedición: 2834/71520946
+
+Remitente: Mango
+
+Fecha de entrega: 17/11/2026
+
+Franja horaria prevista: 15:00 - 19:00
+
+Seguimiento [https://www.nacex.es/seguimientoDetalle.do?agencia_origen=2834&numero_albaran=71520946&externo=N]
+
+NACEX · Calle Ejemplo 1, 08001 Barcelona
+
+Política de privacidad [https://www.nacex.es/privacidad]
+
+--b1_342d4c2f49e8
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Envío en reparto</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#004b93}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#004b93;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.nacex.es/img/logo-nacex.png" alt="NACEX" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Tu envío está en reparto</h1>
+<p>Hola Alex Doe,</p>
+<p>Tu envío de <strong>Mango</strong> está en reparto y será entregado hoy.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Expedición</td><td class="value">2834/71520946</td></tr>
+<tr><td class="label">Remitente</td><td class="value">Mango</td></tr>
+<tr><td class="label">Fecha de entrega</td><td class="value">17/11/2026</td></tr>
+<tr><td class="label">Franja horaria prevista</td><td class="value">15:00 - 19:00</td></tr>
+</table>
+<p style="text-align:center"><a class="button" href="https://www.nacex.es/seguimientoDetalle.do?agencia_origen=2834&numero_albaran=71520946&externo=N">Seguimiento</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>NACEX · Calle Ejemplo 1, 08001 Barcelona</p>
+<p><a href="https://www.nacex.es/privacidad">Política de privacidad</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_342d4c2f49e8--

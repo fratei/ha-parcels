@@ -1,0 +1,101 @@
+Return-Path: <bounce-9d41b0fece@bounces.ups.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ups.com header.s=sel1 header.b=83037b29;
+       spf=pass (google.com: domain of bounce-9d41b0fece@bounces.ups.com
+ designates 192.0.2.239 as permitted sender) smtp.mailfrom=bounce-9d41b0fece@bounces.ups.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ups.com
+From: UPS <mcinfo@ups.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Atualiza=C3=A7=C3=A3o_da_UPS=3A_Encomenda_entregue?=
+Date: Tue, 17 Nov 2026 12:03:00 +0000
+Message-ID: <20261117120300.36c2@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_4952acdd0a17"
+
+--b1_4952acdd0a17
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+UPS
+
+A sua encomenda foi entregue
+
+Ol=C3=A1 Alex Doe,
+
+A sua encomenda foi entregue.
+
+Data de entrega: ter=C3=A7a-feira, 17/11/2026, 11:58
+
+Entregue a: Porta da frente
+
+Enviado por: Nike
+
+N=C3=BAmero de rastreamento: 1ZE7F1426803941570
+
+Ver detalhes [https://www.ups.com/track?loc=3Dpt_PT&tracknum=3D1ZE7F1426803=
+941570&requester=3DST/trackdetails]
+
+=C2=A9 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark a=
+nd the color brown are trademarks of United Parcel Service of America, Inc.
+
+Aviso de privacidade [https://www.ups.com/us/en/support/shipping-support/le=
+gal-terms-conditions/privacy-notice.page]
+
+Do not reply to this e-mail. UPS will not receive your reply.
+
+--b1_4952acdd0a17
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"pt">
+<head>
+<meta charset=3D"utf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1">
+<title>Atualiza=C3=A7=C3=A3o da UPS</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-se=
+rif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{pa=
+dding:24px;background:#351c15}.content{padding:24px}td.label{color:#666;pad=
+ding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;=
+padding:12px 24px;background:#351c15;color:#fff;text-decoration:none;border=
+-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class=3D"wrap">
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0">
+<tr><td class=3D"head"><img src=3D"https://www.ups.com/assets/resources/ima=
+ges/UPS_logo.svg" alt=3D"UPS" width=3D"120" height=3D"40"></td></tr>
+<tr><td class=3D"content">
+<h1>A sua encomenda foi entregue</h1>
+<p>Ol=C3=A1 Alex Doe,</p>
+<p>A sua encomenda foi entregue.</p>
+<table class=3D"details" role=3D"presentation" cellpadding=3D"0" cellspacin=
+g=3D"0">
+<tr><td class=3D"label">Data de entrega</td><td class=3D"value">ter=C3=A7a-=
+feira, 17/11/2026, 11:58</td></tr>
+<tr><td class=3D"label">Entregue a</td><td class=3D"value">Porta da frente<=
+/td></tr>
+<tr><td class=3D"label">Enviado por</td><td class=3D"value">Nike</td></tr>
+<tr><td class=3D"label">N=C3=BAmero de rastreamento</td><td class=3D"value"=
+>1ZE7F1426803941570</td></tr>
+</table>
+<p style=3D"text-align:center"><a class=3D"button" href=3D"https://www.ups.=
+com/track?loc=3Dpt_PT&tracknum=3D1ZE7F1426803941570&requester=3DST/trackdet=
+ails">Ver detalhes</a></p>
+</td></tr>
+<tr><td class=3D"foot">
+<p>=C2=A9 2026 United Parcel Service of America, Inc. UPS, the UPS brandmar=
+k and the color brown are trademarks of United Parcel Service of America, I=
+nc.</p>
+<p><a href=3D"https://www.ups.com/us/en/support/shipping-support/legal-term=
+s-conditions/privacy-notice.page">Aviso de privacidade</a></p>
+<p>Do not reply to this e-mail. UPS will not receive your reply.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_4952acdd0a17--

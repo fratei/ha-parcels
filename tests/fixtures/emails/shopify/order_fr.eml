@@ -1,0 +1,145 @@
+Return-Path: <bounces+61234505@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@boutique-exemple.fr header.s=shopify2 header.b=r6Lap4JY;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234505@shopifyemail.com designates 198.51.100.15 as permitted sender) smtp.mailfrom=bounces+61234505@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=boutique-exemple.fr
+Received: from o25.ptr4120.shopifyemail.com (o25.ptr4120.shopifyemail.com. [198.51.100.15])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Mon, 16 Nov 2026 11:44:26 +0100
+From: Boutique Exemple <contact@boutique-exemple.fr>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Commande_=233310_confirm=C3=A9e?=
+Date: Mon, 16 Nov 2026 11:44:26 +0100
+Message-ID: <39865bfd7c836_20261116114426@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Boutique Exemple
+Commande #3310
+
+Merci pour votre achat !
+
+Bonjour Alex, nous pr=C3=A9parons votre commande pour l'exp=C3=A9dition. No=
+us vous pr=C3=A9viendrons d=C3=A8s qu'elle sera partie.
+
+Voir votre commande: https://boutique-exemple.fr/61234567890/orders/eef6bdd=
+01a835f80c0760e588ba79546/authenticate?key=3Ddae6f4ada472b84ccf7fe28f126933=
+6b
+ou Visitez notre boutique: https://boutique-exemple.fr/
+
+R=C3=A9capitulatif de la commande
+
+Carnet en papier recycl=C3=A9 A5 =C3=97 3
+Pointill=C3=A9
+36,00 =E2=82=AC
+Stylo plume en laiton =C3=97 1
+42,00 =E2=82=AC
+
+Sous-total 78,00 =E2=82=AC
+Exp=C3=A9dition 5,50 =E2=82=AC
+Total 83,50 =E2=82=AC EUR
+
+Informations client
+
+Adresse de livraison
+Alex Doe
+1 rue Exemple
+75001 Paris
+France
+
+Mode d'exp=C3=A9dition
+Colissimo - Domicile sans signature
+
+Si vous avez des questions, r=C3=A9pondez =C3=A0 cet e-mail ou contactez-no=
+us =C3=A0 contact@boutique-exemple.fr
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"fr">
+<head>
+<title>Commande #3310 confirm=C3=A9e</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://boutique-exemple.fr/">Boutique Exemple</a></h1></td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Command=
+e #3310</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Merci pour votre achat !</h2>
+<p>Bonjour Alex, nous pr=C3=A9parons votre commande pour l'exp=C3=A9dition.=
+ Nous vous pr=C3=A9viendrons d=C3=A8s qu'elle sera partie.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://boutique-exemple.fr/61234567890/orders/eef6bdd01a835f80c0760e588ba79546=
+/authenticate?key=3Ddae6f4ada472b84ccf7fe28f1269336b" class=3D"button__text=
+">Voir votre commande</a></td></tr></table><table class=3D"link secondary-a=
+ction-cell"><tr><td class=3D"link__cell">ou <a href=3D"https://boutique-exe=
+mple.fr/" class=3D"link__text"><span class=3D'arrow'>&rarr;</span> Visitez =
+notre boutique</a></td></tr></table></td></tr></table>
+<h3 class=3D"h3">R=C3=A9capitulatif de la commande</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/c03ba2f271_compact_cropped.jpg" alt=3D"Carnet en pa=
+pier recycl=C3=A9 A5" width=3D"60" height=3D"60" class=3D"order-list__produ=
+ct-image"></td><td class=3D"order-list__product-description-cell"><span cla=
+ss=3D"order-list__item-title">Carnet en papier recycl=C3=A9 A5&nbsp;&times;=
+&nbsp;3</span><br><span class=3D"order-list__item-variant">Pointill=C3=A9</=
+span></td><td class=3D"order-list__price-cell"><p class=3D"order-list__item=
+-price">36,00 =E2=82=AC</p></td></tr></table></td></tr><tr class=3D"order-l=
+ist__item"><td class=3D"order-list__item__cell"><table><tr><td><img src=3D"=
+https://cdn.shopify.com/s/files/1/0612/3456/7890/products/3892a0501b_compac=
+t_cropped.jpg" alt=3D"Stylo plume en laiton" width=3D"60" height=3D"60" cla=
+ss=3D"order-list__product-image"></td><td class=3D"order-list__product-desc=
+ription-cell"><span class=3D"order-list__item-title">Stylo plume en laiton&=
+nbsp;&times;&nbsp;1</span></td><td class=3D"order-list__price-cell"><p clas=
+s=3D"order-list__item-price">42,00 =E2=82=AC</p></td></tr></table></td></tr=
+></table>
+<table class=3D"row subtotal-lines"><tr><td><table class=3D"row"><tr class=
+=3D"subtotal-line"><td class=3D"subtotal-line__title"><p><span>Sous-total</=
+span></p></td><td class=3D"subtotal-line__value"><strong>78,00 =E2=82=AC</s=
+trong></td></tr><tr class=3D"subtotal-line"><td class=3D"subtotal-line__tit=
+le"><p><span>Exp=C3=A9dition</span></p></td><td class=3D"subtotal-line__val=
+ue"><strong>5,50 =E2=82=AC</strong></td></tr><tr class=3D"subtotal-line"><t=
+d class=3D"subtotal-line__title"><p><span>Total</span></p></td><td class=3D=
+"subtotal-line__value"><strong>83,50 =E2=82=AC EUR</strong></td></tr></tabl=
+e></td></tr></table>
+<h3>Informations client</h3><table class=3D"row"><tr><td class=3D"customer-=
+info__item"><h4>Adresse de livraison</h4><p>Alex Doe<br>1 rue Exemple<br>75=
+001 Paris<br>France</p></td></tr><tr><td class=3D"customer-info__item"><h4>=
+Mode d'exp=C3=A9dition</h4><p>Colissimo - Domicile sans signature</p></td><=
+/tr></table>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">Si vous avez des questions, r=C3=A9pondez =
+=C3=A0 cet e-mail ou contactez-nous =C3=A0 <a href=3D"mailto:contact@boutiq=
+ue-exemple.fr">contact@boutique-exemple.fr</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

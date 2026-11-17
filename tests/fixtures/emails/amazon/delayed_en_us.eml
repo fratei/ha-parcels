@@ -1,0 +1,163 @@
+Return-Path: <20261118061240a1b2c3@bounces.amazon.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.com header.s=sel1amz header.b=JcvEXq9S;
+       dkim=pass header.i=@amazonses.com header.s=ug7nbtf4 header.b=gKycGuYC;
+       spf=pass (google.com: domain of 20261118061240a1b2c3@bounces.amazon.com designates 192.0.2.52 as permitted sender) smtp.mailfrom=20261118061240a1b2c3@bounces.amazon.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.com
+Received: from a48-12.smtp-out.eu-west-1.amazonses.com (a48-12.smtp-out.eu-west-1.amazonses.com. [192.0.2.52])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Wed, 18 Nov 2026 06:12:40 -0800
+From: "Amazon.com" <shipment-tracking@amazon.com>
+To: Alex Doe <alex@example.com>
+Subject: Delayed: "Portable Bluetooth Speaker, Waterproof..."
+Date: Wed, 18 Nov 2026 06:12:40 -0800
+Message-ID: <010201920261118061240.delayed-en-us-000000@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Amazon.com
+Your Orders | Your Account
+
+Hello Alex,
+
+Your package is running late.
+
+We're sorry, your package will arrive later than we told you.
+
+Now arriving:
+Friday, November 20
+
+Previously expected: Wednesday, November 18
+
+Track package: https://www.amazon.com/gp/r.html?C=3D12T7Q9X1M4K8B&K=3D1V3JZ=
+9Q7R2XW5&M=3Durn:rtn:msg:2026111612a1b2c3d4e5f601&R=3D3HXK2P8Q5N7MZ&T=3DC&U=
+=3Dhttps%3A%2F%2Fwww.amazon.com%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_284=
+8631_123456789_TE_SIMP_typ%3F_encoding%3DUTF8%26orderId%3D113-2938475-66102=
+93%26shipmentId%3DKs5RtW2nY%26packageIndex%3D0&H=3DQZXWTGBHJKL0PQ5RS01&ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Order # 113-2938475-6610293
+
+Portable Bluetooth Speaker, Waterproof, 20W, Blue
+Quantity: 1
+https://www.amazon.com/gp/r.html?C=3D12T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Dur=
+n:rtn:msg:2026111612a1b2c3d4e5f602&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%=
+2Fwww.amazon.com%2Fdp%2FB0C2K7P9RD%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=
+=3DQZXWTGBHJKL0PQ5RS02&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+This email was sent from a notification-only address that cannot accept inc=
+oming email. Please do not reply to this message.
+
+Privacy Notice
+
+=C2=A9 2026 Amazon.com, Inc. or its affiliates. All rights reserved.
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"en">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DUTF-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1.=
+0">
+<title>Amazon.com</title>
+<style type=3D"text/css">
+body { margin: 0; padding: 0; background-color: #ffffff; }
+table { border-collapse: collapse; }
+.container { width: 600px; font-family: Arial, Helvetica, sans-serif; color=
+: #0f1111; }
+.h1 { font-size: 20px; font-weight: bold; margin: 16px 0 8px; }
+.h2 { font-size: 16px; font-weight: bold; margin: 16px 0 8px; color: #067d6=
+2; }
+.kv td { padding: 2px 8px 2px 0; font-size: 14px; }
+.button { background-color: #ffd814; border-radius: 20px; color: #0f1111;
+  padding: 8px 18px; text-decoration: none; display: inline-block; }
+.item td { vertical-align: top; padding: 8px 8px 8px 0; font-size: 14px; }
+.nav a { color: #0f1111; font-size: 13px; text-decoration: none; }
+.footer { font-size: 11px; color: #565959; padding-top: 24px; }
+</style>
+</head>
+<body>
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0"><tr>
+<td align=3D"center">
+<table role=3D"presentation" class=3D"container" width=3D"600" cellpadding=
+=3D"0"
+ cellspacing=3D"0">
+<tr><td class=3D"header"><a href=3D"https://www.amazon.com/gp/r.html?C=3D12=
+T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111612a1b2c3d4e5f=
+604&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2F=
+ref%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0PQ5RS04&amp;ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ"><img
+ src=3D"https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo.=
+_CB485934981_.png"
+ alt=3D"Amazon.com" width=3D"98" height=3D"30" border=3D"0"></a></td>
+<td class=3D"nav" align=3D"right"><a href=3D"https://www.amazon.com/gp/r.ht=
+ml?C=3D12T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111612a1=
+b2c3d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amaz=
+on.com%2Fgp%2Fcss%2Forder-history%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ=
+&amp;H=3DQZXWTGBHJKL0PQ5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Your Orders</a> | <a href=3D"https://www.amazon.com/gp/r.html?C=3D12T7Q9X1=
+M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111612a1b2c3d4e5f606&am=
+p;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fgp%2Fc=
+ss%2Fhomepage.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTG=
+BHJKL0PQ5RS06&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Your Account</a></td></tr>
+<tr><td class=3D"content" colspan=3D"2">
+<p>Hello Alex,</p>
+<h1 class=3D"h1">Your package is running late.</h1>
+<p>We're sorry, your package will arrive later than we told you.</p>
+<div class=3D"eta"><span class=3D"label">Now arriving:</span><br><span clas=
+s=3D"value"><b>Friday, November 20</b></span></div>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Previously expected:</td><td class=3D"v"><b>Wednesda=
+y, November 18</b></td></tr></table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.com/gp/r.ht=
+ml?C=3D12T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111612a1=
+b2c3d4e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amaz=
+on.com%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_2848631_123456789_TE_SIMP_ty=
+p%3F_encoding%3DUTF8%26orderId%3D113-2938475-6610293%26shipmentId%3DKs5RtW2=
+nY%26packageIndex%3D0&amp;H=3DQZXWTGBHJKL0PQ5RS01&amp;ref_=3Dpe_2848631_123=
+456789_TE_SIMP_typ">Track package</a></p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Order #</td><td class=3D"v"><b>113-2938475-6610293</=
+b></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.com/gp/r.html?=
+C=3D12T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111612a1b2c=
+3d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.=
+com%2Fdp%2FB0C2K7P9RD%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBH=
+JKL0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https:=
+//m.media-amazon.com/images/I/412K7P9RL._SS142_.jpg" alt=3D"Portable Blueto=
+oth Speaker, Waterproof, 20W, Blue" width=3D"90" height=3D"90" border=3D"0"=
+></a></td><td class=3D"desc"><a href=3D"https://www.amazon.com/gp/r.html?C=
+=3D12T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111612a1b2c3=
+d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.c=
+om%2Fdp%2FB0C2K7P9RD%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJ=
+KL0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Portable Bluetooth =
+Speaker, Waterproof, 20W, Blue</a><br><span>Quantity: 1</span></td></tr></t=
+able>
+</td></tr>
+<tr><td class=3D"footer" colspan=3D"2">
+<p>This email was sent from a notification-only address that cannot accept =
+incoming email. Please do not reply to this message.</p>
+<p><a href=3D"https://www.amazon.com/gp/r.html?C=3D12T7Q9X1M4K8B&amp;K=3D1V=
+3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111612a1b2c3d4e5f603&amp;R=3D3HXK2P8Q5N=
+7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.com%2Fgp%2Fhelp%2Fcustomer%2=
+Fdisplay.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL=
+0PQ5RS03&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Privacy Notice</a></p>
+<p>=C2=A9 2026 Amazon.com, Inc. or its affiliates. All rights reserved.</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

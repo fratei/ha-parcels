@@ -1,0 +1,41 @@
+Return-Path: <bounces@marketing.temu.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@marketing.temu.com header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@marketing.temu.com designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@marketing.temu.com;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=marketing.temu.com
+From: Temu <promotions@marketing.temu.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Your_=E2=82=AC100_coupon_bundle_expires_tonight!?=
+Date: Fri, 20 Nov 2026 09:00:00 +0000
+Message-ID: <20261120090000.en06@mail.example.com>
+MIME-Version: 1.0
+Content-Language: en
+Content-Type: multipart/alternative; boundary="=_parcels_ai_en06"
+
+--=_parcels_ai_en06
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hi Alex,
+Your coupon bundle worth €100 expires at 23:59 tonight.
+Lightning deals up to 90% off.
+Free shipping on all orders. Delivery in 5–12 business days.
+Shop now: https://www.temu.com/
+Unsubscribe: https://www.temu.com/unsubscribe.html
+--=_parcels_ai_en06
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Your €100 coupon bundle expires tonight!</title></head>
+<body>
+<p>Hi Alex,</p>
+<p>Your coupon bundle worth €100 expires at 23:59 tonight.</p>
+<p>Lightning deals up to 90% off.</p>
+<p>Free shipping on all orders. Delivery in 5–12 business days.</p>
+<p><a href="https://www.temu.com/">Shop now</a></p>
+<p><a href="https://www.temu.com/unsubscribe.html">Unsubscribe</a></p>
+</body>
+</html>
+--=_parcels_ai_en06--

@@ -1,0 +1,106 @@
+Return-Path: <bounce-777c343b6c@bounces.dhl.de>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dhl.de header.s=sel1 header.b=e901ea33;
+       spf=pass (google.com: domain of bounce-777c343b6c@bounces.dhl.de
+ designates 192.0.2.9 as permitted sender) smtp.mailfrom=bounce-777c343b6c@bounces.dhl.de;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dhl.de
+From: DHL Paket <noreply@dhl.de>
+To: Alex Doe <alex@example.com>
+Subject: Ihre DHL Sendung liegt in der Packstation zur Abholung bereit
+Date: Tue, 17 Nov 2026 13:05:00 +0100
+Message-ID: <20261117120500.81ab@mail.example.com>
+MIME-Version: 1.0
+Content-Language: de-DE
+Content-Type: multipart/alternative; boundary="b1_cfef1dd76210"
+
+--b1_cfef1dd76210
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+DHL
+
+Ihre Sendung ist abholbereit
+
+Hallo Alex Doe,
+
+Ihre Sendung von Thalia liegt ab sofort in der Packstation zur Abholung ber=
+eit.
+
+Sendungsnummer: JJD000390007283946521
+
+Packstation: Packstation 123
+
+Adresse: Musterstra=C3=9Fe 1, 10115 Berlin
+
+Abholcode: 519384
+
+Abholung bis: 24.11.2026
+
+Bitte holen Sie Ihre Sendung rechtzeitig ab. Danach wird sie an den Absende=
+r zur=C3=BCckgeschickt.
+
+Sendung verfolgen [https://www.dhl.de/de/privatkunden/pakete-empfangen/verf=
+olgen.html?piececode=3DJJD000390007283946521]
+
+Deutsche Post AG =C2=B7 Beispielstra=C3=9Fe 1, 53113 Bonn
+
+Datenschutz [https://www.dhl.de/de/toolbar/footer/datenschutz.html] =C2=B7 =
+Diese E-Mail wurde automatisch erstellt.
+
+--b1_cfef1dd76210
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"de">
+<head>
+<meta charset=3D"utf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1">
+<title>Abholbereit in der Packstation</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-se=
+rif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{pa=
+dding:24px;background:#ffcc00}.content{padding:24px}td.label{color:#666;pad=
+ding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;=
+padding:12px 24px;background:#ffcc00;color:#fff;text-decoration:none;border=
+-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class=3D"wrap">
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0">
+<tr><td class=3D"head"><img src=3D"https://www.dhl.de/content/dam/images/lo=
+go-dhl.png" alt=3D"DHL" width=3D"120" height=3D"40"></td></tr>
+<tr><td class=3D"content">
+<h1>Ihre Sendung ist abholbereit</h1>
+<p>Hallo Alex Doe,</p>
+<p>Ihre Sendung von <strong>Thalia</strong> liegt ab sofort in der Packstat=
+ion zur Abholung bereit.</p>
+<table class=3D"details" role=3D"presentation" cellpadding=3D"0" cellspacin=
+g=3D"0">
+<tr><td class=3D"label">Sendungsnummer</td><td class=3D"value">JJD000390007=
+283946521</td></tr>
+<tr><td class=3D"label">Packstation</td><td class=3D"value">Packstation 123=
+</td></tr>
+<tr><td class=3D"label">Adresse</td><td class=3D"value">Musterstra=C3=9Fe 1=
+, 10115 Berlin</td></tr>
+<tr><td class=3D"label">Abholcode</td><td class=3D"value">519384</td></tr>
+<tr><td class=3D"label">Abholung bis</td><td class=3D"value">24.11.2026</td=
+></tr>
+</table>
+<p>Bitte holen Sie Ihre Sendung rechtzeitig ab. Danach wird sie an den Abse=
+nder zur=C3=BCckgeschickt.</p>
+<p style=3D"text-align:center"><a class=3D"button" href=3D"https://www.dhl.=
+de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=3DJJD000390007=
+283946521">Sendung verfolgen</a></p>
+</td></tr>
+<tr><td class=3D"foot">
+<p>Deutsche Post AG =C2=B7 Beispielstra=C3=9Fe 1, 53113 Bonn</p>
+<p><a href=3D"https://www.dhl.de/de/toolbar/footer/datenschutz.html">Datens=
+chutz</a> =C2=B7 Diese E-Mail wurde automatisch erstellt.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_cfef1dd76210--

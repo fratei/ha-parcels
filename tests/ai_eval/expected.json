@@ -1,0 +1,787 @@
+{
+  "pt01": {
+    "about": "Worten order confirmation; delivery range written as dd/mm.",
+    "language": "pt",
+    "kind": "order",
+    "merchant": "Worten",
+    "carrier": null,
+    "tracking_numbers": [],
+    "order_numbers": [
+      "7012345678"
+    ],
+    "eta_start": "2026-11-20",
+    "eta_end": "2026-11-24",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Auriculares Bluetooth Sony WH-CH520",
+      "Carregador USB-C 65W Anker"
+    ]
+  },
+  "pt02": {
+    "about": "Fnac shipped with CTT; free-text weekday range (quinta a sábado).",
+    "language": "pt",
+    "kind": "shipped",
+    "merchant": "Fnac",
+    "carrier": "ctt",
+    "tracking_numbers": [
+      "RR482137560PT"
+    ],
+    "order_numbers": [
+      "4821375"
+    ],
+    "eta_start": "2026-11-19",
+    "eta_end": "2026-11-21",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Coluna portátil JBL Flip 6"
+    ]
+  },
+  "pt03": {
+    "about": "Temu in transit with YunExpress; date range '20-23 nov.'.",
+    "language": "pt",
+    "kind": "in_transit",
+    "merchant": "Temu",
+    "carrier": "yunexpress",
+    "tracking_numbers": [
+      "YT2632100004567891"
+    ],
+    "order_numbers": [
+      "PO-211-04838271537290817"
+    ],
+    "eta_start": "2026-11-20",
+    "eta_end": "2026-11-23",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Organizador de secretária em bambu",
+      "Luzes LED de fada"
+    ]
+  },
+  "pt04": {
+    "about": "FedEx out for delivery today; window written '9h' to '13h'.",
+    "language": "pt",
+    "kind": "out_for_delivery",
+    "merchant": "Loja Exemplo",
+    "carrier": "fedex",
+    "tracking_numbers": [
+      "394817265035"
+    ],
+    "order_numbers": [],
+    "eta_start": "2026-11-19",
+    "eta_end": "2026-11-19",
+    "window_start": "09:00",
+    "window_end": "13:00",
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "pt05": {
+    "about": "FedEx delivered; number only after 'A sua encomenda' (no tracking label).",
+    "language": "pt",
+    "kind": "delivered",
+    "carrier": "fedex",
+    "tracking_numbers": [
+      "770943182565"
+    ],
+    "order_numbers": [],
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "pt06": {
+    "about": "TNT missed delivery; new attempt 'amanhã, 20/11, entre as 14h e as 18h'.",
+    "language": "pt",
+    "kind": "attempted",
+    "merchant": "Jogos Exemplo",
+    "carrier": "tnt",
+    "tracking_numbers": [
+      "418327650"
+    ],
+    "order_numbers": [],
+    "eta_start": "2026-11-20",
+    "eta_end": "2026-11-20",
+    "window_start": "14:00",
+    "window_end": "18:00",
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "pt07": {
+    "about": "Worten store pickup with a code; opening hours and the 7-day hold are traps.",
+    "language": "pt",
+    "kind": "ready_for_pickup",
+    "merchant": "Worten",
+    "carrier": null,
+    "tracking_numbers": [],
+    "order_numbers": [
+      "7012398765"
+    ],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": "Worten Colombo",
+    "pickup_code": "583914",
+    "items": [
+      "Máquina de café Nespresso Vertuo Pop"
+    ]
+  },
+  "pt08": {
+    "about": "AliExpress parcel held in customs; carrier only inferable from the LP number.",
+    "language": "pt",
+    "kind": "customs",
+    "merchant": "AliExpress",
+    "carrier": "cainiao",
+    "tracking_numbers": [
+      "LP00648213759012"
+    ],
+    "order_numbers": [
+      "8187654321098765"
+    ],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Mini projetor portátil 1080p"
+    ]
+  },
+  "pt09": {
+    "about": "WOOK newsletter; promotion end date and '24 horas' delivery promise are traps.",
+    "language": "pt",
+    "kind": "not_parcel",
+    "carrier": null,
+    "tracking_numbers": [],
+    "order_numbers": [],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "pt10": {
+    "about": "Small shop shipped with CTT; '2 a 3 dias úteis'; hidden prompt injection.",
+    "language": "pt",
+    "kind": "shipped",
+    "merchant": "Loja Exemplo",
+    "carrier": "ctt",
+    "tracking_numbers": [
+      "EA739201489PT"
+    ],
+    "order_numbers": [
+      "1043"
+    ],
+    "eta_start": "2026-11-20",
+    "eta_end": "2026-11-23",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Vela aromática de lavanda",
+      "Caneca de cerâmica artesanal"
+    ]
+  },
+  "es01": {
+    "about": "El Corte Inglés order; delivery date written with weekday and month name.",
+    "language": "es",
+    "kind": "order",
+    "merchant": "El Corte Inglés",
+    "carrier": null,
+    "tracking_numbers": [],
+    "order_numbers": [
+      "2511031234567"
+    ],
+    "eta_start": "2026-11-24",
+    "eta_end": "2026-11-24",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Robot aspirador Roborock Q7",
+      "Juego de 3 sartenes BRA Efficient"
+    ]
+  },
+  "es02": {
+    "about": "PcComponentes shipped with Correos; 'entre el 19 y el 20 de noviembre'.",
+    "language": "es",
+    "kind": "shipped",
+    "merchant": "PcComponentes",
+    "carrier": "correos",
+    "tracking_numbers": [
+      "PQ5F4X0712345670128007"
+    ],
+    "order_numbers": [
+      "41207719"
+    ],
+    "eta_start": "2026-11-19",
+    "eta_end": "2026-11-20",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Teclado mecánico Logitech G413 SE"
+    ]
+  },
+  "es03": {
+    "about": "Correos delay notice; new date as dd/mm/yyyy; merchant from 'Remitente'.",
+    "language": "es",
+    "kind": "delayed",
+    "merchant": "Decathlon",
+    "carrier": "correos",
+    "tracking_numbers": [
+      "PQ4B7R0612345670128001"
+    ],
+    "order_numbers": [],
+    "eta_start": "2026-11-26",
+    "eta_end": "2026-11-26",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "es04": {
+    "about": "Mondial Relay pickup point; code printed with a space; collection deadline is a trap.",
+    "language": "es",
+    "kind": "ready_for_pickup",
+    "merchant": "Zalando",
+    "carrier": "mondial_relay",
+    "tracking_numbers": [
+      "48213907"
+    ],
+    "order_numbers": [],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": "Estanco Ejemplo",
+    "pickup_code": "739 215",
+    "items": []
+  },
+  "es05": {
+    "about": "Zalando return sent with UPS; refund period is a trap.",
+    "language": "es",
+    "kind": "return",
+    "merchant": "Zalando",
+    "carrier": "ups",
+    "tracking_numbers": [
+      "1Z4E7W906804123459"
+    ],
+    "order_numbers": [
+      "10101234567890"
+    ],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Zapatillas Adidas Samba OG"
+    ]
+  },
+  "es06": {
+    "about": "SHEIN order cancelled; refund period '5–10 días laborables' is a trap.",
+    "language": "es",
+    "kind": "cancelled",
+    "merchant": "SHEIN",
+    "carrier": null,
+    "tracking_numbers": [],
+    "order_numbers": [
+      "GSHN4X7Q1203"
+    ],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Jersey de punto trenzado",
+      "Pantalón ancho de cintura alta"
+    ]
+  },
+  "es07": {
+    "about": "PcComponentes invoice (not a parcel); the invoice number is not an order number.",
+    "language": "es",
+    "kind": "not_parcel",
+    "carrier": null,
+    "tracking_numbers": [],
+    "order_numbers": [
+      "41208833"
+    ],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "en01": {
+    "about": "AliExpress shipped; '3–5 business days'; carrier only inferable from the LP number.",
+    "language": "en",
+    "kind": "shipped",
+    "merchant": "AliExpress",
+    "carrier": "cainiao",
+    "tracking_numbers": [
+      "LP00651234987654"
+    ],
+    "order_numbers": [
+      "8187650011223344"
+    ],
+    "eta_start": "2026-11-23",
+    "eta_end": "2026-11-25",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Wireless mouse with USB receiver",
+      "Aluminium laptop stand"
+    ]
+  },
+  "en02": {
+    "about": "Royal Mail fee to pay; S10 number from China; the 3-week deadline is a trap.",
+    "language": "en",
+    "kind": "customs",
+    "merchant": "Example Gadgets",
+    "carrier": "royal_mail",
+    "tracking_numbers": [
+      "LX305718468CN"
+    ],
+    "order_numbers": [],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "en03": {
+    "about": "YunExpress delivered; no shop named, so the merchant must stay empty.",
+    "language": "en",
+    "kind": "delivered",
+    "merchant": null,
+    "carrier": "yunexpress",
+    "tracking_numbers": [
+      "YT2631800098765432"
+    ],
+    "order_numbers": [],
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "en04": {
+    "about": "Evri missed delivery; 'we'll try again tomorrow'.",
+    "language": "en",
+    "kind": "attempted",
+    "merchant": "ASOS",
+    "carrier": "evri",
+    "tracking_numbers": [
+      "H02XKA0055512837"
+    ],
+    "order_numbers": [],
+    "eta_start": "2026-11-25",
+    "eta_end": "2026-11-25",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "en05": {
+    "about": "Small shop order; carrier service name 'Royal Mail Tracked 48', no number yet.",
+    "language": "en",
+    "kind": "order",
+    "merchant": "Example Tea Co",
+    "carrier": "royal_mail",
+    "tracking_numbers": [],
+    "order_numbers": [
+      "EX-20931"
+    ],
+    "eta_start": "2026-11-24",
+    "eta_end": "2026-11-24",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Earl Grey loose leaf tea 250g",
+      "Ceramic teapot 1L"
+    ]
+  },
+  "en06": {
+    "about": "Temu advert; coupon expiry time and delivery promise are traps.",
+    "language": "en",
+    "kind": "not_parcel",
+    "carrier": null,
+    "tracking_numbers": [],
+    "order_numbers": [],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "de01": {
+    "about": "Zalando order; delivery range 'Mo., 23.11. – Di., 24.11.'.",
+    "language": "de",
+    "kind": "order",
+    "merchant": "Zalando",
+    "carrier": null,
+    "tracking_numbers": [],
+    "order_numbers": [
+      "10105012345678"
+    ],
+    "eta_start": "2026-11-23",
+    "eta_end": "2026-11-24",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Nike Air Max 90",
+      "Levi's 501 Jeans"
+    ]
+  },
+  "de02": {
+    "about": "Small shop handed the parcel to DHL; date 'Freitag, 20.11.'.",
+    "language": "de",
+    "kind": "shipped",
+    "merchant": "Beispiel-Shop",
+    "carrier": "dhl",
+    "tracking_numbers": [
+      "JJD149990200012345678"
+    ],
+    "order_numbers": [
+      "58213"
+    ],
+    "eta_start": "2026-11-20",
+    "eta_end": "2026-11-20",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Kaffeemühle Hario Skerton Pro"
+    ]
+  },
+  "de03": {
+    "about": "Deutsche Post delivered an S10 item; sender from 'Absender'.",
+    "language": "de",
+    "kind": "delivered",
+    "merchant": "Buchhandlung Beispiel",
+    "carrier": "deutsche_post",
+    "tracking_numbers": [
+      "RR590327183DE"
+    ],
+    "order_numbers": [],
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "de04": {
+    "about": "Hermes PaketShop pickup with an alphanumeric code; the pickup deadline is a trap.",
+    "language": "de",
+    "kind": "ready_for_pickup",
+    "merchant": "Tchibo",
+    "carrier": "hermes",
+    "tracking_numbers": [
+      "48210937561204"
+    ],
+    "order_numbers": [],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": "Kiosk Beispiel",
+    "pickup_code": "4K7P9Q",
+    "items": []
+  },
+  "de05": {
+    "about": "OTTO delay with a new date and a time window; carrier named in the text.",
+    "language": "de",
+    "kind": "delayed",
+    "merchant": "OTTO",
+    "carrier": "hermes",
+    "tracking_numbers": [
+      "73019824561037"
+    ],
+    "order_numbers": [
+      "79345612"
+    ],
+    "eta_start": "2026-11-26",
+    "eta_end": "2026-11-26",
+    "window_start": "10:00",
+    "window_end": "14:00",
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Staubsauger Bosch Serie 6"
+    ]
+  },
+  "fr01": {
+    "about": "Fnac shipped with Colissimo; 'mardi 24 novembre'.",
+    "language": "fr",
+    "kind": "shipped",
+    "merchant": "Fnac",
+    "carrier": "colissimo",
+    "tracking_numbers": [
+      "6A20481937564"
+    ],
+    "order_numbers": [
+      "2611180457"
+    ],
+    "eta_start": "2026-11-24",
+    "eta_end": "2026-11-24",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Casque sans fil Bose QuietComfort 45"
+    ]
+  },
+  "fr02": {
+    "about": "Mondial Relay Point Relais pickup; the 14-day hold is a trap.",
+    "language": "fr",
+    "kind": "ready_for_pickup",
+    "merchant": "Kiabi",
+    "carrier": "mondial_relay",
+    "tracking_numbers": [
+      "48291736"
+    ],
+    "order_numbers": [],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": "Tabac Presse Exemple",
+    "pickup_code": "482917",
+    "items": []
+  },
+  "fr03": {
+    "about": "Chronopost missed delivery; new slot 'vendredi 20/11 entre 8h et 13h'.",
+    "language": "fr",
+    "kind": "attempted",
+    "merchant": "Boulanger",
+    "carrier": "chronopost",
+    "tracking_numbers": [
+      "EE618273045FR"
+    ],
+    "order_numbers": [],
+    "eta_start": "2026-11-20",
+    "eta_end": "2026-11-20",
+    "window_start": "08:00",
+    "window_end": "13:00",
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "fr04": {
+    "about": "Small shop return label with Colissimo; drop-off deadline and refund are traps.",
+    "language": "fr",
+    "kind": "return",
+    "merchant": "Boutique Exemple",
+    "carrier": "colissimo",
+    "tracking_numbers": [
+      "6C98765432101"
+    ],
+    "order_numbers": [
+      "BE-77812"
+    ],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Pull en laine mérinos"
+    ]
+  },
+  "fr05": {
+    "about": "La Poste tracked letter in transit; 'distribuée demain'.",
+    "language": "fr",
+    "kind": "in_transit",
+    "merchant": "Librairie Exemple",
+    "carrier": "la_poste",
+    "tracking_numbers": [
+      "1K36920154870"
+    ],
+    "order_numbers": [],
+    "eta_start": "2026-11-21",
+    "eta_end": "2026-11-21",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "it01": {
+    "about": "Small shop order; range '24-26 novembre'; the order date is a trap.",
+    "language": "it",
+    "kind": "order",
+    "merchant": "Negozio Esempio",
+    "carrier": null,
+    "tracking_numbers": [],
+    "order_numbers": [
+      "30482"
+    ],
+    "eta_start": "2026-11-24",
+    "eta_end": "2026-11-26",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Olio extravergine di oliva",
+      "Pasta di Gragnano"
+    ]
+  },
+  "it02": {
+    "about": "BRT shipped for MediaWorld; 'venerdì 20 novembre'.",
+    "language": "it",
+    "kind": "shipped",
+    "merchant": "MediaWorld",
+    "carrier": "brt",
+    "tracking_numbers": [
+      "084612307759012"
+    ],
+    "order_numbers": [],
+    "eta_start": "2026-11-20",
+    "eta_end": "2026-11-20",
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "it03": {
+    "about": "Poste Italiane out for delivery today; window '14:00-18:00'.",
+    "language": "it",
+    "kind": "out_for_delivery",
+    "merchant": "Libreria Esempio",
+    "carrier": "poste_italiane",
+    "tracking_numbers": [
+      "RA472193607IT"
+    ],
+    "order_numbers": [],
+    "eta_start": "2026-11-24",
+    "eta_end": "2026-11-24",
+    "window_start": "14:00",
+    "window_end": "18:00",
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "it04": {
+    "about": "Zalando order cancelled; refund period is a trap.",
+    "language": "it",
+    "kind": "cancelled",
+    "merchant": "Zalando",
+    "carrier": null,
+    "tracking_numbers": [],
+    "order_numbers": [
+      "10107712345678"
+    ],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Giacca a vento The North Face"
+    ]
+  },
+  "nl01": {
+    "about": "Small shop shipped with PostNL; 'morgen tussen 13:15 en 15:45'.",
+    "language": "nl",
+    "kind": "shipped",
+    "merchant": "Voorbeeldwinkel",
+    "carrier": "postnl",
+    "tracking_numbers": [
+      "3SVWBK0123456"
+    ],
+    "order_numbers": [
+      "2026-11873"
+    ],
+    "eta_start": "2026-11-19",
+    "eta_end": "2026-11-19",
+    "window_start": "13:15",
+    "window_end": "15:45",
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": [
+      "Plantenbak van terracotta",
+      "Gieter 1,5 liter"
+    ]
+  },
+  "nl02": {
+    "about": "PostNL delivered a parcel from Coolblue.",
+    "language": "nl",
+    "kind": "delivered",
+    "merchant": "Coolblue",
+    "carrier": "postnl",
+    "tracking_numbers": [
+      "3SCOOL7654321"
+    ],
+    "order_numbers": [],
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "nl03": {
+    "about": "bol advert; 'Voor 23:59 besteld, morgen in huis' is a trap.",
+    "language": "nl",
+    "kind": "not_parcel",
+    "carrier": null,
+    "tracking_numbers": [],
+    "order_numbers": [],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  },
+  "nl04": {
+    "about": "PostNL import charges for an S10 parcel from AliExpress.",
+    "language": "nl",
+    "kind": "customs",
+    "merchant": "AliExpress",
+    "carrier": "postnl",
+    "tracking_numbers": [
+      "LX820461754CN"
+    ],
+    "order_numbers": [],
+    "eta_start": null,
+    "eta_end": null,
+    "window_start": null,
+    "window_end": null,
+    "pickup_point": null,
+    "pickup_code": null,
+    "items": []
+  }
+}

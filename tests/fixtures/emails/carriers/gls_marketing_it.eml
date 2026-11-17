@@ -1,0 +1,68 @@
+Return-Path: <bounce-df9a60f4f5@bounces.gls-group.eu>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@gls-group.eu header.s=sel1 header.b=63544e84;
+       spf=pass (google.com: domain of bounce-df9a60f4f5@bounces.gls-group.eu
+ designates 192.0.2.210 as permitted sender) smtp.mailfrom=bounce-df9a60f4f5@bounces.gls-group.eu;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=gls-group.eu
+From: GLS Italy <newsletter@gls-group.eu>
+To: Alex Doe <alex@example.com>
+Subject: Con l'app GLS decidi tu dove ricevere i tuoi pacchi
+Date: Mon, 16 Nov 2026 11:30:00 +0100
+Message-ID: <20261116103000.6cb3@mail.example.com>
+MIME-Version: 1.0
+Content-Language: it-IT
+Content-Type: multipart/alternative; boundary="b1_e82501a70bd7"
+
+--b1_e82501a70bd7
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+GLS
+
+I tuoi pacchi, come vuoi tu
+
+Ciao Alex,
+
+Con FlexDeliveryService scegli un altro giorno di consegna, ritira il pacco in un GLS ParcelShop vicino a te o fallo consegnare a un vicino.
+
+Solo per questo mese: 10% di sconto sulle spedizioni dai GLS ParcelShop.
+
+Scarica l'app [https://gls-group.com/IT/it/app?utm_source=newsletter]
+
+GLS Italy · Via Esempio 1, 20121 Milano
+
+Non vuoi più ricevere la newsletter? Annulla l'iscrizione [https://gls-group.com/IT/it/newsletter/disiscriviti?id=a1b2c3]
+
+--b1_e82501a70bd7
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>L&#x27;app GLS</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#061ab1}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#061ab1;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://gls-group.com/images/gls-logo.png" alt="GLS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>I tuoi pacchi, come vuoi tu</h1>
+<p>Ciao Alex,</p>
+<p>Con FlexDeliveryService scegli un altro giorno di consegna, ritira il pacco in un GLS ParcelShop vicino a te o fallo consegnare a un vicino.</p>
+<p>Solo per questo mese: 10% di sconto sulle spedizioni dai GLS ParcelShop.</p>
+<p style="text-align:center"><a class="button" href="https://gls-group.com/IT/it/app?utm_source=newsletter">Scarica l'app</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>GLS Italy · Via Esempio 1, 20121 Milano</p>
+<p>Non vuoi più ricevere la newsletter? <a href="https://gls-group.com/IT/it/newsletter/disiscriviti?id=a1b2c3">Annulla l'iscrizione</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_e82501a70bd7--

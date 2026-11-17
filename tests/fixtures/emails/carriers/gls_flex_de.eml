@@ -1,0 +1,79 @@
+Return-Path: <bounce-81ef194899@bounces.gls-group.eu>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@gls-group.eu header.s=sel1 header.b=503974e8;
+       spf=pass (google.com: domain of bounce-81ef194899@bounces.gls-group.eu
+ designates 192.0.2.89 as permitted sender) smtp.mailfrom=bounce-81ef194899@bounces.gls-group.eu;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=gls-group.eu
+From: GLS <noreply@gls-group.eu>
+To: Alex Doe <alex@example.com>
+Subject: Ihr GLS Paket kommt heute zwischen 11:10 und 13:10 Uhr
+Date: Tue, 17 Nov 2026 07:40:00 +0100
+Message-ID: <20261117064000.9004@mail.example.com>
+MIME-Version: 1.0
+Content-Language: de-DE
+Content-Type: multipart/alternative; boundary="b1_1016c7a6dddd"
+
+--b1_1016c7a6dddd
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+GLS
+
+Ihr Paket kommt heute
+
+Hallo Alex Doe,
+
+Ihr Paket von Tchibo wird Ihnen heute, 17.11.2026, voraussichtlich zwischen 11:10 und 13:10 Uhr zugestellt.
+
+Paketnummer: 620417392859
+
+Absender: Tchibo
+
+Zustellzeitfenster: 11:10 - 13:10 Uhr
+
+Mit dem FlexDeliveryService passen Sie die Zustellung an Ihre Wünsche an: Wählen Sie einen anderen Tag, lassen Sie das Paket in einen GLS PaketShop umleiten oder erteilen Sie eine Abstellgenehmigung.
+
+Zustellung ändern [https://gls-group.com/DE/de/paketverfolgung?match=620417392859]
+
+GLS Germany GmbH & Co. OHG · Beispielstraße 1, 36286 Neuenstein
+
+Datenschutz [https://gls-group.com/DE/de/datenschutz]
+
+--b1_1016c7a6dddd
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ihr Paket kommt heute</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#061ab1}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#061ab1;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://gls-group.com/images/gls-logo.png" alt="GLS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Ihr Paket kommt heute</h1>
+<p>Hallo Alex Doe,</p>
+<p>Ihr Paket von <strong>Tchibo</strong> wird Ihnen heute, 17.11.2026, voraussichtlich zwischen 11:10 und 13:10 Uhr zugestellt.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Paketnummer</td><td class="value">620417392859</td></tr>
+<tr><td class="label">Absender</td><td class="value">Tchibo</td></tr>
+<tr><td class="label">Zustellzeitfenster</td><td class="value">11:10 - 13:10 Uhr</td></tr>
+</table>
+<p>Mit dem FlexDeliveryService passen Sie die Zustellung an Ihre Wünsche an: Wählen Sie einen anderen Tag, lassen Sie das Paket in einen GLS PaketShop umleiten oder erteilen Sie eine Abstellgenehmigung.</p>
+<p style="text-align:center"><a class="button" href="https://gls-group.com/DE/de/paketverfolgung?match=620417392859">Zustellung ändern</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>GLS Germany GmbH &amp; Co. OHG · Beispielstraße 1, 36286 Neuenstein</p>
+<p><a href="https://gls-group.com/DE/de/datenschutz">Datenschutz</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_1016c7a6dddd--

@@ -1,0 +1,82 @@
+Return-Path: <bounce-c9079300eb@bounces.mrw.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@mrw.es header.s=sel1 header.b=04d22640;
+       spf=pass (google.com: domain of bounce-c9079300eb@bounces.mrw.es
+ designates 192.0.2.117 as permitted sender) smtp.mailfrom=bounce-c9079300eb@bounces.mrw.es;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=mrw.es
+From: MRW <notificaciones@mrw.es>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Tu_env=C3=ADo_MRW_est=C3=A1_en_reparto?=
+Date: Tue, 17 Nov 2026 08:20:00 +0100
+Message-ID: <20261117072000.5d63@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_da66edc7e96b"
+
+--b1_da66edc7e96b
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+MRW
+
+Tu envío está en reparto
+
+Hola Alex Doe,
+
+Tu envío de MediaMarkt ya está en reparto y lo recibirás hoy.
+
+Nº de envío: 02650/0438217
+
+Remitente: MediaMarkt
+
+Fecha de entrega: Martes, 17/11/2026
+
+Franja horaria: de 09:00 a 14:00
+
+Si lo necesitas, puedes cambiar la entrega o recogerlo en tu franquicia MRW más cercana.
+
+Seguir envío [https://www.mrw.es/seguimiento_envios/MRW_resultados_consultas.asp?modo=nacional&envio=026500438217]
+
+MRW · Calle Ejemplo 1, 08001 Barcelona · +34 900 000 000
+
+Política de privacidad [https://www.mrw.es/politica-privacidad]
+
+--b1_da66edc7e96b
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Envío en reparto</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#e2001a}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#e2001a;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.mrw.es/img/logo-mrw.png" alt="MRW" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Tu envío está en reparto</h1>
+<p>Hola Alex Doe,</p>
+<p>Tu envío de <strong>MediaMarkt</strong> ya está en reparto y lo recibirás hoy.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Nº de envío</td><td class="value">02650/0438217</td></tr>
+<tr><td class="label">Remitente</td><td class="value">MediaMarkt</td></tr>
+<tr><td class="label">Fecha de entrega</td><td class="value">Martes, 17/11/2026</td></tr>
+<tr><td class="label">Franja horaria</td><td class="value">de 09:00 a 14:00</td></tr>
+</table>
+<p>Si lo necesitas, puedes cambiar la entrega o recogerlo en tu franquicia MRW más cercana.</p>
+<p style="text-align:center"><a class="button" href="https://www.mrw.es/seguimiento_envios/MRW_resultados_consultas.asp?modo=nacional&envio=026500438217">Seguir envío</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>MRW · Calle Ejemplo 1, 08001 Barcelona · +34 900 000 000</p>
+<p><a href="https://www.mrw.es/politica-privacidad">Política de privacidad</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_da66edc7e96b--

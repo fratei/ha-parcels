@@ -1,0 +1,516 @@
+{
+  "config": {
+    "step": {
+      "hub": {
+        "title": "Set up parcel tracking",
+        "description": "Parcels tracks your parcels from shipping e-mails. This step adds the hub, which holds your parcels, notifications and options. Afterwards, add Parcels again for each Outlook.com or Gmail mailbox."
+      },
+      "pick_implementation": {
+        "title": "Pick authentication method",
+        "data": {
+          "implementation": "Application credentials"
+        },
+        "data_description": {
+          "implementation": "The Microsoft or Google credentials to sign in with."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "description": "Parcels can no longer read {address}. Sign in again with the same account."
+      }
+    },
+    "abort": {
+      "already_configured": "This mailbox is already set up.",
+      "api_disabled": "The Gmail API is turned off for your Google Cloud project. Enable it and try again.",
+      "cannot_connect": "Failed to connect.",
+      "missing_configuration": "Add application credentials for Microsoft or Google first.",
+      "missing_permission": "Parcels may not read this mailbox. Sign in again and allow every permission that is requested.",
+      "no_mailbox": "This account has no mailbox. Sign in with an Outlook.com or Gmail account.",
+      "reauth_successful": "Signed in again successfully.",
+      "unknown": "Unexpected error.",
+      "wrong_account": "Wrong account. Sign in with {address}."
+    },
+    "create_entry": {
+      "default": "Successfully authenticated.",
+      "hub": "Parcel tracking is set up. Now add Parcels again to connect a mailbox."
+    }
+  },
+  "options": {
+    "step": {
+      "hub": {
+        "title": "Parcel tracking options",
+        "description": "Notifications, storage and local AI for all mailboxes.",
+        "data": {
+          "ai_mode": "AI mode",
+          "ai_task_entity": "Local AI task",
+          "archive_days": "Archive delivered parcels after",
+          "collapse_threshold": "Combine Live Activities above",
+          "cutoff_time": "Cut-off time",
+          "excluded_devices": "Excluded devices",
+          "item_names_on_lock_screen": "Show item names on the lock screen",
+          "notify_persons": "People to notify",
+          "purge_days": "Delete delivered parcels after",
+          "seventeentrack": "Live status from 17TRACK",
+          "start_time": "Start time",
+          "test_device": "Test device",
+          "test_mode": "Test mode"
+        },
+        "data_description": {
+          "ai_mode": "Suggest sends every AI result to Needs review. Automatic adds results that pass every check, but only from trusted senders.",
+          "ai_task_entity": "Reads shipping e-mails that no parser understands. Only an Ollama AI task with a local model on the Home Assistant host is accepted, never a cloud model.",
+          "archive_days": "Days after delivery. Archived parcels stay visible in past weeks.",
+          "collapse_threshold": "When more parcels than this are expected on the same day, they share one Live Activity.",
+          "cutoff_time": "Remaining Live Activities end at this time. Undelivered parcels stay in the persistent notification.",
+          "excluded_devices": "Companion app devices that never get Live Activities, such as a shared tablet.",
+          "item_names_on_lock_screen": "Live Activities are visible on the lock screen. When off, they show merchant, carrier, status and time window only.",
+          "notify_persons": "The companion app devices of these people get Live Activities.",
+          "purge_days": "Days after delivery. Must be more than the archive period.",
+          "seventeentrack": "Sends tracking numbers, never item names or e-mails, to the 17TRACK integration.",
+          "start_time": "Live Activities for parcels expected today start at this time.",
+          "test_device": "The only device that gets Live Activities while test mode is on.",
+          "test_mode": "Send Live Activities to the test device only."
+        }
+      },
+      "mailbox": {
+        "title": "Mailbox options",
+        "description": "Options for {address}.",
+        "data": {
+          "folders": "Folders to read",
+          "interval_minutes": "Check for new e-mail every",
+          "lookback_days": "First sync reads back",
+          "owner": "Owner"
+        },
+        "data_description": {
+          "folders": "Junk Email catches shipping e-mails that were wrongly marked as spam.",
+          "interval_minutes": "How often Parcels checks this mailbox.",
+          "lookback_days": "How many days of e-mail the first sync reads.",
+          "owner": "The person this mailbox belongs to. Their private parcels notify only their devices."
+        }
+      }
+    },
+    "error": {
+      "ai_cloud_model": "This AI task uses an Ollama cloud model. Only local models on the Home Assistant host are accepted, never cloud models.",
+      "ai_no_entry": "The Ollama integration of this AI task isn't set up or loaded.",
+      "ai_no_model": "This AI task has no model selected.",
+      "ai_not_ai_task": "This entity isn't an AI task.",
+      "ai_not_found": "This AI task doesn't exist.",
+      "ai_not_ollama": "This AI task doesn't use Ollama. Only local Ollama models on the Home Assistant host are accepted.",
+      "ai_remote_host": "This Ollama server isn't on the Home Assistant host. Only a local Ollama server on the host is accepted.",
+      "ai_unknown": "This AI task couldn't be checked. Only local Ollama models on the Home Assistant host are accepted.",
+      "ai_unresolvable": "The address of this Ollama server couldn't be checked. Use an Ollama server on the Home Assistant host.",
+      "cutoff_before_start": "The cut-off time must be later than the start time.",
+      "no_folders": "Choose at least one folder.",
+      "purge_before_archive": "Use more days than the archive period.",
+      "test_device_required": "Choose a test device, or turn off test mode."
+    }
+  },
+  "selector": {
+    "ai_mode": {
+      "options": {
+        "auto": "Automatic (trusted senders only)",
+        "off": "Off",
+        "suggest": "Suggest (review every result)"
+      }
+    },
+    "folders": {
+      "options": {
+        "inbox": "Inbox",
+        "junkemail": "Junk Email"
+      }
+    },
+    "carrier": {
+      "options": {
+        "amazon": "Amazon Logistics",
+        "asendia": "Asendia",
+        "bpost": "bpost",
+        "brt": "BRT",
+        "cainiao": "Cainiao",
+        "chronopost": "Chronopost",
+        "colissimo": "Colissimo",
+        "correos": "Correos",
+        "correos_express": "Correos Express",
+        "ctt": "CTT",
+        "ctt_expresso": "CTT Expresso",
+        "deutsche_post": "Deutsche Post",
+        "dhl": "DHL",
+        "dpd": "DPD",
+        "evri": "Evri",
+        "fedex": "FedEx",
+        "gls": "GLS",
+        "hermes": "Hermes",
+        "inpost": "InPost",
+        "la_poste": "La Poste",
+        "mondial_relay": "Mondial Relay",
+        "mrw": "MRW",
+        "nacex": "Nacex",
+        "paack": "Paack",
+        "postnl": "PostNL",
+        "poste_italiane": "Poste Italiane",
+        "royal_mail": "Royal Mail",
+        "sda": "SDA",
+        "seur": "SEUR",
+        "tnt": "TNT",
+        "ups": "UPS",
+        "usps": "USPS",
+        "vinted_go": "Vinted Go",
+        "yunexpress": "YunExpress",
+        "other": "Other"
+      }
+    }
+  },
+  "application_credentials": {
+    "description": "Parcels signs in with your own app. The client ID decides the provider, so you can add credentials for both.\n\n**Outlook.com**: in [Microsoft Entra app registrations]({microsoft_console_url}), register an app for personal Microsoft accounts only, add the Web redirect URI `{redirect_url}`, create a client secret and add the delegated Microsoft Graph permissions Mail.Read and User.Read.\n\n**Gmail**: in the [Google Cloud console]({google_console_url}), enable the [Gmail API]({gmail_api_url}), set up the OAuth consent screen with the gmail.readonly scope, and create an OAuth client of type Web application with the redirect URI `{redirect_url}`. Publish the app to production, or Google signs you out every 7 days."
+  },
+  "entity": {
+    "binary_sensor": {
+      "delivery_today": {
+        "name": "Delivery today"
+      }
+    },
+    "sensor": {
+      "arriving_today": {
+        "name": "Arriving today",
+        "unit_of_measurement": "parcels"
+      },
+      "in_transit": {
+        "name": "In transit",
+        "unit_of_measurement": "parcels"
+      },
+      "ready_for_pickup": {
+        "name": "Ready for pickup",
+        "unit_of_measurement": "parcels"
+      },
+      "delivered_today": {
+        "name": "Delivered today",
+        "unit_of_measurement": "parcels"
+      },
+      "ai_queue": {
+        "name": "AI queue",
+        "unit_of_measurement": "e-mails"
+      },
+      "last_sync": {
+        "name": "Last sync"
+      }
+    },
+    "switch": {
+      "live_activities": {
+        "name": "Live Activities"
+      },
+      "daily_notification": {
+        "name": "Delivery day notification"
+      }
+    }
+  },
+  "exceptions": {
+    "hub_not_loaded": {
+      "message": "The Parcels hub isn't loaded."
+    },
+    "not_allowed": {
+      "message": "This parcel is private to someone else."
+    },
+    "unknown_parcel": {
+      "message": "There's no parcel with this ID."
+    },
+    "invalid_tracking_number": {
+      "message": "Enter a tracking number of 6 to 40 letters and digits."
+    },
+    "unknown_carrier": {
+      "message": "Unknown carrier."
+    },
+    "merge_needs_two": {
+      "message": "Choose at least two different parcels to merge."
+    },
+    "nothing_to_undo": {
+      "message": "This parcel has no automatic merge to undo."
+    },
+    "unknown_review": {
+      "message": "This e-mail isn't waiting for review anymore."
+    },
+    "nothing_to_add": {
+      "message": "Add a tracking number or an order number first."
+    },
+    "cannot_trust_free_mail": {
+      "message": "{domain} is a free e-mail service that anyone can send from, so it can't be trusted."
+    },
+    "cannot_ignore_free_mail": {
+      "message": "{domain} is a free e-mail service, so ignoring it would also hide forwarded shipping e-mails."
+    },
+    "unknown_filtered": {
+      "message": "This filtered e-mail isn't in the list anymore."
+    },
+    "ai_not_configured": {
+      "message": "Choose an AI task entity in the Parcels options first."
+    },
+    "unknown_message": {
+      "message": "Parcels doesn't have this e-mail anymore."
+    },
+    "message_gone": {
+      "message": "The e-mail isn't in the mailbox anymore."
+    },
+    "message_unavailable": {
+      "message": "The mailbox of this e-mail isn't loaded."
+    },
+    "no_messages": {
+      "message": "There's no e-mail to read again."
+    },
+    "no_origins": {
+      "message": "Choose the sources to move to the new parcel."
+    },
+    "unknown_origin": {
+      "message": "A chosen source isn't part of this parcel."
+    },
+    "nothing_left": {
+      "message": "Leave at least one source in the parcel."
+    },
+    "shared_number": {
+      "message": "A chosen source has the same tracking number as a source that stays, so they would merge again."
+    },
+    "mailbox_auth_failed": {
+      "message": "Sign in to {address} again."
+    },
+    "mailbox_rate_limited": {
+      "message": "The mail service is limiting requests. Parcels tries again later."
+    },
+    "mailbox_sync_failed": {
+      "message": "Checking the mailbox failed: {error}"
+    },
+    "mailbox_no_mailbox": {
+      "message": "This account has no mailbox."
+    },
+    "mailbox_api_disabled": {
+      "message": "The Gmail API is turned off in the Google Cloud project of your credentials."
+    },
+    "test_not_running": {
+      "message": "Parcels notifications aren't running."
+    },
+    "test_app_unregistered": {
+      "message": "The Home Assistant app on this iPhone can't receive notifications. Open the app to register it again."
+    },
+    "test_send_failed": {
+      "message": "Sending the test Live Activity failed."
+    },
+    "test_not_iphone": {
+      "message": "Live Activities need an iPhone with the Home Assistant app, and the chosen device isn't one."
+    },
+    "test_mode_not_iphone": {
+      "message": "Test mode is on, but the test device isn't an iPhone with the Home Assistant app."
+    },
+    "test_no_iphone": {
+      "message": "There's no iPhone to send a test Live Activity to. Choose a test device, or a person to notify who has an iPhone with the Home Assistant app."
+    }
+  },
+  "issues": {
+    "parser_outdated": {
+      "title": "Shipping e-mails from {sender} aren't understood",
+      "description": "Parcels couldn't read several recent shipping e-mails from {sender}. The sender may have changed its e-mails, or uses a layout Parcels doesn't know. The e-mails are waiting for review on the Parcels page, where you can add their details by hand.\n\nIf this keeps happening, check for an update of Parcels. This issue goes away when an e-mail from {sender} is understood again."
+    },
+    "ai_unavailable": {
+      "title": "The local AI isn't available",
+      "description": "Parcels couldn't use the AI task entity chosen in its options. E-mails for the AI wait in the queue and go to review if the AI stays unavailable.\n\nCheck that the Ollama app and the Ollama integration are running. This issue goes away after the next successful AI call."
+    },
+    "ai_task_refused": {
+      "title": "The chosen AI task isn't local",
+      "description": "Parcels only sends e-mails to an AI task entity of the Ollama integration whose model runs on this Home Assistant. The chosen AI task entity failed this check (reason: {reason}), so no e-mail was sent to it and the AI is paused.\n\nChoose a local Ollama AI task entity in the Parcels options, or set the AI mode to off."
+    }
+  },
+  "services": {
+    "add": {
+      "name": "Add parcel",
+      "description": "Adds a parcel by its tracking number. Returns the parcel's ID, which is the ID of the existing parcel when the number is already tracked.",
+      "fields": {
+        "tracking_number": {
+          "name": "Tracking number",
+          "description": "The tracking number from the carrier or the shop."
+        },
+        "carrier": {
+          "name": "Carrier",
+          "description": "The carrier that delivers the parcel. Leave empty to detect it from the number."
+        },
+        "merchant": {
+          "name": "Merchant",
+          "description": "The shop the parcel comes from."
+        },
+        "private": {
+          "name": "Private",
+          "description": "Show the parcel only to you, not to the other people in Home Assistant."
+        }
+      }
+    },
+    "update": {
+      "name": "Update parcel",
+      "description": "Corrects the details of a parcel. Fields you leave out stay as they are; clear a field to remove it.",
+      "fields": {
+        "parcel_id": {
+          "name": "Parcel ID",
+          "description": "The ID of the parcel, from the parcel's details on the Parcels page or the parcels attribute of a Parcels sensor."
+        },
+        "tracking_number": {
+          "name": "Tracking number",
+          "description": "The tracking number from the carrier or the shop."
+        },
+        "carrier": {
+          "name": "Carrier",
+          "description": "The carrier that delivers the parcel."
+        },
+        "merchant": {
+          "name": "Merchant",
+          "description": "The shop the parcel comes from."
+        },
+        "eta_start": {
+          "name": "Expected from",
+          "description": "The first day the parcel may arrive."
+        },
+        "eta_end": {
+          "name": "Expected until",
+          "description": "The last day the parcel may arrive."
+        },
+        "window_start": {
+          "name": "Window start",
+          "description": "The start of the delivery time window."
+        },
+        "window_end": {
+          "name": "Window end",
+          "description": "The end of the delivery time window."
+        },
+        "pickup_point": {
+          "name": "Pickup point",
+          "description": "Where to collect the parcel."
+        },
+        "pickup_code": {
+          "name": "Pickup code",
+          "description": "The code to collect the parcel."
+        },
+        "private": {
+          "name": "Private",
+          "description": "Show the parcel only to you, not to the other people in Home Assistant."
+        },
+        "confirm": {
+          "name": "Confirm AI details",
+          "description": "Confirm the details the local AI found, which removes the AI mark."
+        },
+        "confirm_merge": {
+          "name": "Keep merge",
+          "description": "Keep the automatic merge of this parcel, which removes the undo option."
+        }
+      }
+    },
+    "mark_delivered": {
+      "name": "Mark delivered",
+      "description": "Marks a parcel as delivered now.",
+      "fields": {
+        "parcel_id": {
+          "name": "Parcel ID",
+          "description": "The ID of the parcel, from the parcel's details on the Parcels page or the parcels attribute of a Parcels sensor."
+        }
+      }
+    },
+    "archive": {
+      "name": "Archive parcel",
+      "description": "Archives a parcel. It leaves the lists and the notifications, and is removed after the retention period.",
+      "fields": {
+        "parcel_id": {
+          "name": "Parcel ID",
+          "description": "The ID of the parcel, from the parcel's details on the Parcels page or the parcels attribute of a Parcels sensor."
+        }
+      }
+    },
+    "undo_merge": {
+      "name": "Undo merge",
+      "description": "Splits a parcel that Parcels merged automatically back into the parcels it came from.",
+      "fields": {
+        "parcel_id": {
+          "name": "Parcel ID",
+          "description": "The ID of the parcel, from the parcel's details on the Parcels page or the parcels attribute of a Parcels sensor."
+        }
+      }
+    },
+    "merge": {
+      "name": "Merge parcels",
+      "description": "Merges parcels that are the same delivery into the first one. Returns the ID of the merged parcel.",
+      "fields": {
+        "parcel_ids": {
+          "name": "Parcel IDs",
+          "description": "The IDs of the parcels to merge, at least two."
+        }
+      }
+    },
+    "split": {
+      "name": "Split parcel",
+      "description": "Moves sources of a parcel, such as e-mails or a manual entry, to a new parcel. Returns the ID of the new parcel.",
+      "fields": {
+        "parcel_id": {
+          "name": "Parcel ID",
+          "description": "The ID of the parcel, from the parcel's details on the Parcels page or the parcels attribute of a Parcels sensor."
+        },
+        "origins": {
+          "name": "Sources",
+          "description": "The IDs of the sources to move, from the parcel's details on the Parcels page."
+        }
+      }
+    },
+    "refresh": {
+      "name": "Refresh",
+      "description": "Checks all mailboxes, and 17TRACK when it's on, now."
+    },
+    "reprocess": {
+      "name": "Read e-mails again",
+      "description": "Downloads the e-mails of a parcel, a review item or a filtered e-mail again and reads them with the current parsers. Give one of the IDs. Only administrators can use this action.",
+      "fields": {
+        "parcel_id": {
+          "name": "Parcel ID",
+          "description": "The ID of the parcel, from the parcel's details on the Parcels page or the parcels attribute of a Parcels sensor."
+        },
+        "review_id": {
+          "name": "Review ID",
+          "description": "The ID of an e-mail waiting for review on the Parcels page."
+        },
+        "filtered_id": {
+          "name": "Filtered ID",
+          "description": "The ID of a filtered e-mail on the Parcels page."
+        },
+        "use_ai": {
+          "name": "Use local AI",
+          "description": "Put the e-mails up for review and ask the local AI to fill in their details."
+        }
+      }
+    },
+    "trust_sender": {
+      "name": "Trust sender",
+      "description": "Trusts a sender, so its e-mails are read as shipping e-mails, and reads its e-mails under review again. Give a domain or a review ID. Returns the trusted domain. Only administrators can use this action.",
+      "fields": {
+        "domain": {
+          "name": "Domain",
+          "description": "The sender's domain. Parcels trusts the whole organisation, for example shop.example for mail.shop.example."
+        },
+        "review_id": {
+          "name": "Review ID",
+          "description": "The ID of an e-mail under review whose sender to trust."
+        }
+      }
+    },
+    "ignore_sender": {
+      "name": "Ignore sender",
+      "description": "Ignores a sender: its e-mails are no longer read, and its e-mails under review are removed. Give a domain or a review ID. Returns the ignored domain. Only administrators can use this action.",
+      "fields": {
+        "domain": {
+          "name": "Domain",
+          "description": "The sender's domain. Parcels ignores the whole organisation, for example shop.example for mail.shop.example."
+        },
+        "review_id": {
+          "name": "Review ID",
+          "description": "The ID of an e-mail under review whose sender to ignore."
+        }
+      }
+    },
+    "test_live_activity": {
+      "name": "Test Live Activity",
+      "description": "Sends a demo Live Activity to an iPhone. It ends after a minute. Only administrators can use this action.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The iPhone. Leave empty to use the test device, or else the first iPhone that gets Parcels notifications."
+        }
+      }
+    }
+  }
+}

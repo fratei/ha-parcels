@@ -1,0 +1,43 @@
+Return-Path: <bounces@wook.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@wook.pt header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@wook.pt designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@wook.pt;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=wook.pt
+From: WOOK <newsletter@wook.pt>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Black_Friday_antecipada=3A_at=C3=A9_50=25_em_livros?=
+Date: Tue, 17 Nov 2026 18:00:00 +0000
+Message-ID: <20261117180000.pt09@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt
+Content-Type: multipart/alternative; boundary="=_parcels_ai_pt09"
+
+--=_parcels_ai_pt09
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Olá Alex,
+A Black Friday chegou mais cedo à WOOK!
+Até 50% de desconto em milhares de livros, até 30 de novembro.
+Entrega em 24 horas para encomendas feitas até às 15h.
+Portes grátis em encomendas a partir de 15 €.
+Ver promoções: https://www.wook.pt/promocoes
+Cancelar subscrição: https://www.wook.pt/newsletter/cancelar
+--=_parcels_ai_pt09
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="utf-8"><title>Black Friday antecipada: até 50% em livros</title></head>
+<body>
+<p>Olá Alex,</p>
+<p>A Black Friday chegou mais cedo à WOOK!</p>
+<p>Até 50% de desconto em milhares de livros, até 30 de novembro.</p>
+<p>Entrega em 24 horas para encomendas feitas até às 15h.</p>
+<p>Portes grátis em encomendas a partir de 15 €.</p>
+<p><a href="https://www.wook.pt/promocoes">Ver promoções</a></p>
+<p><a href="https://www.wook.pt/newsletter/cancelar">Cancelar subscrição</a></p>
+</body>
+</html>
+--=_parcels_ai_pt09--

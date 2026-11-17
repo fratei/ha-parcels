@@ -1,0 +1,111 @@
+Return-Path: <bounces+61234504@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@beispiel-laden.de header.s=shopify2 header.b=nS7mR6lQ;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234504@shopifyemail.com designates 198.51.100.14 as permitted sender) smtp.mailfrom=bounces+61234504@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=beispiel-laden.de
+Received: from o24.ptr4120.shopifyemail.com (o24.ptr4120.shopifyemail.com. [198.51.100.14])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Thu, 19 Nov 2026 13:52:19 +0100
+From: Beispiel Laden <kontakt@beispiel-laden.de>
+To: Alex Doe <alex@example.com>
+Subject: Eine Sendung aus Bestellung #1203 wurde zugestellt
+Date: Thu, 19 Nov 2026 13:52:19 +0100
+Message-ID: <2fab24bbbb234_20261119135219@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Beispiel Laden
+Bestellung #1203
+
+Ihre Bestellung wurde zugestellt
+
+Sie haben Ihr Paket nicht erhalten? Bitte lassen Sie es uns wissen.
+
+Sendung verfolgen: https://tracking.dpd.de/status/en_US/parcel/019060047182=
+50
+oder Besuchen Sie unseren Shop: https://beispiel-laden.de/
+
+DPD-Sendungsnummer: 01906004718250
+
+Artikel in dieser Sendung
+
+Schneidebrett aus Eichenholz =C3=97 1
+Gro=C3=9F
+Leinen-Geschirrtuch, 2er-Set =C3=97 1
+
+Wenn Sie Fragen haben, antworten Sie auf diese E-Mail oder kontaktieren Sie=
+ uns unter kontakt@beispiel-laden.de
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"de">
+<head>
+<title>Eine Sendung aus Bestellung #1203 wurde zugestellt</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://beispiel-laden.de/">Beispiel Laden</a></h1></td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Bestell=
+ung #1203</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Ihre Bestellung wurde zugestellt</h2>
+<p>Sie haben Ihr Paket nicht erhalten? Bitte lassen Sie es uns wissen.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://tracking.dpd.de/status/en_US/parcel/01906004718250" class=3D"button__te=
+xt">Sendung verfolgen</a></td></tr></table><table class=3D"link secondary-a=
+ction-cell"><tr><td class=3D"link__cell">oder <a href=3D"https://beispiel-l=
+aden.de/" class=3D"link__text"><span class=3D'arrow'>&rarr;</span> Besuchen=
+ Sie unseren Shop</a></td></tr></table></td></tr></table>
+<p class=3D"disclaimer__subtext">DPD-Sendungsnummer: <a href=3D"https://tra=
+cking.dpd.de/status/en_US/parcel/01906004718250">01906004718250</a></p>
+<h3 class=3D"h3">Artikel in dieser Sendung</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/29f198baee_compact_cropped.jpg" alt=3D"Schneidebret=
+t aus Eichenholz" width=3D"60" height=3D"60" class=3D"order-list__product-i=
+mage"></td><td class=3D"order-list__product-description-cell"><span class=
+=3D"order-list__item-title">Schneidebrett aus Eichenholz&nbsp;&times;&nbsp;=
+1</span><br><span class=3D"order-list__item-variant">Gro=C3=9F</span></td><=
+/tr></table></td></tr><tr class=3D"order-list__item"><td class=3D"order-lis=
+t__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1=
+/0612/3456/7890/products/a3fbb7e0d6_compact_cropped.jpg" alt=3D"Leinen-Gesc=
+hirrtuch, 2er-Set" width=3D"60" height=3D"60" class=3D"order-list__product-=
+image"></td><td class=3D"order-list__product-description-cell"><span class=
+=3D"order-list__item-title">Leinen-Geschirrtuch, 2er-Set&nbsp;&times;&nbsp;=
+1</span></td></tr></table></td></tr></table>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">Wenn Sie Fragen haben, antworten Sie auf d=
+iese E-Mail oder kontaktieren Sie uns unter <a href=3D"mailto:kontakt@beisp=
+iel-laden.de">kontakt@beispiel-laden.de</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

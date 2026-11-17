@@ -1,0 +1,76 @@
+Return-Path: <bounce-1871195f88@bounces.dhl.it>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dhl.it header.s=sel1 header.b=e7257fe9;
+       spf=pass (google.com: domain of bounce-1871195f88@bounces.dhl.it
+ designates 192.0.2.149 as permitted sender) smtp.mailfrom=bounce-1871195f88@bounces.dhl.it;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dhl.it
+From: DHL Express <noreply@dhl.it>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?La_tua_spedizione_DHL_=C3=A8_stata_consegnata?=
+Date: Tue, 17 Nov 2026 10:50:00 +0100
+Message-ID: <20261117095000.33a4@mail.example.com>
+MIME-Version: 1.0
+Content-Language: it-IT
+Content-Type: multipart/alternative; boundary="b1_296f70ec725f"
+
+--b1_296f70ec725f
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DHL
+
+Spedizione consegnata
+
+Gentile Alex Doe,
+
+la tua spedizione con lettera di vettura 5829173641 è stata consegnata il 17/11/2026 alle 10:42.
+
+Lettera di vettura: 5829173641
+
+Mittente: Yoox
+
+Luogo di consegna: Portineria
+
+Dettagli spedizione [https://www.dhl.com/it-it/home/tracking.html?tracking-id=5829173641]
+
+DHL Express (Italy) S.r.l. · Via Esempio 1, 20121 Milano
+
+Informativa sulla privacy [https://www.dhl.com/it-it/home/footer/privacy-notice.html]
+
+--b1_296f70ec725f
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spedizione consegnata</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#ffcc00}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ffcc00;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.dhl.de/content/dam/images/logo-dhl.png" alt="DHL" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Spedizione consegnata</h1>
+<p>Gentile Alex Doe,</p>
+<p>la tua spedizione con lettera di vettura 5829173641 è stata consegnata il 17/11/2026 alle 10:42.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Lettera di vettura</td><td class="value">5829173641</td></tr>
+<tr><td class="label">Mittente</td><td class="value">Yoox</td></tr>
+<tr><td class="label">Luogo di consegna</td><td class="value">Portineria</td></tr>
+</table>
+<p style="text-align:center"><a class="button" href="https://www.dhl.com/it-it/home/tracking.html?tracking-id=5829173641">Dettagli spedizione</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>DHL Express (Italy) S.r.l. · Via Esempio 1, 20121 Milano</p>
+<p><a href="https://www.dhl.com/it-it/home/footer/privacy-notice.html">Informativa sulla privacy</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_296f70ec725f--

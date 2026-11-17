@@ -1,0 +1,45 @@
+Return-Path: <orders@example-store.example>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@example-store.example header.s=mail header.b=QmFzZTY0;
+       spf=pass (google.com: domain of orders@example-store.example designates 192.0.2.90 as permitted sender) smtp.mailfrom=orders@example-store.example;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=example-store.example
+Received: from mail.example-store.example (mail.example-store.example. [192.0.2.90])
+        by mx.google.com with ESMTPS id a1si1234567wra.101.2026.11.17
+        for <alex@example.com>;
+        Tue, 17 Nov 2026 05:45:00 -0800 (PST)
+From: Example Store <orders@example-store.example>
+To: Alex Doe <alex@example.com>
+Subject: Order #1001 confirmed
+Date: Tue, 17 Nov 2026 13:45:00 +0000
+Message-ID: <20261117134500.1001@mail.example-store.example>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hi Alex,
+
+Thank you for your order! We're getting your order ready to be shipped.
+We will notify you when it has been sent.
+
+Order summary
+1 x Ceramic mug    €12.00
+Subtotal €12.00 · Shipping €3.90 · Total €15.90
+
+Shipping address: Alex Doe, Rua Exemplo 1, 1000-001 Lisboa, Portugal
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><body>
+<p>Hi Alex,</p>
+<p>Thank you for your order! We're getting your order ready to be shipped.<br>We will notify you when it has been sent.</p>
+<h2>Order summary</h2>
+<table><tr><td>1 &times; Ceramic mug</td><td>&euro;12.00</td></tr>
+<tr><td>Subtotal</td><td>&euro;12.00</td></tr><tr><td>Shipping</td><td>&euro;3.90</td></tr><tr><td>Total</td><td>&euro;15.90</td></tr></table>
+<p>Shipping address: Alex Doe, Rua Exemplo 1, 1000-001 Lisboa, Portugal</p>
+<p><a href="https://example-store.example/account/orders/1001">View your order</a></p>
+</body></html>
+--=_parcels_b1--

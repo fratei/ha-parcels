@@ -1,0 +1,82 @@
+Return-Path: <bounce-2efdb2d60b@bounces.vinted.nl>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@vinted.nl header.s=sel1 header.b=1f9f2e31;
+       spf=pass (google.com: domain of bounce-2efdb2d60b@bounces.vinted.nl
+ designates 192.0.2.47 as permitted sender) smtp.mailfrom=bounce-2efdb2d60b@bounces.vinted.nl;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=vinted.nl
+From: Vinted <no-reply@vinted.nl>
+To: Alex Doe <alex@example.com>
+Subject: Je pakket ligt klaar in de Vinted Go-locker
+Date: Tue, 17 Nov 2026 12:45:00 +0100
+Message-ID: <20261117114500.a4c0@mail.example.com>
+MIME-Version: 1.0
+Content-Language: nl-NL
+Content-Type: multipart/alternative; boundary="b1_f20c9e6da266"
+
+--b1_f20c9e6da266
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Vinted
+
+Je pakket ligt klaar
+
+Hoi Alex,
+
+Je pakket ligt klaar om op te halen in de Vinted Go-locker. Je kunt het ophalen tot en met 24-11-2026.
+
+Trackingcode: 1704829163057299
+
+Locker: Vinted Go Amsterdam Voorbeeld
+
+Adres: Voorbeeldstraat 1, 1011 AB Amsterdam
+
+Ophaalcode: 604127
+
+Open de locker met de QR-code in de Vinted-app of voer de ophaalcode in op het scherm.
+
+Volg je pakket [https://www.vinted.nl/shipments/tracking?tracking_code=1704829163057299]
+
+Vinted, UAB · Exemplo g. 1, Vilnius
+
+Privacybeleid [https://www.vinted.nl/privacy-policy]
+
+--b1_f20c9e6da266
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Je pakket ligt klaar</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#007782}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#007782;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://static.vinted.com/assets/logo.png" alt="Vinted" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Je pakket ligt klaar</h1>
+<p>Hoi Alex,</p>
+<p>Je pakket ligt klaar om op te halen in de Vinted Go-locker. Je kunt het ophalen tot en met 24-11-2026.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Trackingcode</td><td class="value">1704829163057299</td></tr>
+<tr><td class="label">Locker</td><td class="value">Vinted Go Amsterdam Voorbeeld</td></tr>
+<tr><td class="label">Adres</td><td class="value">Voorbeeldstraat 1, 1011 AB Amsterdam</td></tr>
+<tr><td class="label">Ophaalcode</td><td class="value">604127</td></tr>
+</table>
+<p>Open de locker met de QR-code in de Vinted-app of voer de ophaalcode in op het scherm.</p>
+<p style="text-align:center"><a class="button" href="https://www.vinted.nl/shipments/tracking?tracking_code=1704829163057299">Volg je pakket</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Vinted, UAB · Exemplo g. 1, Vilnius</p>
+<p><a href="https://www.vinted.nl/privacy-policy">Privacybeleid</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_f20c9e6da266--

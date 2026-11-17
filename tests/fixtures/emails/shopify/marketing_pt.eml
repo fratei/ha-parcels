@@ -1,0 +1,91 @@
+Return-Path: <bounces+61234501@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@loja-exemplo.pt header.s=shopify2 header.b=r6Lap4JY;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234501@shopifyemail.com designates 198.51.100.11 as permitted sender) smtp.mailfrom=bounces+61234501@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=loja-exemplo.pt
+Received: from o21.ptr4120.shopifyemail.com (o21.ptr4120.shopifyemail.com. [198.51.100.11])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Fri, 20 Nov 2026 10:00:05 +0000
+From: Loja Exemplo <loja@loja-exemplo.pt>
+To: Alex Doe <alex@example.com>
+Subject: Novidades de inverno: 20% de desconto em velas
+Date: Fri, 20 Nov 2026 10:00:05 +0000
+Message-ID: <d3491bc20ce6f_20261120100005@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Loja Exemplo
+
+Novidades de inverno
+
+Aque=C3=A7a a casa com as nossas novas velas de soja, feitas =C3=A0 m=C3=A3=
+o em Lisboa.
+
+Use o c=C3=B3digo INVERNO20 at=C3=A9 domingo e poupe 20% em toda a cole=C3=
+=A7=C3=A3o.
+
+Comprar agora: https://loja-exemplo.pt/collections/velas?utm_source=3Dshopi=
+fy_email
+
+Recebeu este e-mail porque subscreveu a nossa newsletter.Cancelar subscri=
+=C3=A7=C3=A3o (https://loja-exemplo.pt/unsubscribe?token=3D3f9a1c2b7d)
+
+Se tiver alguma quest=C3=A3o, responda a este e-mail ou contacte-nos atrav=
+=C3=A9s de loja@loja-exemplo.pt
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"pt">
+<head>
+<title>Novidades de inverno: 20% de desconto em velas</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://loja-exemplo.pt/">Loja Exemplo</a></h1></td>
+
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Novidades de inverno</h2>
+<p>Aque=C3=A7a a casa com as nossas novas velas de soja, feitas =C3=A0 m=C3=
+=A3o em Lisboa.</p>
+<p>Use o c=C3=B3digo INVERNO20 at=C3=A9 domingo e poupe 20% em toda a cole=
+=C3=A7=C3=A3o.</p>
+<p class=3D"cta"><a class=3D"button" href=3D"https://loja-exemplo.pt/collec=
+tions/velas?utm_source=3Dshopify_email">Comprar agora</a></p>
+<p>Recebeu este e-mail porque subscreveu a nossa newsletter.<a href=3D"http=
+s://loja-exemplo.pt/unsubscribe?token=3D3f9a1c2b7d">Cancelar subscri=C3=A7=
+=C3=A3o</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">Se tiver alguma quest=C3=A3o, responda a e=
+ste e-mail ou contacte-nos atrav=C3=A9s de <a href=3D"mailto:loja@loja-exem=
+plo.pt">loja@loja-exemplo.pt</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

@@ -1,0 +1,106 @@
+Return-Path: <bounces+61234503@shopifyemail.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@example-outfitters.co.uk header.s=shopify2 header.b=kyCQes6K;
+       dkim=pass header.i=@shopifyemail.com header.s=s1 header.b=1iP6nUBs;
+       spf=pass (google.com: domain of bounces+61234503@shopifyemail.com designates 198.51.100.13 as permitted sender) smtp.mailfrom=bounces+61234503@shopifyemail.com;
+       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=example-outfitters.co.uk
+Received: from o23.ptr4120.shopifyemail.com (o23.ptr4120.shopifyemail.com. [198.51.100.13])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Thu, 19 Nov 2026 14:36:50 +0000
+From: Example Outfitters <hello@example-outfitters.co.uk>
+To: Alex Doe <alex@example.com>
+Subject: A shipment from order #1060 has been delivered
+Date: Thu, 19 Nov 2026 14:36:50 +0000
+Message-ID: <d889004c3a2b5_20261119143650@shopifyemail.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Example Outfitters
+Order #1060
+
+Your order has been delivered
+
+Haven't received your package? Let us know.
+
+Track your shipment: https://www.royalmail.com/track-your-item#/tracking-re=
+sults/TT405182734GB
+or Visit our store: https://example-outfitters.co.uk/
+
+Royal Mail tracking number: TT405182734GB
+
+Items in this shipment
+
+Leather Card Holder =C3=97 1
+Tan
+
+If you have any questions, reply to this email or contact us at hello@examp=
+le-outfitters.co.uk
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"en">
+<head>
+<title>A shipment from order #1060 has been delivered</title>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width">
+<style>.button__cell { background: #1990C6; } a, a:visited { color: #1990C6=
+; }</style>
+</head>
+<body>
+<table class=3D"body"><tr><td>
+<table class=3D"header row"><tr><td class=3D"header__cell"><center>
+<table class=3D"container"><tr><td><table class=3D"row"><tr>
+<td class=3D"shop-name__cell"><h1 class=3D"shop-name__text">
+<a href=3D"https://example-outfitters.co.uk/">Example Outfitters</a></h1></=
+td>
+<td class=3D"order-number__cell"><span class=3D"order-number__text">Order #=
+1060</span></td>
+</tr></table></td></tr></table>
+</center></td></tr></table>
+<table class=3D"row content"><tr><td class=3D"content__cell"><center>
+<table class=3D"container"><tr><td>
+<h2 class=3D"h2">Your order has been delivered</h2>
+<p>Haven't received your package? Let us know.</p>
+<table class=3D"row actions"><tr><td class=3D"actions__cell"><table class=
+=3D"button main-action-cell"><tr><td class=3D"button__cell"><a href=3D"http=
+s://www.royalmail.com/track-your-item#/tracking-results/TT405182734GB" clas=
+s=3D"button__text">Track your shipment</a></td></tr></table><table class=3D=
+"link secondary-action-cell"><tr><td class=3D"link__cell">or <a href=3D"htt=
+ps://example-outfitters.co.uk/" class=3D"link__text"><span class=3D'arrow'>=
+&rarr;</span> Visit our store</a></td></tr></table></td></tr></table>
+<p class=3D"disclaimer__subtext">Royal Mail tracking number: <a href=3D"htt=
+ps://www.royalmail.com/track-your-item#/tracking-results/TT405182734GB">TT4=
+05182734GB</a></p>
+<h3 class=3D"h3">Items in this shipment</h3>
+<table class=3D"row"><tr class=3D"order-list__item"><td class=3D"order-list=
+__item__cell"><table><tr><td><img src=3D"https://cdn.shopify.com/s/files/1/=
+0612/3456/7890/products/1a72cdbabd_compact_cropped.jpg" alt=3D"Leather Card=
+ Holder" width=3D"60" height=3D"60" class=3D"order-list__product-image"></t=
+d><td class=3D"order-list__product-description-cell"><span class=3D"order-l=
+ist__item-title">Leather Card Holder&nbsp;&times;&nbsp;1</span><br><span cl=
+ass=3D"order-list__item-variant">Tan</span></td></tr></table></td></tr></ta=
+ble>
+</td></tr></table>
+</center></td></tr></table>
+<table class=3D"row footer"><tr><td class=3D"footer__cell"><center>
+<table class=3D"container"><tr><td>
+<p class=3D"disclaimer__subtext">If you have any questions, reply to this e=
+mail or contact us at <a href=3D"mailto:hello@example-outfitters.co.uk">hel=
+lo@example-outfitters.co.uk</a></p>
+</td></tr></table>
+</center></td></tr></table>
+<img src=3D"https://cdn.shopify.com/s/files/1/0612/3456/7890/spacer.png" cl=
+ass=3D"spacer" height=3D"1">
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

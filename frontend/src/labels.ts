@@ -1,0 +1,97 @@
+import { CARRIER_NAMES, carrierName } from "./carriers.ts";
+import {
+  KIND_LABELS,
+  MERGE_REASON_LABELS,
+  REASON_LABELS,
+  SOURCE_LABELS,
+  STATUS_LABELS,
+  STRINGS,
+} from "./strings.ts";
+import type { Parcel } from "./types.ts";
+
+function clean(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+/** "unknown_sender" → "Unknown sender"; other text is returned unchanged. */
+export function humanize(code: string): string {
+  const trimmed = code.trim();
+  if (!/^[a-z0-9]+(?:[_-][a-z0-9]+)*$/.test(trimmed)) {
+    return trimmed;
+  }
+  const words = trimmed.replace(/[_-]+/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function lookup(labels: Readonly<Record<string, string>>, code: unknown): string {
+  const value = clean(code);
+  if (!value) {
+    return "";
+  }
+  return Object.hasOwn(labels, value) ? (labels[value] ?? value) : humanize(value);
+}
+
+/** The carrier's display name: carrier_name, else the name of the carrier ID, else null. */
+export function carrierLabel(parcel: Pick<Parcel, "carrier" | "carrier_name">): string | null {
+  const name = clean(parcel.carrier_name);
+  if (name) {
+    return name;
+  }
+  const id = clean(parcel.carrier);
+  if (!id || id === "other") {
+    return null;
+  }
+  return Object.hasOwn(CARRIER_NAMES, id) ? carrierName(id) : humanize(id);
+}
+
+/**
+ * The name shown for a parcel: "Private parcel" when restricted, else the
+ * merchant, the carrier, the tracking number, or "Parcel".
+ */
+export function parcelTitle(
+  parcel: Pick<Parcel, "restricted" | "merchant" | "carrier" | "carrier_name" | "tracking_number">,
+): string {
+  if (parcel.restricted) {
+    return STRINGS.privateParcel;
+  }
+  return (
+    clean(parcel.merchant) ??
+    carrierLabel(parcel) ??
+    clean(parcel.tracking_number) ??
+    STRINGS.unnamedParcel
+  );
+}
+
+/** The carrier shown under the title, or null when the title already is the carrier. */
+export function parcelSubtitle(
+  parcel: Pick<Parcel, "restricted" | "merchant" | "carrier" | "carrier_name" | "tracking_number">,
+): string | null {
+  const carrier = carrierLabel(parcel);
+  return carrier && carrier !== parcelTitle(parcel) ? carrier : null;
+}
+
+export function statusLabel(status: unknown): string {
+  return lookup(STATUS_LABELS, status);
+}
+
+export function kindLabel(kind: unknown): string {
+  return lookup(KIND_LABELS, kind);
+}
+
+export function sourceLabel(source: unknown): string {
+  return lookup(SOURCE_LABELS, source);
+}
+
+/** A readable review reason: a known label, else the code made readable, else the text as sent. */
+export function reasonLabel(reason: unknown): string {
+  return lookup(REASON_LABELS, reason);
+}
+
+/** Why a parcel was merged automatically, for use inside a sentence; "" without a reason. */
+export function mergeReasonLabel(reason: unknown): string {
+  return lookup(MERGE_REASON_LABELS, reason);
+}

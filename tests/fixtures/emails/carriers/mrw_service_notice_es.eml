@@ -1,0 +1,65 @@
+Return-Path: <bounce-a8d408a848@bounces.mrw.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@mrw.es header.s=sel1 header.b=bfada06c;
+       spf=pass (google.com: domain of bounce-a8d408a848@bounces.mrw.es
+ designates 192.0.2.59 as permitted sender) smtp.mailfrom=bounce-a8d408a848@bounces.mrw.es;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=mrw.es
+From: MRW <informacion@mrw.es>
+To: Alex Doe <alex@example.com>
+Subject: Horario especial de Navidad en MRW
+Date: Mon, 16 Nov 2026 13:00:00 +0100
+Message-ID: <20261116120000.b68c@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_3f4093cda5ea"
+
+--b1_3f4093cda5ea
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+MRW
+
+Horario especial de Navidad
+
+Hola Alex,
+
+Te informamos de que durante las fiestas nuestras franquicias tendrán un horario especial: el 24 y el 31 de diciembre cerrarán a las 14:00.
+
+Los envíos que se entreguen en una franquicia después de las 13:00 de esos días saldrán el siguiente día laborable.
+
+MRW · Calle Ejemplo 1, 08001 Barcelona
+
+Recibes este correo porque eres cliente de MRW. Gestionar preferencias [https://www.mrw.es/preferencias?id=a1b2c3]
+
+--b1_3f4093cda5ea
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Horario especial de Navidad</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#e2001a}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#e2001a;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.mrw.es/img/logo-mrw.png" alt="MRW" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Horario especial de Navidad</h1>
+<p>Hola Alex,</p>
+<p>Te informamos de que durante las fiestas nuestras franquicias tendrán un horario especial: el 24 y el 31 de diciembre cerrarán a las 14:00.</p>
+<p>Los envíos que se entreguen en una franquicia después de las 13:00 de esos días saldrán el siguiente día laborable.</p>
+</td></tr>
+<tr><td class="foot">
+<p>MRW · Calle Ejemplo 1, 08001 Barcelona</p>
+<p>Recibes este correo porque eres cliente de MRW. <a href="https://www.mrw.es/preferencias?id=a1b2c3">Gestionar preferencias</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_3f4093cda5ea--

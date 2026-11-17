@@ -1,0 +1,39 @@
+Return-Path: <bounces@notificatie.postnl.nl>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@notificatie.postnl.nl header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@notificatie.postnl.nl designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@notificatie.postnl.nl;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=notificatie.postnl.nl
+From: PostNL <noreply@notificatie.postnl.nl>
+To: Alex Doe <alex@example.com>
+Subject: Je pakket is bezorgd
+Date: Thu, 19 Nov 2026 13:50:00 +0100
+Message-ID: <20261119135000.nl02@mail.example.com>
+MIME-Version: 1.0
+Content-Language: nl
+Content-Type: multipart/alternative; boundary="=_parcels_ai_nl02"
+
+--=_parcels_ai_nl02
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hoi Alex,
+Je pakket van Coolblue is bezorgd.
+Track & Trace-code: 3SCOOL7654321
+Bezorgd op: Voorbeeldstraat 1, 1011 AB Amsterdam
+Bekijk de details: https://jouw.postnl.nl/track-and-trace/3SCOOL7654321-NL-1011AB
+--=_parcels_ai_nl02
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="nl">
+<head><meta charset="utf-8"><title>Je pakket is bezorgd</title></head>
+<body>
+<p>Hoi Alex,</p>
+<p>Je pakket van Coolblue is bezorgd.</p>
+<p>Track &amp; Trace-code: 3SCOOL7654321</p>
+<p>Bezorgd op: Voorbeeldstraat 1, 1011 AB Amsterdam</p>
+<p><a href="https://jouw.postnl.nl/track-and-trace/3SCOOL7654321-NL-1011AB">Bekijk de details</a></p>
+</body>
+</html>
+--=_parcels_ai_nl02--

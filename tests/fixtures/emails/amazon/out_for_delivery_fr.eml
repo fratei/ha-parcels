@@ -1,0 +1,164 @@
+Return-Path: <20261119083047a1b2c3@bounces.amazon.fr>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.fr header.s=sel1amz header.b=gKycGuYC;
+       dkim=pass header.i=@amazonses.com header.s=ug7nbtf4 header.b=gKycGuYC;
+       spf=pass (google.com: domain of 20261119083047a1b2c3@bounces.amazon.fr designates 192.0.2.49 as permitted sender) smtp.mailfrom=20261119083047a1b2c3@bounces.amazon.fr;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.fr
+Received: from a48-9.smtp-out.eu-west-1.amazonses.com (a48-9.smtp-out.eu-west-1.amazonses.com. [192.0.2.49])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Thu, 19 Nov 2026 08:30:47 +0100
+From: "Amazon.fr" <shipment-tracking@amazon.fr>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?En_cours_de_livraison_=3A_=C2=AB_Lampe_de_bureau_LED_?=
+ =?utf-8?q?=C3=A0_intensit=C3=A9_variable=2E=2E=2E_=C2=BB?=
+Date: Thu, 19 Nov 2026 08:30:47 +0100
+Message-ID: <010201920261119083047.out-for-delivery-fr-000000@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Amazon.fr
+Vos commandes | Votre compte
+
+Bonjour Alex,
+
+Votre colis est en cours de livraison.
+
+Livraison :
+aujourd=E2=80=99hui
+
+Suivre votre colis: https://www.amazon.fr/gp/r.html?C=3D09T7Q9X1M4K8B&K=3D1=
+V3JZ9Q7R2XW5&M=3Durn:rtn:msg:2026111609a1b2c3d4e5f601&R=3D3HXK2P8Q5N7MZ&T=
+=3DC&U=3Dhttps%3A%2F%2Fwww.amazon.fr%2Fprogress-tracker%2Fpackage%2Fref%3Dp=
+e_2848631_123456789_TE_SIMP_typ%3F_encoding%3DUTF8%26orderId%3D171-4829375-=
+6639201%26shipmentId%3DWm6KcY2pD%26packageIndex%3D0&H=3DQZXWTGBHJKL0PQ5RS01=
+&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Commande n=C2=B0 171-4829375-6639201
+
+Lampe de bureau LED =C3=A0 intensit=C3=A9 variable, port USB, blanc
+Quantit=C3=A9 : 1
+https://www.amazon.fr/gp/r.html?C=3D09T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:2026111609a1b2c3d4e5f602&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.fr%2Fdp%2FB0D1F6H3QK%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=3DQ=
+ZXWTGBHJKL0PQ5RS02&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Adresse de livraison Alex Doe, 1 rue Exemple, Paris
+
+Cet e-mail a =C3=A9t=C3=A9 envoy=C3=A9 depuis une adresse qui ne peut pas r=
+ecevoir de messages. Merci de ne pas y r=C3=A9pondre.
+
+Protection de vos informations personnelles
+
+=C2=A9 2026 Amazon.com, Inc. ou ses filiales. Tous droits r=C3=A9serv=C3=A9=
+s.
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"fr">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DUTF-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1.=
+0">
+<title>Amazon.fr</title>
+<style type=3D"text/css">
+body { margin: 0; padding: 0; background-color: #ffffff; }
+table { border-collapse: collapse; }
+.container { width: 600px; font-family: Arial, Helvetica, sans-serif; color=
+: #0f1111; }
+.h1 { font-size: 20px; font-weight: bold; margin: 16px 0 8px; }
+.h2 { font-size: 16px; font-weight: bold; margin: 16px 0 8px; color: #067d6=
+2; }
+.kv td { padding: 2px 8px 2px 0; font-size: 14px; }
+.button { background-color: #ffd814; border-radius: 20px; color: #0f1111;
+  padding: 8px 18px; text-decoration: none; display: inline-block; }
+.item td { vertical-align: top; padding: 8px 8px 8px 0; font-size: 14px; }
+.nav a { color: #0f1111; font-size: 13px; text-decoration: none; }
+.footer { font-size: 11px; color: #565959; padding-top: 24px; }
+</style>
+</head>
+<body>
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0"><tr>
+<td align=3D"center">
+<table role=3D"presentation" class=3D"container" width=3D"600" cellpadding=
+=3D"0"
+ cellspacing=3D"0">
+<tr><td class=3D"header"><a href=3D"https://www.amazon.fr/gp/r.html?C=3D09T=
+7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111609a1b2c3d4e5f6=
+04&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.fr%2Fre=
+f%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0PQ5RS04&amp;ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ"><img
+ src=3D"https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo.=
+_CB485934981_.png"
+ alt=3D"Amazon.fr" width=3D"98" height=3D"30" border=3D"0"></a></td>
+<td class=3D"nav" align=3D"right"><a href=3D"https://www.amazon.fr/gp/r.htm=
+l?C=3D09T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111609a1b=
+2c3d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazo=
+n.fr%2Fgp%2Fcss%2Forder-history%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&a=
+mp;H=3DQZXWTGBHJKL0PQ5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Vos commandes</a> | <a href=3D"https://www.amazon.fr/gp/r.html?C=3D09T7Q9X=
+1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111609a1b2c3d4e5f606&a=
+mp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.fr%2Fgp%2Fc=
+ss%2Fhomepage.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTG=
+BHJKL0PQ5RS06&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Votre compte</a></td></tr>
+<tr><td class=3D"content" colspan=3D"2">
+<p>Bonjour Alex,</p>
+<h1 class=3D"h1">Votre colis est en cours de livraison.</h1>
+<div class=3D"eta"><span class=3D"label">Livraison :</span><br><span class=
+=3D"value"><b>aujourd=E2=80=99hui</b></span></div>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.fr/gp/r.htm=
+l?C=3D09T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111609a1b=
+2c3d4e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazo=
+n.fr%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_2848631_123456789_TE_SIMP_typ%=
+3F_encoding%3DUTF8%26orderId%3D171-4829375-6639201%26shipmentId%3DWm6KcY2pD=
+%26packageIndex%3D0&amp;H=3DQZXWTGBHJKL0PQ5RS01&amp;ref_=3Dpe_2848631_12345=
+6789_TE_SIMP_typ">Suivre votre colis</a></p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Commande n=C2=B0</td><td class=3D"v"><b>171-4829375-=
+6639201</b></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.fr/gp/r.html?C=
+=3D09T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111609a1b2c3=
+d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.f=
+r%2Fdp%2FB0D1F6H3QK%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJK=
+L0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https://=
+m.media-amazon.com/images/I/411F6H3QL._SS142_.jpg" alt=3D"Lampe de bureau L=
+ED =C3=A0 intensit=C3=A9 variable, port USB, blanc" width=3D"90" height=3D"=
+90" border=3D"0"></a></td><td class=3D"desc"><a href=3D"https://www.amazon.=
+fr/gp/r.html?C=3D09T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:20=
+26111609a1b2c3d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%=
+2Fwww.amazon.fr%2Fdp%2FB0D1F6H3QK%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;=
+H=3DQZXWTGBHJKL0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Lampe =
+de bureau LED =C3=A0 intensit=C3=A9 variable, port USB, blanc</a><br><span>=
+Quantit=C3=A9 : 1</span></td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Adresse de livraison</td><td class=3D"v"><b>Alex Doe=
+, 1 rue Exemple, Paris</b></td></tr></table>
+</td></tr>
+<tr><td class=3D"footer" colspan=3D"2">
+<p>Cet e-mail a =C3=A9t=C3=A9 envoy=C3=A9 depuis une adresse qui ne peut pa=
+s recevoir de messages. Merci de ne pas y r=C3=A9pondre.</p>
+<p><a href=3D"https://www.amazon.fr/gp/r.html?C=3D09T7Q9X1M4K8B&amp;K=3D1V3=
+JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111609a1b2c3d4e5f603&amp;R=3D3HXK2P8Q5N7=
+MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.fr%2Fgp%2Fhelp%2Fcustomer%2Fd=
+isplay.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0P=
+Q5RS03&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Protection de vos infor=
+mations personnelles</a></p>
+<p>=C2=A9 2026 Amazon.com, Inc. ou ses filiales. Tous droits r=C3=A9serv=C3=
+=A9s.</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

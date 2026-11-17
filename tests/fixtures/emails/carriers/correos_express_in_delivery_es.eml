@@ -1,0 +1,82 @@
+Return-Path: <bounce-230ee34d3e@bounces.correosexpress.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@correosexpress.com header.s=sel1 header.b=4ba5b6e2;
+       spf=pass (google.com: domain of bounce-230ee34d3e@bounces.correosexpress.com
+ designates 192.0.2.46 as permitted sender) smtp.mailfrom=bounce-230ee34d3e@bounces.correosexpress.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=correosexpress.com
+From: Correos Express <notificaciones@correosexpress.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Tu_env=C3=ADo_est=C3=A1_en_reparto?=
+Date: Tue, 17 Nov 2026 08:45:00 +0100
+Message-ID: <20261117074500.ce49@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_71df56c7ee83"
+
+--b1_71df56c7ee83
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CEX
+
+Tu envío está en reparto
+
+Hola Alex Doe,
+
+Tu envío de El Corte Inglés está en reparto y lo recibirás hoy.
+
+Nº de envío: 3230004517823964
+
+Remitente: El Corte Inglés
+
+Fecha de entrega: 17/11/2026
+
+Franja horaria: 09:00 - 14:00
+
+Si no vas a estar en casa, puedes cambiar la fecha o la dirección de entrega desde nuestra web.
+
+Seguir mi envío [https://s.correosexpress.com/SeguimientoSinCP/search?shippingNumber=3230004517823964]
+
+Correos Express Paquetería Urgente, S.A. · Calle Ejemplo 1, 28001 Madrid
+
+Política de privacidad [https://www.correosexpress.com/web/correosexpress/politica-de-privacidad]
+
+--b1_71df56c7ee83
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tu envío está en reparto</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#ffcc00}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ffcc00;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.correosexpress.com/img/logo-correos-express.png" alt="CEX" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Tu envío está en reparto</h1>
+<p>Hola Alex Doe,</p>
+<p>Tu envío de <strong>El Corte Inglés</strong> está en reparto y lo recibirás hoy.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Nº de envío</td><td class="value">3230004517823964</td></tr>
+<tr><td class="label">Remitente</td><td class="value">El Corte Inglés</td></tr>
+<tr><td class="label">Fecha de entrega</td><td class="value">17/11/2026</td></tr>
+<tr><td class="label">Franja horaria</td><td class="value">09:00 - 14:00</td></tr>
+</table>
+<p>Si no vas a estar en casa, puedes cambiar la fecha o la dirección de entrega desde nuestra web.</p>
+<p style="text-align:center"><a class="button" href="https://s.correosexpress.com/SeguimientoSinCP/search?shippingNumber=3230004517823964">Seguir mi envío</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Correos Express Paquetería Urgente, S.A. · Calle Ejemplo 1, 28001 Madrid</p>
+<p><a href="https://www.correosexpress.com/web/correosexpress/politica-de-privacidad">Política de privacidad</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_71df56c7ee83--

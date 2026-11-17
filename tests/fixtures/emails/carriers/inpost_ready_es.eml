@@ -1,0 +1,82 @@
+Return-Path: <bounce-915049cd01@bounces.inpost.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@inpost.es header.s=sel1 header.b=9c484d52;
+       spf=pass (google.com: domain of bounce-915049cd01@bounces.inpost.es
+ designates 192.0.2.190 as permitted sender) smtp.mailfrom=bounce-915049cd01@bounces.inpost.es;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=inpost.es
+From: InPost <noreply@inpost.es>
+To: Alex Doe <alex@example.com>
+Subject: Tu paquete te espera en el Locker InPost
+Date: Tue, 17 Nov 2026 12:15:00 +0100
+Message-ID: <20261117111500.f590@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="b1_a9eb95315ae9"
+
+--b1_a9eb95315ae9
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+InPost
+
+¡Tu paquete ya ha llegado!
+
+Hola, Alex:
+
+Tu pedido de Primor te espera en el Locker InPost. Tienes hasta el 20/11/2026 para recogerlo.
+
+Número de envío: 602937500284163957202142
+
+Locker: Locker InPost MAD05M
+
+Dirección: Calle Ejemplo 1, 28001 Madrid
+
+Código de recogida: 736152
+
+Para abrir el locker, usa la app InPost o introduce el código de recogida y tu número de teléfono en la pantalla del locker.
+
+Abrir en la app [https://inpost.es/seguimiento?number=602937500284163957202142]
+
+InPost Spain · Calle Ejemplo 1, 28001 Madrid
+
+Política de privacidad [https://inpost.es/politica-de-privacidad]
+
+--b1_a9eb95315ae9
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tu paquete ya ha llegado</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#ffcd00}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ffcd00;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://inpost.pt/sites/default/files/logo-inpost.png" alt="InPost" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>¡Tu paquete ya ha llegado!</h1>
+<p>Hola, Alex:</p>
+<p>Tu pedido de <strong>Primor</strong> te espera en el Locker InPost. Tienes hasta el 20/11/2026 para recogerlo.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Número de envío</td><td class="value">602937500284163957202142</td></tr>
+<tr><td class="label">Locker</td><td class="value">Locker InPost MAD05M</td></tr>
+<tr><td class="label">Dirección</td><td class="value">Calle Ejemplo 1, 28001 Madrid</td></tr>
+<tr><td class="label">Código de recogida</td><td class="value">736152</td></tr>
+</table>
+<p>Para abrir el locker, usa la app InPost o introduce el código de recogida y tu número de teléfono en la pantalla del locker.</p>
+<p style="text-align:center"><a class="button" href="https://inpost.es/seguimiento?number=602937500284163957202142">Abrir en la app</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>InPost Spain · Calle Ejemplo 1, 28001 Madrid</p>
+<p><a href="https://inpost.es/politica-de-privacidad">Política de privacidad</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_a9eb95315ae9--

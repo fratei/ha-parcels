@@ -1,0 +1,108 @@
+Return-Path: <bounce-b0f2b43766@bounces.ctt.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ctt.pt header.s=sel1 header.b=62121f80;
+       spf=pass (google.com: domain of bounce-b0f2b43766@bounces.ctt.pt
+ designates 192.0.2.27 as permitted sender) smtp.mailfrom=bounce-b0f2b43766@bounces.ctt.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ctt.pt
+From: CTT <notificacoes@ctt.pt>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?O_seu_objeto_RR617304824PT_est=C3=A1_em_distribui=C3=A7?=
+ =?utf-8?q?=C3=A3o?=
+Date: Tue, 17 Nov 2026 08:31:00 +0000
+Message-ID: <20261117083100.21c1@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_cb06dc5961c0"
+
+--b1_cb06dc5961c0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+CTT
+
+Hoje =C3=A9 dia de entrega!
+
+Ol=C3=A1 Alex Doe,
+
+O seu objeto RR617304824PT saiu para distribui=C3=A7=C3=A3o e ser=C3=A1 ent=
+regue hoje na morada indicada.
+
+N.=C2=BA do objeto: RR617304824PT
+
+Remetente: Fnac Portugal
+
+Previs=C3=A3o de entrega: 17-11-2026, entre as 13:00 e as 17:00
+
+Se n=C3=A3o estiver em casa, pode indicar um vizinho ou alterar a entrega p=
+ara um Ponto CTT na app CTT.
+
+Gerir entrega [https://www.ctt.pt/feapl_2/app/open/objectSearch/objectSearc=
+h.jspx?objects=3DRR617304824PT]
+
+Esta mensagem foi gerada automaticamente. Por favor, n=C3=A3o responda.
+
+CTT =E2=80=93 Correios de Portugal, S.A. =C2=B7 Avenida Exemplo 1, 1000-001=
+ Lisboa
+
+Pol=C3=ADtica de privacidade [https://www.ctt.pt/home/politica-de-privacida=
+de] =C2=B7 Ajuda [https://www.ctt.pt/ajuda] =C2=B7 Linha CTT: +351 210 000 =
+000
+
+--b1_cb06dc5961c0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"pt">
+<head>
+<meta charset=3D"utf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1">
+<title>Objeto em distribui=C3=A7=C3=A3o</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-se=
+rif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{pa=
+dding:24px;background:#df0024}.content{padding:24px}td.label{color:#666;pad=
+ding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;=
+padding:12px 24px;background:#df0024;color:#fff;text-decoration:none;border=
+-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class=3D"wrap">
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0">
+<tr><td class=3D"head"><img src=3D"https://www.ctt.pt/application/themes/im=
+ages/logo-ctt.png" alt=3D"CTT" width=3D"120" height=3D"40"></td></tr>
+<tr><td class=3D"content">
+<h1>Hoje =C3=A9 dia de entrega!</h1>
+<p>Ol=C3=A1 Alex Doe,</p>
+<p>O seu objeto <strong>RR617304824PT</strong> saiu para distribui=C3=A7=C3=
+=A3o e ser=C3=A1 entregue hoje na morada indicada.</p>
+<table class=3D"details" role=3D"presentation" cellpadding=3D"0" cellspacin=
+g=3D"0">
+<tr><td class=3D"label">N.=C2=BA do objeto</td><td class=3D"value">RR617304=
+824PT</td></tr>
+<tr><td class=3D"label">Remetente</td><td class=3D"value">Fnac Portugal</td=
+></tr>
+<tr><td class=3D"label">Previs=C3=A3o de entrega</td><td class=3D"value">17=
+-11-2026, entre as 13:00 e as 17:00</td></tr>
+</table>
+<p>Se n=C3=A3o estiver em casa, pode indicar um vizinho ou alterar a entreg=
+a para um Ponto CTT na app CTT.</p>
+<p style=3D"text-align:center"><a class=3D"button" href=3D"https://www.ctt.=
+pt/feapl_2/app/open/objectSearch/objectSearch.jspx?objects=3DRR617304824PT"=
+>Gerir entrega</a></p>
+</td></tr>
+<tr><td class=3D"foot">
+<p>Esta mensagem foi gerada automaticamente. Por favor, n=C3=A3o responda.<=
+/p>
+<p>CTT =E2=80=93 Correios de Portugal, S.A. =C2=B7 Avenida Exemplo 1, 1000-=
+001 Lisboa</p>
+<p><a href=3D"https://www.ctt.pt/home/politica-de-privacidade">Pol=C3=ADtic=
+a de privacidade</a> =C2=B7 <a href=3D"https://www.ctt.pt/ajuda">Ajuda</a> =
+=C2=B7 Linha CTT: +351 210 000 000</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_cb06dc5961c0--

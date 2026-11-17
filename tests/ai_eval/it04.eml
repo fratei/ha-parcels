@@ -1,0 +1,39 @@
+Return-Path: <bounces@service-mail.zalando.it>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@service-mail.zalando.it header.s=sel1 header.b=AbCd1234;
+       spf=pass (google.com: domain of bounces@service-mail.zalando.it designates 192.0.2.10 as permitted sender) smtp.mailfrom=bounces@service-mail.zalando.it;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=service-mail.zalando.it
+From: Zalando <info@service-mail.zalando.it>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Il_tuo_ordine_=C3=A8_stato_annullato?=
+Date: Wed, 25 Nov 2026 19:45:00 +0100
+Message-ID: <20261125194500.it04@mail.example.com>
+MIME-Version: 1.0
+Content-Language: it
+Content-Type: multipart/alternative; boundary="=_parcels_ai_it04"
+
+--=_parcels_ai_it04
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Ciao Alex,
+il tuo ordine 10107712345678 è stato annullato perché l'articolo non è più disponibile.
+Articolo: Giacca a vento The North Face
+Riceverai il rimborso entro 3-5 giorni lavorativi.
+I miei ordini: https://www.zalando.it/myaccount/orders/
+--=_parcels_ai_it04
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="it">
+<head><meta charset="utf-8"><title>Il tuo ordine è stato annullato</title></head>
+<body>
+<p>Ciao Alex,</p>
+<p>il tuo ordine 10107712345678 è stato annullato perché l'articolo non è più disponibile.</p>
+<p>Articolo: Giacca a vento The North Face</p>
+<p>Riceverai il rimborso entro 3-5 giorni lavorativi.</p>
+<p><a href="https://www.zalando.it/myaccount/orders/">I miei ordini</a></p>
+</body>
+</html>
+--=_parcels_ai_it04--

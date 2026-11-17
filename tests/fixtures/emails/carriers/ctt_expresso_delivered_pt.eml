@@ -1,0 +1,79 @@
+Return-Path: <bounce-ff628c24b8@bounces.notifications.cttexpress.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@notifications.cttexpress.com header.s=sel1 header.b=cf7473f1;
+       spf=pass (google.com: domain of bounce-ff628c24b8@bounces.notifications.cttexpress.com
+ designates 192.0.2.212 as permitted sender) smtp.mailfrom=bounce-ff628c24b8@bounces.notifications.cttexpress.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=notifications.cttexpress.com
+From: CTT Expresso <no-reply@notifications.cttexpress.com>
+To: Alex Doe <alex@example.com>
+Subject: O seu envio EA529184065PT foi entregue
+Date: Tue, 17 Nov 2026 07:30:00 +0000
+Message-ID: <20261117073000.7387@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_c1c6b14760aa"
+
+--b1_c1c6b14760aa
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CTT Expresso
+
+Envio entregue
+
+Olá Alex Doe,
+
+O seu envio EA529184065PT foi entregue ontem, 16-11-2026, às 16:05.
+
+N.º de envio: EA529184065PT
+
+Data de entrega: 16-11-2026 16:05
+
+Recebido por: Sam Example
+
+Obrigado por escolher a CTT Expresso.
+
+CTT Expresso – Serviços Postais e Logística, S.A.
+
+Esta é uma mensagem automática. Por favor, não responda a este e-mail.
+
+Privacidade [https://www.cttexpress.com/pt/privacidade]
+
+--b1_c1c6b14760aa
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Envio entregue</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#e30613}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#e30613;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.cttexpress.com/img/logo-cttexpress.png" alt="CTT Expresso" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Envio entregue</h1>
+<p>Olá Alex Doe,</p>
+<p>O seu envio <strong>EA529184065PT</strong> foi entregue ontem, 16-11-2026, às 16:05.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">N.º de envio</td><td class="value">EA529184065PT</td></tr>
+<tr><td class="label">Data de entrega</td><td class="value">16-11-2026 16:05</td></tr>
+<tr><td class="label">Recebido por</td><td class="value">Sam Example</td></tr>
+</table>
+<p>Obrigado por escolher a CTT Expresso.</p>
+</td></tr>
+<tr><td class="foot">
+<p>CTT Expresso – Serviços Postais e Logística, S.A.</p>
+<p>Esta é uma mensagem automática. Por favor, não responda a este e-mail.</p>
+<p><a href="https://www.cttexpress.com/pt/privacidade">Privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_c1c6b14760aa--
