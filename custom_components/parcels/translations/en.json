@@ -159,7 +159,7 @@
     }
   },
   "application_credentials": {
-    "description": "Parcels signs in with your own app. The client ID decides the provider, so you can add credentials for both.\n\n**Outlook.com**: in [Microsoft Entra app registrations]({microsoft_console_url}), register an app for personal Microsoft accounts only, add the Web redirect URI `{redirect_url}`, create a client secret and add the delegated Microsoft Graph permissions Mail.Read and User.Read.\n\n**Gmail**: in the [Google Cloud console]({google_console_url}), enable the [Gmail API]({gmail_api_url}), set up the OAuth consent screen with the gmail.readonly scope, and create an OAuth client of type Web application with the redirect URI `{redirect_url}`. Publish the app to production, or Google signs you out every 7 days."
+    "description": "Parcels signs in with your own app. The client ID decides the provider, so you can add credentials for both.\n\n**Outlook.com**: in [Microsoft Entra app registrations]({microsoft_console_url}), register an app for personal Microsoft accounts only, add the Web redirect URI `{redirect_url}`, create a client secret and add the delegated Microsoft Graph permissions Mail.Read and User.Read.\n\n**Gmail**: in the [Google Cloud console]({google_console_url}), enable the [Gmail API]({gmail_api_url}) and set up the OAuth consent screen with the gmail.readonly scope. Under Branding, enter the home page `{branding_home_page_url}` and the privacy policy link `{branding_privacy_policy_url}`, add the authorized domain `home-assistant.io`, and don't upload a logo. Then create an OAuth client of type Web application with the redirect URI `{redirect_url}`. Publish the app to production, or Google signs you out every 7 days."
   },
   "entity": {
     "binary_sensor": {

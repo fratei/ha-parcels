@@ -146,16 +146,15 @@ registrations cost nothing.
    `https://www.googleapis.com/auth/gmail.readonly`.
 3. Google requires an application home page and a privacy policy link before
    you can publish. Under **Branding**, use the values from Home Assistant's
-   own
-   [Google Mail instructions](https://www.home-assistant.io/integrations/google_mail/)
+   own [Nest instructions](https://www.home-assistant.io/integrations/nest/)
    and select **Save**:
-   - Under **App domain**, enter `https://home-assistant.io` as the
-     **Application home page**, the **Application privacy policy link** and
-     the **Application terms of service link**.
+   - Under **App domain**, enter `https://www.home-assistant.io` as the
+     **Application home page** and `https://www.home-assistant.io/privacy` as
+     the **Application privacy policy link**.
    - Under **Authorized domains**, add `home-assistant.io`. This also covers
-     the redirect URI on `my.home-assistant.io`.
-   - Don't upload a logo. On a published app, a logo needs Google's brand
-     verification, and only verified apps show their logo and name anyway.
+     `www.home-assistant.io` and the redirect URI on `my.home-assistant.io`.
+   - Leave the **Application terms of service link** and the **App logo**
+     empty, to avoid triggering Google's verification.
 4. Under **Clients**, create an OAuth client of type **Web application** with
    the authorized redirect URI `https://my.home-assistant.io/redirect/oauth`,
    and copy its client ID and secret.
@@ -165,6 +164,25 @@ registrations cost nothing.
    and don't select **Verify branding** either. Your own use needs neither.
    The status changes to **In production**. When you sign in, Google says it
    hasn't verified the app; select **Advanced** and continue.
+
+If Google reports a problem:
+
+- **Branding shows "Issues found from the previous verification attempt".**
+  The list under **View issues**, such as "The website of the home page URL is
+  not registered to you", comes from Google's optional brand verification.
+  That check can't pass with `home-assistant.io`, and personal use doesn't
+  need it. Never select **Verify branding**, **Request re-verification** or
+  **Request additional review**. If a verification is in progress, select
+  **Cancel** first: Google blocks Branding changes while it runs. The "not
+  registered to you" item may stay listed; it's harmless.
+- **The Verification Center says the app needs verification.** That's because
+  of the `gmail.readonly` scope. An app for personal use, with fewer than 100
+  users, may stay unverified, as
+  [Google explains](https://support.google.com/cloud/answer/13464323).
+- **Sign-in stops at "Access blocked … Error 403: access_denied".** Remove any
+  logo under **Branding** and select **Save**, then check that **Audience**
+  says **In production**. While the app is in **Testing**, only the accounts
+  listed under **Test users** can sign in.
 
 ### 3. Add the application credentials
 

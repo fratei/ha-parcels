@@ -41,6 +41,11 @@ MICROSOFT_CONSOLE_URL = (
 )
 GOOGLE_CONSOLE_URL = "https://console.cloud.google.com/apis/credentials"
 GMAIL_API_URL = "https://console.cloud.google.com/apis/library/gmail.googleapis.com"
+# Branding values of the user's Google app, which Google needs before it can be
+# published. Keep the www host: the bare domain redirects, and Google reports it
+# as unresponsive.
+GOOGLE_BRANDING_HOME_PAGE_URL = "https://www.home-assistant.io"
+GOOGLE_BRANDING_PRIVACY_POLICY_URL = "https://www.home-assistant.io/privacy"
 
 
 def provider_from_client_id(client_id: str) -> str:
@@ -137,4 +142,6 @@ async def async_get_description_placeholders(hass: HomeAssistant) -> dict[str, s
         "microsoft_console_url": MICROSOFT_CONSOLE_URL,
         "google_console_url": GOOGLE_CONSOLE_URL,
         "gmail_api_url": GMAIL_API_URL,
+        "branding_home_page_url": GOOGLE_BRANDING_HOME_PAGE_URL,
+        "branding_privacy_policy_url": GOOGLE_BRANDING_PRIVACY_POLICY_URL,
     }

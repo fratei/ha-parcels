@@ -110,7 +110,7 @@ async def test_each_sign_in_has_its_own_verifier(hass: HomeAssistant) -> None:
 
 
 async def test_description_placeholders(hass: HomeAssistant) -> None:
-    """The credentials dialog gets the redirect URL and the consoles."""
+    """The credentials dialog gets its links and Google's branding values."""
     placeholders = await async_get_description_placeholders(hass)
 
     assert (
@@ -126,4 +126,5 @@ async def test_description_placeholders(hass: HomeAssistant) -> None:
     )
     description = strings["application_credentials"]["description"]
     assert set(re.findall(r"\{(\w+)\}", description)) == set(placeholders)
-    assert "https://" not in description
+    # Hassfest rejects URLs in translations, including ones without a scheme.
+    assert not re.search(r"https?://|www\.", description)
