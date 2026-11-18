@@ -10,7 +10,8 @@ check and records an error code for every value it drops:
   format and check-digit rules of their carrier. The code's own detector
   reads the subject and body as well, so a number the model missed is still
   found; the model's numbers are only extra candidates. Values marked as
-  order, phone or tax numbers, or equal to the pickup code, are excluded.
+  order, phone or tax numbers, or written only as a delivery or pickup
+  code, are excluded.
 * Dates and times are normalized in code from the forms models write
   (``9h``, ``09:00:00.000Z``, ``19/11``, ``19 de novembro``, ``amanhã``),
   and dates must fall between 2 days before and 60 days after the e-mail.
@@ -18,7 +19,10 @@ check and records an error code for every value it drops:
   from the model's answer when the e-mail names that carrier, else from the
   sender name, else from each tracking number's format.
 * Free text (merchant, items, pickup point) must be short plain text, and
-  the pickup code must be written in the e-mail.
+  the pickup code (a pickup code, delivery PIN or one-time code) must be
+  written in the e-mail and can't be one of the tracking or order numbers.
+  Items the e-mail lists only under a recommendations heading ("Buy again",
+  "Recommended for you") are dropped, and repeated items are merged.
 
 The confidence is computed here, never taken from the model: 0.8 when no
 value was dropped and the result has a grounded identifier, else 0.5.
@@ -34,9 +38,12 @@ from typing import Any
 import unicodedata
 
 from ..const import CARRIER_NAMES, MailKind
+from ..parsers.amazon import product_buttons
 from ..parsers.base import Eta, MailMessage, ParsedShipment, ParseResult
 from ..parsers.carriers import brand_carriers
+from ..parsers.codes import code_spans, compact_code, mask_codes
 from ..parsers.eta import parse_eta, parse_time_window
+from ..parsers.items import drop_recommended, unique_items
 from ..parsers.lang import MONTHS, WEEKDAY_ABBREVIATIONS, WEEKDAYS, fold
 from ..parsers.senders import lookup, organizational_domain
 from ..parsers.tracking import (
@@ -64,6 +71,10 @@ MAX_PICKUP_CODE_CHARS = 20
 LABEL_WINDOW_CHARS = 40
 
 NOTE_ADDED_BY_DETECTOR = "tracking_added_by_detector"
+NOTE_ITEM_RECOMMENDED = "item_recommended"
+
+# In these e-mails a bare "Code:" names the code to collect the parcel.
+_LOCKER_KINDS = frozenset({MailKind.READY_FOR_PICKUP, MailKind.ATTEMPTED})
 
 # Carrier domains that aren't listed as carriers in parsers/senders.py.
 EXTRA_CARRIER_DOMAINS: dict[str, str] = {"sda.it": "sda", "vintedgo.com": "vinted_go"}
@@ -600,6 +611,13 @@ class _Checker:
             else self.detector_text
         )
         self.code_text = "\n".join([subject, text, body])
+        # Values written as a delivery code, and the text without them; set
+        # once the kind is known.
+        self.code_values: set[str] = set()
+        self.uncoded_text = self.number_text
+        # Items are looked up in what the model read.
+        self.item_text = f"{subject}\n{body}"
+        self.buttons = product_buttons(message.links)
         link_hosts = " ".join(domain for domain, _ in self.links)
         self.carrier_text = _name_key(
             " ".join(
@@ -623,20 +641,30 @@ class _Checker:
         kind = self.kind()
         if kind is None:
             return Validation(None, ("kind_invalid",))
+        self.read_codes(kind)
         merchant = self.merchant()
         items = self.items()
         pickup_point = self.pickup_point()
         pickup_code = self.pickup_code()
         orders = self.orders()
         carrier = self.carrier()
-        numbers, detected = self.tracking_numbers(carrier, orders, pickup_code)
+        numbers, detected = self.tracking_numbers(carrier, orders)
         strong = {number for number, _ in numbers if is_strong_number(number)}
         kept_orders = []
         for order in orders:
             if _compact(order).upper() in strong:
                 self.error("order_is_tracking")
+            elif self.code_only(order):
+                self.error("order_is_pickup_code")
             else:
                 kept_orders.append(order)
+        if pickup_code and compact_code(pickup_code) in {
+            *(number for number, _ in numbers),
+            *(compact_code(order) for order in kept_orders),
+        }:
+            # A tracking or order number is never the code.
+            self.error("pickup_code_is_number")
+            pickup_code = None
         eta = self.eta()
         if kind is MailKind.NOT_PARCEL:
             if any(n not in detected or n in strong for n, _ in numbers):
@@ -676,6 +704,26 @@ class _Checker:
         except ValueError:
             return None
 
+    def read_codes(self, kind: MailKind) -> None:
+        """Find the values the e-mail writes as a delivery or pickup code."""
+        locker = kind in _LOCKER_KINDS
+        self.code_values = {
+            compact_code(self.number_text[start:end])
+            for start, end in code_spans(self.number_text, locker=locker)
+        }
+        if self.code_values:
+            self.uncoded_text = mask_codes(self.number_text, locker=locker)
+
+    def code_only(self, value: str) -> bool:
+        """Return True when the e-mail writes ``value`` only as a code.
+
+        Such a value is a PIN, never a tracking or order number.
+        """
+        compact = compact_code(value)
+        return compact in self.code_values and not _written_pattern(
+            compact, r"\s\-./"
+        ).search(self.uncoded_text)
+
     def merchant(self) -> str | None:
         try:
             text = _text_value(self.data.get("merchant"))
@@ -714,9 +762,13 @@ class _Checker:
                 continue
             if len(text) > MAX_ITEM_CHARS:
                 text = text[: MAX_ITEM_CHARS - 1].rstrip() + "\u2026"
-            if text not in items:
-                items.append(text)
-        return tuple(items)
+            items.append(text)
+        # Products the e-mail only lists under "Buy again" or "Recommended
+        # for you" weren't ordered.
+        kept = drop_recommended(items, self.item_text, buttons=self.buttons)
+        if len(kept) < len(items):
+            self.notes.append(NOTE_ITEM_RECOMMENDED)
+        return tuple(unique_items(kept))
 
     def pickup_point(self) -> str | None:
         try:
@@ -826,7 +878,7 @@ class _Checker:
         return any(detect_carrier(number) == carrier for number in numbers)
 
     def tracking_numbers(
-        self, carrier: str | None, orders: list[str], pickup_code: str | None
+        self, carrier: str | None, orders: list[str]
     ) -> tuple[list[tuple[str, str | None]], set[str]]:
         """Return the final numbers and carriers, and those only code found.
 
@@ -842,7 +894,7 @@ class _Checker:
             if not valid:
                 self.error("tracking_invalid")
                 continue
-            reason = self.exclusion(number, orders_compact, pickup_code)
+            reason = self.exclusion(number, orders_compact)
             if reason:
                 self.error(reason)
                 continue
@@ -853,7 +905,7 @@ class _Checker:
             if number in found:
                 continue
             valid, number_carrier = _number_carrier(number, carrier)
-            if not valid or self.exclusion(number, orders_compact, pickup_code):
+            if not valid or self.exclusion(number, orders_compact):
                 continue
             found[number] = number_carrier
             detected.add(number)
@@ -886,18 +938,17 @@ class _Checker:
                 numbers.append(number)
         return numbers
 
-    def exclusion(
-        self, number: str, orders: set[str], pickup_code: str | None
-    ) -> str | None:
+    def exclusion(self, number: str, orders: set[str]) -> str | None:
         """Return why a tracking number must not be used, or None.
 
         UPU S10, UPS and Amazon numbers identify themselves and are kept.
-        Others are left out when they equal an order number or the pickup
-        code, or the e-mail labels them as an order, phone or tax number.
+        Others are left out when the e-mail writes them only as a delivery
+        or pickup code, when they equal an order number, or when the e-mail
+        labels them as an order, phone or tax number.
         """
         if is_strong_number(number):
             return None
-        if pickup_code and number == _compact(pickup_code).upper():
+        if self.code_only(number):
             return "tracking_is_pickup_code"
         if number in orders:
             return "tracking_is_order"

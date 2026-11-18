@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import re
 from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
+from .codes import ALL_CODE_LABELS, LOCKER_CODE_LABELS
 from .lang import fold_aligned
 from .senders import lookup, organizational_domain
 
@@ -609,7 +610,8 @@ CARRIER_WORDS: dict[str, str] = {
 }
 
 _KEYWORD_RE = _words(TRACKING_WORDS)
-_BLOCKER_RE = _words(BLOCKING_WORDS)
+# A PIN after its label ("delivery code", "Abholcode") is not a tracking number.
+_BLOCKER_RE = _words((*BLOCKING_WORDS, *ALL_CODE_LABELS, *LOCKER_CODE_LABELS))
 _CARRIER_WORD_RE = _words(re.escape(name).replace(r"\ ", " ") for name in CARRIER_WORDS)
 # A possessive right before an order word: "tracking number of your order".
 _POSSESSIVE_RE = re.compile(

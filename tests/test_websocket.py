@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 import logging
+import re
 from typing import Any
 from unittest.mock import patch
 
@@ -28,7 +29,7 @@ from pytest_homeassistant.typing import MockHAClientWebSocket, WebSocketGenerato
 from custom_components.parcels.const import DOMAIN, SIGNAL_AI_UPDATED, MailKind
 from custom_components.parcels.dedup import REASON_SAME_MERCHANT_DAY, apply_contribution
 from custom_components.parcels.engine import ParcelsEngine
-from custom_components.parcels.models import MessageState, order_key
+from custom_components.parcels.models import MessageState, Suggestion, order_key
 from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.views import (
     SYSTEM_VIEWER,
@@ -62,6 +63,12 @@ UPS = "email.ups.com"
 FILTERED_SENDER = "servicos-exemplo.example"
 SHOP_MAIL = "common/small_shop_ctt.eml"
 DASHBOARD = "/dashboard-parcels/week"
+# DPD's e-mail with the code to give the driver for this parcel.
+DPD_CODE_MAIL = "carriers/dpd_delivery_code_pt.eml"
+DPD_NUMBER = "09381726450517"
+DPD_CODE = "4821"
+# Amazon's e-mail with a delivery code for an order Parcels doesn't know.
+AMAZON_CODE_MAIL = "amazon/delivery_code_es.eml"
 # What someone who may not see a private parcel gets instead of its details.
 HIDDEN = {
     "merchant": None,
@@ -71,6 +78,7 @@ HIDDEN = {
     "tracking_url": None,
     "pickup_point": None,
     "pickup_code": None,
+    "has_code": False,
     "order_numbers": [],
     "items": [],
     "source": "parser",
@@ -78,6 +86,7 @@ HIDDEN = {
     "auto_merged": None,
     "inferred": False,
     "origins": [],
+    "shipment_group": None,
     "restricted": True,
 }
 
@@ -300,6 +309,8 @@ async def test_list(engine: ParcelsEngine, ws: MockHAClientWebSocket) -> None:
         "user_is_admin": True,
         "ai_enabled": False,
         "ai_mode": "suggest",
+        "ai_queue": 0,
+        "ai_queue_seconds": None,
         "dashboard_url": DASHBOARD,
         "seventeentrack": False,
         "time_zone": "Europe/Lisbon",
@@ -341,7 +352,9 @@ async def test_private_parcels(
         alex_parcel,
         system_parcel,
     ]
-    assert alex[alex_parcel]["pickup_code"] == "4711"
+    # The code is only in the details.
+    assert alex[alex_parcel]["pickup_code"] is None
+    assert alex[alex_parcel]["has_code"]
     assert seen[alex_parcel] == {**alex[alex_parcel], **HIDDEN}
     assert seen[alex_parcel]["owners"] == [OWNER]
     assert seen[sam_parcel]["owners"] == [OTHER_OWNER]
@@ -352,11 +365,93 @@ async def test_private_parcels(
     await refused(sam_ws, "parcels/get", "not_allowed", parcel_id=system_parcel)
     await refused(ws, "parcels/get", "not_allowed", parcel_id=sam_parcel)
     await refused(ws, "parcels/get", "unknown_parcel", parcel_id="p_missing")
+    shown = await result(ws, "parcels/get", parcel_id=alex_parcel)
+    assert shown["parcel"]["pickup_code"] == "4711"
     mine = await result(sam_ws, "parcels/get", parcel_id=sam_parcel)
     assert mine["parcel"]["tracking_number"] == DHL_NUMBER
     unowned = await result(ws, "parcels/get", parcel_id=system_parcel)
     assert unowned["parcel"]["tracking_number"] == OTHER_DHL_NUMBER
     assert no_errors_logged(caplog)
+
+
+async def test_delivery_code_mail(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    client: FakeMailClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A delivery code e-mail fills in its parcel's details and nothing else.
+
+    It makes no parcel of its own, and the code isn't in the list, the
+    entities or the logs.
+    """
+    caplog.set_level(logging.DEBUG, logger="custom_components.parcels")
+    freezer.move_to("2026-11-20 09:00:00+00:00")
+    parcel_id = await add(hass, DPD_NUMBER, carrier="dpd")
+    parcels = set(engine.data.parcels)
+    client.add(DPD_CODE_MAIL)
+    client.add(AMAZON_CODE_MAIL)
+    (mailbox,) = engine.mailboxes.values()
+    assert mailbox.coordinator is not None
+
+    await mailbox.coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert set(engine.data.parcels) == parcels
+    listed = {p["id"]: p for p in (await result(ws, "parcels/list"))["parcels"]}
+    assert listed[parcel_id]["has_code"]
+    assert listed[parcel_id]["pickup_code"] is None
+    shown = await result(ws, "parcels/get", parcel_id=parcel_id)
+    assert shown["parcel"]["pickup_code"] == DPD_CODE
+    code = re.compile(rf"(?<![0-9A-Za-z]){DPD_CODE}(?![0-9A-Za-z])")
+    for state in hass.states.async_all():
+        assert not code.search(f"{state.state} {dict(state.attributes)}"), state
+    assert not code.search(caplog.text)
+
+
+async def test_shipments(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket, sam_ws: MockHAClientWebSocket
+) -> None:
+    """Packages sent together are one shipment, of the packages the user sees."""
+    data = engine.data
+    now = dt_util.utcnow()
+    packages = [
+        apply_contribution(
+            data,
+            contribution(
+                f"msg:gls{n}#0",
+                kind=MailKind.IN_TRANSIT,
+                time=datetime(2026, 11, 16, 18, 50 + n, tzinfo=UTC),
+                carrier="gls",
+                number=f"6100001231005{n}",
+                merchant="Loja Exemplo",
+                label=SHOP,
+                owner=OWNER,
+                private=private,
+            ),
+            now,
+        ).parcel_id
+        for n, private in ((1, False), (2, True))
+    ]
+    engine.async_changed()
+
+    alex = {p["id"]: p for p in (await result(ws, "parcels/list"))["parcels"]}
+    sam = {p["id"]: p for p in (await result(sam_ws, "parcels/list"))["parcels"]}
+    details = await result(ws, "parcels/get", parcel_id=packages[1])
+
+    shipment = min(packages)
+    assert [alex[parcel_id]["shipment_group"] for parcel_id in packages] == [
+        shipment,
+        shipment,
+    ]
+    assert details["parcel"]["shipment_group"] == shipment
+    # Sam doesn't see Alex's private package, nor that it's in the shipment.
+    assert [sam[parcel_id]["shipment_group"] for parcel_id in packages] == [
+        None,
+        None,
+    ]
 
 
 async def test_viewer_for(
@@ -451,7 +546,10 @@ async def test_get(
     ws: MockHAClientWebSocket,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    """The details have the timeline, the tracking link, the pickup and e-mails."""
+    """The details have the timeline, the tracking link, the pickup and e-mails.
+
+    The delivery code shows until the parcel is delivered.
+    """
     ((parcel_id, parcel),) = engine.data.parcels.items()
     (mail_origin,) = parcel.origins
     freezer.tick(timedelta(minutes=5))
@@ -465,6 +563,8 @@ async def test_get(
             "eta_start": "2026-11-19",
         },
     )
+    before = (await result(ws, "parcels/get", parcel_id=parcel_id))["parcel"]
+    assert (before["pickup_point"], before["pickup_code"]) == ("Locker 12", "4711")
     freezer.tick(timedelta(minutes=5))
     await call(hass, "mark_delivered", {"parcel_id": parcel_id})
 
@@ -472,7 +572,7 @@ async def test_get(
 
     shown = details["parcel"]
     assert CTT_NUMBER in shown["tracking_url"]
-    assert (shown["pickup_point"], shown["pickup_code"]) == ("Locker 12", "4711")
+    assert (shown["pickup_point"], shown["pickup_code"]) == ("Locker 12", None)
     assert shown["eta_start"] == "2026-11-19"
     # The edits stay with the parcel; only the e-mail can be split off.
     assert shown["origins"] == [mail_origin]
@@ -594,6 +694,57 @@ async def test_review_accept(
     assert review[UPS] not in engine.data.review
 
 
+async def test_review_accept_cancels_nothing(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket, review: dict[str, str]
+) -> None:
+    """Cancelling an order that has no parcel adds nothing."""
+    parcels = set(engine.data.parcels)
+
+    accepted = await result(
+        ws,
+        "parcels/review/accept",
+        review_id=review[UPS],
+        overrides={"kind": "cancelled", "order_numbers": ["#5150"]},
+    )
+
+    assert accepted == {"parcel_ids": []}
+    assert set(engine.data.parcels) == parcels
+    assert review[UPS] not in engine.data.review
+
+
+async def test_review_teaches_a_shops_carrier(
+    engine: ParcelsEngine, review: dict[str, str]
+) -> None:
+    """Accepting teaches the carrier of a shop, but not of Amazon.
+
+    Amazon hands its parcels to many carriers.
+    """
+    shop = engine.data.review[review[SHOP]]
+    engine.data.review["r_amazon"] = replace(
+        shop, id="r_amazon", message="f" * 64, sender_domain="amazon.es"
+    )
+    engine.review_accept(
+        "r_amazon",
+        {
+            "carrier": "ctt_expresso",
+            "tracking_numbers": [],
+            "order_numbers": ["171-0000001-0000001"],
+        },
+    )
+    engine.review_accept(review[SHOP], {"carrier": "ctt"})
+
+    assert engine.prefill(None, "amazon.es") is None
+    assert engine.prefill(None, SHOP) == Suggestion(
+        kind=MailKind.UNKNOWN, carrier="ctt"
+    )
+    assert engine.prefill(None, "cttexpresso.pt") == Suggestion(
+        kind=MailKind.UNKNOWN, carrier="ctt_expresso"
+    )
+    assert engine.prefill(None, "vinted.pt") == Suggestion(
+        kind=MailKind.UNKNOWN, carrier="vinted_go"
+    )
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -651,6 +802,63 @@ async def test_review_dismiss_and_restore(
     await refused(
         ws, "parcels/review/restore", "unknown_filtered", filtered_id=filtered_id
     )
+
+
+async def test_filtered_clear(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket, client: FakeMailClient
+) -> None:
+    """A cleared e-mail leaves the filtered list and is never read again."""
+    (filtered_id,) = engine.data.filtered
+    message = engine.data.filtered[filtered_id].message
+
+    assert await result(ws, "parcels/filtered/clear", filtered_id=filtered_id) is None
+
+    assert (await result(ws, "parcels/list"))["filtered"] == []
+    assert engine.data.messages[message].state is MessageState.DISMISSED
+    await refused(
+        ws, "parcels/filtered/clear", "unknown_filtered", filtered_id=filtered_id
+    )
+    # The mailbox reports the e-mail again: it isn't downloaded or listed.
+    fetches = len(client.fetches)
+    client.add("common/unknown_phone_only.eml")
+    (mailbox,) = engine.mailboxes.values()
+    assert mailbox.coordinator is not None
+    await mailbox.coordinator.async_refresh()
+    assert len(client.fetches) == fetches
+    assert not engine.data.filtered
+    assert engine.data.messages[message].state is MessageState.DISMISSED
+
+
+async def test_filtered_clear_all(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket
+) -> None:
+    """Clear all empties the filtered list; the e-mails stay known."""
+    data = engine.data
+    (entry,) = data.filtered.values()
+    data.messages["other"] = replace(data.messages[entry.message], hash="other")
+    data.filtered["f_other"] = replace(entry, id="f_other", message="other")
+
+    assert await result(ws, "parcels/filtered/clear_all") == {"cleared": 2}
+
+    assert not data.filtered
+    states = {data.messages[key].state for key in (entry.message, "other")}
+    assert states == {MessageState.DISMISSED}
+    assert (await result(ws, "parcels/list"))["filtered"] == []
+    assert await result(ws, "parcels/filtered/clear_all") == {"cleared": 0}
+
+
+@pytest.mark.parametrize("command", ["clear", "clear_all"])
+async def test_filtered_admin_only(
+    engine: ParcelsEngine, sam_ws: MockHAClientWebSocket, command: str
+) -> None:
+    """Only administrators clear filtered e-mails."""
+    (filtered_id,) = engine.data.filtered
+    data = {"filtered_id": filtered_id} if command == "clear" else {}
+
+    err = await error(sam_ws, f"parcels/filtered/{command}", **data)
+
+    assert err["code"] == "unauthorized"
+    assert filtered_id in engine.data.filtered
 
 
 async def test_review_senders(

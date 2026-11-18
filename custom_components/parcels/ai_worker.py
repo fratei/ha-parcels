@@ -188,6 +188,25 @@ class AIWorker:
             day for key, day in days.items() if key >= cutoff and isinstance(day, dict)
         ]
 
+    def average_seconds(self) -> float | None:
+        """Return how long a call took on average in the last STATS_DAYS days."""
+        timing = self._recent("timing")
+        calls = sum(int(day.get("calls", 0)) for day in timing)
+        seconds = sum(float(day.get("seconds", 0.0)) for day in timing)
+        return seconds / calls if calls else None
+
+    def wait_seconds(self) -> int | None:
+        """Return about how long the queue will take; None when it can't be told.
+
+        Only while the AI is working through it: not paused, nor at the limit.
+        """
+        average = self.average_seconds()
+        if not self.queue or average is None:
+            return None
+        if self.status not in (STATUS_IDLE, STATUS_BUSY):
+            return None
+        return round(len(self.queue) * average)
+
     def shadow_totals(self) -> tuple[int, int]:
         """Return how often the AI agreed and disagreed with the parsers."""
         agree = disagree = 0
@@ -763,9 +782,7 @@ class AIWorker:
         ai = self.engine.data.ai
         agree, disagree = self.shadow_totals()
         days = self._recent("stats")
-        timing = self._recent("timing")
-        timed = sum(int(day.get("calls", 0)) for day in timing)
-        seconds = sum(float(day.get("seconds", 0.0)) for day in timing)
+        average = self.average_seconds()
         return {
             "configured": bool(self.engine.ai_entity),
             "mode": self.engine.ai_mode.value,
@@ -784,7 +801,7 @@ class AIWorker:
             "totals": {
                 name: sum(int(day.get(name, 0)) for day in days) for name in STAT_KEYS
             },
-            "average_seconds": round(seconds / timed, 1) if timed else None,
+            "average_seconds": round(average, 1) if average is not None else None,
             "stats": dict(ai.get("stats") or {}),
             "last_error": self._last_error,
         }

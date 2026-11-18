@@ -471,8 +471,9 @@ export class ParcelsWeekCard extends ParcelsChipCard {
   }
 
   /**
-   * A chip in the grid (one per parcel, spanning its days) or in a stacked day
-   * (one per day; the continuation marks only on its first and last day).
+   * A chip in the grid (one per parcel or shipment box, spanning its days) or
+   * in a stacked day (one per day; the continuation marks only on its first and
+   * last day).
    */
   private _chip(
     item: WeekItem,
@@ -488,7 +489,8 @@ export class ParcelsWeekCard extends ParcelsChipCard {
       continuesBefore,
       continuesAfter,
       showRange: stacked,
-      busy: this._busyParcels.has(item.parcel.id),
+      members: item.members,
+      busy: item.members.some((member) => this._busyParcels.has(member.id)),
       position,
       onOpen: this.openDetails,
       onUndoMerge: this.undoMerge,

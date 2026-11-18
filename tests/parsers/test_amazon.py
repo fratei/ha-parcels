@@ -77,6 +77,26 @@ def _day(day: int) -> Eta:
         ("cancelled_nl", MailKind.CANCELLED, "nl", "404-1122334-5566778"),
         ("refund_de", MailKind.RETURN, "de", "303-8473625-1928374"),
         ("refund_es", MailKind.RETURN, "es", "405-9384756-1203948"),
+        (
+            "shipped_recommendations_es",
+            MailKind.SHIPPED,
+            "es",
+            "405-7263918-4410392",
+        ),
+        (
+            "shipped_recommendations_pt",
+            MailKind.SHIPPED,
+            "pt",
+            "406-3917452-8803164",
+        ),
+        ("shipped_duplicate_item_pt", MailKind.SHIPPED, "pt", "406-8264017-3359120"),
+        ("delivery_code_es", MailKind.CODE, "es", "405-5190372-2286401"),
+        (
+            "out_for_delivery_code_pt",
+            MailKind.OUT_FOR_DELIVERY,
+            "pt",
+            "406-2750193-9918274",
+        ),
     ],
 )
 def test_kind_language_and_order(
@@ -208,6 +228,34 @@ def test_order_confirmation(
     assert shipment.tracking_url is None
 
 
+@pytest.mark.parametrize(
+    ("name", "item"),
+    [
+        (
+            "shipped_recommendations_es",
+            "Sartén antiadherente de 28 cm con mango ergonómico, apta para inducción",
+        ),
+        (
+            "shipped_recommendations_pt",
+            "Frigideira antiaderente de 28 cm com pega ergonómica",
+        ),
+        (
+            "shipped_duplicate_item_pt",
+            "Exemplo Frigideira Origem, 24 cm, antiaderente, indução",
+        ),
+    ],
+)
+def test_items_are_the_order_lines_once(parse: Parse, name: str, item: str) -> None:
+    """Products under "Buy again" or "Inspired by your shopping" aren't items.
+
+    An item named twice, once cut short, is listed once with its full title.
+    """
+    result = parse(name)
+    assert result.items == (item,)
+    [shipment] = result.shipments
+    assert shipment.items == (item,)
+
+
 def test_order_in_several_deliveries(parse: Parse) -> None:
     """An order arriving in two deliveries has one ORDER shipment for each."""
     result = parse("order_multi_pt")
@@ -298,6 +346,80 @@ def test_ready_for_pickup(
     assert shipment.eta is None
     expected = datetime(2026, 11, *event, tzinfo=tz) if event else None
     assert shipment.event_time == expected
+
+
+def test_delivery_code_only(parse: Parse) -> None:
+    """An e-mail with only a delivery code adds it to the order's package."""
+    result = parse("delivery_code_es")
+    assert result.confidence >= CONFIDENCE_APPLY
+    assert result.items == ()
+    [shipment] = result.shipments
+    assert shipment.kind is MailKind.CODE
+    assert shipment.pickup_code == "739215"
+    assert shipment.amazon_shipment_id == "Ts9KdM2xQ"
+    assert shipment.carrier is None
+    assert shipment.tracking_number is None
+    assert shipment.eta is None
+    assert shipment.event_time is None
+
+
+def test_delivery_code_needs_an_order_or_a_package(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """A code that names neither an order nor a package isn't read."""
+    message = load_eml("amazon/delivery_code_es.eml")
+    verdict = verdict_for(message)
+    result = parse_amazon(message, verdict, tz)
+    assert result is not None
+    assert result.kind is MailKind.CODE
+    bare = dataclasses.replace(
+        message, text="Hola:\nTu código de entrega es 739215.\n", links=()
+    )
+    assert parse_amazon(bare, verdict, tz) is None
+
+
+def test_status_with_delivery_code(parse: Parse) -> None:
+    """A status e-mail keeps its kind and carries the delivery code."""
+    result = parse("out_for_delivery_code_pt")
+    [shipment] = result.shipments
+    assert shipment.kind is None
+    assert shipment.pickup_code == "4821"
+    assert shipment.amazon_shipment_id == "Wm5RbQ7tL"
+    assert shipment.eta == Eta(
+        date(2026, 11, 20), date(2026, 11, 20), None, time(21, 0)
+    )
+
+
+@pytest.mark.parametrize(
+    ("line", "number"),
+    [
+        ("Entregue pela CTT.\nCódigo de entrega: 7391520486", None),
+        (
+            "Entregue pela CTT, objeto RR482915732PT.\n"
+            "Código de entrega do objeto RR482915732PT: 7391520486",
+            "RR482915732PT",
+        ),
+    ],
+)
+def test_delivery_code_is_no_tracking_number(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    line: str,
+    number: str | None,
+) -> None:
+    """A PIN shaped like a CTT number isn't one, and a number isn't the PIN."""
+    message = load_eml("amazon/out_for_delivery_code_pt.eml")
+    text = message.text.replace("Código de entrega: 4821", line)
+    message = dataclasses.replace(message, text=text)
+    result = parse_amazon(message, verdict_for(message), tz)
+    assert result is not None
+    assert result.order_numbers == ("406-2750193-9918274",)
+    [shipment] = result.shipments
+    assert shipment.pickup_code == "7391520486"
+    assert shipment.tracking_number == number
 
 
 @pytest.mark.parametrize(

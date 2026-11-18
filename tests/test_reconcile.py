@@ -1,9 +1,12 @@
-"""Tests for reconciling whole parcels, inferred deliveries and the repair."""
+"""Tests for reconciling whole parcels, inferred deliveries and the repair.
+
+Also how e-mails about one of an order's packages find that package.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from homeassistant.util import dt as dt_util
@@ -13,6 +16,9 @@ from custom_components.parcels.const import MailKind, ParcelStatus
 from custom_components.parcels.dedup import (
     REASON_SAME_MERCHANT_DAY,
     REASON_SAME_MERCHANT_DOMAIN,
+    REASON_SAME_MERCHANT_ETA,
+    REASON_SAME_ORDER,
+    Applied,
     Contribution,
     DedupError,
     accept_suggestion,
@@ -29,6 +35,7 @@ from custom_components.parcels.dedup import (
 from custom_components.parcels.models import ParcelsData, Source, order_key
 from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.parsers.tracking import tracking_url
+from custom_components.parcels.views import shipment_groups
 
 from .factories import contribution
 
@@ -39,8 +46,18 @@ CTT_1 = "EX123456789012"
 CTT_2 = "EX123456789013"
 SHOP = "bricolage-exemplo.example"
 SHOP_NAME = "Bricolage Exemplo"
-SHOP_ORDER = "2630001234"
+SHOP_ORDER = "5180001234"
 GLS = ("61234567890123", "61234567890124", "61234567890125")
+CEX = "3230000000000001"
+MUG = "Caneca Exemplo de cerâmica, 350 ml, pack de 2"
+LAMP = "Candeeiro Exemplo de secretária, LED, 5 W"
+POT = "Vaso Exemplo para plantas, 20 cm"
+SHARED = "Pilhas Exemplo AA, pack de 8"
+RECOMMENDED = (
+    "Chávenas Exemplo para expresso...",
+    "Toalhas de mesa Exemplo, 2 un...",
+    "Sacos do lixo Exemplo, 30 l...",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -56,8 +73,10 @@ def _nov(day: int, hour: int = 0, minute: int = 0) -> datetime:
     return datetime(2026, 11, day, hour, minute, tzinfo=UTC)
 
 
+_DAYS_40 = timedelta(days=40)
+
 # The first sync of a mailbox reads every e-mail at once.
-SYNC = _nov(4, 13)
+SYNC = _nov(9, 13)
 
 
 def _eta(start: int, end: int | None = None) -> Eta:
@@ -109,12 +128,14 @@ def _shop_order(
         time=when,
         merchant=SHOP_NAME,
         orders=[order],
-        eta=_eta(20),
+        eta=_eta(25),
         label=SHOP,
     )
 
 
-def _shop_gls(origin_id: str, number: str, when: datetime) -> Contribution:
+def _shop_gls(
+    origin_id: str, number: str, when: datetime, eta: Eta | None = None
+) -> Contribution:
     """A carrier notice the shop sends from its domain under the carrier's name."""
     return contribution(
         origin_id,
@@ -122,8 +143,22 @@ def _shop_gls(origin_id: str, number: str, when: datetime) -> Contribution:
         time=when,
         merchant="GLS PT Informa",
         number=number,
-        eta=_eta(18),
+        eta=eta or _eta(23),
         label=SHOP,
+    )
+
+
+def _gls(origin_id: str, number: str, when: datetime, **kwargs: Any) -> Contribution:
+    """GLS's own e-mail about a parcel."""
+    return contribution(
+        origin_id,
+        kind=MailKind.IN_TRANSIT,
+        time=when,
+        carrier="gls",
+        number=number,
+        eta=_eta(23),
+        label="gls-group.eu",
+        **kwargs,
     )
 
 
@@ -141,13 +176,13 @@ def test_order_joins_carrier_delivery_of_its_day() -> None:
     """
     data = ParcelsData()
     ctt = _apply(
-        data, _ctt("msg:c1#0", CTT_1, MailKind.OUT_FOR_DELIVERY, _nov(4, 9, 54)), SYNC
+        data, _ctt("msg:c1#0", CTT_1, MailKind.OUT_FOR_DELIVERY, _nov(9, 9, 15)), SYNC
     )
     assert (
-        _apply(data, _ctt("msg:c2#0", CTT_1, MailKind.DELIVERED, _nov(4, 11, 28)), SYNC)
+        _apply(data, _ctt("msg:c2#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)), SYNC)
         == ctt
     )
-    amazon = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(4, 1, 31), _eta(4)), SYNC)
+    amazon = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(9, 2, 5), _eta(9)), SYNC)
     assert amazon != ctt
 
     result = reconcile(data, SYNC)
@@ -178,25 +213,25 @@ def test_order_joins_carrier_delivery_of_its_day() -> None:
 def test_order_mail_after_the_delivery_stays_apart() -> None:
     """An order e-mail sent after the carrier delivered is another parcel."""
     data = ParcelsData()
-    _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(4, 11, 28)), SYNC)
-    _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(4, 12), _eta(4)), SYNC)
+    _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)), SYNC)
+    _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(9, 12), _eta(9)), SYNC)
 
     result = reconcile(data, SYNC)
 
     assert not result.removed
     assert result.suggestions == []
-    assert infer_deliveries(data, _nov(5, 8)) == set()
+    assert infer_deliveries(data, _nov(10, 8)) == set()
 
 
 def test_same_day_groups_are_suggested() -> None:
     """Two orders and two deliveries on one day: the user picks the pairs."""
     data = ParcelsData()
-    first = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(4, 11)), SYNC)
+    first = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 11)), SYNC)
     second = _apply(
-        data, _ctt("msg:c2#0", CTT_2, MailKind.DELIVERED, _nov(4, 12)), SYNC
+        data, _ctt("msg:c2#0", CTT_2, MailKind.DELIVERED, _nov(9, 12)), SYNC
     )
-    one = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(3, 1), _eta(4)), SYNC)
-    two = _apply(data, _amazon("msg:a2#0", ORDER_2, _nov(3, 2), _eta(4)), SYNC)
+    one = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(8, 1), _eta(9)), SYNC)
+    two = _apply(data, _amazon("msg:a2#0", ORDER_2, _nov(8, 2), _eta(9)), SYNC)
     assert len(data.parcels) == 4
 
     result = reconcile(data, SYNC)
@@ -206,7 +241,7 @@ def test_same_day_groups_are_suggested() -> None:
     assert [suggestion.parcel_id for suggestion in result.suggestions] == targets
     for suggestion in result.suggestions:
         assert suggestion.candidates == (one, two)
-        assert suggestion.day == date(2026, 11, 4)
+        assert suggestion.day == date(2026, 11, 9)
         assert suggestion.merchant == "Amazon"
         assert suggestion.reason == REASON_SAME_MERCHANT_DAY
     assert result.suggestions[0].id != result.suggestions[1].id
@@ -222,11 +257,11 @@ def test_same_day_groups_are_suggested() -> None:
 def test_accepting_a_suggestion_merges() -> None:
     """An accepted suggestion merges; two tracking numbers never do."""
     data = ParcelsData()
-    first = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(4, 11)), SYNC)
+    first = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 11)), SYNC)
     second = _apply(
-        data, _ctt("msg:c2#0", CTT_2, MailKind.DELIVERED, _nov(4, 12)), SYNC
+        data, _ctt("msg:c2#0", CTT_2, MailKind.DELIVERED, _nov(9, 12)), SYNC
     )
-    order = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(3, 1), _eta(4)), SYNC)
+    order = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(8, 1), _eta(9)), SYNC)
 
     result = reconcile(data, SYNC)
 
@@ -249,9 +284,9 @@ def test_accepting_a_suggestion_merges() -> None:
 def test_shop_shipments_absorb_the_order() -> None:
     """A shop's carrier notices name the carrier and absorb the order's parcel."""
     data = ParcelsData()
-    order = _apply(data, _shop_order("msg:o1#0", _nov(15, 21, 45)))
+    order = _apply(data, _shop_order("msg:o1#0", _nov(20, 20, 30)))
     shipments = [
-        _apply(data, _shop_gls(f"msg:g{index}#0", number, _nov(16, 18, 50 + index)))
+        _apply(data, _shop_gls(f"msg:g{index}#0", number, _nov(21, 17, 40 + index)))
         for index, number in enumerate(GLS)
     ]
     assert len({order, *shipments}) == 4
@@ -261,7 +296,7 @@ def test_shop_shipments_absorb_the_order() -> None:
         assert state.tracking_url == tracking_url("gls", number)
         assert state.merchant == SHOP_NAME
 
-    result = reconcile(data, _nov(16, 19))
+    result = reconcile(data, _nov(21, 19))
 
     assert result.removed == {order}
     assert result.suggestions == []
@@ -272,21 +307,21 @@ def test_shop_shipments_absorb_the_order() -> None:
     assert parcel.state.order_numbers == (SHOP_ORDER,)
     assert parcel.state.carrier == "gls"
     assert parcel.state.merchant == SHOP_NAME
-    assert parcel.state.eta == _eta(18)
+    assert parcel.state.eta == _eta(23)
     assert len(data.parcels) == 3
 
 
 def test_shop_named_once_its_name_is_known() -> None:
     """A carrier brand never names the shop; its domain does until the name."""
     data = ParcelsData()
-    shipment = _apply(data, _shop_gls("msg:g1#0", GLS[0], _nov(16, 18, 50)), SYNC)
+    shipment = _apply(data, _shop_gls("msg:g1#0", GLS[0], _nov(21, 17, 40)), SYNC)
     state = data.parcels[shipment].state
     assert state.carrier == "gls"
     assert state.merchant == SHOP
-    order = _apply(data, _shop_order("msg:o1#0", _nov(15, 21, 45)), SYNC)
+    order = _apply(data, _shop_order("msg:o1#0", _nov(20, 20, 30)), SYNC)
     assert order != shipment
 
-    result = reconcile(data, _nov(16, 19))
+    result = reconcile(data, _nov(21, 19))
 
     assert result.removed == {order}
     assert result.changed == {shipment}
@@ -297,11 +332,11 @@ def test_shop_named_once_its_name_is_known() -> None:
 def test_shop_with_two_open_orders_gets_a_suggestion() -> None:
     """With two orders that could be the shipment, the user decides."""
     data = ParcelsData()
-    first = _apply(data, _shop_order("msg:o1#0", _nov(15, 21, 45)))
-    second = _apply(data, _shop_order("msg:o2#0", _nov(15, 22), order="2630005678"))
-    shipment = _apply(data, _shop_gls("msg:g1#0", GLS[0], _nov(16, 18, 50)))
+    first = _apply(data, _shop_order("msg:o1#0", _nov(20, 20, 30)))
+    second = _apply(data, _shop_order("msg:o2#0", _nov(20, 22), order="5180005678"))
+    shipment = _apply(data, _shop_gls("msg:g1#0", GLS[0], _nov(21, 17, 40)))
 
-    result = reconcile(data, _nov(16, 19))
+    result = reconcile(data, _nov(21, 19))
 
     assert not result.removed
     assert [
@@ -309,52 +344,191 @@ def test_shop_with_two_open_orders_gets_a_suggestion() -> None:
     ] == [(shipment, (first, second), None, REASON_SAME_MERCHANT_DOMAIN)]
 
 
+def test_shop_packages_are_one_shipment() -> None:
+    """A shop's packages sent together are one shipment; each stays a parcel.
+
+    Eight GLS packages of one order, in e-mails the shop sends under GLS's
+    name, one of them about two packages. Half come a day later.
+    """
+    data = ParcelsData()
+    order = _apply(data, _shop_order("msg:o1#0", _nov(20, 20, 30)))
+    packages = {
+        _apply(data, _shop_gls(origin_id, number, when, _eta(day))): day
+        for origin_id, number, when, day in (
+            ("msg:g1#0", "61000012310052", _nov(21, 17, 40), 23),
+            ("msg:g1#1", "61000012310056", _nov(21, 17, 40), 23),
+            ("msg:g2#0", "61000012310071", _nov(21, 17, 41), 23),
+            ("msg:g3#0", "61000012310089", _nov(21, 17, 42), 23),
+            ("msg:g4#0", "61000012310093", _nov(22, 2, 35), 22),
+            ("msg:g5#0", "61000012310108", _nov(22, 2, 43), 22),
+            ("msg:g6#0", "61000012310117", _nov(22, 2, 52), 22),
+            ("msg:g7#0", "61000012310125", _nov(22, 3, 5), 22),
+        )
+    }
+    assert len(packages) == 8
+
+    result = reconcile(data, _nov(22, 5))
+
+    assert result.removed == {order}
+    assert set(data.parcels) == set(packages)
+    for parcel_id, day in packages.items():
+        state = data.parcels[parcel_id].state
+        assert (state.carrier, state.merchant, state.eta) == (
+            "gls",
+            SHOP_NAME,
+            _eta(day),
+        )
+    (absorbed,) = (
+        parcel for parcel in data.parcels.values() if parcel.state.order_numbers
+    )
+    assert absorbed.state.order_numbers == (SHOP_ORDER,)
+    assert absorbed.auto_merged is not None
+    assert absorbed.auto_merged.reason == REASON_SAME_MERCHANT_DOMAIN
+    assert shipment_groups(data.parcels.values()) == dict.fromkeys(
+        packages, min(packages)
+    )
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "together"),
+    [
+        pytest.param(
+            _shop_gls("msg:g1#0", "61000012310052", _nov(21, 17, 40)),
+            _shop_gls("msg:g2#0", "61000012310552", _nov(23, 17, 40)),
+            True,
+            id="same-shop",
+        ),
+        pytest.param(
+            _shop_gls("msg:g1#0", "61000012310052", _nov(21, 17, 40)),
+            _shop_gls("msg:g2#0", "61000012310562", _nov(21, 17, 40)),
+            False,
+            id="numbers-far-apart",
+        ),
+        pytest.param(
+            _shop_gls("msg:g1#0", "61000012310052", _nov(21, 17, 40)),
+            _shop_gls("msg:g2#0", "61000012310061", _nov(23, 17, 41)),
+            False,
+            id="days-apart",
+        ),
+        pytest.param(
+            _shop_gls("msg:g1#0", "61000012310052", _nov(21, 17, 40)),
+            contribution(
+                "msg:d1#0",
+                kind=MailKind.IN_TRANSIT,
+                time=_nov(21, 17, 40),
+                carrier="dpd",
+                number="61000012310061",
+                label=SHOP,
+            ),
+            False,
+            id="another-carrier",
+        ),
+        pytest.param(
+            _shop_gls("msg:g1#0", "61000012310052", _nov(21, 17, 40)),
+            contribution(
+                "msg:x1#0",
+                kind=MailKind.IN_TRANSIT,
+                time=_nov(21, 17, 40),
+                merchant="GLS PT Informa",
+                number="61000012310061",
+                label="outra-loja.example",
+            ),
+            False,
+            id="another-shop",
+        ),
+        pytest.param(
+            _gls("msg:g1#0", "61000012310052", _nov(21, 17, 40), orders=[SHOP_ORDER]),
+            _gls("msg:g2#0", "61000012310061", _nov(21, 17, 40), orders=[SHOP_ORDER]),
+            True,
+            id="same-order",
+        ),
+        pytest.param(
+            _gls("msg:g1#0", "61000012310052", _nov(21, 17, 40), merchant="Amazon"),
+            _gls("msg:g2#0", "61000012310061", _nov(21, 17, 40), merchant="Amazon.es"),
+            True,
+            id="same-merchant",
+        ),
+        pytest.param(
+            _gls("msg:g1#0", "61000012310052", _nov(21, 17, 40)),
+            _gls("msg:g2#0", "61000012310061", _nov(21, 17, 40)),
+            False,
+            id="nothing-shared",
+        ),
+    ],
+)
+def test_one_shipment(
+    first: Contribution, second: Contribution, together: bool
+) -> None:
+    """One carrier, close numbers and e-mails, and a shared order, shop or name."""
+    data = ParcelsData()
+    parcels = {_apply(data, first), _apply(data, second)}
+    assert len(parcels) == 2
+
+    groups = shipment_groups(data.parcels.values())
+
+    assert groups == (dict.fromkeys(parcels, min(parcels)) if together else {})
+
+
+def test_renamed_package_stays_in_its_shipment() -> None:
+    """The shop that sent the packages decides, whatever the user names them."""
+    data = ParcelsData()
+    parcels = {
+        _apply(data, _shop_gls("msg:g1#0", "61000012310052", _nov(21, 17, 40))),
+        _apply(data, _shop_gls("msg:g2#0", "61000012310061", _nov(21, 17, 41))),
+    }
+    update_parcel(data, max(parcels), {"merchant": "Presente de anos"}, _nov(21, 19))
+
+    groups = shipment_groups(data.parcels.values())
+
+    assert groups == dict.fromkeys(parcels, min(parcels))
+
+
 def test_inferred_delivery() -> None:
     """Orders packed into one carrier parcel close with its delivery."""
     data = ParcelsData()
     orders = [
-        _apply(data, _amazon(f"msg:a{day}#0", order, _nov(day, 8), _eta(4)))
-        for day, order in enumerate((ORDER_1, ORDER_2, ORDER_3), start=1)
+        _apply(data, _amazon(f"msg:a{day}#0", order, _nov(day, 8), _eta(9)))
+        for day, order in enumerate((ORDER_1, ORDER_2, ORDER_3), start=6)
     ]
     ctt = _apply(
-        data, _ctt("msg:c1#0", CTT_1, MailKind.OUT_FOR_DELIVERY, _nov(4, 9, 54))
+        data, _ctt("msg:c1#0", CTT_1, MailKind.OUT_FOR_DELIVERY, _nov(9, 9, 15))
     )
-    _apply(data, _ctt("msg:c2#0", CTT_1, MailKind.DELIVERED, _nov(4, 11, 28)))
+    _apply(data, _ctt("msg:c2#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)))
     assert len(data.parcels) == 4
 
     # Not before the day after the expected day.
-    assert infer_deliveries(data, _nov(4, 23)) == set()
-    assert infer_deliveries(data, _nov(5, 8)) == set(orders)
+    assert infer_deliveries(data, _nov(9, 23)) == set()
+    assert infer_deliveries(data, _nov(10, 8)) == set(orders)
     for parcel_id in orders:
         parcel = data.parcels[parcel_id]
         assert parcel.state.status is ParcelStatus.DELIVERED
         assert parcel.state.inferred
-        assert parcel.state.delivered_at == _nov(4, 11, 28)
+        assert parcel.state.delivered_at == _nov(9, 10, 40)
         assert [entry.inferred for entry in parcel.state.timeline] == [False, True]
     assert not data.parcels[ctt].state.inferred
     assert len(data.parcels) == 4
-    assert infer_deliveries(data, _nov(5, 9)) == set()
+    assert infer_deliveries(data, _nov(10, 9)) == set()
 
     # News about the order replaces the guess.
     _apply(
         data,
-        _amazon("msg:a9#0", ORDER_1, _nov(5, 10), None, kind=MailKind.IN_TRANSIT),
+        _amazon("msg:a9#0", ORDER_1, _nov(10, 10), None, kind=MailKind.IN_TRANSIT),
     )
     state = data.parcels[orders[0]].state
     assert state.status is ParcelStatus.IN_TRANSIT
     assert not state.inferred
-    assert infer_deliveries(data, _nov(6, 8)) == set()
+    assert infer_deliveries(data, _nov(11, 8)) == set()
 
 
 @pytest.mark.parametrize(
-    ("eta_day", "inferred"), [(2, False), (3, True), (5, True), (6, False)]
+    ("eta_day", "inferred"), [(7, False), (8, True), (10, True), (11, False)]
 )
 def test_inferred_delivery_margin(eta_day: int, inferred: bool) -> None:
     """A delivery within a day of the expected days counts."""
     data = ParcelsData()
-    order = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(1, 8), _eta(eta_day)))
-    _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(4, 11, 28)))
-    assert infer_deliveries(data, _nov(10, 8)) == ({order} if inferred else set())
+    order = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(6, 8), _eta(eta_day)))
+    _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)))
+    assert infer_deliveries(data, _nov(15, 8)) == ({order} if inferred else set())
 
 
 def test_tracked_parcels_arent_inferred() -> None:
@@ -365,45 +539,45 @@ def test_tracked_parcels_arent_inferred() -> None:
         _amazon(
             "msg:a1#0",
             ORDER_1,
-            _nov(1, 8),
-            _eta(4),
+            _nov(6, 8),
+            _eta(9),
             carrier="amazon",
             number="TBA123456789012",
         ),
     )
-    _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(4, 11, 28)))
+    _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)))
     assert len(data.parcels) == 2
-    assert infer_deliveries(data, _nov(10, 8)) == set()
+    assert infer_deliveries(data, _nov(15, 8)) == set()
 
 
 def test_undo_and_confirm_inferred_delivery() -> None:
     """The user can take an inferred delivery back, or keep it."""
     data = ParcelsData()
-    undone = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(1, 8), _eta(3)))
-    kept = _apply(data, _amazon("msg:a2#0", ORDER_2, _nov(1, 9), _eta(3)))
-    _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(4, 11, 28)))
-    assert infer_deliveries(data, _nov(5, 8)) == {undone, kept}
+    undone = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(6, 8), _eta(8)))
+    kept = _apply(data, _amazon("msg:a2#0", ORDER_2, _nov(6, 9), _eta(8)))
+    _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)))
+    assert infer_deliveries(data, _nov(10, 8)) == {undone, kept}
 
-    parcel = undo_inferred_delivery(data, undone, _nov(5, 9))
+    parcel = undo_inferred_delivery(data, undone, _nov(10, 9))
     assert parcel.delivery_rejected
     assert parcel.state.status is ParcelStatus.SHIPPED
     assert not parcel.state.inferred
-    assert infer_deliveries(data, _nov(6, 8)) == set()
+    assert infer_deliveries(data, _nov(11, 8)) == set()
     assert (
-        _error(undo_inferred_delivery, data, undone, _nov(6, 9))
+        _error(undo_inferred_delivery, data, undone, _nov(11, 9))
         == "no_inferred_delivery"
     )
 
-    parcel = update_parcel(data, kept, {"confirm_delivery": True}, _nov(5, 9))
+    parcel = update_parcel(data, kept, {"confirm_delivery": True}, _nov(10, 9))
     state = parcel.state
     assert state.status is ParcelStatus.DELIVERED
     assert not state.inferred
-    assert state.delivered_at == _nov(4, 11, 28)
+    assert state.delivered_at == _nov(9, 10, 40)
     assert [event.source for event in parcel.events if event.kind] == [
         Source.PARSER,
         Source.MANUAL,
     ]
-    assert _error(undo_inferred_delivery, data, kept, _nov(5, 9)) == (
+    assert _error(undo_inferred_delivery, data, kept, _nov(10, 9)) == (
         "no_inferred_delivery"
     )
 
@@ -412,15 +586,15 @@ def test_repair_store() -> None:
     """The one-time repair fixes what 0.1.0 stored."""
     data = ParcelsData()
     untracked = _apply(
-        data, _amazon("msg:a1#0", ORDER_1, _nov(1, 8), _eta(4), carrier="amazon")
+        data, _amazon("msg:a1#0", ORDER_1, _nov(6, 8), _eta(9), carrier="amazon")
     )
     by_ai = _apply(
         data,
         _amazon(
             "msg:a2#0",
             ORDER_2,
-            _nov(1, 9),
-            _eta(5),
+            _nov(6, 9),
+            _eta(10),
             carrier="amazon",
             source=Source.AI,
         ),
@@ -430,8 +604,8 @@ def test_repair_store() -> None:
         _amazon(
             "msg:a3#0",
             ORDER_3,
-            _nov(1, 10),
-            _eta(6),
+            _nov(6, 10),
+            _eta(11),
             carrier="amazon",
             number="TBA123456789012",
         ),
@@ -439,23 +613,23 @@ def test_repair_store() -> None:
     edited = _apply(
         data,
         _amazon(
-            "msg:a4#0", "171-0000004-0000004", _nov(1, 11), _eta(7), carrier="amazon"
+            "msg:a4#0", "171-0000004-0000004", _nov(6, 11), _eta(12), carrier="amazon"
         ),
     )
-    update_parcel(data, edited, {"carrier": "amazon"}, _nov(1, 12))
-    order = _apply(data, _shop_order("msg:o1#0", _nov(15, 21, 45)))
-    shipment = _apply(data, _shop_gls("msg:g1#0", GLS[0], _nov(16, 18, 50)))
+    update_parcel(data, edited, {"carrier": "amazon"}, _nov(6, 12))
+    order = _apply(data, _shop_order("msg:o1#0", _nov(20, 20, 30)))
+    shipment = _apply(data, _shop_gls("msg:g1#0", GLS[0], _nov(21, 17, 40)))
     # What 0.1.0 stored for the shop's carrier notice.
     parcel = data.parcels[shipment]
     stored = parcel.origins["msg:g1#0"]
     stored.carrier = None
     stored.merchant = "GLS PT Informa"
     stored.tracking_url = tracking_url(None, GLS[0])
-    parcel.touch(_nov(16, 18, 50))
+    parcel.touch(_nov(21, 17, 40))
     assert parcel.state.carrier is None
     data.orders.clear()
 
-    changed = repair_store(data, _nov(17, 8))
+    changed = repair_store(data, _nov(22, 8))
 
     assert changed == {untracked, by_ai, edited, shipment}
     assert data.parcels[untracked].state.carrier is None
@@ -470,4 +644,440 @@ def test_repair_store() -> None:
     assert {order_key("Amazon", ORDER_1), order_key(SHOP_NAME, SHOP_ORDER)} <= set(
         data.orders
     )
-    assert repair_store(data, _nov(17, 9)) == set()
+    assert repair_store(data, _nov(22, 9)) == set()
+
+
+def test_repair_forgets_a_carrier_learned_for_amazon() -> None:
+    """Amazon's e-mails no longer suggest the carrier of an accepted one."""
+    data = ParcelsData()
+    data.sender("amazon.es").carrier = "amazon"
+    data.sender(SHOP).carrier = "gls"
+
+    repair_store(data, _nov(22, 8))
+
+    assert data.senders["amazon.es"].carrier is None
+    assert data.senders[SHOP].carrier == "gls"
+
+
+@pytest.mark.parametrize(("delivered_day", "merged"), [(15, True), (12, False)])
+def test_delivery_read_first_joins_its_order(delivered_day: int, merged: bool) -> None:
+    """An order's "delivered" e-mail read before its "shipped" e-mail is one parcel.
+
+    A delivery before the order shipped is another package.
+    """
+    data = ParcelsData()
+    delivered = _apply(
+        data,
+        _amazon(
+            "msg:d1#0", ORDER_1, _nov(delivered_day, 15), None, kind=MailKind.DELIVERED
+        ),
+        _nov(15, 16),
+    )
+    shipped = _apply(
+        data,
+        _amazon(
+            "msg:s1#0",
+            ORDER_1,
+            _nov(13, 9),
+            _eta(15),
+            shipment_id="DkSHIP0001",
+            items=[POT],
+        ),
+        _nov(15, 16),
+    )
+    assert shipped != delivered
+
+    result = reconcile(data, _nov(15, 16))
+
+    if not merged:
+        assert not result.removed
+        assert len(data.parcels) == 2
+        return
+    assert result.removed == {delivered}
+    parcel = data.parcels[shipped]
+    assert parcel.state.status is ParcelStatus.DELIVERED
+    assert parcel.state.items == (POT,)
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_ORDER
+    split = undo_auto_merge(data, shipped, _nov(15, 17))
+    assert split is not None
+    assert set(split.origins) == {"msg:d1#0"}
+    assert not reconcile(data, _nov(15, 18)).removed
+
+
+@pytest.mark.parametrize("other_shipment", [False, True])
+def test_return_read_first_joins_its_shipment(other_shipment: bool) -> None:
+    """A "returned" e-mail with the order's item updates the shipped parcel.
+
+    Not when it names another shipment of the order.
+    """
+    data = ParcelsData()
+    returned = _apply(
+        data,
+        _amazon(
+            "msg:r1#0",
+            ORDER_2,
+            _nov(15, 14),
+            None,
+            kind=MailKind.RETURN,
+            items=[LAMP],
+            shipment_id="DkSHIP0002" if other_shipment else None,
+        ),
+        _nov(15, 16),
+    )
+    shipped = _apply(
+        data,
+        _amazon(
+            "msg:s1#0",
+            ORDER_2,
+            _nov(14, 8),
+            _eta(15),
+            shipment_id="DkSHIP0001",
+            items=[LAMP],
+        ),
+        _nov(15, 16),
+    )
+    assert shipped != returned
+
+    result = reconcile(data, _nov(15, 16))
+
+    if other_shipment:
+        assert not result.removed
+        return
+    assert result.removed == {returned}
+    state = data.parcels[shipped].state
+    assert state.status is ParcelStatus.RETURNED
+    assert state.amazon_shipment_ids == ("DkSHIP0001",)
+
+
+def test_order_mail_finds_its_package_by_items() -> None:
+    """An order's e-mails about one package don't join its other package."""
+    data = ParcelsData()
+    lamp = _apply(
+        data, _amazon("msg:c1#0", ORDER_3, _nov(20, 9), _eta(23), items=[LAMP])
+    )
+    # Read before the mug's "shipped" e-mail, which is older.
+    mug = _apply(
+        data,
+        _amazon("msg:s2#0", ORDER_3, _nov(22, 10, 25), _eta(22), items=[MUG]),
+        _nov(22, 12),
+    )
+    assert mug != lamp
+
+    applied = apply_contribution(
+        data,
+        _amazon(
+            "msg:s1#0",
+            ORDER_3,
+            _nov(22, 0, 40),
+            _eta(26),
+            shipment_id="DkSHIP0003",
+            items=[MUG],
+        ),
+        _nov(22, 12),
+    )
+
+    assert applied.parcel_id == mug
+    assert applied.auto_merged == REASON_SAME_ORDER
+    state = data.parcels[mug].state
+    assert state.eta == _eta(22)
+    assert state.items == (MUG,)
+    assert data.parcels[lamp].state.items == (LAMP,)
+
+
+def test_order_merges_stack_on_a_carrier_pairing() -> None:
+    """A package's other e-mail joins it after it paired with the carrier's.
+
+    One undo takes every guessed e-mail back together.
+    """
+    data = ParcelsData()
+    lamp = _apply(
+        data, _amazon("msg:c1#0", ORDER_3, _nov(20, 9), _eta(23), items=[LAMP])
+    )
+    # The first sync reads the carrier's delivery before Amazon's e-mail.
+    ctt = _apply(
+        data,
+        _ctt("msg:t1#0", CTT_1, MailKind.DELIVERED, _nov(22, 13, 20)),
+        _nov(22, 14),
+    )
+    _apply(
+        data,
+        _amazon("msg:s2#0", ORDER_3, _nov(22, 10, 25), _eta(22), items=[MUG]),
+        _nov(22, 14),
+    )
+    assert len(data.parcels) == 3
+    reconcile(data, _nov(22, 14))
+    assert set(data.parcels) == {lamp, ctt}
+    shipped = _apply(
+        data,
+        _amazon(
+            "msg:s1#0",
+            ORDER_3,
+            _nov(22, 0, 40),
+            _eta(26),
+            shipment_id="DkSHIP0003",
+            items=[MUG],
+        ),
+        _nov(22, 14),
+    )
+    assert shipped not in (lamp, ctt)
+
+    result = reconcile(data, _nov(22, 15))
+
+    assert result.removed == {shipped}
+    parcel = data.parcels[ctt]
+    assert parcel.state.status is ParcelStatus.DELIVERED
+    assert parcel.state.items == (MUG,)
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_DAY
+    assert parcel.auto_merged.all_origins == {"msg:s1#0", "msg:s2#0"}
+    split = undo_auto_merge(data, ctt, _nov(22, 16))
+    assert split is not None
+    assert set(split.origins) == {"msg:s1#0", "msg:s2#0"}
+    assert set(data.parcels[ctt].origins) == {"msg:t1#0"}
+    assert not reconcile(data, _nov(22, 17)).removed
+
+
+def _separate(*contributions: Contribution) -> ParcelsData:
+    """Return data with a parcel per e-mail, as earlier versions could store."""
+    data = ParcelsData()
+    for contrib in contributions:
+        alone = ParcelsData()
+        _apply(alone, contrib, _nov(22, 14))
+        data.parcels.update(alone.parcels)
+        data.orders.update(alone.orders)
+    return data
+
+
+def test_repaired_order_pairs_with_the_carrier() -> None:
+    """A package that the repair put back together pairs with the carrier's.
+
+    The guesses stay one: a single undo takes them back together.
+    """
+    data = _separate(
+        _amazon("msg:c1#0", ORDER_3, _nov(20, 9), _eta(23), items=[LAMP]),
+        _amazon(
+            "msg:s1#0",
+            ORDER_3,
+            _nov(22, 0, 40),
+            _eta(26),
+            shipment_id="DkSHIP0003",
+            items=[MUG],
+        ),
+        _amazon("msg:s2#0", ORDER_3, _nov(22, 10, 25), _eta(22), items=[MUG]),
+        _ctt("msg:t1#0", CTT_1, MailKind.DELIVERED, _nov(22, 13, 20)),
+    )
+    assert len(data.parcels) == 4
+    repair_store(data, _nov(23, 2))
+
+    result = reconcile(data, _nov(23, 2))
+
+    assert not result.suggestions
+    assert len(data.parcels) == 2
+    ctt = next(p for p in data.parcels.values() if p.state.tracking_number == CTT_1)
+    assert ctt.state.items == (MUG,)
+    assert ctt.auto_merged is not None
+    assert ctt.auto_merged.reason == REASON_SAME_MERCHANT_DAY
+    assert ctt.auto_merged.all_origins == {"msg:s1#0", "msg:s2#0"}
+
+
+def test_guesses_on_one_parcel_undo_together() -> None:
+    """A guess on a parcel that another guess made grows its flag."""
+    data = ParcelsData()
+    _apply(data, _amazon("msg:c1#0", ORDER_3, _nov(20, 9), _eta(23), items=[LAMP]))
+    mug = _apply(
+        data, _amazon("msg:s2#0", ORDER_3, _nov(21, 20), _eta(22), items=[MUG])
+    )
+    shipped = apply_contribution(
+        data,
+        _amazon(
+            "msg:s1#0",
+            ORDER_3,
+            _nov(22, 0, 40),
+            _eta(22),
+            shipment_id="DkSHIP0003",
+            items=[MUG],
+        ),
+        _nov(22, 2),
+    )
+    assert shipped.parcel_id == mug
+    assert shipped.auto_merged == REASON_SAME_ORDER
+
+    delivered = apply_contribution(
+        data,
+        _ctt("msg:t1#0", CTT_1, MailKind.DELIVERED, _nov(22, 13, 20)),
+        _nov(22, 14),
+    )
+
+    assert delivered.parcel_id == mug
+    assert delivered.auto_merged == REASON_SAME_MERCHANT_ETA
+    flag = data.parcels[mug].auto_merged
+    assert flag is not None
+    assert flag.all_origins == {"msg:s1#0", "msg:t1#0"}
+    split = undo_auto_merge(data, mug, _nov(22, 15))
+    assert split is not None
+    assert set(split.origins) == {"msg:s1#0", "msg:t1#0"}
+
+
+@pytest.mark.parametrize(("elsewhere", "merged"), [(False, True), (True, False)])
+def test_items_of_unrelated_orders_link_nothing(elsewhere: bool, merged: bool) -> None:
+    """A title that unrelated orders share, e.g. a recommendation, links nothing."""
+    data = ParcelsData()
+    if elsewhere:
+        _apply(
+            data,
+            _amazon("msg:x1#0", ORDER_1, _nov(10, 9), _eta(12), items=[POT, SHARED]),
+        )
+    returned = _apply(
+        data,
+        _amazon(
+            "msg:r1#0",
+            ORDER_2,
+            _nov(15, 14),
+            None,
+            kind=MailKind.RETURN,
+            items=[SHARED],
+        ),
+        _nov(15, 16),
+    )
+    _apply(
+        data,
+        _amazon(
+            "msg:s1#0",
+            ORDER_2,
+            _nov(14, 8),
+            _eta(15),
+            shipment_id="DkSHIP0001",
+            items=[LAMP, SHARED],
+        ),
+        _nov(15, 16),
+    )
+
+    result = reconcile(data, _nov(15, 16))
+
+    assert (result.removed == {returned}) is merged
+
+
+def test_attach_only_never_makes_a_parcel() -> None:
+    """An e-mail with only a delivery code joins its parcel or nothing."""
+    data = ParcelsData()
+    tracked = _apply(data, _ctt("msg:t1#0", CTT_1, MailKind.IN_TRANSIT, _nov(21, 9)))
+    ordered = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(21, 8), _eta(23)))
+
+    def code(origin_id: str, **kwargs: Any) -> Applied:
+        contrib = contribution(
+            origin_id, kind=MailKind.CODE, time=_nov(22, 7), **kwargs
+        )
+        contrib.attach_only = True
+        return apply_contribution(data, contrib, _nov(22, 7))
+
+    ctt = {"carrier": "ctt_expresso", "label": "cttexpresso.pt"}
+    amazon = {"merchant": "Amazon.es", "label": "amazon.es"}
+    assert code("msg:k1#0", number=CTT_1, **ctt).parcel_id == tracked
+    assert code("msg:k2#0", orders=[ORDER_1], **amazon).parcel_id == ordered
+    # The same merchant and day isn't enough, and nothing new is made.
+    assert code("msg:k3#0", eta=_eta(23), **amazon) == Applied(parcel_id=None)
+    assert code("msg:k4#0", number=CTT_2, **ctt) == Applied(parcel_id=None)
+    assert set(data.parcels) == {tracked, ordered}
+
+
+def test_carrier_mail_naming_the_order_joins_its_parcel() -> None:
+    """A carrier's e-mail with the shop's order number is that order's parcel.
+
+    Even when it comes earlier than the shop said.
+    """
+    data = ParcelsData()
+    ordered = _apply(
+        data,
+        _amazon(
+            "msg:a1#0",
+            ORDER_1,
+            _nov(21, 8),
+            _eta(25),
+            shipment_id="DkSHIP0001",
+            items=[POT],
+        ),
+    )
+
+    applied = apply_contribution(
+        data,
+        contribution(
+            "msg:e1#0",
+            kind=MailKind.OUT_FOR_DELIVERY,
+            time=_nov(23, 8),
+            carrier="correos_express",
+            number=CEX,
+            merchant="AMAZON EU SARL SUCURSAL EN",
+            orders=[ORDER_1],
+            label="correosexpress.com",
+        ),
+        _nov(23, 8),
+    )
+
+    assert applied.parcel_id == ordered
+    assert applied.auto_merged == REASON_SAME_ORDER
+    state = data.parcels[ordered].state
+    assert state.carrier == "correos_express"
+    assert state.tracking_number == CEX
+    assert state.merchant == "Amazon"
+    assert state.items == (POT,)
+
+
+def test_repair_cleans_items_and_merges_orders() -> None:
+    """The repair drops recommendations read as items and merges duplicates.
+
+    Unlike reconciling, it looks at old parcels too.
+    """
+    data = ParcelsData()
+    first = _apply(
+        data,
+        _amazon("msg:a1#0", ORDER_1, _nov(6, 8), _eta(9), items=[MUG, *RECOMMENDED]),
+    )
+    second = _apply(
+        data,
+        _amazon("msg:a2#0", ORDER_2, _nov(7, 8), _eta(10), items=[POT, *RECOMMENDED]),
+    )
+    # Two shared titles could be bought again: they stay.
+    third = _apply(
+        data,
+        _amazon(
+            "msg:a3#0", ORDER_3, _nov(8, 8), _eta(11), items=[LAMP, *RECOMMENDED[:2]]
+        ),
+    )
+    old_order = "171-0000004-0000004"
+    delivered = _apply(
+        data,
+        _amazon(
+            "msg:d1#0",
+            old_order,
+            _nov(13, 15) - _DAYS_40,
+            None,
+            kind=MailKind.DELIVERED,
+        ),
+    )
+    shipped = _apply(
+        data,
+        _amazon(
+            "msg:s1#0",
+            old_order,
+            _nov(11, 9) - _DAYS_40,
+            None,
+            shipment_id="DkSHIP0004",
+            items=[SHARED],
+        ),
+        _nov(13, 16) - _DAYS_40,
+    )
+    assert not reconcile(data, _nov(22, 8)).removed
+
+    changed = repair_store(data, _nov(22, 8))
+
+    assert changed == {first, second, shipped}
+    assert data.parcels[first].state.items == (MUG,)
+    assert data.parcels[second].state.items == (POT,)
+    assert data.parcels[third].state.items == (LAMP, *RECOMMENDED[:2])
+    assert delivered not in data.parcels
+    parcel = data.parcels[shipped]
+    assert parcel.state.status is ParcelStatus.DELIVERED
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_ORDER
+    assert repair_store(data, _nov(22, 9)) == set()

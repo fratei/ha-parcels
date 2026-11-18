@@ -122,10 +122,10 @@ def _amazon_delivered_by_ctt() -> tuple[MailMessage, MailMessage]:
     delivered = load_message(CTT_EXPRESSO)
     text = delivered.text.replace(
         f"O seu envio {CTT_EXPRESSO_NUMBER} foi entregue ontem, 16-11-2026, às 16:05.",
-        "O seu envio da loja Amazon foi entregue hoje, 19-11-2026, às 11:28.",
-    ).replace("Data de entrega 16-11-2026 16:05", "Data de entrega 19-11-2026 11:28")
+        "O seu envio da loja Amazon foi entregue hoje, 19-11-2026, às 10:40.",
+    ).replace("Data de entrega 16-11-2026 16:05", "Data de entrega 19-11-2026 10:40")
     assert "loja Amazon" in text
-    assert "19-11-2026 11:28" in text
+    assert "19-11-2026 10:40" in text
     delivered = dataclasses.replace(
         delivered,
         message_id="<amazon-delivered@notifications.cttexpress.com>",

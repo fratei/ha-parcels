@@ -7,11 +7,17 @@ fallback), labels such as "Arriving:", "Chegada:" or "Zustellung:" give
 the delivery estimates, and the order number, the shipment ID (from the
 "Track package" link) and any carrier tracking number are collected from
 the whole e-mail. Links are only read as strings, never fetched.
+
+A delivery PIN or one-time password is read for any kind; an e-mail whose
+only news is such a code for an order or a package gets the kind ``CODE``.
+Products below a recommendations heading ("Buy again", "Inspired by your
+shopping trends") weren't ordered and aren't items.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from datetime import tzinfo
 import re
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -34,7 +40,7 @@ from ._amazon_shopify_common import (
     line_bounds,
     local_date,
     own_https_url,
-    pickup_details,
+    pickup_point,
     quantity_items,
     query_params,
     today_eta,
@@ -44,7 +50,9 @@ from ._amazon_shopify_common import (
     words_regex,
 )
 from .base import Eta, Link, MailMessage, ParsedShipment, ParseResult, SenderVerdict
+from .codes import find_code, has_code_label, mask_codes
 from .eta import find_eta, parse_eta, parse_time_window
+from .items import recommendations_start, unique_items
 from .senders import lookup
 
 PARSER = "amazon"
@@ -63,6 +71,10 @@ _MAX_ORDERS = 10
 
 # Kinds whose key identifier is the order number.
 _ORDER_KINDS = frozenset({MailKind.ORDER, MailKind.CANCELLED, MailKind.RETURN})
+# Kinds whose e-mails may give a locker code under a bare "Code:" label.
+_LOCKER_KINDS = frozenset({MailKind.READY_FOR_PICKUP, MailKind.ATTEMPTED})
+# Kinds without a delivery code: the parcel won't be delivered.
+_NO_CODE_KINDS = frozenset({MailKind.CANCELLED, MailKind.RETURN})
 # Confidence by (kind found in the subject, key identifier present).
 _CONFIDENCE: dict[tuple[bool, bool], float] = {
     (True, True): 0.9,
@@ -70,6 +82,9 @@ _CONFIDENCE: dict[tuple[bool, bool], float] = {
     (False, True): 0.6,
     (False, False): 0.5,
 }
+# Confidence of a code-only e-mail, with and without a code label in the
+# subject.
+_CODE_CONFIDENCE = {True: 0.9, False: 0.8}
 # Kinds that carry a delivery estimate.
 _ETA_KINDS = frozenset(
     {
@@ -486,40 +501,6 @@ _LOCKER_RE = words_regex(
     ("amazon locker", "amazon hub", "amazon counter", "hub locker", "hub counter")
 )
 
-# Headings of product recommendations: the products below them weren't
-# ordered.
-_RECOMMENDATIONS_RE = words_regex(
-    (
-        "recommended for you",
-        "recommended items",
-        "top picks for you",
-        "inspired by your",
-        "customers who bought",
-        "you might also like",
-        "related to items you",
-        "recomendado para si",
-        "recomendados para si",
-        "sugestoes para si",
-        "recomendado para ti",
-        "recomendados para ti",
-        "productos recomendados",
-        "los clientes que compraron",
-        "empfehlungen fur sie",
-        "empfohlen fur sie",
-        "kunden, die",
-        "recommande pour vous",
-        "recommandations pour vous",
-        "les clients ayant achete",
-        "consigliati per te",
-        "consigliato per te",
-        "i clienti che hanno acquistato",
-        "aanbevolen voor jou",
-        "aanbevolen voor u",
-        "aanbevelingen voor jou",
-        "klanten die",
-    )
-)
-
 
 @dataclass(slots=True)
 class _Context:
@@ -583,6 +564,25 @@ def _shipment_ids(urls: tuple[str, ...]) -> list[str]:
     return ids
 
 
+def _link_asins(link: Link) -> list[str]:
+    """Return the ASINs of the Amazon product pages a link goes to."""
+    return [
+        match.group(1)
+        for url in unwrap_url(link.url)
+        if _is_amazon_url(url) and (match := _ASIN_PATH_RE.search(url_path(url)))
+    ]
+
+
+def product_buttons(links: Iterable[Link]) -> list[str]:
+    """Return the texts of the links to Amazon product pages.
+
+    A "Buy again" button under an ordered item is such a link, so it isn't
+    taken for the recommendations heading of the same name (see
+    ``items.recommendations_start``).
+    """
+    return [link.text for link in links if _link_asins(link)]
+
+
 def _subject_title(subject: str) -> str | None:
     """Return the quoted product title of a subject, if any."""
     folded = fold_text(subject)
@@ -598,31 +598,32 @@ def _items(
     """Return the product titles and the ASINs of the product links.
 
     Only product links whose text appears in the body before any
-    recommendations heading count: image links (whose text is the image's
-    alt text) and recommended products aren't ordered items.
+    recommendations heading ("Buy again", "Recommended for you") count:
+    image links (whose text is the image's alt text) and recommended or
+    previously bought products aren't ordered items.
     """
     items: list[str] = []
     asins: set[str] = set()
-    flat = " ".join(folded.split())
-    heading = _RECOMMENDATIONS_RE.search(flat)
-    cutoff = heading.start() if heading else len(flat)
+    products: list[Link] = []
     for link in message.links:
-        found = [
-            match.group(1)
-            for url in unwrap_url(link.url)
-            if _is_amazon_url(url) and (match := _ASIN_PATH_RE.search(url_path(url)))
-        ]
-        if not found:
-            continue
-        asins.update(found)
+        if found := _link_asins(link):
+            asins.update(found)
+            products.append(link)
+    # A "Buy again" button under an ordered item links to the product; it
+    # isn't the heading of the same name.
+    cut = recommendations_start(text, buttons=[link.text for link in products])
+    if cut is not None:
+        text, folded = text[:cut], folded[:cut]
+    flat = " ".join(folded.split())
+    for link in products:
         title = " ".join(fold_text(link.text).split())
-        if title and not _BUTTON_RE.search(title) and 0 <= flat.find(title) < cutoff:
+        if title and not _BUTTON_RE.search(title) and title in flat:
             add_item(items, link.text)
     if not items:
         quantity_items(text, folded, items)
     if not items and (title := _subject_title(message.subject)):
         add_item(items, title)
-    return tuple(items), frozenset(asins)
+    return tuple(unique_items(items)), frozenset(asins)
 
 
 def _label_etas(ctx: _Context, kind: MailKind) -> list[tuple[int, Eta]]:
@@ -712,13 +713,13 @@ def _order_shipments(
     ]
 
 
-def _pickup(ctx: _Context) -> tuple[str | None, str | None]:
-    """Return the pickup point and the pickup code of a pickup notice."""
-    point, code = pickup_details(ctx.text, ctx.folded)
+def _pickup_point(ctx: _Context) -> str | None:
+    """Return the pickup point of a pickup notice."""
+    point = pickup_point(ctx.text, ctx.folded)
     if point is None and (match := _LOCKER_RE.search(ctx.folded)):
         _, end = line_bounds(ctx.text, match.start())
         point = clip(ctx.text[match.start() : end], MAX_POINT_CHARS).rstrip(".") or None
-    return point, code
+    return point
 
 
 def _track_url(ctx: _Context, shipment_id: str | None) -> str | None:
@@ -748,11 +749,12 @@ def _status_shipments(
     shipment_ids: list[str],
     numbers: list[FoundNumber],
     etas: list[tuple[int, Eta]],
-) -> tuple[list[ParsedShipment], str | None]:
-    """Build one shipment per Amazon shipment; also return the pickup code."""
-    if kind in (MailKind.CANCELLED, MailKind.RETURN):
-        return [ParsedShipment(order_numbers=ctx.orders, items=ctx.items)], None
-    point, code = _pickup(ctx) if kind is MailKind.READY_FOR_PICKUP else (None, None)
+    code: str | None = None,
+) -> list[ParsedShipment]:
+    """Build one shipment per Amazon shipment, all with the delivery code."""
+    if kind in _NO_CODE_KINDS:
+        return [ParsedShipment(order_numbers=ctx.orders, items=ctx.items)]
+    point = _pickup_point(ctx) if kind is MailKind.READY_FOR_PICKUP else None
     when = event_time(ctx.folded, kind, ctx.message, ctx.tz, ctx.lang)
     slots: list[str | None] = [*shipment_ids] or [None]
     single = len(slots) == 1
@@ -786,6 +788,7 @@ def _status_shipments(
             ParsedShipment(
                 carrier=carrier,
                 tracking_number=number,
+                kind=MailKind.CODE if kind is MailKind.CODE else None,
                 eta=eta,
                 event_time=when,
                 pickup_point=point,
@@ -796,7 +799,7 @@ def _status_shipments(
                 tracking_url=url,
             )
         )
-    return shipments, code
+    return shipments
 
 
 def _not_parcel(message: MailMessage) -> ParseResult:
@@ -809,14 +812,22 @@ def _not_parcel(message: MailMessage) -> ParseResult:
     )
 
 
+def _code(message: MailMessage, exclude: list[str], locker: bool) -> str | None:
+    """Return the delivery code written in the body or, failing that, the subject."""
+    return find_code(message.text, exclude=exclude, locker=locker) or find_code(
+        message.subject, exclude=exclude, locker=locker
+    )
+
+
 def parse_amazon(
     message: MailMessage, verdict: SenderVerdict, tz: tzinfo
 ) -> ParseResult | None:
     """Parse an Amazon order or shipping e-mail.
 
     Returns None when the e-mail isn't recognised (marketing, account
-    e-mails, or a layout the parser can't read), and a NOT_PARCEL result
-    for review requests and digital orders.
+    e-mails, or a layout the parser can't read), a CODE result for an
+    e-mail that only gives a delivery code for an order or a package, and
+    a NOT_PARCEL result for review requests and digital orders.
     """
     subject = _QUOTED_RE.sub(" ", fold_text(message.subject))
     if _FEEDBACK_RE.search(subject):
@@ -830,19 +841,48 @@ def parse_amazon(
     pattern, from_subject = detect_kind(
         subject, folded, _SUBJECT_PATTERNS, _BODY_PATTERNS
     )
-    if pattern is None:
-        return None
-    kind = pattern.kind
+    # Without a status, the e-mail can only be about a delivery code.
+    kind = pattern.kind if pattern is not None else MailKind.CODE
     if kind in _ORDER_KINDS and not orders:
         return None
+    locker = kind in _LOCKER_KINDS
     items, asins = _items(message, text, folded)
+    shipment_ids: list[str] = []
+    numbers: list[FoundNumber] = []
+    if kind not in _ORDER_KINDS:
+        shipment_ids = _shipment_ids(urls)
+        exclude = frozenset(
+            {
+                *asins,
+                *(sid.upper() for sid in shipment_ids),
+                *(order.replace("-", "") for order in orders),
+            }
+        )
+        # Numbers are read without the codes, so a PIN is never one of them.
+        plain = mask_codes(text, locker=locker)
+        numbers = find_numbers(
+            plain,
+            fold_text(plain),
+            message.links,
+            exclude=exclude,
+            window=120,
+            allow_other=False,
+        )
+        if not (orders or shipment_ids or numbers):
+            return None
+    code: str | None = None
+    if kind not in _NO_CODE_KINDS:
+        known = [*orders, *shipment_ids, *(found.number for found in numbers)]
+        code = _code(message, known, locker)
+    if kind is MailKind.CODE and code is None:
+        return None
     ctx = _Context(
         message=message,
         verdict=verdict,
         tz=tz,
         text=text,
         folded=folded,
-        lang=message.language or pattern.lang,
+        lang=message.language or (pattern.lang if pattern is not None else None),
         orders=orders,
         items=items,
         urls=urls,
@@ -852,25 +892,18 @@ def parse_amazon(
         shipments = (
             _order_shipments(ctx, etas)
             if kind is MailKind.ORDER
-            else _status_shipments(ctx, kind, [], [], etas)[0]
+            else _status_shipments(ctx, kind, [], [], etas)
         )
+        if code is not None and len(shipments) == 1:
+            shipments = [replace(shipments[0], pickup_code=code)]
         key = True
     else:
-        shipment_ids = _shipment_ids(urls)
-        exclude = frozenset(
-            {
-                *asins,
-                *(sid.upper() for sid in shipment_ids),
-                *(order.replace("-", "") for order in orders),
-            }
-        )
-        numbers = find_numbers(
-            text, folded, message.links, exclude=exclude, window=120, allow_other=False
-        )
-        if not (orders or shipment_ids or numbers):
-            return None
-        shipments, code = _status_shipments(ctx, kind, shipment_ids, numbers, etas)
+        shipments = _status_shipments(ctx, kind, shipment_ids, numbers, etas, code)
         key = bool(shipment_ids or numbers or code)
+    if kind is MailKind.CODE:
+        confidence = _CODE_CONFIDENCE[has_code_label(message.subject)]
+    else:
+        confidence = _CONFIDENCE[from_subject, key]
     return ParseResult(
         parser=PARSER,
         kind=kind,
@@ -878,6 +911,6 @@ def parse_amazon(
         order_numbers=orders,
         shipments=shipments,
         items=items,
-        confidence=_CONFIDENCE[from_subject, key],
+        confidence=confidence,
         language=ctx.lang,
     )

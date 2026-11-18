@@ -17,19 +17,27 @@ existing parcels:
 
 * the same tracking number when one side doesn't know the carrier;
 * an order: a shipment absorbs the parcel without a tracking number that an
-  order e-mail of the same order created;
+  order e-mail of the same order created. When the order has several, the
+  one with the shipment's items;
 * heuristics, which flag the parcel "auto-merged" so the user can undo them:
-  the same long tracking number from carriers of different families, or the
-  same merchant with overlapping delivery dates when only one parcel fits.
+  the same long tracking number from carriers of different families, the
+  order's only open parcel with the same items (or, for a "delivered" e-mail
+  without items, the order's only open parcel), or the same merchant with
+  overlapping delivery dates when only one parcel fits.
 
 After a sync, :func:`reconcile` looks at whole parcels again, because e-mails
 arrive in any order and a shop's e-mail rarely names the carrier's number:
 
+* parcels of one order that are the same package join: the same items, or a
+  "delivered" e-mail without items and the order's only other parcel;
 * a shop's single parcel without a tracking number joins the tracked
   shipments that the same sender domain announces within a few days;
 * a parcel without a tracking number joins the tracked parcel of the same
   merchant delivered on its date, when they are the only two that fit. When
   more fit, the user gets merge suggestions instead.
+
+Item titles never link different orders, and titles that unrelated orders
+share (a shop's recommendations read as items) don't count at all.
 
 :func:`infer_deliveries` then closes parcels without a tracking number whose
 date has passed when the same merchant delivered another parcel then. Shops
@@ -40,10 +48,11 @@ not merged.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 import hashlib
+from itertools import combinations
 from typing import Any
 
 from .const import MailKind, ParcelStatus
@@ -56,6 +65,7 @@ from .models import (
     ParcelsData,
     Source,
     date_from_str,
+    is_carrier_mail,
     local_date,
     merchant_key,
     new_id,
@@ -64,7 +74,13 @@ from .models import (
 )
 from .parsers.base import Eta
 from .parsers.carriers import brand_carriers
-from .parsers.senders import is_free_mail, lookup, organizational_domain
+from .parsers.items import item_key, same_key
+from .parsers.senders import (
+    is_free_mail,
+    lookup,
+    organizational_domain,
+    ships_with_many,
+)
 from .parsers.tracking import (
     detect_carrier,
     is_s10,
@@ -77,6 +93,7 @@ REASON_SAME_MERCHANT_ETA = "same_merchant_eta"
 REASON_SAME_NUMBER = "same_number"
 REASON_SAME_MERCHANT_DAY = "same_merchant_day"
 REASON_SAME_MERCHANT_DOMAIN = "same_merchant_domain"
+REASON_SAME_ORDER = "same_order"
 
 # How far back reconcile() looks, and how soon after a shop's order e-mails
 # its tracked shipments must follow to absorb the order's parcel.
@@ -89,7 +106,7 @@ INFER_MARGIN = timedelta(days=1)
 # of the one-time repair of stored parcels.
 KEPT_APART = "kept_apart"
 REPAIR_KEY = "repair"
-REPAIR_VERSION = 1
+REPAIR_VERSION = 2
 
 # Shorter numbers from carriers of different families are not linked.
 LOOSE_MIN_LENGTH = 10
@@ -133,6 +150,8 @@ class Contribution:
     events: list[ParcelEvent] = field(default_factory=list)
     private: bool = False
     order_placed: datetime | None = None
+    # Only joins a parcel that exists, e.g. an e-mail with just a delivery code.
+    attach_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,24 +318,164 @@ def _untracked(parcel: Parcel) -> bool:
     )
 
 
-def _absorbable(data: ParcelsData, origin: Origin, exclude: set[str]) -> set[str]:
-    """Return, per order of a shipment, its single parcel without a number."""
+def _finished(parcel: Parcel) -> bool:
+    """Return True for a parcel that news or the user closed, not a guess."""
+    state = parcel.state
+    return state.terminal and not state.inferred
+
+
+def _item_keys(items: Iterable[str]) -> set[str]:
+    return {key for item in items if (key := item_key(item))}
+
+
+def _noise_items(parcels: Iterable[Parcel]) -> frozenset[str]:
+    """Return the item titles that unrelated orders share.
+
+    A shop's recommendations ("buy it again") read as items make the same
+    titles turn up in orders that have nothing in common, and so does an item
+    bought again. Such titles don't tell which parcel an e-mail is about.
+    """
+    orders: dict[str, list[frozenset[str]]] = defaultdict(list)
+    for parcel in parcels:
+        if keys := frozenset(parcel_order_keys(parcel)):
+            for item in _item_keys(parcel.state.items):
+                orders[item].append(keys)
+    # A title cut short counts as the full title it starts with.
+    titles = sorted(orders)
+    group = {title: title for title in titles}
+    for index, short in enumerate(titles):
+        for full in titles[index + 1 :]:
+            if not full.startswith(short):
+                break
+            if same_key(short, full):
+                group[full] = group[short]
+    shared: dict[str, list[frozenset[str]]] = defaultdict(list)
+    for title, keys in orders.items():
+        shared[group[title]].extend(keys)
+    noisy = {
+        name
+        for name, keys in shared.items()
+        if any(first.isdisjoint(second) for first, second in combinations(keys, 2))
+    }
+    return frozenset(title for title in titles if group[title] in noisy)
+
+
+def _is_noise(key: str, noise: Collection[str]) -> bool:
+    return key in noise or any(same_key(key, other) for other in noise)
+
+
+def _same_items(
+    first: Iterable[str], second: Iterable[str], noise: Collection[str]
+) -> bool:
+    """Return True when the item titles of one side are all on the other.
+
+    Titles in ``noise`` don't count; with none left on a side, it's False.
+    """
+    one = [key for key in first if not _is_noise(key, noise)]
+    two = [key for key in second if not _is_noise(key, noise)]
+    if not one or not two:
+        return False
+    fewer, more = sorted((one, two), key=len)
+    return all(any(same_key(key, other) for other in more) for key in fewer)
+
+
+def _different_items(
+    first: Iterable[str], second: Iterable[str], noise: Collection[str]
+) -> bool:
+    """Return True when both sides list items and they aren't the same ones."""
+    one = [key for key in first if not _is_noise(key, noise)]
+    two = [key for key in second if not _is_noise(key, noise)]
+    return bool(one and two) and not _same_items(one, two, ())
+
+
+def _absorbable(
+    data: ParcelsData, origin: Origin, exclude: set[str]
+) -> tuple[set[str], str | None]:
+    """Return, per order of a shipment, the parcel without a number it absorbs.
+
+    That's the order's only such parcel, unless it lists other items. Of
+    several, it's the only one with the shipment's items, and the merge is
+    flagged so the user can undo it.
+    """
     found: set[str] = set()
+    reason: str | None = None
+    items = _item_keys(origin.items)
+    noise: frozenset[str] = frozenset()
+    if items:
+        noise = _noise_items(data.parcels.values())
     for key in origin_order_keys(origin):
         candidates = [
-            parcel.id
+            parcel
             for parcel in order_parcels(data, key, include_archived=False)
             if _untracked(parcel)
         ]
-        if len(candidates) == 1 and candidates[0] not in exclude:
-            found.add(candidates[0])
-    return found
+        several = len(candidates) > 1
+        if items:
+            candidates = [
+                parcel
+                for parcel in candidates
+                if not _different_items(items, _item_keys(parcel.state.items), noise)
+            ]
+            if len(candidates) > 1:
+                candidates = [
+                    parcel
+                    for parcel in candidates
+                    if _same_items(items, _item_keys(parcel.state.items), noise)
+                ]
+        elif several:
+            continue
+        if len(candidates) != 1 or candidates[0].id in exclude:
+            continue
+        found.add(candidates[0].id)
+        if several:
+            reason = REASON_SAME_ORDER
+    return found, reason
+
+
+def _same_order_target(
+    data: ParcelsData, origin: Origin, events: list[ParcelEvent]
+) -> str | None:
+    """Return the open parcel of the order that a shipment's e-mail is about.
+
+    The e-mail names a tracking number or shipment that no parcel has yet.
+    It belongs to the order's only open parcel with its items. Without
+    items, it belongs to the order's only open parcel when a carrier sent it
+    or when it says the parcel was delivered or returned.
+    """
+    candidates: dict[str, Parcel] = {}
+    for key in origin_order_keys(origin):
+        for parcel in order_parcels(data, key, include_archived=False):
+            if not _finished(parcel) and not _conflicts(parcel, origin):
+                candidates[parcel.id] = parcel
+    if not candidates:
+        return None
+    noise = _noise_items(data.parcels.values())
+    items = [key for key in _item_keys(origin.items) if not _is_noise(key, noise)]
+    if items:
+        matches = [
+            pid
+            for pid, parcel in candidates.items()
+            if _same_items(items, _item_keys(parcel.state.items), noise)
+        ]
+        return matches[0] if len(matches) == 1 else None
+    closing = any(
+        event.status in (ParcelStatus.DELIVERED, ParcelStatus.RETURNED)
+        for event in events
+    )
+    if (closing or is_carrier_mail(origin)) and len(candidates) == 1:
+        return next(iter(candidates))
+    return None
 
 
 def _order_only_target(
     data: ParcelsData, origin: Origin, events: list[ParcelEvent]
 ) -> str | None:
-    """Pick the parcel that order-level news without a number belongs to."""
+    """Pick the parcel that order-level news without a number belongs to.
+
+    That's the order's only parcel with the e-mail's items, otherwise its
+    latest parcel without a number. A parcel with other items is another
+    package, so with only those, there's none.
+    """
     parcels: dict[str, Parcel] = {}
     for key in origin_order_keys(origin):
         for parcel in order_parcels(data, key, include_archived=False):
@@ -335,6 +494,23 @@ def _order_only_target(
         for event in events:
             if event.status is ParcelStatus.CANCELLED:
                 event.status = None
+    if items := _item_keys(origin.items):
+        noise = _noise_items(data.parcels.values())
+        same = [
+            pid
+            for pid, parcel in parcels.items()
+            if _same_items(items, _item_keys(parcel.state.items), noise)
+        ]
+        if len(same) == 1:
+            return same[0]
+        # A parcel with other items is another package of the order.
+        parcels = {
+            pid: parcel
+            for pid, parcel in parcels.items()
+            if not _different_items(items, _item_keys(parcel.state.items), noise)
+        }
+        if not parcels:
+            return None
     untracked = [pid for pid, parcel in parcels.items() if _untracked(parcel)]
     return _most_recent(data, untracked or parcels)
 
@@ -356,12 +532,15 @@ def _conflicts(parcel: Parcel, origin: Origin) -> bool:
 
 
 def _heuristic_target(data: ParcelsData, origin: Origin, eta: Eta | None) -> str | None:
-    """Return the single open parcel of the same merchant with overlapping dates."""
+    """Return the single open parcel of the same merchant with overlapping dates.
+
+    A parcel with other items than the e-mail's isn't a candidate.
+    """
     wanted = merchant_key(origin.merchant)
     if not wanted or eta is None:
         return None
     candidates = [
-        parcel.id
+        parcel
         for parcel in data.parcels.values()
         if parcel.archived is None
         and not parcel.state.terminal
@@ -370,7 +549,14 @@ def _heuristic_target(data: ParcelsData, origin: Origin, eta: Eta | None) -> str
         and _overlap(parcel.state.eta, eta)
         and not _conflicts(parcel, origin)
     ]
-    return candidates[0] if len(candidates) == 1 else None
+    if candidates and (items := _item_keys(origin.items)):
+        noise = _noise_items(data.parcels.values())
+        candidates = [
+            parcel
+            for parcel in candidates
+            if not _different_items(items, _item_keys(parcel.state.items), noise)
+        ]
+    return candidates[0].id if len(candidates) == 1 else None
 
 
 def _normalise(origin: Origin) -> None:
@@ -473,11 +659,18 @@ def apply_contribution(
         targets = {_most_recent(data, loose)}
         reason = REASON_SAME_NUMBER
     if number or origin.amazon_shipment_id:
-        targets |= _absorbable(data, origin, targets)
+        absorbed, absorb_reason = _absorbable(data, origin, targets)
+        targets |= absorbed
+        if not targets and (same := _same_order_target(data, origin, events)):
+            targets = {same}
+            absorb_reason = REASON_SAME_ORDER
+        reason = reason or absorb_reason
     elif not targets and (order_target := _order_only_target(data, origin, events)):
         targets = {order_target}
-    if not targets and (
-        heuristic := _heuristic_target(data, origin, _contribution_eta(events))
+    if (
+        not targets
+        and not contribution.attach_only
+        and (heuristic := _heuristic_target(data, origin, _contribution_eta(events)))
     ):
         targets = {heuristic}
         reason = REASON_SAME_MERCHANT_ETA
@@ -490,6 +683,9 @@ def apply_contribution(
         parcel = merge_parcels(data, target_id, merged, now) if merged else None
         parcel = parcel or data.parcels[target_id]
     else:
+        if contribution.attach_only:
+            # Nothing it belongs to.
+            return Applied(parcel_id=None)
         has_number = bool(number or origin.amazon_shipment_id)
         statuses = {event.status for event in events if event.status}
         if not has_number and statuses <= {ParcelStatus.CANCELLED} and statuses:
@@ -509,8 +705,12 @@ def apply_contribution(
     ]
     parcel.events.extend(events)
     parcel.private = parcel.private or contribution.private
-    if reason and parcel.auto_merged is None:
-        parcel.auto_merged = AutoMerge(origin=origin.id, at=now, reason=reason)
+    if reason:
+        parcel.auto_merged = (
+            AutoMerge(origin=origin.id, at=now, reason=reason)
+            if parcel.auto_merged is None
+            else _grown(parcel.auto_merged, parcel, {origin.id})
+        )
     parcel.touch(now)
     if parcel.archived is not None and not parcel.state.terminal:
         # News about an archived parcel that isn't finished brings it back.
@@ -813,11 +1013,15 @@ def mark_delivered(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel:
 
 
 def archive_parcel(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel:
-    """Archive a parcel: it leaves the lists but stays in past weeks."""
+    """Archive a parcel: it leaves the lists but stays in past weeks.
+
+    Its delivery codes go: nobody needs them any more.
+    """
     parcel = data.parcels[parcel_id]
     if parcel.archived is None:
         parcel.archived = now
         parcel.updated = now
+    parcel.drop_codes()
     return parcel
 
 
@@ -906,7 +1110,7 @@ def _all_origins(data: ParcelsData) -> Iterator[Origin]:
         yield from parcel.origins.values()
 
 
-def _is_shop(label: str) -> bool:
+def is_shop(label: str) -> bool:
     """Return True for a sender domain of a shop Parcels doesn't know."""
     return bool(label) and lookup(label) is None and not is_free_mail(label)
 
@@ -990,7 +1194,7 @@ def _name_merchant(
     on change.
     """
     label = origin.label
-    if origin.message is None or not _is_shop(label):
+    if origin.message is None or not is_shop(label):
         return False
     merchant = (origin.merchant or "").strip()
     brand = bool(merchant) and bool(brand_carriers(merchant))
@@ -1055,7 +1259,7 @@ def _news_times(parcel: Parcel) -> list[datetime]:
     ]
 
 
-def _first_news(parcel: Parcel) -> datetime | None:
+def first_news(parcel: Parcel) -> datetime | None:
     """Return when Parcels first heard of a parcel from a mailbox or 17TRACK."""
     return min(_news_times(parcel), default=None)
 
@@ -1143,7 +1347,7 @@ def _suggestion(
 ) -> MergeSuggestion:
     ordered = sorted(
         candidates,
-        key=lambda parcel: (_first_news(parcel) or parcel.created, parcel.id),
+        key=lambda parcel: (first_news(parcel) or parcel.created, parcel.id),
     )
     ids = tuple(parcel.id for parcel in ordered)
     digest = hashlib.sha1(
@@ -1167,20 +1371,169 @@ def _auto_merge(
     now: datetime,
     result: Reconciled,
 ) -> None:
-    """Merge a parcel without a tracking number into one with, undoably."""
+    """Merge ``other`` into ``target``, undoably.
+
+    When ``target`` was already merged by a guess, that flag grows to cover
+    the new origins too, so one undo takes back every guess. The merged
+    parcel stays archived only when it was and nothing open joined it.
+    """
+    earlier = target.auto_merged
+    joining_open = other.archived is None
     moving = sorted(other.origins.values(), key=lambda origin: (origin.time, origin.id))
-    first = next(
-        (origin for origin in moving if origin.source is not Source.MANUAL), moving[0]
-    )
     merge_parcels(data, target.id, (other.id,), now, keep_archived=True)
-    target.auto_merged = AutoMerge(
-        origin=first.id,
-        at=now,
-        reason=reason,
-        origins=tuple(origin.id for origin in moving if origin.id != first.id),
-    )
+    if target.archived is not None and joining_open and not target.state.terminal:
+        target.archived = None
+    if earlier is not None:
+        target.auto_merged = _grown(earlier, target, {origin.id for origin in moving})
+    else:
+        first = next(
+            (origin for origin in moving if origin.source is not Source.MANUAL),
+            moving[0],
+        )
+        target.auto_merged = AutoMerge(
+            origin=first.id,
+            at=now,
+            reason=reason,
+            origins=tuple(origin.id for origin in moving if origin.id != first.id),
+        )
     result.changed.add(target.id)
     result.removed.add(other.id)
+
+
+def _grown(flag: AutoMerge, parcel: Parcel, guessed: set[str]) -> AutoMerge:
+    """Return a parcel's guess flag grown to cover more guessed origins.
+
+    One undo then takes back every guess.
+    """
+    linked = (flag.all_origins | guessed) & parcel.origins.keys()
+    linked.discard(flag.origin)
+    return AutoMerge(
+        origin=flag.origin,
+        at=flag.at,
+        reason=flag.reason,
+        origins=tuple(sorted(linked, key=lambda oid: (parcel.origins[oid].time, oid))),
+    )
+
+
+def _may_auto_merge(target: Parcel, other: Parcel) -> bool:
+    """Return True when a guessed merge of two parcels can still be undone.
+
+    A parcel merged by an earlier guess gets suggestions instead, except a
+    merge of the same order's e-mails, which leaves together on undo.
+    """
+    return target.auto_merged is None and (
+        other.auto_merged is None or other.auto_merged.reason == REASON_SAME_ORDER
+    )
+
+
+def _merge_by_order(
+    data: ParcelsData,
+    since: datetime | None,
+    apart: Callable[[Parcel, Parcel], bool],
+    now: datetime,
+    result: Reconciled,
+) -> None:
+    """Merge the parcels of an order that are the same package, undoably.
+
+    Two parcels of an order with the same items are one, unless their
+    tracking numbers or shipments differ or both were already finished. A
+    "delivered" or "returned" e-mail without items belongs to the order's
+    only other parcel when that was still open. Orders without news since
+    ``since`` are left alone; None looks at every order.
+    """
+    noise = _noise_items(data.parcels.values())
+    while _merge_one_by_order(data, since, noise, apart, now, result):
+        pass
+
+
+def _merge_one_by_order(
+    data: ParcelsData,
+    since: datetime | None,
+    noise: frozenset[str],
+    apart: Callable[[Parcel, Parcel], bool],
+    now: datetime,
+    result: Reconciled,
+) -> bool:
+    """Do one merge of :func:`_merge_by_order`; returns False when none is left."""
+    by_order: dict[str, list[Parcel]] = defaultdict(list)
+    for parcel in sorted(data.parcels.values(), key=lambda p: p.id):
+        if parcel.state.status is not ParcelStatus.CANCELLED:
+            for key in parcel_order_keys(parcel):
+                by_order[key].append(parcel)
+
+    def recent(*parcels: Parcel) -> bool:
+        return since is None or any(
+            time >= since for parcel in parcels for time in _news_times(parcel)
+        )
+
+    def mergeable(first: Parcel, second: Parcel) -> bool:
+        return not _parcels_conflict(first, second) and not apart(first, second)
+
+    for parcel in sorted(data.parcels.values(), key=lambda p: p.id):
+        state = parcel.state
+        if (
+            not _finished(parcel)
+            or state.status not in (ParcelStatus.DELIVERED, ParcelStatus.RETURNED)
+            or state.items
+            or state.tracking_number
+            or not (keys := parcel_order_keys(parcel))
+        ):
+            continue
+        others = {
+            other.id: other
+            for key in keys
+            for other in by_order[key]
+            if other.id != parcel.id
+        }
+        if len(others) != 1:
+            continue
+        other = next(iter(others.values()))
+        when = state.delivered_at or state.status_time
+        first = first_news(other)
+        if (
+            not _finished(other)
+            and when is not None
+            and first is not None
+            and when >= first
+            and recent(parcel, other)
+            and mergeable(parcel, other)
+        ):
+            _auto_merge(data, other, parcel, REASON_SAME_ORDER, now, result)
+            return True
+
+    partners: dict[str, set[str]] = defaultdict(set)
+    for parcels in by_order.values():
+        for first, second in combinations(parcels, 2):
+            if (
+                not (_finished(first) and _finished(second))
+                and recent(first, second)
+                and _same_items(
+                    _item_keys(first.state.items),
+                    _item_keys(second.state.items),
+                    noise,
+                )
+                and mergeable(first, second)
+            ):
+                partners[first.id].add(second.id)
+                partners[second.id].add(first.id)
+    for pid in sorted(partners):
+        if len(partners[pid]) != 1:
+            continue
+        other_id = next(iter(partners[pid]))
+        if partners[other_id] != {pid}:
+            continue
+        target, other = sorted(
+            (data.parcels[pid], data.parcels[other_id]),
+            key=lambda parcel: (
+                not parcel.state.tracking_number,
+                not parcel.state.amazon_shipment_ids,
+                first_news(parcel) or parcel.created,
+                parcel.id,
+            ),
+        )
+        _auto_merge(data, target, other, REASON_SAME_ORDER, now, result)
+        return True
+    return False
 
 
 def _reconcile_pool(data: ParcelsData, start: datetime) -> list[Parcel]:
@@ -1218,7 +1571,7 @@ def _absorb_by_domain(
         state = parcel.state
         shop_mail: dict[str, datetime] = {}
         for origin in parcel.origins.values():
-            if origin.message is not None and _is_shop(origin.label):
+            if origin.message is not None and is_shop(origin.label):
                 when = shop_mail.get(origin.label)
                 shop_mail[origin.label] = min(when or origin.time, origin.time)
         for label, when in shop_mail.items():
@@ -1231,7 +1584,7 @@ def _absorb_by_domain(
     first_mail: dict[str, datetime] = {}
     for label, parcels in untracked.items():
         for parcel in parcels:
-            first = _first_news(parcel)
+            first = first_news(parcel)
             last = _last_activity(parcel)
             if first is None or last is None:
                 continue
@@ -1255,7 +1608,7 @@ def _absorb_by_domain(
         sources = sorted(pid for pid in component if pid not in first_mail)
         target = data.parcels[targets[0]]
         parcels = [data.parcels[pid] for pid in sources]
-        if len(parcels) == 1 and not (target.auto_merged or parcels[0].auto_merged):
+        if len(parcels) == 1 and _may_auto_merge(target, parcels[0]):
             _auto_merge(
                 data, target, parcels[0], REASON_SAME_MERCHANT_DOMAIN, now, result
             )
@@ -1314,7 +1667,7 @@ def _pair_by_day(
             if (day := _delivery_day(parcel)) is not None:
                 tracked.append((parcel, key, day))
         elif (expected := _expected_days(parcel)) is not None and (
-            first := _first_news(parcel)
+            first := first_news(parcel)
         ) is not None:
             untracked.append((parcel, key, *expected, first))
 
@@ -1340,7 +1693,7 @@ def _pair_by_day(
         if len(targets) == 1 and len(sources) == 1:
             target = data.parcels[targets[0]]
             other = data.parcels[sources[0]]
-            if not (target.auto_merged or other.auto_merged):
+            if _may_auto_merge(target, other):
                 _auto_merge(data, target, other, REASON_SAME_MERCHANT_DAY, now, result)
                 continue
         for target_id in targets:
@@ -1385,6 +1738,7 @@ def reconcile(
             _record_orders(data, parcel, now)
             result.changed.add(parcel.id)
 
+    _merge_by_order(data, start, apart, now, result)
     _absorb_by_domain(data, _reconcile_pool(data, start), apart, now, result)
     _pair_by_day(data, _reconcile_pool(data, start), apart, now, result)
     result.changed -= result.removed
@@ -1498,6 +1852,48 @@ def undo_inferred_delivery(data: ParcelsData, parcel_id: str, now: datetime) -> 
 # --- Repairing parcels stored by earlier versions ---------------------------------
 
 
+RECOMMENDATIONS_MIN = 3
+
+
+def _drop_recommendations(data: ParcelsData, now: datetime) -> set[str]:
+    """Drop the shop's recommendations that earlier versions read as items.
+
+    They're the titles at the end of an item list that also follow the
+    first item in the lists of unrelated orders. At least three must end the
+    list, and the first item always stays. Returns the changed parcel IDs.
+    """
+    listed = [
+        (parcel, origin, frozenset(keys), [item_key(item) for item in origin.items])
+        for parcel in data.parcels.values()
+        for origin in parcel.origins.values()
+        if origin.source in (Source.PARSER, Source.AI)
+        and len(origin.items) > 1
+        and (keys := origin_order_keys(origin))
+    ]
+
+    def elsewhere(key: str, orders: frozenset[str]) -> bool:
+        return bool(key) and any(
+            orders.isdisjoint(other_orders)
+            and any(same_key(key, other) for other in other_keys[1:])
+            for _, _, other_orders, other_keys in listed
+        )
+
+    tails: dict[str, int] = {}
+    for _, origin, orders, keys in listed:
+        size = 0
+        while size < len(keys) - 1 and elsewhere(keys[-1 - size], orders):
+            size += 1
+        if size >= RECOMMENDATIONS_MIN:
+            tails[origin.id] = size
+    changed: set[str] = set()
+    for parcel, origin, _, _ in listed:
+        if size := tails.get(origin.id):
+            origin.items = origin.items[:-size]
+            parcel.touch(now)
+            changed.add(parcel.id)
+    return changed
+
+
 def repair_store(data: ParcelsData, now: datetime) -> set[str]:
     """Fix what earlier versions stored; returns the changed parcel IDs.
 
@@ -1505,8 +1901,16 @@ def repair_store(data: ParcelsData, now: datetime) -> set[str]:
     * A shop's bare domain is replaced by its name from other e-mails.
     * Amazon e-mails without a tracking number no longer claim that Amazon
       delivers: the carrier is unknown until a carrier's e-mail names it.
+    * A shop's recommendations read as items are dropped.
+    * Parcels of one order that are the same package are merged, undoably.
     * Orders are recorded again under the current order keys.
+    * A carrier learned for a shop that ships with many carriers is forgotten.
+
+    Every step can run again harmlessly.
     """
+    for domain, prefs in data.senders.items():
+        if prefs.carrier and ships_with_many(domain):
+            prefs.carrier = None
     names = _merchant_names(_all_origins(data))
     changed: set[str] = set()
     for parcel in data.parcels.values():
@@ -1526,5 +1930,11 @@ def repair_store(data: ParcelsData, now: datetime) -> set[str]:
         if dirty:
             parcel.touch(now)
             changed.add(parcel.id)
+    changed |= _drop_recommendations(data, now)
+    merged = Reconciled()
+    _merge_by_order(data, None, _apart_checker(data), now, merged)
+    changed |= merged.changed
+    changed -= merged.removed
+    for parcel in data.parcels.values():
         _record_orders(data, parcel, now)
     return changed

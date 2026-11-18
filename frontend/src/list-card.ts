@@ -11,11 +11,12 @@ import { repeat } from "lit/directives/repeat.js";
 import { ParcelsChipCard } from "./base-card.ts";
 import { renderChip } from "./chip.ts";
 import { cardTitle, listCardConfig, type ListCardConfig } from "./config.ts";
+import { shipmentBoxes, type ShipmentBox } from "./groups.ts";
 import { undatedParcels } from "./parcels.ts";
 import { defineElement, registerCard } from "./register.ts";
 import { STRINGS } from "./strings.ts";
 import { baseStyles, chipStyles } from "./styles.ts";
-import type { Parcel, Snapshot } from "./types.ts";
+import type { Snapshot } from "./types.ts";
 
 export class ParcelsListCard extends ParcelsChipCard {
   static override properties: PropertyDeclarations = {
@@ -42,7 +43,7 @@ export class ParcelsListCard extends ParcelsChipCard {
 
   declare private _config: ListCardConfig;
 
-  private _listCache: { snapshot: Snapshot; parcels: Parcel[] } | null = null;
+  private _listCache: { snapshot: Snapshot; boxes: ShipmentBox[] } | null = null;
 
   constructor() {
     super();
@@ -58,8 +59,8 @@ export class ParcelsListCard extends ParcelsChipCard {
   }
 
   getCardSize(): number {
-    const parcels = this._parcels();
-    return parcels ? 1 + Math.max(1, parcels.length) : 3;
+    const boxes = this._boxes();
+    return boxes ? 1 + Math.max(1, boxes.length) : 3;
   }
 
   getGridOptions(): Record<string, unknown> {
@@ -73,45 +74,47 @@ export class ParcelsListCard extends ParcelsChipCard {
     );
   }
 
-  private _parcels(): Parcel[] | null {
+  /** The undated parcels, packages of one shipment in one box. */
+  private _boxes(): ShipmentBox[] | null {
     const snapshot = this.snapshot;
     if (!snapshot) {
       return null;
     }
     if (this._listCache?.snapshot !== snapshot) {
-      this._listCache = { snapshot, parcels: undatedParcels(snapshot.parcels) };
+      this._listCache = { snapshot, boxes: shipmentBoxes(undatedParcels(snapshot.parcels)) };
     }
-    return this._listCache.parcels;
+    return this._listCache.boxes;
   }
 
   protected override render(): TemplateResult {
-    const parcels = this._parcels();
+    const boxes = this._boxes();
     const title = cardTitle(this._config.title, STRINGS.defaultListTitle);
     return html`<ha-card>
         ${title ? html`<div class="header"><h2 class="title">${title}</h2></div>` : nothing}
         ${this.renderBanners()}
         <div class="content" tabindex="-1">
-          ${parcels ? this._renderList(parcels) : this.renderLoading()}
+          ${boxes ? this._renderList(boxes) : this.renderLoading()}
         </div>
       </ha-card>
       ${this.renderDetailsDialog()}`;
   }
 
-  private _renderList(parcels: readonly Parcel[]): TemplateResult {
-    if (!parcels.length) {
+  private _renderList(boxes: readonly ShipmentBox[]): TemplateResult {
+    if (!boxes.length) {
       return html`<p class="empty">${STRINGS.noUndatedParcels}</p>`;
     }
     const locale = this.locale;
     return html`<ul class="list">
       ${repeat(
-        parcels,
-        (parcel) => parcel.id,
-        (parcel) =>
+        boxes,
+        (box) => box.parcel.id,
+        ({ parcel, members }) =>
           html`<li>
             ${renderChip(parcel, {
               locale,
               showStatus: true,
-              busy: this._busyParcels.has(parcel.id),
+              members,
+              busy: members.some((member) => this._busyParcels.has(member.id)),
               onOpen: this.openDetails,
               onUndoMerge: this.undoMerge,
               onKeepMerge: this.keepMerge,

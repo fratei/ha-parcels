@@ -3,7 +3,7 @@ import { describe, test } from "node:test";
 
 import { layoutWeek, placeParcel } from "../src/placement.ts";
 import type { PlacementContext } from "../src/placement.ts";
-import { PARCEL_STATUSES } from "../src/types.ts";
+import { PARCEL_STATUSES, type Parcel } from "../src/types.ts";
 import { makeParcel } from "./helpers.ts";
 
 // Wednesday 2026-07-15; its week runs from Monday 2026-07-13 to Sunday 2026-07-19.
@@ -239,6 +239,51 @@ describe("layoutWeek", () => {
     const item = layoutWeek([parcel], MONDAY, ctx, SHOW_ALL).items[0];
     assert.ok(item);
     assert.equal(item.startCol, 4);
+  });
+
+  test("shows packages of one shipment with the same status and days as one box", () => {
+    const pkg = (id: string, overrides: Partial<Parcel> = {}): Parcel =>
+      makeParcel({
+        id,
+        merchant: "Example Shop",
+        carrier: "gls",
+        tracking_number: `6100001231005${id.slice(-1)}`,
+        eta_start: "2026-07-14",
+        shipment_group: "g1",
+        ...overrides,
+      });
+    const parcels = [
+      pkg("p3"),
+      pkg("p1"),
+      pkg("p2", { window_start: "09:00" }),
+      pkg("p4", { eta_start: "2026-07-15" }),
+      pkg("p5", { status: "out_for_delivery" }),
+      pkg("p6", { shipment_group: "g2" }),
+      pkg("p7", { shipment_group: null }),
+      pkg("p8", { status: "delivered", delivered_at: "2026-07-14T10:00:00Z" }),
+      pkg("p9", { status: "delivered", delivered_at: "2026-07-15T10:00:00Z" }),
+    ];
+    const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL);
+    const boxes = Object.fromEntries(
+      layout.items.map((item) => [item.parcel.id, item.members.map((member) => member.id)]),
+    );
+    assert.deepEqual(boxes, {
+      p1: ["p1", "p2", "p3"],
+      p4: ["p4"],
+      p5: ["p5"],
+      p6: ["p6"],
+      p7: ["p7"],
+      p8: ["p8"],
+      p9: ["p9"],
+    });
+    assert.equal(layout.perDay[1]?.length, 5);
+  });
+
+  test("never puts other users' private parcels in a box", () => {
+    const parcels = ["p1", "p2"].map((id) =>
+      makeParcel({ id, restricted: true, eta_start: "2026-07-14", shipment_group: "g1" }),
+    );
+    assert.equal(layoutWeek(parcels, MONDAY, ctx, SHOW_ALL).items.length, 2);
   });
 
   test("uses the server's time zone for delivery days", () => {

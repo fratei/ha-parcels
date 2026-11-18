@@ -35,7 +35,8 @@ from .const import (
     ParcelStatus,
 )
 from .parsers.base import Eta
-from .parsers.senders import KNOWN_SENDERS
+from .parsers.items import unique_items
+from .parsers.senders import KNOWN_SENDERS, lookup
 from .parsers.tracking import detect_carrier, normalize_tracking_number, tracking_url
 
 _LOGGER = logging.getLogger(__name__)
@@ -543,6 +544,15 @@ class Parcel:
         self._state = None
         self.updated = now
 
+    def drop_codes(self) -> int:
+        """Forget the delivery codes; return how many there were."""
+        codes = [origin for origin in self.origins.values() if origin.pickup_code]
+        for origin in codes:
+            origin.pickup_code = None
+        if codes:
+            self._state = None
+        return len(codes)
+
     def as_dict(self) -> dict[str, Any]:
         """Serialise the parcel."""
         return _compact(
@@ -575,6 +585,32 @@ class Parcel:
             auto_merged=AutoMerge.from_dict(data.get("auto_merged")),
             delivery_rejected=bool(data.get("delivery_rejected", False)),
         )
+
+
+def is_carrier_mail(origin: Origin) -> bool:
+    """Return True for an origin from an e-mail of a carrier's own domain."""
+    return (info := lookup(origin.label)) is not None and info.kind == "carrier"
+
+
+def _best_carrier(ranked: list[Origin], number: str | None) -> str | None:
+    """Return a parcel's carrier from its origins, best first.
+
+    The carrier's own e-mails name it best, then the other e-mails about the
+    tracking number, then the number's format. A merchant's e-mail without
+    the number only counts when nothing else names a carrier.
+    """
+    if number:
+        about = [o for o in ranked if o.tracking_number == number and o.carrier]
+        if found := (
+            next((o.carrier for o in about if is_carrier_mail(o)), None)
+            or next((o.carrier for o in about), None)
+            or detect_carrier(number)
+        ):
+            return found
+    named = [o for o in ranked if o.carrier]
+    return next((o.carrier for o in named if is_carrier_mail(o)), None) or next(
+        (o.carrier for o in named), None
+    )
 
 
 def _event_sort_key(event: ParcelEvent) -> tuple[datetime, int, str]:
@@ -622,31 +658,14 @@ def derive_state(parcel: Parcel) -> ParcelState:
 
     # Tracking number and carrier: a manual edit wins, then the best source,
     # latest first (an international number changes carrier at the border).
-    number: str | None
-    carrier: str | None = None
     number_set, number = manual_value("tracking_number")
     if not number_set:
-        number = None
-        for origin in ranked:
-            if origin.tracking_number:
-                number, carrier = origin.tracking_number, origin.carrier
-                break
-    carrier_set, manual_carrier = manual_value("carrier")
-    if carrier_set:
-        carrier = manual_carrier
-    else:
-        if number and not carrier:
-            carrier = next(
-                (
-                    o.carrier
-                    for o in ranked
-                    if o.tracking_number == number and o.carrier
-                ),
-                None,
-            ) or detect_carrier(number)
-        if not carrier:
-            carrier = next((o.carrier for o in ranked if o.carrier), None)
+        number = next((o.tracking_number for o in ranked if o.tracking_number), None)
+    carrier_set, carrier = manual_value("carrier")
+    if not carrier_set:
+        carrier = _best_carrier(ranked, number)
 
+    # The merchant's own e-mails name it better than a carrier's.
     merchant_set, merchant = manual_value("merchant")
     if not merchant_set:
         merchant = merchant_display(
@@ -655,7 +674,12 @@ def derive_state(parcel: Parcel) -> ParcelState:
                     o.merchant
                     for o in sorted(
                         origins,
-                        key=lambda o: (SOURCE_PRIORITY[o.source], o.time, o.id),
+                        key=lambda o: (
+                            SOURCE_PRIORITY[o.source],
+                            is_carrier_mail(o),
+                            o.time,
+                            o.id,
+                        ),
                     )
                     if o.merchant
                 ),
@@ -672,16 +696,16 @@ def derive_state(parcel: Parcel) -> ParcelState:
     pickup_point = latest("pickup_point")
     pickup_code = latest("pickup_code")
 
-    items: list[str] = []
-    seen_items: set[str] = set()
+    # A shipment's e-mails list what the package holds; an order's e-mails
+    # list the whole order, which may come in several packages.
+    shipped = [
+        o for o in origins if o.items and (o.tracking_number or o.amazon_shipment_id)
+    ]
+    items = unique_items(item for o in shipped or origins for item in o.items)
     order_numbers: list[str] = []
     shipment_ids: set[str] = set()
     owners: set[str] = set()
     for origin in origins:
-        for item in origin.items:
-            if (folded := item.casefold()) not in seen_items:
-                seen_items.add(folded)
-                items.append(item)
         for order in origin.order_numbers:
             if order not in order_numbers:
                 order_numbers.append(order)
@@ -749,6 +773,9 @@ def derive_state(parcel: Parcel) -> ParcelState:
         )
     if status is None:
         status = ParcelStatus.ORDERED
+    if status in TERMINAL_STATUSES and not status_inferred:
+        # A delivery code is no use once the parcel arrived or went back.
+        pickup_code = None
 
     if origins:
         source = min((o.source for o in origins), key=lambda s: SOURCE_PRIORITY[s])

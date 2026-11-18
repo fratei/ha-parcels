@@ -225,6 +225,15 @@ def test_generic_result_is_used(
             ),
         ),
         (
+            "Ihr Zustellcode",
+            ParseResult(
+                parser="ctt",
+                kind=MailKind.UNKNOWN,
+                confidence=0.0,
+                notes=UNPARSED_NOTES,
+            ),
+        ),
+        (
             OTHER_SUBJECT,
             ParseResult(parser="ctt", kind=MailKind.NOT_PARCEL, confidence=0.9),
         ),
@@ -343,6 +352,8 @@ def test_prefilter_error_is_not_a_silent_skip(
         ("amazon/order_es", "amazon", MailKind.ORDER),
         ("shopify/shipped_pt", "shopify", MailKind.SHIPPED),
         ("shop/on_the_way_en", "shop", MailKind.IN_TRANSIT),
+        ("amazon/delivery_code_es", "amazon", MailKind.CODE),
+        ("carriers/dpd_delivery_code_pt", "dpd", MailKind.CODE),
     ],
 )
 def test_fixture_routing(
@@ -358,6 +369,7 @@ def test_fixture_routing(
     result = parse_message(message, verdict_for(message), tz)
     assert result.parser == parser
     assert result.kind is kind
+    assert result.is_parcel
     assert result.confidence >= 0.85
     assert not result.notes
 

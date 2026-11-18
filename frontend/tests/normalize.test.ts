@@ -24,6 +24,8 @@ describe("normalizeSnapshot", () => {
         user_is_admin: false,
         ai_enabled: false,
         ai_mode: "off",
+        ai_queue: 0,
+        ai_queue_seconds: null,
         dashboard_url: "",
         seventeentrack: false,
         time_zone: "UTC",
@@ -46,6 +48,8 @@ describe("normalizeSnapshot", () => {
           user_is_admin: "true",
           ai_enabled: true,
           ai_mode: "auto",
+          ai_queue: 3,
+          ai_queue_seconds: 159,
           dashboard_url: "/parcels",
           seventeentrack: true,
           time_zone: "Europe/Lisbon",
@@ -57,6 +61,8 @@ describe("normalizeSnapshot", () => {
         user_is_admin: false,
         ai_enabled: true,
         ai_mode: "auto",
+        ai_queue: 3,
+        ai_queue_seconds: 159,
         dashboard_url: "/parcels",
         seventeentrack: true,
         time_zone: "Europe/Lisbon",
@@ -64,6 +70,13 @@ describe("normalizeSnapshot", () => {
       },
     );
     assert.equal(normalizeSettings({ ai_mode: "always" }, NOW).ai_mode, "off");
+    for (const queue of ["3", -1, 2.5, Number.NaN, Infinity, null]) {
+      assert.equal(normalizeSettings({ ai_queue: queue }, NOW).ai_queue, 0, String(queue));
+    }
+    for (const wait of ["60", -1, Number.NaN, Infinity]) {
+      assert.equal(normalizeSettings({ ai_queue_seconds: wait }, NOW).ai_queue_seconds, null, String(wait));
+    }
+    assert.equal(normalizeSettings({ ai_queue_seconds: 0 }, NOW).ai_queue_seconds, 0);
   });
 
   test("drops items without an id", () => {
@@ -110,6 +123,7 @@ describe("normalizeParcel", () => {
       inferred: true,
       pickup_point: "Example Locker 12",
       pickup_code: "123456",
+      has_code: true,
       order_numbers: ["ORDER-1"],
       items: ["Blue mug"],
       private: true,
@@ -120,6 +134,7 @@ describe("normalizeParcel", () => {
       provisional: true,
       archived: true,
       origins: ["o1", "o2"],
+      shipment_group: "p0",
       restricted: false,
     });
     assert.deepEqual(normalizeParcel(JSON.parse(JSON.stringify(parcel))), parcel);
@@ -135,6 +150,8 @@ describe("normalizeParcel", () => {
       restricted: 1,
       source: "pigeon",
       auto_merged: { at: "2026-07-14T08:00:00Z" },
+      has_code: "yes",
+      shipment_group: 7,
     });
     assert.ok(parcel);
     assert.equal(parcel.status, "teleported");
@@ -144,6 +161,8 @@ describe("normalizeParcel", () => {
     assert.equal(parcel.restricted, false);
     assert.equal(parcel.source, "parser");
     assert.equal(parcel.auto_merged, null);
+    assert.equal(parcel.has_code, false);
+    assert.equal(parcel.shipment_group, null);
     assert.equal(normalizeParcel([]), null);
     assert.equal(normalizeParcel("p1"), null);
   });

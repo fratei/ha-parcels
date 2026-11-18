@@ -106,6 +106,8 @@ def result_contributions(
                 origin=origin,
                 events=events,
                 order_placed=time if kind is MailKind.ORDER else None,
+                # An e-mail with just a delivery code adds it to its parcel.
+                attach_only=kind is MailKind.CODE and not confirmed,
             )
         )
     return contributions

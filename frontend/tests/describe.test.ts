@@ -23,28 +23,28 @@ describe("describeParcel", () => {
     const day = formatDate(DAY, GB);
     const text = (status: Parcel["status"], kind: Placement["kind"]): string =>
       describeParcel({ ...windowed, status }, { locale: GB, placement: on(kind) });
-    assert.equal(text("delivered", "delivered"), `Example Shop, DHL, delivered ${day}`);
-    assert.equal(text("returned", "returned"), `Example Shop, DHL, returned ${day}`);
+    assert.equal(text("delivered", "delivered"), `Example Shop, carrier DHL, delivered ${day}`);
+    assert.equal(text("returned", "returned"), `Example Shop, carrier DHL, returned ${day}`);
     assert.equal(
       text("ready_for_pickup", "pickup"),
-      `Example Shop, DHL, ready for pickup since ${day}, 13:00–15:00`,
+      `Example Shop, carrier DHL, ready for pickup since ${day}, 13:00–15:00`,
     );
     assert.equal(
       text("attempted", "status"),
-      `Example Shop, DHL, Delivery attempted on ${day}, 13:00–15:00`,
+      `Example Shop, carrier DHL, Delivery attempted on ${day}, 13:00–15:00`,
     );
     assert.equal(
       describeParcel(windowed, { locale: GB, placement: span }),
-      `Example Shop, DHL, In transit, expected ${formatDateRange(span.from, span.to, GB)}, 13:00–15:00`,
+      `Example Shop, carrier DHL, In transit, expected ${formatDateRange(span.from, span.to, GB)}, 13:00–15:00`,
     );
-    assert.equal(describeParcel(shop, { locale: GB }), "Example Shop, DHL, In transit");
+    assert.equal(describeParcel(shop, { locale: GB }), "Example Shop, carrier DHL, In transit");
   });
 
   test("adds the badges, privacy and continuation marks", () => {
     const parcel = makeParcel({ ...shop, ai: true, auto_merged: MERGED, private: true });
     assert.equal(
       describeParcel(parcel, { locale: GB, continuesBefore: true, continuesAfter: true }),
-      "Example Shop, DHL, In transit, found by the local AI, merged automatically, please check, " +
+      "Example Shop, carrier DHL, In transit, found by the local AI, merged automatically, please check, " +
         "private, started before this week, continues after this week",
     );
   });
@@ -53,7 +53,7 @@ describe("describeParcel", () => {
     const parcel = makeParcel({ ...shop, status: "delivered", inferred: true });
     assert.equal(
       describeParcel(parcel, { locale: GB }),
-      "Example Shop, DHL, Delivered, delivery inferred, please check",
+      "Example Shop, carrier DHL, Delivered, delivery inferred, please check",
     );
   });
 
@@ -66,8 +66,57 @@ describe("describeParcel", () => {
       auto_merged: MERGED,
       inferred: true,
     });
-    assert.equal(describeParcel(parcel, { locale: GB }), "Private parcel, DHL, In transit, private");
+    assert.equal(describeParcel(parcel, { locale: GB }), "Private parcel, carrier DHL, In transit, private");
     assert.equal(chipMeta(parcel, { locale: GB }), "DHL");
+  });
+});
+
+describe("carrier and shop", () => {
+  const untracked = makeParcel({ merchant: "Example Shop", window_start: "13:00", window_end: "15:00" });
+
+  test("say when the carrier isn't known yet instead of naming the shop", () => {
+    assert.equal(
+      describeParcel(untracked, { locale: GB }),
+      "Example Shop, carrier not known yet, In transit, 13:00–15:00",
+    );
+    assert.equal(
+      chipMeta(untracked, { locale: GB, placement: span }),
+      "13:00–15:00 · Carrier not known yet",
+    );
+    assert.equal(
+      chipMeta(untracked, { locale: GB, showStatus: true }),
+      "In transit · 13:00–15:00 · Carrier not known yet",
+    );
+  });
+
+  test("keep quiet about the carrier of another user's private parcel", () => {
+    const parcel = makeParcel({ restricted: true, private: true });
+    assert.equal(describeParcel(parcel, { locale: GB }), "Private parcel, In transit, private");
+    assert.equal(chipMeta(parcel, { locale: GB }), "");
+  });
+});
+
+describe("shipment boxes", () => {
+  test("count the packages", () => {
+    assert.equal(
+      describeParcel(shop, { locale: GB, count: 4 }),
+      "Example Shop, 4 packages, carrier DHL, In transit",
+    );
+    assert.equal(chipMeta(shop, { locale: GB, count: 4, showStatus: true }), "In transit · 4 packages · DHL");
+    assert.equal(chipMeta(shop, { locale: GB, count: 1 }), "DHL");
+  });
+});
+
+describe("PIN codes", () => {
+  test("are hinted at, never shown", () => {
+    const parcel = makeParcel({ ...shop, has_code: true, pickup_code: "4711" });
+    const text = describeParcel(parcel, { locale: GB });
+    assert.equal(text, "Example Shop, carrier DHL, In transit, PIN in the details");
+    assert.equal(chipMeta(parcel, { locale: GB, showStatus: true }), "In transit · DHL");
+    assert.equal(
+      describeParcel({ ...parcel, restricted: true }, { locale: GB }),
+      "Private parcel, carrier DHL, In transit, private",
+    );
   });
 });
 

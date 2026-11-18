@@ -3,7 +3,7 @@
  * full description used as the chip's accessible name and tooltip.
  */
 import { formatDate, formatDateRange, formatWindow, type LocaleOptions } from "./format.ts";
-import { parcelSubtitle, parcelTitle, statusLabel } from "./labels.ts";
+import { carrierLabel, parcelSubtitle, parcelTitle, statusLabel } from "./labels.ts";
 import { etaRange } from "./parcels.ts";
 import type { Placement } from "./placement.ts";
 import { STRINGS, fmt } from "./strings.ts";
@@ -11,6 +11,8 @@ import type { Parcel } from "./types.ts";
 
 export interface ChipContext {
   locale: LocaleOptions;
+  /** The number of packages in the box; 1 when the parcel is alone. */
+  count?: number;
   /** Where the chip is in the calendar; absent in the list card. */
   placement?: Placement | null;
   continuesBefore?: boolean;
@@ -19,6 +21,8 @@ export interface ChipContext {
 
 export interface MetaOptions {
   locale: LocaleOptions;
+  /** The number of packages in the box; 1 when the parcel is alone. */
+  count?: number;
   placement?: Placement | null;
   /** Start with the status (the list card, which has no dates to show it). */
   showStatus?: boolean;
@@ -34,7 +38,20 @@ function windowText(parcel: Parcel, placement: Placement | null, locale: LocaleO
   return formatWindow(parcel.window_start, parcel.window_end, locale);
 }
 
-/** The second line of a chip, e.g. "DPD · 13:00–14:00". */
+/** Whether to say the carrier isn't known yet: never for another user's private parcel. */
+function carrierUnknown(parcel: Parcel): boolean {
+  return !parcel.restricted && carrierLabel(parcel) === null;
+}
+
+function packagesText(count: number | undefined): string | null {
+  return count !== undefined && count > 1 ? fmt(STRINGS.packages, { count: String(count) }) : null;
+}
+
+/**
+ * The second line of a chip, e.g. "4 packages · DPD · 13:00–14:00". The
+ * carrier is the one delivering, never the shop; until an e-mail names it,
+ * "Carrier not known yet" comes last, after the window.
+ */
 export function chipMeta(parcel: Parcel, options: MetaOptions): string {
   const placement = options.placement ?? null;
   const parts: string[] = [];
@@ -43,6 +60,10 @@ export function chipMeta(parcel: Parcel, options: MetaOptions): string {
     if (status) {
       parts.push(status);
     }
+  }
+  const packages = packagesText(options.count);
+  if (packages) {
+    parts.push(packages);
   }
   const subtitle = parcelSubtitle(parcel);
   if (subtitle) {
@@ -55,20 +76,30 @@ export function chipMeta(parcel: Parcel, options: MetaOptions): string {
   if (window) {
     parts.push(window);
   }
+  if (carrierUnknown(parcel)) {
+    parts.push(STRINGS.carrierNotKnown);
+  }
   return parts.join(" · ");
 }
 
 /**
  * Everything a chip shows, as one sentence for screen readers and the tooltip,
- * e.g. "Example Shop, DPD, In transit, expected Tue 14 Jul, 13:00–14:00, private".
+ * e.g. "Example Shop, carrier DPD, In transit, expected Tue 14 Jul,
+ * 13:00–14:00, private".
  */
 export function describeParcel(parcel: Parcel, context: ChipContext): string {
   const { locale } = context;
   const placement = context.placement ?? null;
   const parts: string[] = [parcelTitle(parcel)];
+  const packages = packagesText(context.count);
+  if (packages) {
+    parts.push(packages);
+  }
   const subtitle = parcelSubtitle(parcel);
   if (subtitle) {
-    parts.push(subtitle);
+    parts.push(fmt(STRINGS.carrierIs, { carrier: subtitle }));
+  } else if (carrierUnknown(parcel)) {
+    parts.push(STRINGS.carrierNotKnownLabel);
   }
   const status = statusLabel(parcel.status);
   const day = placement ? formatDate(placement.from, locale) : "";
@@ -112,6 +143,9 @@ export function describeParcel(parcel: Parcel, context: ChipContext): string {
     }
     if (parcel.inferred) {
       parts.push(STRINGS.inferredLabel);
+    }
+    if (parcel.has_code) {
+      parts.push(STRINGS.hasCode);
     }
   }
   if (parcel.private || parcel.restricted) {

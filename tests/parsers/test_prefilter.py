@@ -266,6 +266,49 @@ def test_strong_keyword_beats_advertising() -> None:
     assert is_candidate(UNKNOWN, "Your order has shipped - free returns for 30 days")
 
 
+# Subjects of e-mails that only give a delivery or pickup code, and of
+# one-time password e-mails without a delivery word.
+CODE_SUBJECTS: dict[str, tuple[tuple[str, ...], str]] = {
+    "pt": (
+        ("O seu código de entrega", "PIN de entrega", "Código de recolha"),
+        "A sua palavra-passe única",
+    ),
+    "es": (
+        ("Tu código de entrega", "Tu PIN de entrega", "Código de recogida"),
+        "Tu contraseña de un solo uso",
+    ),
+    "en": (
+        ("Your delivery code", "Your delivery PIN", "Your collection code"),
+        "Your one-time password",
+    ),
+    "de": (
+        ("Ihr Zustellcode", "Ihre Liefer-PIN", "Ihr Abholcode"),
+        "Ihr Einmalpasswort",
+    ),
+    "fr": (
+        ("Votre code de livraison", "Votre code de retrait"),
+        "Votre code à usage unique",
+    ),
+    "it": (
+        ("Il tuo codice di consegna", "Il tuo PIN di consegna"),
+        "Il tuo codice monouso",
+    ),
+    "nl": (("Je bezorgcode", "Je ophaalcode"), "Je eenmalige code"),
+}
+
+
+@pytest.mark.parametrize("lang", CODE_SUBJECTS)
+def test_delivery_code_subjects_pass(lang: str) -> None:
+    """Delivery and pickup code labels pass, even next to an offer.
+
+    A one-time password without a delivery word is a login or a bank code.
+    """
+    subjects, one_time_password = CODE_SUBJECTS[lang]
+    for subject in subjects:
+        assert is_candidate(UNKNOWN, subject, "-10%"), subject
+    assert not is_candidate(UNKNOWN, one_time_password)
+
+
 def test_weak_keyword_with_marketing_fails() -> None:
     """Weak keywords next to sale words or a percentage don't pass."""
     assert is_candidate(UNKNOWN, "Your parcel")

@@ -15,6 +15,7 @@ from custom_components.parcels.models import (
     FilteredItem,
     MessageRecord,
     MessageState,
+    ParcelEvent,
     ParcelsData,
     ReviewItem,
     Source,
@@ -223,3 +224,41 @@ def test_record_retention() -> None:
     assert (result.messages, result.review, result.filtered) == (1, 1, 1)
     assert list(data.messages) == list(data.review) == list(data.filtered) == ["new"]
     assert data.parcels[next(iter(data.parcels))].state.status is ParcelStatus.SHIPPED
+
+
+def test_delivery_codes_go_once_the_parcel_is_done() -> None:
+    """Delivery codes of delivered or archived parcels are deleted."""
+    data = ParcelsData()
+    delivered = _parcel(data, "d1", MailKind.DELIVERED, -1)
+    inferred = _parcel(data, "i1", MailKind.SHIPPED, -2)
+    data.parcels[inferred].events.append(
+        ParcelEvent(
+            time=at(days=-1),
+            source=Source.PARSER,
+            status=ParcelStatus.DELIVERED,
+            inferred=True,
+        )
+    )
+    out = _parcel(data, "o1", MailKind.OUT_FOR_DELIVERY, 0)
+    archived = _parcel(data, "a1", MailKind.SHIPPED, -2)
+    for parcel in data.parcels.values():
+        for origin in parcel.origins.values():
+            origin.pickup_code = "4821"
+        parcel.touch(parcel.updated)
+    archive_parcel(data, archived, at(days=-1))
+    assert data.parcels[archived].state.pickup_code is None
+
+    result = apply_retention(data, T0)
+
+    assert result.codes == 1
+    assert result.changed
+    assert data.parcels[delivered].state.pickup_code is None
+    assert all(
+        origin.pickup_code is None
+        for parcel_id in (delivered, archived)
+        for origin in data.parcels[parcel_id].origins.values()
+    )
+    for parcel_id in (inferred, out):
+        assert data.parcels[parcel_id].state.pickup_code == "4821"
+    assert data.parcels[inferred].state.inferred
+    assert not apply_retention(data, T0).changed

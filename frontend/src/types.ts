@@ -48,7 +48,10 @@ export interface Parcel {
   /** Delivered only by inference: another parcel from the shop was delivered then. */
   inferred: boolean;
   pickup_point: string | null;
+  /** The PIN or pickup code; only sent with the details (`parcels/get`). */
   pickup_code: string | null;
+  /** The parcel has a PIN or pickup code (shown in the details). */
+  has_code: boolean;
   order_numbers: string[];
   items: string[];
   private: boolean;
@@ -59,6 +62,8 @@ export interface Parcel {
   provisional: boolean;
   archived: boolean;
   origins: string[];
+  /** Packages sent together share this ID (the shipment's first parcel ID); null when alone. */
+  shipment_group: string | null;
   restricted: boolean;
 }
 
@@ -105,6 +110,10 @@ export interface Settings {
   user_is_admin: boolean;
   ai_enabled: boolean;
   ai_mode: AiMode;
+  /** E-mails waiting for the local AI; 0 for everyone but administrators. */
+  ai_queue: number;
+  /** About how long the AI needs for them; null when nobody can tell. */
+  ai_queue_seconds: number | null;
   dashboard_url: string;
   seventeentrack: boolean;
   time_zone: string;

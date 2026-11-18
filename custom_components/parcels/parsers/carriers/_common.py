@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, tzinfo
 from functools import lru_cache
 import re
@@ -23,6 +23,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 from ...const import MailKind
 from ..base import Eta, MailMessage, ParsedShipment, ParseResult, SenderVerdict
+from ..codes import find_code, has_code_label, mask_codes
 from ..eta import find_eta, parse_eta, parse_time_window
 from ..lang import (
     MONTHS,
@@ -50,14 +51,12 @@ from ._phrases import (
     ETA_LABELS,
     EVENT_LABELS,
     FUTURE_WORDS,
-    GENERIC_CODE_LABELS,
     KIND_EXCLUSIONS,
     KIND_PHRASES,
     MARKETING_WORDS,
     MERCHANT_LABELS,
     MESSAGE_WORDS,
     NEGATION_WORDS,
-    NOT_CODE_WORDS,
     NOT_ETA_WORDS,
     NOT_EVENT_WORDS,
     NOT_MERCHANT_WORDS,
@@ -1176,52 +1175,26 @@ def _pickup_point(doc: _Doc, kind: MailKind) -> str | None:
     return None
 
 
-_CODE_TOKEN_RE = re.compile(
-    r"(?<![0-9A-Za-z/.:,\-])(?P<a>[0-9A-Z]{3,12})(?:[ ](?P<b>\d{3}))?"
-    r"(?![0-9A-Za-z/:\-]|[.,][0-9A-Za-z])"
-)
+# Kinds whose e-mails may give a locker or counter code with a bare label.
+_LOCKER_KINDS = frozenset({MailKind.READY_FOR_PICKUP, MailKind.ATTEMPTED})
 
 
-def _code_in(doc: _Doc, start: int, end: int, numbers: set[str]) -> str | None:
-    for token in _CODE_TOKEN_RE.finditer(doc.text, start, end):
-        value = token.group("a")
-        if token.group("b") and len(value) == 3 and value.isdigit():
-            value += token.group("b")
-        if (
-            4 <= len(value) <= 12
-            and any(c.isdigit() for c in value)
-            and value not in numbers
-            and not re.fullmatch(r"(?:19|20)\d{2}", value)
-        ):
-            return value
-    return None
+def _without_codes(doc: _Doc, locker: bool) -> _Doc:
+    """Return ``doc`` with the values written as a code blanked out.
+
+    Tracking and order numbers are read from it, so a PIN is never one.
+    """
+    text = mask_codes(doc.text, locker=locker)
+    if text == doc.text:
+        return doc
+    return replace(doc, text=text, folded=fold_text(text))
 
 
-def _pickup_code(doc: _Doc, numbers: set[str]) -> str | None:
-    """Return the code that opens a locker or proves the right to collect."""
-    generic = re.compile(rf"(?<![a-z0-9])(?:{_alternation(GENERIC_CODE_LABELS)})[ ]*:")
-    not_code = phrase_regex(NOT_CODE_WORDS)
-    candidates = [
-        m.span() for m in phrase_regex(PICKUP_CODE_LABELS).finditer(doc.folded)
-    ]
-    for match in generic.finditer(doc.folded):
-        line_start = doc.line(doc.line_index(match.start()))[0]
-        if not not_code.search(doc.folded, line_start, match.start()):
-            candidates.append(match.span())
-    for start, end in sorted(candidates):
-        index = doc.line_index(start)
-        line_end = doc.line(index)[1]
-        if code := _code_in(doc, end, min(line_end, end + 40), numbers):
-            return code
-        if _label_only(doc, end, line_end):
-            following = doc.next_line(index)
-            if following is not None:
-                next_start, next_end = doc.line(following)
-                if code := _code_in(
-                    doc, next_start, min(next_end, next_start + 40), numbers
-                ):
-                    return code
-    return None
+def _code(doc: _Doc, exclude: list[str], locker: bool) -> str | None:
+    """Return the delivery PIN or pickup code; never one of ``exclude``."""
+    return find_code(doc.text, exclude=exclude, locker=locker) or find_code(
+        doc.subject, exclude=exclude, locker=locker
+    )
 
 
 # --- Merchant and order numbers -------------------------------------------------------
@@ -1362,6 +1335,13 @@ def _confidence(
     return None
 
 
+def _code_confidence(doc: _Doc, numbers: list[_Number]) -> float:
+    """Return the confidence of an e-mail that only gives a code."""
+    if any(n.source != "link" for n in numbers):
+        return CONFIDENCE_SUBJECT if has_code_label(doc.subject) else CONFIDENCE_BODY
+    return CONFIDENCE_LINK if numbers else CONFIDENCE_NO_NUMBER
+
+
 def parse_with_spec(
     message: MailMessage,
     verdict: SenderVerdict,
@@ -1373,7 +1353,8 @@ def parse_with_spec(
 
     ``parser`` is the parser id reported in the result. ``verdict`` is not
     needed to read the e-mail: the parcel engine decides from it whether the
-    result may be applied.
+    result may be applied. An e-mail whose only news is a delivery PIN or a
+    pickup code for a parcel it identifies gets the kind ``CODE``.
     """
     doc = _document(message, tz)
     whole = f"{doc.fsubject}\n{doc.folded}"
@@ -1382,37 +1363,45 @@ def parse_with_spec(
     head = f"{doc.fsubject}\n{doc.folded[:1500]}"
     carrier = spec.resolve(head) if spec.resolve else spec.carrier
     decision, matches = _decide_kind(doc, spec)
-    numbers = _numbers(doc, message, spec, carrier)
+    locker = decision.kind in _LOCKER_KINDS
+    plain = _without_codes(doc, locker)
+    numbers = _numbers(plain, message, spec, carrier)
+    number_set = {n.number for n in numbers}
+    orders = _order_numbers(plain, number_set)
+    pickup_code = _code(doc, [*number_set, *orders], locker)
+    only_code = decision.kind is None and bool(pickup_code and (numbers or orders))
     marketing = phrase_regex(MARKETING_WORDS).search(whole) is not None
-    if marketing and (not numbers or decision.kind is None):
+    if marketing and not only_code and (not numbers or decision.kind is None):
         return None
     notes: list[str] = []
     kind = decision.kind
-    if kind is None:
+    if only_code:
+        kind = MailKind.CODE
+    elif kind is None:
         if not numbers:
             return None
         kind = MailKind.IN_TRANSIT
         notes.append("kind_unclear")
-    eta = _eta(doc, kind, matches)
-    if kind in WEAK_KINDS and eta is not None and eta.start == eta.end == doc.today:
-        kind = MailKind.OUT_FOR_DELIVERY
-    event_time = _event_time(doc, kind, _kind_lines(doc, decision, matches))
-    number_set = {n.number for n in numbers}
-    pickup_point = _pickup_point(doc, kind)
-    pickup_code = (
-        _pickup_code(doc, number_set)
-        if kind in (MailKind.READY_FOR_PICKUP, MailKind.ATTEMPTED)
-        else None
-    )
+    eta: Eta | None = None
+    event_time: datetime | None = None
+    pickup_point: str | None = None
+    if kind is not MailKind.CODE:
+        eta = _eta(doc, kind, matches)
+        if kind in WEAK_KINDS and eta is not None and eta.start == eta.end == doc.today:
+            kind = MailKind.OUT_FOR_DELIVERY
+        event_time = _event_time(doc, kind, _kind_lines(doc, decision, matches))
+        pickup_point = _pickup_point(doc, kind)
     merchant = _merchant(doc, spec)
-    orders = _order_numbers(doc, number_set)
-    confidence = _confidence(
-        decision,
-        kind,
-        numbers,
-        has_details=bool(merchant or pickup_code),
-        has_date=bool(eta or event_time),
-    )
+    if kind is MailKind.CODE:
+        confidence: float | None = _code_confidence(doc, numbers)
+    else:
+        confidence = _confidence(
+            decision,
+            kind,
+            numbers,
+            has_details=bool(merchant or pickup_code),
+            has_date=bool(eta or event_time),
+        )
     if confidence is None:
         return None
     if "kind_unclear" in notes:

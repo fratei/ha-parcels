@@ -19,6 +19,7 @@ export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
     inferred: false,
     pickup_point: null,
     pickup_code: null,
+    has_code: false,
     order_numbers: [],
     items: [],
     private: false,
@@ -29,6 +30,7 @@ export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
     provisional: false,
     archived: false,
     origins: [],
+    shipment_group: null,
     restricted: false,
     ...overrides,
   };

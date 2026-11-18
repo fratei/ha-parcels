@@ -316,6 +316,86 @@ def test_number_with_a_bad_check_digit_is_not_used() -> None:
     assert result.confidence < CONFIDENCE_APPLY
 
 
+def test_code_only_email_gives_the_code_of_its_parcel() -> None:
+    """A PIN for a parcel the e-mail names is a CODE result.
+
+    The PIN isn't read as a second tracking number, and a PIN for no parcel
+    gives no result.
+    """
+    sender = "notificaciones@seur.com"
+    verdict = SenderVerdict(domain="seur.com", authenticated=True, known=True)
+    message = _message(
+        "Hola Alex Doe,\n"
+        "El código de entrega de tu envío es 73915204.\n"
+        "Número de envío: 0628174539\n",
+        "Tu código de entrega",
+        sender=sender,
+        sender_name="SEUR",
+    )
+    result = parse_carrier(message, verdict, LISBON, "seur")
+    assert result is not None
+    assert result.kind is MailKind.CODE
+    assert result.confidence >= CONFIDENCE_APPLY
+    [shipment] = result.shipments
+    assert shipment.kind is MailKind.CODE
+    assert shipment.tracking_number == "0628174539"
+    assert shipment.pickup_code == "73915204"
+    assert shipment.eta is None
+    no_parcel = _message(
+        "Hola Alex Doe,\nTu código de entrega: 73915204\n",
+        "Tu código de entrega",
+        sender=sender,
+        sender_name="SEUR",
+    )
+    assert parse_carrier(no_parcel, verdict, LISBON, "seur") is None
+
+
+# Status e-mails with a code and an order number: the lines after the status
+# line, the order numbers and the code they must give.
+ORDER_AND_CODE = {
+    "code_is_no_order": (
+        "está em distribuição e será entregue hoje.\nCódigo de entrega do pedido: 4821\n",
+        (),
+        "4821",
+    ),
+    "order_is_no_code": (
+        "está disponível para levantamento no Cacifo CTT Saldanha.\n"
+        "Pedido n.º 48213\nCódigo de levantamento: 48213\n",
+        ("48213",),
+        None,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", ORDER_AND_CODE)
+def test_code_and_order_number_stay_apart(case: str) -> None:
+    """A code is never an order number, and an order number never a code."""
+    lines, orders, code = ORDER_AND_CODE[case]
+    message = _message(f"Olá Alex Doe,\nO seu objeto RR123456785PT {lines}")
+    result = parse_carrier(message, CTT, LISBON, "ctt")
+    assert result is not None
+    assert result.order_numbers == orders
+    [shipment] = result.shipments
+    assert shipment.tracking_number == "RR123456785PT"
+    assert shipment.order_numbers == orders
+    assert shipment.pickup_code == code
+
+
+def test_tracking_number_is_never_the_code() -> None:
+    """A tracking number written after a code label isn't the code."""
+    rows = "Olá Alex Doe,\nN.º do objeto: 7391520486\nEstado: Em distribuição\n"
+    for line, code in (
+        ("Código de entrega: 7391520486\n", None),
+        ("Código de entrega do objeto 7391520486: 4821\n", "4821"),
+    ):
+        result = parse_carrier(_message(rows + line), CTT, LISBON, "ctt")
+        assert result is not None
+        assert result.kind is MailKind.OUT_FOR_DELIVERY
+        [shipment] = result.shipments
+        assert shipment.tracking_number == "7391520486"
+        assert shipment.pickup_code == code
+
+
 def test_failure_returns_none_and_logs_no_email_content(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

@@ -7,7 +7,10 @@ first, then the start of the body), the delivery date from anchored
 phrases, order numbers from localised labels, pickup details, and the
 merchant from the sender. Confidence is capped at 0.8, and at 0.5 when no
 tracking number carries a check digit, so most generic results go to
-"Needs review".
+"Needs review". An e-mail whose only news is a delivery PIN or a pickup
+code for a parcel it identifies by tracking or order number gets the kind
+``CODE`` and 0.7 (0.8 with a code label in the subject): it can only add
+the code to a parcel that exists.
 
 Keyword tables hold folded (lowercase, accent-free) regex fragments: a
 space stands for any whitespace, " ?" for optional whitespace, and "'" for
@@ -25,6 +28,7 @@ from urllib.parse import urlsplit
 from ..const import MailKind
 from .base import Eta, MailMessage, ParsedShipment, ParseResult, SenderVerdict
 from .carriers import brand_carriers
+from .codes import find_code, has_code_label, mask_codes
 from .eta import find_eta
 from .lang import detect_language, fold, fold_aligned
 from .senders import SenderInfo, lookup, organizational_domain
@@ -45,6 +49,8 @@ SUBJECT_KIND_BONUS = 0.1
 MAX_CONFIDENCE = 0.8
 # Cap when tracking numbers were found but none has a check digit.
 FORMAT_ONLY_CONFIDENCE = 0.5
+# An e-mail that only gives a code for a parcel it identifies.
+CODE_CONFIDENCE = 0.7
 MAX_SUBJECT_CHARS = 500
 # The kind is read from the subject, then from this much of the body.
 KIND_BODY_CHARS = 2000
@@ -74,6 +80,8 @@ KIND_PRECEDENCE: tuple[MailKind, ...] = (
 
 # Kinds for which a delivery date makes no sense.
 NO_ETA_KINDS = frozenset({MailKind.DELIVERED, MailKind.RETURN, MailKind.CANCELLED})
+# Kinds whose e-mails may give a locker code under a bare "Code:" label.
+_LOCKER_KINDS = frozenset({MailKind.READY_FOR_PICKUP, MailKind.ATTEMPTED})
 
 KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
     MailKind.CANCELLED: (
@@ -873,6 +881,7 @@ NOTE_KIND_FROM_SUBJECT = "kind_from_subject"
 NOTE_KIND_FROM_BODY = "kind_from_body"
 NOTE_KIND_DEFAULT = "kind_default"
 NOTE_CHECK_DIGIT = "check_digit"
+NOTE_KIND_FROM_CODE = "kind_from_code"
 
 # Words that are not a shop's name in a From display name ("Example Shop
 # Orders", "No-Reply | Example", "Customer Service - Example").
@@ -1081,21 +1090,6 @@ def find_order_numbers(text: str) -> list[str]:
     return [value for _, value in found[:MAX_ORDER_NUMBERS]]
 
 
-# Pickup codes: "Pickup code: 123456", "Código de levantamento: 4821",
-# "Abholcode 1234", "Code de retrait : 123456"...
-_PICKUP_CODE_RE = re.compile(
-    r"(?<![a-z0-9])(?:"
-    r"(?:pick\s*-?\s*up|collection|unlock|locker|retrieval|access|security|opening"
-    r"|pin)\s+code"
-    r"|pin(?:\s*code)?"
-    r"|codigo\s+(?:de\s+)?(?:levantamento|recolha|desbloqueio|recogida|retirada"
-    r"|acesso|acceso|apertura|seguranca|seguridad)"
-    r"|abhol(?:code|pin|nummer)|code\s+(?:de\s+)?(?:retrait|pin)"
-    r"|codice\s+(?:di\s+)?(?:ritiro|sblocco|apertura)"
-    r"|afhaalcode|ophaalcode|pincode"
-    r")(?![a-z0-9])\s*(?:[:#]\s*|(?:is|e|es|ist|est)\s+)?"
-    r"(?P<value>[a-z0-9]{3,16})(?![a-z0-9])"
-)
 # Pickup point labels. Strong labels may stand alone on a line (the point
 # is on the next line); weak ones need a colon.
 _POINT_STRONG = (
@@ -1121,17 +1115,6 @@ _POINT_LINE_RE = re.compile(
 )
 _POINT_STRIP = " \t-\u2013\u2014\u2022*|>:"
 _POINT_LOOKAHEAD_LINES = 3
-
-
-def _pickup_code(text: str, numbers: set[str]) -> str | None:
-    """Return the pickup or locker code, as written."""
-    folded = fold_aligned(text)
-    for match in _PICKUP_CODE_RE.finditer(folded):
-        start, end = match.span("value")
-        value = text[start:end]
-        if _DIGIT_RE.search(value) and normalize_tracking_number(value) not in numbers:
-            return value
-    return None
 
 
 def _clean_point(value: str) -> str | None:
@@ -1265,9 +1248,12 @@ def _carrier_for(
 
 
 def _numbers(
-    message: MailMessage, info: SenderInfo | None, orders: Iterable[str]
+    message: MailMessage, info: SenderInfo | None, orders: Iterable[str], text: str
 ) -> list[TrackingMatch]:
-    """Return the tracking numbers in the text and links, validated first."""
+    """Return the tracking numbers in ``text`` and the links, validated first.
+
+    ``text`` is the subject and the body, with codes masked.
+    """
     hint = info.carrier if info is not None else None
     found: dict[str, TrackingMatch] = {}
 
@@ -1282,7 +1268,6 @@ def _numbers(
                 old.validated or match.validated,
             )
 
-    text = f"{message.subject[:MAX_SUBJECT_CHARS]}\n{message.text[:SCAN_CHARS]}"
     for match in find_tracking_numbers(text, carrier=hint):
         add(match)
     link_carriers: set[str] = set()
@@ -1342,8 +1327,10 @@ def parse_generic(
 
     Returns one shipment per tracking number found in the text or in
     carrier tracking links, or one shipment without a number for an e-mail
-    with a recognised kind and an order number. Returns None when nothing
-    parcel-like is found.
+    with a recognised kind and an order number. A delivery PIN or pickup
+    code is read whatever the kind when the e-mail is about one parcel; an
+    e-mail with no other news gets the kind ``CODE``. Returns None when
+    nothing parcel-like is found.
     """
     if _is_bounce(message):
         return None
@@ -1355,24 +1342,35 @@ def parse_generic(
         f"{subject}\n{text[:KIND_BODY_CHARS]}"
     )
     kind, source = detect_kind(subject, text, lang=language)
-    orders = find_order_numbers(f"{subject}\n{text}")
-    numbers = _numbers(message, info, orders)
-    if not numbers and (kind is None or not orders):
+    locker = kind in _LOCKER_KINDS
+    # Numbers are read without the codes, so a PIN is never one of them.
+    plain = f"{mask_codes(subject, locker=locker)}\n{mask_codes(text, locker=locker)}"
+    orders = find_order_numbers(plain)
+    numbers = _numbers(message, info, orders, plain)
+    code: str | None = None
+    if len(numbers) <= 1:
+        exclude = [*(match.number for match in numbers), *orders]
+        code = find_code(text, exclude=exclude, locker=locker) or find_code(
+            subject, exclude=exclude, locker=locker
+        )
+    only_code = kind is None and code is not None and bool(numbers or orders)
+    if not numbers and (kind is None or not orders) and not only_code:
         return None
 
     notes: list[str] = []
-    if kind is None:
+    if only_code:
+        kind = MailKind.CODE
+        notes.append(NOTE_KIND_FROM_CODE)
+    elif kind is None:
         kind = MailKind.SHIPPED
         notes.append(NOTE_KIND_DEFAULT)
     else:
         notes.append(
             NOTE_KIND_FROM_SUBJECT if source == "subject" else NOTE_KIND_FROM_BODY
         )
-    eta = _eta(message, kind, tz, language)
+    eta = _eta(message, kind, tz, language) if kind is not MailKind.CODE else None
     point: str | None = None
-    code: str | None = None
     if kind is MailKind.READY_FOR_PICKUP and len(numbers) <= 1:
-        code = _pickup_code(text, {match.number for match in numbers})
         point = _pickup_point(text)
 
     order_numbers = tuple(orders)
@@ -1413,6 +1411,10 @@ def parse_generic(
     confidence = min(confidence, MAX_CONFIDENCE)
     if numbers and not check_digit:
         confidence = min(confidence, FORMAT_ONLY_CONFIDENCE)
+    if kind is MailKind.CODE:
+        confidence = CODE_CONFIDENCE
+        if has_code_label(subject):
+            confidence += SUBJECT_KIND_BONUS
 
     return ParseResult(
         parser=PARSER,

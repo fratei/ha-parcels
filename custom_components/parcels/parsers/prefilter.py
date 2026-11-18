@@ -7,8 +7,10 @@ e-mails pass when their subject or preview has shipping or order words in
 one of the seven supported languages:
 
 * ``STRONG_KEYWORDS`` (status phrases such as "out for delivery",
-  "foi entregue", "zugestellt", tracking and order-number labels) always
-  pass;
+  "foi entregue", "zugestellt", tracking and order-number labels, and
+  delivery or pickup code labels such as "código de entrega" or
+  "Zustellcode") always pass; a one-time password without a delivery word
+  is a login or bank code and doesn't count;
 * ``WEAK_KEYWORDS`` (generic words such as "parcel", "your order",
   "envio", "Lieferung" or a carrier name) pass unless the text also has
   advertising markers (``MARKETING_WORDS``, or a "%" sign).
@@ -227,7 +229,8 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"(?:arriving|arrives) (?:today|tomorrow)",
         "will be delivered",
         r"(?:scheduled|delivery) (?:delivery|window|scheduled)",
-        r"(?:pick[- ]?up|collection) code",
+        r"(?:pick[- ]?up|collection) (?:code|pin)",
+        r"delivery (?:code|pin|passcode|otp)",
         "proof of delivery",
     ),
     "pt": (
@@ -264,7 +267,9 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"(?:encomenda|pedido) cancelad[oa]",
         r"cacifos?",
         r"ponto (?:de recolha|pickup|payshop)",
-        r"codigo de (?:levantamento|recolha)",
+        r"codigo de (?:levantamento|recolha|retirada)",
+        r"(?:codigo|pin|senha) (?:de|da|para|para a) entrega",
+        r"codigo de confirmacao (?:de|da) entrega",
     ),
     "es": (
         r"confirmacion (?:de|del|de tu|de su) pedido",
@@ -297,7 +302,9 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"pedido (?:cancelado|anulado)",
         r"punto (?:de recogida|pack)",
         r"taquillas?",
-        r"codigo de recogida",
+        r"codigo de (?:recogida|retirada|recoleccion)",
+        r"(?:codigo|pin|clave) de entrega",
+        r"codigo de confirmacion de entrega",
         r"entrega (?:prevista|estimada)",
     ),
     "de": (
@@ -319,7 +326,7 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         "abholbereit",
         r"(?:zur|bereit zur) abholung",
         r"abholung bereit",
-        "abholcode",
+        r"(?:zustell|liefer|abhol)(?:-| ?)(?:code|pin)",
         "packstation",
         "sendungsverfolgung",
         r"(?:sendung|paket) verfolgen",
@@ -356,7 +363,8 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"disponible (?:en (?:point )?relais|au retrait|en consigne)",
         r"pret a etre retire",
         r"en attente de retrait",
-        r"code de retrait",
+        r"code (?:de )?(?:retrait|livraison)",
+        r"code de confirmation de livraison",
         r"numero de suivi",
         r"suivi de (?:colis|commande|livraison)",
         r"suivre (?:mon|votre|le) (?:colis|commande)",
@@ -392,6 +400,7 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"(?:pronto|disponibile) per (?:il ritiro|essere ritirato)",
         r"in attesa di ritiro",
         r"(?:codice|punto) di ritiro",
+        r"(?:codice|pin) (?:di )?consegna",
         "fermopoint",
         r"(?:codice|numero) di (?:tracciamento|spedizione|tracking)",
         r"(?:traccia|segui) (?:il tuo ordine|la (?:tua )?spedizione|il tuo pacco)",
@@ -426,7 +435,7 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         "ligt klaar",
         r"kan (?:worden )?opgehaald",
         "af te halen",
-        r"(?:ophaal|afhaal)code",
+        r"(?:ophaal|afhaal|bezorg) ?(?:pin)?code",
         r"track\s*(?:&|en)\s*trace",
         r"volg (?:je|uw) (?:pakket|bestelling|zending)",
         r"tracking(?:nummer|code)",

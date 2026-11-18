@@ -28,6 +28,15 @@ import {
 import { carrierLabel, kindLabel, mergeReasonLabel, parcelTitle, reasonLabel } from "./labels.ts";
 import { etaRange } from "./parcels.ts";
 import { defineElement, registerCard } from "./register.ts";
+import {
+  aiQueueText,
+  hideHandled,
+  hidePending,
+  settleHidden,
+  unhide,
+  withoutHidden,
+  type HiddenItems,
+} from "./review-state.ts";
 import { KIND_LABELS, STRINGS, fmt } from "./strings.ts";
 import { baseStyles } from "./styles.ts";
 import type {
@@ -72,9 +81,9 @@ function latestDayFirst(items: readonly MergeSuggestion[]): MergeSuggestion[] {
 }
 
 interface Lists {
-  review: ReviewItem[];
-  suggestions: MergeSuggestion[];
-  filtered: FilteredItem[];
+  review: readonly ReviewItem[];
+  suggestions: readonly MergeSuggestion[];
+  filtered: readonly FilteredItem[];
 }
 
 function withoutKey<K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> {
@@ -95,6 +104,8 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     _editProblem: { state: true },
     _busyItems: { state: true },
     _itemErrors: { state: true },
+    _hidden: { state: true },
+    _confirmClearAll: { state: true },
   };
 
   static override styles: CSSResultGroup = [
@@ -205,8 +216,21 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       .edit-form .alert {
         margin: 0;
       }
-      .filtered-hint {
+      .filtered-hint,
+      .queue-hint {
         margin-bottom: 12px;
+      }
+      .clear-all {
+        margin: 0 0 12px;
+      }
+      .confirm {
+        margin-bottom: 12px;
+        padding: 12px;
+        border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+        border-radius: 12px;
+      }
+      .confirm p {
+        margin: 0;
       }
       .candidates {
         display: flex;
@@ -245,10 +269,17 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   declare private _busyItems: ReadonlySet<string>;
   /** The last failed command of each item. */
   declare private _itemErrors: ReadonlyMap<string, string>;
+  /** Items hidden as soon as their command starts; a failed command shows them again. */
+  declare private _hidden: HiddenItems<Snapshot>;
+  /** True while "Clear all" waits for its confirmation. */
+  declare private _confirmClearAll: boolean;
 
   /** The focused item before the current render, to move focus on when it's gone. */
   private _focusedItem: { id: string; index: number } | null = null;
   private _listCache: (Lists & { snapshot: Snapshot }) | null = null;
+  private _visibleCache: { lists: Lists; hidden: HiddenItems<Snapshot>; visible: Lists } | null =
+    null;
+  private _clearingAll = false;
 
   constructor() {
     super();
@@ -259,6 +290,8 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     this._editProblem = null;
     this._busyItems = new Set();
     this._itemErrors = new Map();
+    this._hidden = new Map();
+    this._confirmClearAll = false;
   }
 
   static getStubConfig(): Record<string, unknown> {
@@ -273,7 +306,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     if (!this._visible()) {
       return 0;
     }
-    const lists = this._lists();
+    const lists = this._visibleLists();
     if (!lists) {
       return 3;
     }
@@ -329,6 +362,28 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     return this._listCache;
   }
 
+  /** The lists as shown: without the items whose command runs or just succeeded. */
+  private _visibleLists(): Lists | null {
+    const lists = this._lists();
+    if (!lists) {
+      return null;
+    }
+    const hidden = this._hidden;
+    if (this._visibleCache?.lists !== lists || this._visibleCache.hidden !== hidden) {
+      const snapshot = this.snapshot;
+      this._visibleCache = {
+        lists,
+        hidden,
+        visible: {
+          review: withoutHidden(lists.review, hidden, snapshot),
+          suggestions: withoutHidden(lists.suggestions, hidden, snapshot),
+          filtered: withoutHidden(lists.filtered, hidden, snapshot),
+        },
+      };
+    }
+    return this._visibleCache.visible;
+  }
+
   /** True while the item (a review item, suggestion or filtered e-mail) is listed. */
   private _listed(itemId: string): boolean {
     const lists = this._lists();
@@ -350,6 +405,14 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       this._focusedItem = { id: item.dataset.itemId ?? "", index: items.indexOf(item) };
     } else {
       this._focusedItem = null;
+    }
+    // A newer snapshot shows whether the items handled before it are gone.
+    this._hidden = settleHidden(this._hidden, this.snapshot);
+    if (this._confirmClearAll && !this._visibleLists()?.filtered.length) {
+      this._confirmClearAll = false;
+      if (active instanceof HTMLElement && active.closest(".confirm")) {
+        this._focusAfterUpdate("#panel-filtered");
+      }
     }
     const lists = this._lists();
     if (lists) {
@@ -391,7 +454,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     if (!this._visible()) {
       return nothing;
     }
-    const lists = this._lists();
+    const lists = this._visibleLists();
     const title = cardTitle(this._config.title, STRINGS.defaultReviewTitle);
     return html`<ha-card>
       ${title ? html`<div class="header"><h2 class="title">${title}</h2></div>` : nothing}
@@ -460,10 +523,13 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     items: readonly ReviewItem[],
     suggestions: readonly MergeSuggestion[],
   ): TemplateResult {
+    const settings = this.snapshot?.settings;
+    const queue = settings ? aiQueueText(settings.ai_queue, settings.ai_queue_seconds) : null;
+    const queueLine = queue ? html`<p class="hint queue-hint">${queue}</p>` : nothing;
     if (!items.length && !suggestions.length) {
-      return html`<p class="empty">${STRINGS.emptyReview}</p>`;
+      return html`${queueLine}<p class="empty">${STRINGS.emptyReview}</p>`;
     }
-    return html`<div class="items">
+    return html`${queueLine}<div class="items">
       ${repeat(
         suggestions,
         (item) => item.id,
@@ -546,7 +612,8 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   private _renderFilteredList(items: readonly FilteredItem[]): TemplateResult {
     return html`<p class="hint filtered-hint">${STRINGS.filteredHint}</p>
       ${items.length
-        ? html`<div class="items">
+        ? html`${this._renderClearAll()}
+            <div class="items">
             ${repeat(
               items,
               (item) => item.id,
@@ -554,6 +621,33 @@ export class ParcelsReviewCard extends ParcelsCardBase {
             )}
           </div>`
         : html`<p class="empty">${STRINGS.emptyFiltered}</p>`}`;
+  }
+
+  /** "Clear all", then its confirmation in place. */
+  private _renderClearAll(): TemplateResult {
+    if (!this._confirmClearAll) {
+      return html`<div class="row-actions clear-all">
+        <button type="button" class="btn" id="clear-all" @click=${this._askClearAll}>
+          ${STRINGS.clearAll}
+        </button>
+      </div>`;
+    }
+    return html`<div
+      class="confirm"
+      role="group"
+      aria-labelledby="clear-all-question"
+      @keydown=${this._onConfirmKeyDown}
+    >
+      <p id="clear-all-question">${STRINGS.clearAllQuestion}</p>
+      <div class="row-actions">
+        <button type="button" class="btn danger primary" @click=${this._clearAll}>
+          ${STRINGS.clearAll}
+        </button>
+        <button type="button" class="btn" id="clear-all-cancel" @click=${this._cancelClearAll}>
+          ${STRINGS.cancel}
+        </button>
+      </div>
+    </div>`;
   }
 
   private _renderHead(
@@ -687,7 +781,14 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         class="btn"
         title=${fmt(STRINGS.trustSenderHint, { domain })}
         aria-disabled=${disabled}
-        @click=${() => this._command(item.id, "review/trust_sender", { review_id: item.id })}
+        @click=${() =>
+          this._command(
+            item.id,
+            "review/trust_sender",
+            { review_id: item.id },
+            // The item stays: its e-mail is read again as a known sender's.
+            { hide: false },
+          )}
       >
         ${STRINGS.trustSender}
       </button>
@@ -832,6 +933,15 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         >
           ${STRINGS.restore}
         </button>
+        <button
+          type="button"
+          class="btn"
+          title=${STRINGS.clearHint}
+          aria-disabled=${busy ? "true" : "false"}
+          @click=${() => this._command(item.id, "filtered/clear", { filtered_id: item.id })}
+        >
+          ${STRINGS.clear}
+        </button>
       </div>
     </article>`;
   }
@@ -874,6 +984,54 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     const tab = TABS[(next + TABS.length) % TABS.length];
     if (tab) {
       this._selectTab(tab, true);
+    }
+  }
+
+  private _focusAfterUpdate(selector: string): void {
+    void this.updateComplete.then(() =>
+      this.renderRoot.querySelector<HTMLElement>(selector)?.focus(),
+    );
+  }
+
+  private _askClearAll(): void {
+    this._confirmClearAll = true;
+    this._focusAfterUpdate("#clear-all-cancel");
+  }
+
+  private _cancelClearAll(): void {
+    this._confirmClearAll = false;
+    this._focusAfterUpdate("#clear-all");
+  }
+
+  private _onConfirmKeyDown(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      this._cancelClearAll();
+    }
+  }
+
+  /** Clears every filtered e-mail shown; they disappear at once and come back if that fails. */
+  private async _clearAll(): Promise<void> {
+    const hass = this.hass;
+    const itemIds = this._visibleLists()?.filtered.map((item) => item.id) ?? [];
+    if (!hass || this._clearingAll || !itemIds.length) {
+      return;
+    }
+    this._clearingAll = true;
+    this._confirmClearAll = false;
+    this._hidden = hidePending(this._hidden, itemIds);
+    this._focusAfterUpdate("#panel-filtered");
+    try {
+      await callParcelsCommand(hass, "filtered/clear_all");
+      this._hidden = hideHandled(this._hidden, itemIds, this.snapshot, (itemId) =>
+        this._listed(itemId),
+      );
+    } catch (error) {
+      this._hidden = unhide(this._hidden, itemIds);
+      this.showActionError(fmt(STRINGS.actionFailed, { message: errorMessage(error) }));
+    } finally {
+      this._clearingAll = false;
     }
   }
 
@@ -926,10 +1084,12 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       itemId,
       "review/accept",
       { review_id: itemId, overrides: formToSuggestion(this._editForm) },
-      () => {
-        if (this._editing === itemId) {
-          this._editing = null;
-        }
+      {
+        onSuccess: () => {
+          if (this._editing === itemId) {
+            this._editing = null;
+          }
+        },
       },
     );
   }
@@ -938,23 +1098,36 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     void this._command(item.id, "review/accept", { review_id: item.id });
   }
 
-  /** Sends a review command for one item; its error shows on the item (or the card once it's gone). */
+  /**
+   * Sends a review command for one item. The item disappears at once (unless `hide` is false),
+   * so the next one can be used; if the command fails, it comes back with the error, or the
+   * error shows on the card once the item is gone.
+   */
   private async _command(
     itemId: string,
     command: string,
     data: Record<string, unknown>,
-    onSuccess?: () => void,
+    { hide = true, onSuccess }: { hide?: boolean; onSuccess?: () => void } = {},
   ): Promise<void> {
     const hass = this.hass;
-    if (!hass || this._busyItems.has(itemId)) {
+    if (!hass || this._busyItems.has(itemId) || this._hidden.has(itemId)) {
       return;
     }
     this._busyItems = new Set([...this._busyItems, itemId]);
     this._itemErrors = withoutKey(this._itemErrors, itemId);
+    if (hide) {
+      this._hidden = hidePending(this._hidden, [itemId]);
+    }
     try {
       await callParcelsCommand(hass, command, data);
+      if (hide) {
+        this._hidden = hideHandled(this._hidden, [itemId], this.snapshot, (id) =>
+          this._listed(id),
+        );
+      }
       onSuccess?.();
     } catch (error) {
+      this._hidden = unhide(this._hidden, [itemId]);
       const message = fmt(STRINGS.actionFailed, { message: errorMessage(error) });
       if (this._listed(itemId)) {
         this._itemErrors = new Map([...this._itemErrors, [itemId, message]]);

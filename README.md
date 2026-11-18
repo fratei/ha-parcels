@@ -40,16 +40,31 @@ local AI model on your Home Assistant host.
 - **Each parcel once**: e-mails about the same order or shipment are merged,
   also across mailboxes, so a parcel appears once however many e-mails you
   get. An order e-mail creates a provisional parcel that the shipping e-mail
-  later completes, also when the carrier's e-mail names only the shop. An
-  e-mail that arrives late never moves a parcel back to an earlier status.
-  Merges that rely on a guess (same shop, matching dates, only one candidate)
-  are marked, and you can undo them. When several parcels could match,
-  Parcels asks in **Needs review** instead. Parcels with different tracking
-  numbers are never merged.
+  later completes, also when the carrier's e-mail names only the shop. A
+  later e-mail about the same order and items updates that order's parcel,
+  and a delivery or return e-mail without items updates the order's only open
+  parcel. An e-mail that arrives late never moves a parcel back to an earlier
+  status. Merges that rely on a guess (same shop, matching dates, only one
+  candidate) are marked, and you can undo them. When several parcels could
+  match, Parcels asks in **Needs review** instead. Parcels with different
+  tracking numbers are never merged.
 - **Parcels without a tracking number**: when a carrier delivers another
   parcel from the same shop around the expected day, and no e-mail says
   otherwise, the parcel is marked as probably delivered. You can undo that.
   One with no news a week after its expected day is archived.
+- **Shipments of several packages**: packages sent together that arrive on the
+  same day share one box, which says how many packages it holds. The details
+  list every package with its tracking number. Packages that arrive on
+  different days get a box each.
+- **Shop and carrier apart**: shops such as Amazon often hand their parcels to
+  a local carrier. A carrier's e-mail joins the shop's parcel when they share a
+  tracking number or an order number, and the details then show the shop and
+  who delivers it ("Delivered by"). Until an e-mail names the carrier, or the
+  tracking number's format gives it away, the parcel says "Carrier not known
+  yet".
+- **Delivery PINs**: delivery PINs, one-time codes and pickup codes found in
+  e-mails are shown in the parcel's details (see
+  [Privacy and safety](#privacy-and-safety)).
 - **A Parcels page** with a Monday-to-Sunday calendar of your deliveries, the
   parcels that don't have a date yet, and the e-mails Parcels wasn't sure
   about.
@@ -85,6 +100,13 @@ local AI model on your Home Assistant host.
   status and time window, never item names unless you turn that on. A parcel
   marked private notifies only its owner and is only counted in the shared
   persistent notification.
+- **Delivery PINs** are shown only in a parcel's details, and to administrators
+  in the e-mails waiting for review. They never appear in entity states or
+  attributes, the recorder, events, logs, diagnostics, notifications or Live
+  Activities; a box only says "PIN in the details". Parcels hides a PIN once
+  its parcel is delivered, returned or cancelled, and deletes it at the
+  nightly cleanup or when the parcel is archived. A delivery that Parcels only
+  inferred keeps its PIN, in case the parcel hasn't arrived.
 - **17TRACK** gets tracking numbers only, under a generic name, never item
   names, shops or the numbers of private parcels.
 - **Revoking access.** Delete the mailbox entry in Home Assistant, then remove
@@ -262,21 +284,27 @@ add a resource.
 
 - **Parcels week** (`custom:parcels-week-card`): a Monday-to-Sunday calendar
   with the week's deliveries. Date ranges are drawn as bars and colored by
-  status, delivered parcels show ✓ on their delivery day, and parcels found by
-  the AI carry an "AI" badge until you confirm them. Select a parcel for its
-  timeline, carrier link, tracking number, pickup point and code, and to mark
-  it delivered, edit it, make it private, merge, split or archive it. Merges
-  and deliveries that Parcels guessed are marked there, to keep or undo. The
-  card also adds parcels by tracking number. Options: `title` (an empty string
-  hides it) and `show_archived` (default `true`).
+  status, delivered parcels show ✓ on their delivery day, and parcels found
+  by the AI carry an "AI" badge until you confirm them. Packages of one
+  shipment that arrive on the same day share a box with a package count.
+  Select a parcel for its timeline, carrier and carrier link, tracking
+  number, the shipment's other packages, pickup point, PIN or pickup code and
+  parcel ID, and to mark it delivered, edit it, make it private, merge, split
+  or archive it. Merges and deliveries that Parcels guessed are marked there,
+  to keep or undo. The card also adds parcels by tracking number. Options:
+  `title` (an empty string hides it) and `show_archived` (default `true`).
 - **Parcels without a date** (`custom:parcels-list-card`): active parcels that
   don't have a delivery date yet. Option: `title`.
 - **Parcels review** (`custom:parcels-review-card`): **Needs review** lists the
   e-mails Parcels wasn't sure about, with what it found filled in, to accept,
   edit, dismiss, or trust or ignore the sender. It also lists parcels that may
-  be the same one, to merge or keep apart. **Filtered** lists e-mails that
-  looked like shipping e-mails but turned out not to be about a parcel; you
-  can move them back. Option: `title`.
+  be the same one, to merge or keep apart. While e-mails wait for the local AI,
+  it says how many and, after the AI's first answer, about how long they'll
+  take. **Filtered** lists e-mails that looked like shipping e-mails but
+  turned out not to be about a parcel; you can move them back, or clear one or
+  all of them. A cleared e-mail isn't read again. Items leave the list as soon
+  as you act on them, and come back with the error if the action fails.
+  Option: `title`.
 
 Delivery notifications open `/dashboard-parcels/week`. To make them land on
 your page, go to **Settings > Dashboards > Add dashboard > New dashboard from
@@ -463,7 +491,9 @@ Its own tracking number detector always runs as well.
 Limits: 5 minutes per e-mail, one retry, 50 e-mails a day, and only the last
 14 days during a mailbox's first sync. E-mails still waiting after a day go to
 **Needs review**. On a typical Home Assistant host's CPU, a short e-mail takes
-several seconds.
+several seconds, and a long one about a minute. The review card shows how many
+e-mails are waiting and about how long they'll take, from the average time
+of the last 14 days' calls.
 
 In Suggest mode, Parcels also gives the AI up to 5 e-mails a day that a parser
 already read, and counts how often the two agree; those answers are never
@@ -538,7 +568,12 @@ actions:
   the Parcels page. If the sender isn't known, trust it there, or run
   `parcels.reprocess`.
 - **A parcel shows twice.** Check **Needs review** for a merge suggestion, or
-  select the parcel and merge it.
+  select the parcel and merge it. Packages of one shipment that arrive on
+  different days have a box each.
+- **A delivery PIN is missing.** Parcels doesn't read the e-mails it read
+  before version 0.1.2 again by itself. Select the parcel, copy its
+  **Parcel ID** from the details, and run `parcels.reprocess` with that
+  `parcel_id`.
 - **A parcel shows as delivered but hasn't arrived.** If its details say the
   delivery was inferred, select **Undo**.
 - **Repair: "Shipping e-mails from … aren't understood".** A known sender

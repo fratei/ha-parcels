@@ -3,11 +3,18 @@
 A private parcel is shown in full to its owners (the people whose mailboxes
 it came from), or to administrators when it has no owner. Everyone else sees
 when it arrives, but not what it is or where it comes from.
+
+A delivery PIN or pickup code is only sent with a parcel's details, never in
+the snapshot that every open page receives.
 """
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+import re
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.auth.models import User
@@ -17,6 +24,8 @@ from homeassistant.util import dt as dt_util
 from .const import CONF_DASHBOARD_PATH, CONF_SEVENTEENTRACK
 from .dedup import (
     MergeSuggestion,
+    first_news,
+    is_shop,
     manual_origin_id,
     order_parcels,
     parcel_order_keys,
@@ -26,6 +35,7 @@ from .models import (
     Parcel,
     ReviewItem,
     dt_to_str,
+    merchant_key,
     time_to_str,
 )
 
@@ -91,8 +101,109 @@ def splittable_origins(parcel: Parcel) -> list[str]:
     ]
 
 
-def parcel_json(parcel: Parcel, viewer: Viewer) -> dict[str, Any]:
-    """Return a parcel as the page shows it."""
+# --- Packages of one shipment ----------------------------------------------------
+
+# The serial at the end of a tracking number; its last digit may be a check digit.
+_SERIAL = re.compile(r"\d{6,}$")
+SHIPMENT_MIN_LENGTH = 10
+# How far apart the serials of one shipment's packages may be.
+SHIPMENT_SPREAD = 50
+# How far apart the first e-mails about them may be.
+SHIPMENT_GAP = timedelta(hours=48)
+
+
+@dataclass(frozen=True, slots=True)
+class _Package:
+    """What tells a package of a multi-package shipment apart."""
+
+    parcel_id: str
+    bucket: tuple[str, int, str]
+    serial: int
+    first: datetime
+    orders: frozenset[str]
+    shops: frozenset[str]
+    merchant: str
+
+
+def _package(parcel: Parcel) -> _Package | None:
+    state = parcel.state
+    number = state.tracking_number
+    if not state.carrier or not number or len(number) < SHIPMENT_MIN_LENGTH:
+        return None
+    if (serial := _SERIAL.search(number)) is None:
+        return None
+    if (first := first_news(parcel)) is None:
+        return None
+    return _Package(
+        parcel_id=parcel.id,
+        bucket=(state.carrier, len(number), number[: serial.start()]),
+        serial=int(serial.group()[:-1]),
+        first=first,
+        orders=frozenset(parcel_order_keys(parcel)),
+        shops=frozenset(
+            origin.label
+            for origin in parcel.origins.values()
+            if origin.message is not None and is_shop(origin.label)
+        ),
+        merchant=merchant_key(state.merchant),
+    )
+
+
+def _one_shipment(first: _Package, second: _Package) -> bool:
+    if abs(first.serial - second.serial) > SHIPMENT_SPREAD:
+        return False
+    if abs(first.first - second.first) > SHIPMENT_GAP:
+        return False
+    return bool(
+        first.orders & second.orders
+        or first.shops & second.shops
+        or (first.merchant and first.merchant == second.merchant)
+    )
+
+
+def shipment_groups(parcels: Iterable[Parcel]) -> dict[str, str]:
+    """Return the shipment of each parcel that is one package of several.
+
+    A shop may send several packages at once, each with its own number. They
+    have one carrier, numbers in a short run, and first e-mails within two
+    days of each other from the same order, shop or merchant. The page shows
+    them as one box per day; each stays a parcel of its own. A shipment is
+    named after its smallest parcel ID.
+    """
+    buckets: dict[tuple[str, int, str], list[_Package]] = defaultdict(list)
+    for parcel in parcels:
+        if (package := _package(parcel)) is not None:
+            buckets[package.bucket].append(package)
+    parent: dict[str, str] = {}
+
+    def root(parcel_id: str) -> str:
+        while (up := parent.get(parcel_id, parcel_id)) != parcel_id:
+            parcel_id = up
+        return parcel_id
+
+    for packages in buckets.values():
+        for index, first in enumerate(packages):
+            for second in packages[index + 1 :]:
+                if _one_shipment(first, second):
+                    one, other = root(first.parcel_id), root(second.parcel_id)
+                    # The smallest ID stays the root, so it names the shipment.
+                    parent[max(one, other)] = min(one, other)
+                    parent.setdefault(min(one, other), min(one, other))
+    return {parcel_id: root(parcel_id) for parcel_id in parent}
+
+
+def parcel_json(
+    parcel: Parcel,
+    viewer: Viewer,
+    *,
+    shipment: str | None = None,
+    code: bool = False,
+) -> dict[str, Any]:
+    """Return a parcel as the page shows it.
+
+    ``shipment`` is the parcel's group from :func:`shipment_groups`. The PIN
+    or pickup code is only included with ``code``, for the details.
+    """
     state = parcel.state
     eta = state.eta
     restricted = not viewer.can_see(parcel)
@@ -112,7 +223,8 @@ def parcel_json(parcel: Parcel, viewer: Viewer) -> dict[str, Any]:
         "delivered_at": dt_to_str(state.delivered_at),
         "inferred": state.inferred,
         "pickup_point": state.pickup_point,
-        "pickup_code": state.pickup_code,
+        "pickup_code": state.pickup_code if code else None,
+        "has_code": bool(state.pickup_code),
         "order_numbers": list(state.order_numbers),
         "items": list(state.items),
         "private": parcel.private,
@@ -123,6 +235,7 @@ def parcel_json(parcel: Parcel, viewer: Viewer) -> dict[str, Any]:
         "provisional": state.provisional,
         "archived": parcel.archived is not None,
         "origins": splittable_origins(parcel),
+        "shipment_group": shipment,
         "restricted": restricted,
     }
     if restricted:
@@ -134,6 +247,7 @@ def parcel_json(parcel: Parcel, viewer: Viewer) -> dict[str, Any]:
             tracking_url=None,
             pickup_point=None,
             pickup_code=None,
+            has_code=False,
             order_numbers=[],
             items=[],
             source="parser",
@@ -141,6 +255,7 @@ def parcel_json(parcel: Parcel, viewer: Viewer) -> dict[str, Any]:
             auto_merged=None,
             inferred=False,
             origins=[],
+            shipment_group=None,
         )
     return result
 
@@ -213,12 +328,18 @@ def suggestion_json(
 
 
 def settings_json(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
-    """Return the settings the page needs."""
+    """Return the settings the page needs.
+
+    Only administrators see the review lists, so only they get the AI queue.
+    """
     options = engine.options
+    ai_queue = engine.ai.queue_size if viewer.is_admin and engine.ai_active else 0
     return {
         "user_is_admin": viewer.is_admin,
         "ai_enabled": engine.ai_active,
         "ai_mode": engine.ai_mode.value,
+        "ai_queue": ai_queue,
+        "ai_queue_seconds": engine.ai.wait_seconds() if ai_queue else None,
         "dashboard_url": str(options.get(CONF_DASHBOARD_PATH) or ""),
         "seventeentrack": bool(
             options.get(CONF_SEVENTEENTRACK)
@@ -256,8 +377,14 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
         filtered = [
             filtered_json(item) for item in _newest_first(list(data.filtered.values()))
         ]
+    groups = shipment_groups(
+        parcel for parcel in data.parcels.values() if viewer.can_see(parcel)
+    )
     return {
-        "parcels": [parcel_json(parcel, viewer) for parcel in data.parcels.values()],
+        "parcels": [
+            parcel_json(parcel, viewer, shipment=groups.get(parcel.id))
+            for parcel in data.parcels.values()
+        ],
         "review": review,
         "merge_suggestions": suggestions,
         "filtered": filtered,
@@ -314,8 +441,13 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
         }
         for origin_id in splittable_origins(parcel)
     ]
+    groups = shipment_groups(
+        other for other in data.parcels.values() if viewer.can_see(other)
+    )
     return {
-        "parcel": parcel_json(parcel, viewer),
+        "parcel": parcel_json(
+            parcel, viewer, shipment=groups.get(parcel.id), code=True
+        ),
         "timeline": timeline,
         "orders": orders,
         "origins": origins,

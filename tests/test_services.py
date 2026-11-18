@@ -543,7 +543,7 @@ async def test_inferred_delivery(hass: HomeAssistant, engine: ParcelsEngine) -> 
     """
     data = engine.data
     now = dt_util.utcnow()
-    delivered = dt_util.parse_datetime("2026-11-13 11:28:00+00:00")
+    delivered = dt_util.parse_datetime("2026-11-13 10:40:00+00:00")
     assert delivered is not None
     apply_contribution(
         data,

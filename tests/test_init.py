@@ -292,3 +292,27 @@ async def test_start_repairs_stored_parcels_once(
     engine = get_engine(hass)
     assert engine is not None
     assert engine.data.parcels[parcel_id].state.carrier is None
+
+
+async def test_start_repairs_again_for_newer_rules(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """A store an earlier repair fixed is repaired again when rules were added."""
+    data = ParcelsData()
+    # What 0.1.1's repair left.
+    data.engine[REPAIR_KEY] = 1
+    hass_storage["parcels"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "parcels",
+        "data": data.as_dict(),
+    }
+    add_hub(hass)
+
+    with patch(
+        "custom_components.parcels.engine.repair_store", return_value=set()
+    ) as repair:
+        engine = await async_setup_parcels(hass)
+
+    repair.assert_called_once()
+    assert engine.data.engine[REPAIR_KEY] == REPAIR_VERSION

@@ -8,7 +8,7 @@ from typing import Final
 
 DOMAIN: Final = "parcels"
 NAME: Final = "Parcels"
-VERSION: Final = "0.1.1"
+VERSION: Final = "0.1.2"
 
 STORAGE_KEY: Final = "parcels"
 STORAGE_VERSION: Final = 1
@@ -196,12 +196,16 @@ class MailKind(StrEnum):
     CUSTOMS = "customs"
     RETURN = "return"
     CANCELLED = "cancelled"
+    # Only a delivery PIN or pickup code for a parcel known by its number or
+    # order: it's added to that parcel and never creates one.
+    CODE = "code"
     NOT_PARCEL = "not_parcel"
     UNKNOWN = "unknown"
 
 
 # Status that a mail kind moves a parcel to. Delayed keeps the parcel in
-# transit with a new ETA; customs holds are exceptions.
+# transit with a new ETA; customs holds are exceptions. A code doesn't change
+# the status.
 KIND_TO_STATUS: Final[dict[MailKind, ParcelStatus]] = {
     MailKind.ORDER: S.ORDERED,
     MailKind.SHIPPED: S.SHIPPED,

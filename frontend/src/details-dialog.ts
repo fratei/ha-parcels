@@ -30,6 +30,7 @@ import {
   type DateForm,
   type FormProblem,
 } from "./forms.ts";
+import { shipmentPackages } from "./groups.ts";
 import {
   carrierLabel,
   mergeReasonLabel,
@@ -236,6 +237,23 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._pendingPrivate = null;
     void this._load();
     await this.showDialog(returnFocus);
+  }
+
+  /** Shows another package of the same shipment in the open dialog. */
+  private _switchTo(parcelId: string): void {
+    if (this._busy || parcelId === this._parcelId) {
+      return;
+    }
+    this._parcelId = parcelId;
+    this._details = null;
+    this._loadError = null;
+    this._error = null;
+    this._mode = "view";
+    this._copyState = "idle";
+    this._formError = null;
+    this._pendingPrivate = null;
+    void this._load();
+    void this.focusAfterRender("[data-current-package]");
   }
 
   protected override dialogClosed(): void {
@@ -501,6 +519,10 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const url = parcel.restricted ? null : safeHttpsUrl(parcel.tracking_url);
     const number = parcel.tracking_number?.trim() ?? "";
     const orders = this._details?.orders ?? [];
+    const packages = shipmentPackages(this.snapshot?.parcels ?? [], parcel);
+    // The snapshot never holds the PIN; only the details of this parcel do.
+    const loaded = this._details?.parcel.id === parcel.id ? this._details.parcel : null;
+    const code = parcel.has_code ? (loaded?.pickup_code ?? null) : null;
     const row = (label: string, value: unknown): TemplateResult =>
       html`<div><dt>${label}</dt><dd>${value}</dd></div>`;
     const since = parcel.status_time
@@ -515,10 +537,10 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
         ? row(STRINGS.expected, formatDateRange(eta.start, eta.end, locale, EXPECTED_FORMAT))
         : nothing}
       ${window ? row(STRINGS.timeWindow, window) : nothing}
-      ${carrier || url
+      ${carrier || url || !parcel.restricted
         ? row(
             STRINGS.carrier,
-            html`${carrier ?? ""}${url
+            html`${carrier ?? (parcel.restricted ? "" : STRINGS.notKnownYet)}${url
               ? html`<a class="link" href=${url} target="_blank" rel="noopener noreferrer">
                   ${STRINGS.trackOnline}<span class="sr-only"> ${STRINGS.opensInNewTab}</span>
                   <ha-icon icon="mdi:open-in-new" aria-hidden="true"></ha-icon>
@@ -549,6 +571,14 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
             </dd>
           </div>`
         : nothing}
+      ${packages.length
+        ? row(
+            STRINGS.packagesInShipment,
+            html`<ul class="packages">
+              ${packages.map((item) => this._renderPackage(item, parcel.id))}
+            </ul>`,
+          )
+        : nothing}
       ${parcel.merchant ? row(STRINGS.merchant, parcel.merchant) : nothing}
       ${orders.length
         ? row(
@@ -576,8 +606,38 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
           )
         : nothing}
       ${parcel.pickup_point ? row(STRINGS.pickupPoint, parcel.pickup_point) : nothing}
-      ${parcel.pickup_code ? row(STRINGS.pickupCode, parcel.pickup_code) : nothing}
+      ${code ? row(STRINGS.pickupCode, code) : nothing}
+      ${parcel.restricted ? nothing : row(STRINGS.parcelId, parcel.id)}
     </dl>`;
+  }
+
+  /** A package of the shipment: its number, status and date; the others open on a tap. */
+  private _renderPackage(item: Parcel, currentId: string): TemplateResult {
+    const locale = this.locale;
+    const name = item.tracking_number?.trim() || parcelTitle(item);
+    const eta = etaRange(item);
+    const when = item.delivered_at
+      ? formatDateTime(item.delivered_at, locale)
+      : eta
+        ? formatDateRange(eta.start, eta.end, locale)
+        : "";
+    const text = [statusLabel(item.status), when].filter(Boolean).join(" · ");
+    if (item.id === currentId) {
+      return html`<li aria-current="true" tabindex="-1" data-current-package>
+        <strong>${name}</strong>${text ? ` · ${text}` : ""}
+      </li>`;
+    }
+    return html`<li>
+      <button
+        type="button"
+        class="link-btn"
+        aria-label=${fmt(STRINGS.showPackage, { name })}
+        aria-disabled=${this._busy ? "true" : "false"}
+        @click=${() => this._switchTo(item.id)}
+      >
+        ${name}</button
+      >${text ? ` · ${text}` : ""}
+    </li>`;
   }
 
   private _renderTimeline(timeline: readonly TimelineEntry[]): TemplateResult {

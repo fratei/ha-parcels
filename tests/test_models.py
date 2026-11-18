@@ -219,6 +219,95 @@ def test_items_are_unique_and_capped() -> None:
     assert len(parcel.state.items) == 20
 
 
+def test_carrier_mail_names_the_carrier() -> None:
+    """The carrier's own e-mail names the carrier; the shop's names the shop."""
+    number = "61234567890123"
+    parcel = _parcel(
+        _event(S.OUT_FOR_DELIVERY, at()),
+        origins=(
+            _origin(
+                "carrier",
+                label="cttexpresso.pt",
+                carrier="ctt_expresso",
+                tracking_number=number,
+                merchant="Example Seller SL",
+            ),
+            _origin(
+                "shop",
+                label="shop.example",
+                time=at(hours=1),
+                carrier="dhl",
+                tracking_number=number,
+                merchant="Example Shop",
+            ),
+        ),
+    )
+    assert parcel.state.carrier == "ctt_expresso"
+    assert parcel.state.merchant == "Example Shop"
+
+
+def test_shop_mail_carrier_only_without_others() -> None:
+    """Without a carrier's e-mail or a number, a shop's e-mail names it."""
+    shop = _origin(
+        "shop", label="shop.example", time=at(hours=1), carrier="gls", merchant="Shop"
+    )
+    parcel = _parcel(_event(S.SHIPPED, at()), origins=(shop,))
+    assert parcel.state.carrier == "gls"
+
+    # Even when the shop's e-mail is newer.
+    parcel.origins["carrier"] = _origin(
+        "carrier", label="cttexpresso.pt", carrier="ctt_expresso"
+    )
+    parcel.touch(at(hours=1))
+    assert parcel.state.carrier == "ctt_expresso"
+
+
+def test_shipment_items_win_over_the_order() -> None:
+    """A package holds what its shipping e-mail lists, not the whole order."""
+    order = _origin(
+        "order",
+        order_numbers=("1001",),
+        items=("Lamp", "Cable", "Chávena de café EX200 para..."),
+    )
+    shipped = _origin(
+        "shipped",
+        time=at(hours=1),
+        tracking_number="05212345678901",
+        order_numbers=("1001",),
+        items=("lamp",),
+    )
+    assert _parcel(origins=(order, shipped)).state.items == ("lamp",)
+
+    # Without a shipment's list, the order's items show, each once.
+    again = _origin(
+        "again",
+        time=at(hours=2),
+        order_numbers=("1001",),
+        items=("Chávena de café EX200 para expresso", "LAMP"),
+    )
+    assert _parcel(origins=(order, again)).state.items == (
+        "Lamp",
+        "Cable",
+        "Chávena de café EX200 para expresso",
+    )
+
+
+def test_delivery_code_until_the_parcel_arrives() -> None:
+    """A delivery code shows until the parcel is delivered, unless inferred."""
+    coded = _origin(tracking_number="05212345678901", pickup_code="4821")
+    parcel = _parcel(_event(S.OUT_FOR_DELIVERY, at()), origins=(coded,))
+    assert parcel.state.pickup_code == "4821"
+
+    parcel.events.append(_event(S.DELIVERED, at(hours=2), inferred=True))
+    parcel.touch(at(hours=2))
+    assert parcel.state.inferred
+    assert parcel.state.pickup_code == "4821"
+
+    parcel.events.append(_event(S.DELIVERED, at(hours=3)))
+    parcel.touch(at(hours=3))
+    assert parcel.state.pickup_code is None
+
+
 def test_keys() -> None:
     """Merchant and order keys ignore case, accents and marketplaces."""
     assert merchant_key("Amazon.es") == merchant_key("amazon.co.uk") == "amazon"

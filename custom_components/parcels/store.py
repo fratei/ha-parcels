@@ -99,6 +99,7 @@ class RetentionResult:
     messages: int = 0
     review: int = 0
     filtered: int = 0
+    codes: int = 0
 
     @property
     def changed(self) -> bool:
@@ -110,6 +111,7 @@ class RetentionResult:
             or self.messages
             or self.review
             or self.filtered
+            or self.codes
         )
 
 
@@ -151,6 +153,8 @@ def apply_retention(
       since: nothing will report their delivery. Parcels whose inferred
       delivery the user undid wait for the 30 days.
     * Archived parcels are deleted ``purge_days`` after their last news.
+    * Delivery codes of archived parcels, and of parcels that were delivered,
+      returned or cancelled (not just inferred delivered), are deleted.
     * Orders without parcels, e-mail hashes after 120 days, "Needs review"
       items after 30 days and "Filtered" items after 14 days are deleted.
     """
@@ -176,6 +180,9 @@ def apply_retention(
         if parcel.archived is not None and now - activity >= purge_after:
             del data.parcels[parcel.id]
             result.purged.append(parcel.id)
+            continue
+        if parcel.archived is not None or (state.terminal and not state.inferred):
+            result.codes += parcel.drop_codes()
 
     used: set[str] = set()
     for parcel in data.parcels.values():

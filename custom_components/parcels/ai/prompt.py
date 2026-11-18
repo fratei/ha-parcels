@@ -70,8 +70,9 @@ FIELDS: tuple[str, ...] = (
 )
 LIST_FIELDS = frozenset({"tracking_numbers", "order_numbers", "items"})
 
+# The AI reads a delivery code into pickup_code; it doesn't answer "code".
 KINDS: tuple[str, ...] = tuple(
-    kind.value for kind in MailKind if kind is not MailKind.UNKNOWN
+    kind.value for kind in MailKind if kind not in (MailKind.UNKNOWN, MailKind.CODE)
 )
 
 INSTRUCTIONS = f"""\
@@ -108,8 +109,11 @@ date twice for a single day.
 - window_start, window_end: the delivery time window, such as 09:00 and \
 13:00.
 - pickup_point: the name and address of the pickup point or locker.
-- pickup_code: the code needed to collect the parcel.
-- items: the product names, at most 10."""
+- pickup_code: a code the customer needs for this parcel, in any kind of \
+e-mail: the code to collect it, or a delivery PIN or one-time code to give \
+the courier. Never a tracking or order number.
+- items: the names of the ordered products, at most 10. Leave out the \
+products under headings such as "Buy again" or "Recommended for you"."""
 
 _EMPTY_TEXT = "empty string when not in the e-mail"
 _EMPTY_LIST = "empty list when not in the e-mail"
@@ -166,12 +170,18 @@ SERVICE_STRUCTURE: dict[str, dict[str, Any]] = {
         "selector": {"text": {}},
     },
     "pickup_code": {
-        "description": f"Code to collect the parcel; {_EMPTY_TEXT}.",
+        "description": (
+            "Code to collect the parcel, or delivery PIN or one-time code, "
+            f"never a tracking or order number; {_EMPTY_TEXT}."
+        ),
         "required": True,
         "selector": {"text": {}},
     },
     "items": {
-        "description": f"Product names, at most 10; {_EMPTY_LIST}.",
+        "description": (
+            "Names of the ordered products, not recommended ones, at most 10; "
+            f"{_EMPTY_LIST}."
+        ),
         "required": True,
         "selector": {"text": {"multiple": True}},
     },

@@ -1,0 +1,88 @@
+Return-Path: <bounce-5d21c0a9e3@bounces.ctt.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ctt.pt header.s=sel1 header.b=TEzkVG1m;
+       spf=pass (google.com: domain of bounce-5d21c0a9e3@bounces.ctt.pt designates 192.0.2.27 as permitted sender) smtp.mailfrom=bounce-5d21c0a9e3@bounces.ctt.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ctt.pt
+Received: from mta27.bounces.ctt.pt (mta27.bounces.ctt.pt. [192.0.2.27])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Thu, 19 Nov 2026 08:14:00 +0000
+From: CTT <notificacoes@ctt.pt>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?O_seu_objeto_RR739204180PT_est=C3=A1_em_distribui=C3=A7?=
+ =?utf-8?q?=C3=A3o?=
+Date: Thu, 19 Nov 2026 08:14:00 +0000
+Message-ID: <20261119081400.4c7e@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Hoje =C3=A9 dia de entrega!
+
+Ol=C3=A1 Alex Doe,
+
+O seu objeto RR739204180PT saiu para distribui=C3=A7=C3=A3o e ser=C3=A1 ent=
+regue hoje na morada indicada.
+
+Esta entrega precisa de um c=C3=B3digo: indique ao carteiro o c=C3=B3digo d=
+e entrega abaixo.
+
+C=C3=B3digo de entrega: 5937
+
+N.=C2=BA do objeto: RR739204180PT
+
+Previs=C3=A3o de entrega: 19-11-2026, entre as 09:00 e as 13:00
+
+Gerir entrega: https://www.ctt.pt/feapl_2/app/open/objectSearch/objectSearc=
+h.jspx?objects=3DRR739204180PT
+
+Esta mensagem foi gerada automaticamente. Por favor, n=C3=A3o responda.
+
+CTT =E2=80=93 Correios de Portugal, S.A. =C2=B7 Avenida Exemplo 1, Lisboa
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"pt">
+<head>
+<meta charset=3D"utf-8">
+<title>Objeto em distribui=C3=A7=C3=A3o</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,sans-serif}.wrap{=
+max-width:600px;margin:0 auto;background:#fff;padding:24px}h1{color:#df0024=
+}.button{display:inline-block;padding:12px 24px;background:#df0024;color:#f=
+ff;text-decoration:none}</style>
+</head>
+<body>
+<div class=3D"wrap">
+<h1 class=3D"h1">Hoje =C3=A9 dia de entrega!</h1>
+<p>Ol=C3=A1 Alex Doe,</p>
+<p>O seu objeto RR739204180PT saiu para distribui=C3=A7=C3=A3o e ser=C3=A1 =
+entregue hoje na morada indicada.</p>
+<p>Esta entrega precisa de um c=C3=B3digo: indique ao carteiro o c=C3=B3dig=
+o de entrega abaixo.</p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">C=C3=B3digo de entrega:</td><td class=3D"v"><b>5937<=
+/b></td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">N.=C2=BA do objeto:</td><td class=3D"v"><b>RR7392041=
+80PT</b></td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Previs=C3=A3o de entrega:</td><td class=3D"v"><b>19-=
+11-2026, entre as 09:00 e as 13:00</b></td></tr></table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.ctt.pt/feapl_2/app=
+/open/objectSearch/objectSearch.jspx?objects=3DRR739204180PT">Gerir entrega=
+</a></p>
+<p>Esta mensagem foi gerada automaticamente. Por favor, n=C3=A3o responda.<=
+/p>
+<p>CTT =E2=80=93 Correios de Portugal, S.A. =C2=B7 Avenida Exemplo 1, Lisbo=
+a</p>
+</div>
+</body>
+</html>
+--=_parcels_b1--

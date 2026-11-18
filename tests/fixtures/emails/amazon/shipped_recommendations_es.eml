@@ -1,0 +1,243 @@
+Return-Path: <20261119094217a1b2c3@bounces.amazon.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.es header.s=sel1amz header.b=gKycGuYC;
+       dkim=pass header.i=@amazonses.com header.s=ug7nbtf4 header.b=gKycGuYC;
+       spf=pass (google.com: domain of 20261119094217a1b2c3@bounces.amazon.es designates 192.0.2.71 as permitted sender) smtp.mailfrom=20261119094217a1b2c3@bounces.amazon.es;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.es
+Received: from a48-31.smtp-out.eu-west-1.amazonses.com (a48-31.smtp-out.eu-west-1.amazonses.com. [192.0.2.71])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Thu, 19 Nov 2026 09:42:17 +0100
+From: "Amazon.es" <confirmar-envio@amazon.es>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Enviado=3A_=22Sart=C3=A9n_antiadherente_de_28_cm_con_ma?=
+ =?utf-8?q?ngo=2E=2E=2E=22?=
+Date: Thu, 19 Nov 2026 09:42:17 +0100
+Message-ID: <010201920261119094217.shipped-recommendations-es-000000@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Amazon.es
+Tus pedidos | Tu cuenta
+
+Hola Alex,
+
+Tu paquete se ha enviado.
+
+Llegada:
+s=C3=A1bado, 21 de noviembre
+
+Seguir paquete: https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M4K8B&K=3D1V3JZ=
+9Q7R2XW5&M=3Durn:rtn:msg:2026111631a1b2c3d4e5f601&R=3D3HXK2P8Q5N7MZ&T=3DC&U=
+=3Dhttps%3A%2F%2Fwww.amazon.es%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_2848=
+631_123456789_TE_SIMP_typ%3F_encoding%3DUTF8%26orderId%3D405-7263918-441039=
+2%26shipmentId%3DHq3ZvK8pW%26packageIndex%3D0&H=3DQZXWTGBHJKL0PQ5RS01&ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Pedido n.=C2=BA 405-7263918-4410392
+
+Sart=C3=A9n antiadherente de 28 cm con mango ergon=C3=B3mico, apta para ind=
+ucci=C3=B3n
+Cantidad: 1
+https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:2026111631a1b2c3d4e5f602&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.es%2Fdp%2FB0D4MZ7Q2K%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=3DQ=
+ZXWTGBHJKL0PQ5RS02&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Direcci=C3=B3n de env=C3=ADo Alex Doe, Rua Exemplo 1, 1000-001 Lisboa
+
+Volver a comprar    Ver todo: https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M=
+4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn:rtn:msg:2026111631a1b2c3d4e5f603&R=3D3HXK2P8=
+Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fgp%2Fbuyagain%3Fref_%3Dpe_28=
+48631_123456789_TE_SIMP_typ&H=3DQZXWTGBHJKL0PQ5RS03&ref_=3Dpe_2848631_12345=
+6789_TE_SIMP_typ
+
+Tazas de caf=C3=A9 para expreso, juego de 6, aptas para lavavajillas
+14,99 =E2=82=AC
+https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:2026111631a1b2c3d4e5f604&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.es%2Fdp%2FB0BW8F3TQ1%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=3DQ=
+ZXWTGBHJKL0PQ5RS04&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Pilas alcalinas AA, pack de 8
+11,49 =E2=82=AC
+https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:2026111631a1b2c3d4e5f605&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.es%2Fdp%2FB0C2XP9H4L%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=3DQ=
+ZXWTGBHJKL0PQ5RS05&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Bolsas de basura 30 L, 50 unidades
+4,79 =E2=82=AC
+https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:2026111631a1b2c3d4e5f606&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.es%2Fdp%2FB0B7KT1R8D%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=3DQ=
+ZXWTGBHJKL0PQ5RS06&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Este correo electr=C3=B3nico se ha enviado desde una direcci=C3=B3n que sol=
+o env=C3=ADa notificaciones y no acepta mensajes entrantes. No respondas a =
+este mensaje.
+
+Aviso de privacidad
+
+=C2=A9 2026 Amazon.com, Inc. o sus afiliados. Todos los derechos reservados.
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"es">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DUTF-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1.=
+0">
+<title>Amazon.es</title>
+<style type=3D"text/css">
+body { margin: 0; padding: 0; background-color: #ffffff; }
+table { border-collapse: collapse; }
+.container { width: 600px; font-family: Arial, Helvetica, sans-serif; color=
+: #0f1111; }
+.h1 { font-size: 20px; font-weight: bold; margin: 16px 0 8px; }
+.h2 { font-size: 16px; font-weight: bold; margin: 16px 0 8px; color: #067d6=
+2; }
+.kv td { padding: 2px 8px 2px 0; font-size: 14px; }
+.button { background-color: #ffd814; border-radius: 20px; color: #0f1111;
+  padding: 8px 18px; text-decoration: none; display: inline-block; }
+.item td { vertical-align: top; padding: 8px 8px 8px 0; font-size: 14px; }
+.nav a { color: #0f1111; font-size: 13px; text-decoration: none; }
+.footer { font-size: 11px; color: #565959; padding-top: 24px; }
+</style>
+</head>
+<body>
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0"><tr>
+<td align=3D"center">
+<table role=3D"presentation" class=3D"container" width=3D"600" cellpadding=
+=3D"0"
+ cellspacing=3D"0">
+<tr><td class=3D"header"><a href=3D"https://www.amazon.es/gp/r.html?C=3D31T=
+7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b2c3d4e5f6=
+08&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fre=
+f%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0PQ5RS08&amp;ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ"><img
+ src=3D"https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo.=
+_CB485934981_.png"
+ alt=3D"Amazon.es" width=3D"98" height=3D"30" border=3D"0"></a></td>
+<td class=3D"nav" align=3D"right"><a href=3D"https://www.amazon.es/gp/r.htm=
+l?C=3D31T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b=
+2c3d4e5f609&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazo=
+n.es%2Fgp%2Fcss%2Forder-history%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&a=
+mp;H=3DQZXWTGBHJKL0PQ5RS09&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Tus pedidos</a> | <a href=3D"https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M=
+4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b2c3d4e5f610&amp=
+;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fgp%2Fcss=
+%2Fhomepage.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBH=
+JKL0PQ5RS10&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Tu cuenta</a></td></tr>
+<tr><td class=3D"content" colspan=3D"2">
+<p>Hola Alex,</p>
+<h1 class=3D"h1">Tu paquete se ha enviado.</h1>
+<div class=3D"eta"><span class=3D"label">Llegada:</span><br><span class=3D"=
+value"><b>s=C3=A1bado, 21 de noviembre</b></span></div>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.es/gp/r.htm=
+l?C=3D31T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b=
+2c3d4e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazo=
+n.es%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_2848631_123456789_TE_SIMP_typ%=
+3F_encoding%3DUTF8%26orderId%3D405-7263918-4410392%26shipmentId%3DHq3ZvK8pW=
+%26packageIndex%3D0&amp;H=3DQZXWTGBHJKL0PQ5RS01&amp;ref_=3Dpe_2848631_12345=
+6789_TE_SIMP_typ">Seguir paquete</a></p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Pedido n.=C2=BA</td><td class=3D"v"><b>405-7263918-4=
+410392</b></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D31T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b2c3=
+d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB0D4MZ7Q2K%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJK=
+L0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https://=
+m.media-amazon.com/images/I/414MZ7Q2L._SS142_.jpg" alt=3D"Sart=C3=A9n antia=
+dherente de 28 cm con mango ergon=C3=B3mico, apta para inducci=C3=B3n" widt=
+h=3D"90" height=3D"90" border=3D"0"></a></td><td class=3D"desc"><a href=3D"=
+https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp=
+;M=3Durn:rtn:msg:2026111631a1b2c3d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&a=
+mp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fdp%2FB0D4MZ7Q2K%2Fref%3Dpe_2848631_123=
+456789_TE_dp_1&amp;H=3DQZXWTGBHJKL0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_=
+TE_SIMP_typ">Sart=C3=A9n antiadherente de 28 cm con mango ergon=C3=B3mico, =
+apta para inducci=C3=B3n</a><br><span>Cantidad: 1</span></td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Direcci=C3=B3n de env=C3=ADo</td><td class=3D"v"><b>=
+Alex Doe, Rua Exemplo 1, 1000-001 Lisboa</b></td></tr></table>
+<table role=3D"presentation" class=3D"reco" width=3D"100%" cellpadding=3D"0=
+" cellspacing=3D"0"><tr><td class=3D"h2"><b>Volver a comprar</b></td><td al=
+ign=3D"right"><a href=3D"https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M4K8B&=
+amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b2c3d4e5f603&amp;R=3D=
+3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fgp%2Fbuyagain=
+%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0PQ5RS03&amp;=
+ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Ver todo</a></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D31T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b2c3=
+d4e5f604&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB0BW8F3TQ1%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJK=
+L0PQ5RS04&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https://=
+m.media-amazon.com/images/I/41W8F3TQL._SS142_.jpg" alt=3D"Tazas de caf=C3=
+=A9 para expreso, juego de 6, aptas para lavavajillas" width=3D"90" height=
+=3D"90" border=3D"0"></a></td><td class=3D"desc"><a href=3D"https://www.ama=
+zon.es/gp/r.html?C=3D31T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:ms=
+g:2026111631a1b2c3d4e5f604&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A=
+%2F%2Fwww.amazon.es%2Fdp%2FB0BW8F3TQ1%2Fref%3Dpe_2848631_123456789_TE_dp_1&=
+amp;H=3DQZXWTGBHJKL0PQ5RS04&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Ta=
+zas de caf=C3=A9 para expreso, juego de 6, aptas para lavavajillas</a><br><=
+span>14,99 =E2=82=AC</span></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D31T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b2c3=
+d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB0C2XP9H4L%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJK=
+L0PQ5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https://=
+m.media-amazon.com/images/I/412XP9H4L._SS142_.jpg" alt=3D"Pilas alcalinas A=
+A, pack de 8" width=3D"90" height=3D"90" border=3D"0"></a></td><td class=3D=
+"desc"><a href=3D"https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M4K8B&amp;K=
+=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b2c3d4e5f605&amp;R=3D3HXK2=
+P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fdp%2FB0C2XP9H4L%2F=
+ref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJKL0PQ5RS05&amp;ref_=3Dp=
+e_2848631_123456789_TE_SIMP_typ">Pilas alcalinas AA, pack de 8</a><br><span=
+>11,49 =E2=82=AC</span></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D31T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b2c3=
+d4e5f606&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB0B7KT1R8D%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJK=
+L0PQ5RS06&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https://=
+m.media-amazon.com/images/I/417KT1R8L._SS142_.jpg" alt=3D"Bolsas de basura =
+30 L, 50 unidades" width=3D"90" height=3D"90" border=3D"0"></a></td><td cla=
+ss=3D"desc"><a href=3D"https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M4K8B&am=
+p;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b2c3d4e5f606&amp;R=3D3H=
+XK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fdp%2FB0B7KT1R8D=
+%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJKL0PQ5RS06&amp;ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ">Bolsas de basura 30 L, 50 unidades</a>=
+<br><span>4,79 =E2=82=AC</span></td></tr></table>
+</td></tr>
+<tr><td class=3D"footer" colspan=3D"2">
+<p>Este correo electr=C3=B3nico se ha enviado desde una direcci=C3=B3n que =
+solo env=C3=ADa notificaciones y no acepta mensajes entrantes. No respondas=
+ a este mensaje.</p>
+<p><a href=3D"https://www.amazon.es/gp/r.html?C=3D31T7Q9X1M4K8B&amp;K=3D1V3=
+JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111631a1b2c3d4e5f607&amp;R=3D3HXK2P8Q5N7=
+MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fgp%2Fhelp%2Fcustomer%2Fd=
+isplay.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0P=
+Q5RS07&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Aviso de privacidad</a>=
+</p>
+<p>=C2=A9 2026 Amazon.com, Inc. o sus afiliados. Todos los derechos reserva=
+dos.</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

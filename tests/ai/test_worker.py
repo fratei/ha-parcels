@@ -52,6 +52,7 @@ from custom_components.parcels.engine import ParcelsEngine
 from custom_components.parcels.mail.errors import MailError
 from custom_components.parcels.models import MessageState, Source
 from custom_components.parcels.parsers.base import MailMessage
+from custom_components.parcels.views import SYSTEM_VIEWER, Viewer, settings_json
 
 from ..common import (
     FakeMailClient,
@@ -919,6 +920,32 @@ async def test_counters_keep_two_weeks(
     assert diagnostics["average_seconds"] == 5.0
     engine.ai.today()
     assert set(engine.data.ai["stats"]) == {"2026-11-03", "2026-11-17"}
+
+
+async def test_page_shows_the_wait_for_the_ai(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """Administrators see how many e-mails wait for the AI, and about how long."""
+    engine = await async_setup(
+        hass, client, *(ctt_message(number=number) for number in (1, 2, 3))
+    )
+    assert engine.ai.queue_size == 3
+    # No call has been timed yet.
+    settings = settings_json(engine, SYSTEM_VIEWER)
+    assert (settings["ai_queue"], settings["ai_queue_seconds"]) == (3, None)
+
+    engine.data.ai["timing"] = {"2026-11-17": {"calls": 2, "seconds": 106.0}}
+    settings = settings_json(engine, SYSTEM_VIEWER)
+    assert (settings["ai_queue"], settings["ai_queue_seconds"]) == (3, 159)
+    # The others don't see the review lists, so they don't see the queue either.
+    settings = settings_json(engine, Viewer(is_admin=False))
+    assert (settings["ai_queue"], settings["ai_queue_seconds"]) == (0, None)
+
+    # While the AI is paused, nobody can tell how long it takes.
+    engine.data.ai["paused_until"] = IN_30_MINUTES
+    assert engine.ai.status == STATUS_PAUSED
+    settings = settings_json(engine, SYSTEM_VIEWER)
+    assert (settings["ai_queue"], settings["ai_queue_seconds"]) == (3, None)
 
 
 async def test_damaged_stored_data_is_reset(

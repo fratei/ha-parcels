@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from custom_components.parcels.const import MailKind
+from custom_components.parcels.const import CONFIDENCE_APPLY, MailKind
 from custom_components.parcels.parsers.base import (
     Eta,
     Link,
@@ -367,6 +367,198 @@ def test_carrier_brand_needs_the_carrier_format(tz: ZoneInfo) -> None:
     [shipment] = result.shipments
     assert shipment.tracking_number == "ABC123456789"
     assert shipment.carrier is None
+
+
+# Out-for-delivery e-mails with a delivery PIN or one-time code: subject, body.
+STATUS_WITH_CODE = {
+    "pt": (
+        "A sua encomenda está em distribuição",
+        "Olá Alex,\nA sua encomenda RR123456785PT está em distribuição.\n"
+        "Código de entrega: 4821\n",
+    ),
+    "es": (
+        "Tu pedido está en reparto",
+        "Hola Alex,\nTu pedido RR123456785PT está en reparto.\n"
+        "Tu código de entrega es 4821.\n",
+    ),
+    "en": (
+        "Your parcel is out for delivery",
+        "Hi Alex,\nYour parcel RR123456785PT is out for delivery today.\n"
+        "Your one-time password (OTP) is 4821.\n",
+    ),
+    "de": (
+        "Ihr Paket ist in Zustellung",
+        "Hallo Alex,\nIhr Paket RR123456785PT wird heute zugestellt.\n"
+        "Ihr Zustellcode lautet: 4821\n",
+    ),
+    "fr": (
+        "Votre colis est en cours de livraison",
+        "Bonjour Alex,\nVotre colis RR123456785PT est en cours de livraison.\n"
+        "Votre code de livraison est 4821.\n",
+    ),
+    "it": (
+        "Il tuo pacco è in consegna",
+        "Ciao Alex,\nIl tuo pacco RR123456785PT è in consegna oggi.\n"
+        "Il codice di consegna è 4821.\n",
+    ),
+    "nl": (
+        "Je pakket wordt vandaag bezorgd",
+        "Hoi Alex,\nJe pakket RR123456785PT wordt vandaag bezorgd.\n"
+        "Je bezorgcode is 4821.\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("lang", STATUS_WITH_CODE)
+def test_status_email_with_a_code(tz: ZoneInfo, lang: str) -> None:
+    """A delivery code next to a status is kept, and the status too."""
+    subject, text = STATUS_WITH_CODE[lang]
+    result = _parse(_message(subject, text), tz)
+    assert result is not None
+    assert result.kind is MailKind.OUT_FOR_DELIVERY
+    assert result.language == lang
+    [shipment] = result.shipments
+    assert shipment.kind is MailKind.OUT_FOR_DELIVERY
+    assert shipment.tracking_number == "RR123456785PT"
+    assert shipment.pickup_code == "4821"
+
+
+# E-mails whose only news is a code: subject, body, tracking and order numbers.
+CODE_ONLY = {
+    "pt": (
+        "Código de entrega da sua encomenda",
+        "Olá Alex,\nO código de entrega da sua encomenda RR123456785PT é 4821.\n",
+        "RR123456785PT",
+        (),
+    ),
+    "es": (
+        "Tu código de entrega",
+        "Hola Alex,\nEl código de entrega de tu pedido RR123456785PT es 4821.\n",
+        "RR123456785PT",
+        (),
+    ),
+    "en": (
+        "Your delivery code",
+        "Hi Alex,\nYour delivery code for parcel RR123456785PT is 4821.\n",
+        "RR123456785PT",
+        (),
+    ),
+    "de": (
+        "Ihr Zustellcode",
+        "Hallo Alex,\nDer Zustellcode für Ihre Sendung RR123456785PT lautet 4821.\n",
+        "RR123456785PT",
+        (),
+    ),
+    "fr": (
+        "Votre code de livraison",
+        "Bonjour Alex,\nLe code de livraison de votre colis RR123456785PT est 4821.\n",
+        "RR123456785PT",
+        (),
+    ),
+    "it": (
+        "Il tuo codice di consegna",
+        "Ciao Alex,\nIl codice di consegna del pacco RR123456785PT è 4821.\n",
+        "RR123456785PT",
+        (),
+    ),
+    "nl": (
+        "Je bezorgcode",
+        "Hoi Alex,\nDe bezorgcode voor bestelnummer 77012 is 4821.\n",
+        None,
+        ("77012",),
+    ),
+}
+
+
+@pytest.mark.parametrize("lang", CODE_ONLY)
+def test_code_only_email(tz: ZoneInfo, lang: str) -> None:
+    """An e-mail whose only news is a code for a parcel has the kind CODE."""
+    subject, text, number, orders = CODE_ONLY[lang]
+    result = _parse(_message(subject, text), tz)
+    assert result is not None
+    assert result.kind is MailKind.CODE
+    assert result.language == lang
+    assert result.confidence >= CONFIDENCE_APPLY
+    assert "kind_from_code" in result.notes
+    assert result.order_numbers == orders
+    [shipment] = result.shipments
+    assert shipment.kind is MailKind.CODE
+    assert shipment.tracking_number == number
+    assert shipment.pickup_code == "4821"
+    assert shipment.eta is None
+
+
+def test_code_only_email_needs_a_parcel(tz: ZoneInfo) -> None:
+    """A code for an order is a CODE result; a code for nothing is none."""
+    order = _message(
+        "Your delivery code", "Hi Alex,\nYour delivery code for order #1001 is 4821.\n"
+    )
+    result = _parse(order, tz)
+    assert result is not None
+    assert result.kind is MailKind.CODE
+    assert result.order_numbers == ("#1001",)
+    assert [shipment.pickup_code for shipment in result.shipments] == ["4821"]
+    nothing = _message("Your delivery code", "Hi Alex,\nYour delivery code is 4821.\n")
+    assert _parse(nothing, tz) is None
+
+
+# A code next to tracking or order numbers: subject, body, then the tracking
+# number, the order numbers and the code the e-mail must give.
+APART = {
+    "code_is_no_tracking_number_pt": (
+        "O seu pedido está em distribuição",
+        "Olá Alex,\nO seu pedido n.º 1001 está em distribuição pela CTT.\n"
+        "Código de entrega: 7391520486\n",
+        None,
+        ("1001",),
+        "7391520486",
+    ),
+    "code_is_no_tracking_number_es": (
+        "Tu pedido ha sido enviado",
+        "Hola Alex,\nTu pedido n.º 1001 ha sido enviado con SEUR.\n"
+        "Código de entrega: 73915204\n",
+        None,
+        ("1001",),
+        "73915204",
+    ),
+    "code_is_no_order_number": (
+        "A sua encomenda está em distribuição",
+        "Olá Alex,\nA sua encomenda RR123456785PT está em distribuição.\n"
+        "Código de entrega do pedido: 4821\n",
+        "RR123456785PT",
+        (),
+        "4821",
+    ),
+    "order_number_is_no_code": (
+        "A sua encomenda está disponível para levantamento",
+        "Olá Alex,\nA sua encomenda RR123456785PT está disponível para"
+        " levantamento.\nPedido n.º 48213\nCódigo de levantamento: 48213\n",
+        "RR123456785PT",
+        ("48213",),
+        None,
+    ),
+    "tracking_number_is_no_code": (
+        "Tu pedido está en reparto",
+        "Hola Alex,\nTu pedido está en reparto con SEUR.\n"
+        "Número de envío SEUR: 0628174539\nCódigo de entrega: 0628174539\n"
+        "Código de entrega del envío 0628174539: 73915204\n",
+        "0628174539",
+        (),
+        "73915204",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", APART)
+def test_codes_and_numbers_stay_apart(tz: ZoneInfo, case: str) -> None:
+    """A code is never a tracking or order number, nor the other way round."""
+    subject, text, number, orders, code = APART[case]
+    result = _parse(_message(subject, text), tz)
+    assert result is not None
+    assert result.order_numbers == orders
+    [shipment] = result.shipments
+    assert shipment.tracking_number == number
+    assert shipment.pickup_code == code
 
 
 @pytest.mark.parametrize(

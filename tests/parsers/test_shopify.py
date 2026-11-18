@@ -428,3 +428,195 @@ def test_shop_non_delivery_email(
         links=(),
     )
     assert parse_shop(message, verdict, tz) is None
+
+
+# Delivery codes added to a Shopify status update: the lines, then the code.
+STATUS_CODES = {
+    "code": ("Código de entrega: 5937", "5937"),
+    # A PIN with the shape of a CTT number, next to the carrier's name.
+    "code_like_a_number": (
+        "Transportadora: CTT\nCódigo de entrega: 7391520486",
+        "7391520486",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", STATUS_CODES)
+def test_status_update_with_a_delivery_code(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    case: str,
+) -> None:
+    """A delivery code in a status update is kept, and is never a parcel."""
+    lines, code = STATUS_CODES[case]
+    message = load_eml("shopify/out_for_delivery_pt.eml")
+    verdict = verdict_for(message)
+    text = message.text.replace(
+        "Artigos neste envio", f"{lines}\n\nArtigos neste envio"
+    )
+    result = parse_shopify(dataclasses.replace(message, text=text), verdict, tz)
+    assert result is not None
+    assert result.kind is MailKind.OUT_FOR_DELIVERY
+    assert result.order_numbers == ("#1008",)
+    _assert_tracked(result, "ctt", "LA908172638PT")
+    [shipment] = result.shipments
+    assert shipment.pickup_code == code
+    assert shipment.eta == _day(19)
+    assert shipment.items == ("Vela aromática de soja, baunilha",)
+
+
+def _code_email(message: MailMessage, subject: str, text: str) -> MailMessage:
+    """Return the message with another subject and text, and no links."""
+    return dataclasses.replace(message, subject=subject, text=text, links=())
+
+
+def test_code_only_email(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """An e-mail whose only news is a delivery code has the kind CODE."""
+    message = load_eml("shopify/out_for_delivery_pt.eml")
+    verdict = verdict_for(message)
+    message = _code_email(
+        message,
+        "O código de entrega da encomenda #1008",
+        "Loja Exemplo\nEncomenda #1008\n\n"
+        "O código de entrega da sua encomenda é 5937.\n"
+        "Número de seguimento CTT: LA908172638PT\n",
+    )
+    result = parse_shopify(message, verdict, tz)
+    assert result is not None
+    assert result.kind is MailKind.CODE
+    assert result.confidence >= CONFIDENCE_APPLY
+    assert result.merchant == STORES["pt"]
+    assert result.order_numbers == ("#1008",)
+    [shipment] = result.shipments
+    assert shipment.kind is MailKind.CODE
+    assert shipment.carrier == "ctt"
+    assert shipment.tracking_number == "LA908172638PT"
+    assert shipment.pickup_code == "5937"
+    assert shipment.eta is None
+    assert shipment.order_numbers == ("#1008",)
+
+
+def test_code_only_email_needs_an_order_or_a_parcel(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """A code for an order is a CODE result; a code for nothing is none."""
+    message = load_eml("shopify/out_for_delivery_pt.eml")
+    verdict = verdict_for(message)
+    order = _code_email(
+        message,
+        "O código de entrega da encomenda #1008",
+        "Loja Exemplo\nEncomenda #1008\n\n"
+        "O código de entrega da sua encomenda é 5937.\n",
+    )
+    result = parse_shopify(order, verdict, tz)
+    assert result is not None
+    assert result.kind is MailKind.CODE
+    [shipment] = result.shipments
+    assert shipment.kind is MailKind.CODE
+    assert shipment.tracking_number is None
+    assert shipment.order_numbers == ("#1008",)
+    assert shipment.pickup_code == "5937"
+    nothing = _code_email(
+        message,
+        "O seu código de entrega",
+        "Loja Exemplo\n\nO seu código de entrega é 5937.\n",
+    )
+    assert parse_shopify(nothing, verdict, tz) is None
+
+
+def test_order_name_is_no_code(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """The order's number under a pickup code label isn't the pickup code."""
+    message = load_eml("shopify/out_for_delivery_pt.eml")
+    verdict = verdict_for(message)
+    message = _code_email(
+        message,
+        "A encomenda #1008 está pronta para levantamento",
+        "Loja Exemplo\nEncomenda #1008\n\n"
+        "A sua encomenda está pronta para levantamento.\n"
+        "Código de levantamento: 1008\n",
+    )
+    result = parse_shopify(message, verdict, tz)
+    assert result is not None
+    assert result.kind is MailKind.READY_FOR_PICKUP
+    assert result.order_numbers == ("#1008",)
+    [shipment] = result.shipments
+    assert shipment.pickup_code is None
+
+
+def test_same_item_is_listed_once(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """A title cut short next to the full title is one item: the full one."""
+    message = load_eml("shopify/out_for_delivery_pt.eml")
+    verdict = verdict_for(message)
+    text = message.text.replace(
+        "Vela aromática de soja, baunilha \u00d7 1",
+        "Exemplo Frigideira Origem 24... \u00d7 1\n"
+        "Exemplo Frigideira Origem 24 cm, antiaderente \u00d7 1",
+    )
+    result = parse_shopify(dataclasses.replace(message, text=text), verdict, tz)
+    assert result is not None
+    title = "Exemplo Frigideira Origem 24 cm, antiaderente"
+    assert result.items == (title,)
+    [shipment] = result.shipments
+    assert shipment.items == (title,)
+
+
+def test_shop_update_with_a_delivery_code(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """A Shop app update keeps its status and gains the delivery code."""
+    message = load_eml("shop/on_the_way_en.eml")
+    verdict = verdict_for(message)
+    number = "Tracking number: 1Z0X118A0398765439"
+    text = message.text.replace(number, f"{number}\nDelivery code: 4821")
+    result = parse_shop(dataclasses.replace(message, text=text), verdict, tz)
+    assert result is not None
+    assert result.kind is MailKind.IN_TRANSIT
+    _assert_tracked(result, "ups", "1Z0X118A0398765439")
+    [shipment] = result.shipments
+    assert shipment.pickup_code == "4821"
+
+
+def test_shop_code_only_email(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """A Shop app e-mail that only gives a delivery code has the kind CODE."""
+    message = load_eml("shop/on_the_way_en.eml")
+    verdict = verdict_for(message)
+    message = _code_email(
+        message,
+        "Your delivery code for your order from Example Outfitters",
+        "Shop\nYour delivery code for your order from Example Outfitters\n"
+        "Order #1057\nCarrier: UPS\nTracking number: 1Z0X118A0398765439\n"
+        "Delivery code: 4821\n",
+    )
+    result = parse_shop(message, verdict, tz)
+    assert result is not None
+    assert result.kind is MailKind.CODE
+    assert result.confidence >= CONFIDENCE_APPLY
+    assert result.merchant == STORES["en"]
+    assert result.order_numbers == ("#1057",)
+    [shipment] = result.shipments
+    assert shipment.kind is MailKind.CODE
+    assert shipment.carrier == "ups"
+    assert shipment.tracking_number == "1Z0X118A0398765439"
+    assert shipment.pickup_code == "4821"
+    assert shipment.eta is None

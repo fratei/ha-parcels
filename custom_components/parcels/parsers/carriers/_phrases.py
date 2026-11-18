@@ -1218,6 +1218,8 @@ ADDRESS_LABELS: Final[tuple[str, ...]] = (
     "indirizzo",
     "adres",
 )
+# Code labels: a line with one isn't a pickup point's address. Codes
+# themselves are read by ``parsers.codes``.
 PICKUP_CODE_LABELS: Final[tuple[str, ...]] = (
     "codigo de levantamento",
     "codigo de recolha",
@@ -1248,43 +1250,6 @@ PICKUP_CODE_LABELS: Final[tuple[str, ...]] = (
     "ophaalcode",
     "afhaalcode",
     "openingscode",
-)
-# Generic "code" labels: only followed directly by a colon.
-GENERIC_CODE_LABELS: Final[tuple[str, ...]] = ("codigo", "code", "codice")
-# A generic code label on a line with one of these is another kind of code.
-NOT_CODE_WORDS: Final[tuple[str, ...]] = (
-    "postal",
-    "codigo postal",
-    "rastreio",
-    "seguimento",
-    "seguimiento",
-    "promo*",
-    "desconto",
-    "descuento",
-    "discount",
-    "zip",
-    "postcode",
-    "tracking",
-    "track",
-    "plz",
-    "postleitzahl",
-    "rabatt*",
-    "gutschein*",
-    "code postal",
-    "suivi",
-    "reduction",
-    "cap",
-    "tracciamento",
-    "sconto",
-    "kortingscode",
-    "voucher",
-    "coupon",
-    "qr",
-    "cliente",
-    "customer",
-    "kunde*",
-    "client",
-    "klant*",
 )
 
 MERCHANT_LABELS: Final[tuple[str, ...]] = (

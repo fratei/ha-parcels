@@ -119,6 +119,45 @@ def test_order_only_contribution() -> None:
     assert event.time == SENT
 
 
+@pytest.mark.parametrize(("confirmed", "attach_only"), [(False, True), (True, False)])
+def test_code_mail_only_joins_its_parcel(confirmed: bool, attach_only: bool) -> None:
+    """An e-mail with just a delivery code adds to a parcel, never makes one.
+
+    Unless the user confirmed it in "Needs review".
+    """
+    result = _result(
+        MailKind.CODE,
+        ParsedShipment(tracking_number=NUMBER, kind=MailKind.CODE, pickup_code="4821"),
+    )
+
+    [contribution] = result_contributions(
+        result, message_hash="h", time=SENT, source=Source.PARSER, confirmed=confirmed
+    )
+
+    assert contribution.attach_only is attach_only
+    assert contribution.origin.pickup_code == "4821"
+    assert contribution.events == []
+
+
+def test_status_mail_with_a_code_makes_a_parcel() -> None:
+    """A status e-mail that also gives a code is applied as usual."""
+    result = _result(
+        MailKind.OUT_FOR_DELIVERY,
+        ParsedShipment(
+            tracking_number=NUMBER,
+            kind=MailKind.OUT_FOR_DELIVERY,
+            pickup_code="4821",
+        ),
+    )
+
+    [contribution] = result_contributions(
+        result, message_hash="h", time=SENT, source=Source.PARSER
+    )
+
+    assert not contribution.attach_only
+    assert contribution.origin.pickup_code == "4821"
+
+
 def test_contribution_per_shipment() -> None:
     """Each shipment is a parcel; its own kind wins and items stay with it."""
     result = _result(

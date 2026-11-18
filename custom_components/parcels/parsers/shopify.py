@@ -10,6 +10,11 @@ the carrier named next to it, the carrier website it links to, or the
 carrier its format identifies. The Shop app (shop.app) sends delivery
 updates for orders from many stores; the store's name is read from the
 subject. Links are only read as strings, never fetched.
+
+A delivery PIN or one-time password is read for any kind; an e-mail whose
+only news is such a code for an order or a tracking number gets the kind
+``CODE``. Codes are hidden before order names and tracking numbers are
+read, so a PIN is never taken for either.
 """
 
 from __future__ import annotations
@@ -34,14 +39,16 @@ from ._amazon_shopify_common import (
     fold_text,
     iter_lines,
     kind_table,
-    pickup_details,
+    pickup_point,
     quantity_items,
     today_eta,
     url_org,
     url_path,
 )
 from .base import Eta, MailMessage, ParsedShipment, ParseResult, SenderVerdict
+from .codes import find_code, has_code_label, mask_codes
 from .eta import find_eta
+from .items import before_recommendations, unique_items
 from .senders import organizational_domain
 
 SHOPIFY_PARSER = "shopify"
@@ -74,8 +81,16 @@ _NO_ETA_KINDS = frozenset(
         MailKind.READY_FOR_PICKUP,
         MailKind.CANCELLED,
         MailKind.RETURN,
+        MailKind.CODE,
     }
 )
+# Kinds whose e-mails may give a locker code under a bare "Code:" label.
+_LOCKER_KINDS = frozenset({MailKind.READY_FOR_PICKUP, MailKind.ATTEMPTED})
+# Kinds without a delivery code: the parcel won't be delivered.
+_NO_CODE_KINDS = frozenset({MailKind.CANCELLED, MailKind.RETURN})
+# Confidence of a code-only e-mail, with and without a code label in the
+# subject.
+_CODE_CONFIDENCE = {True: 0.9, False: 0.8}
 
 # Subjects of Shopify's standard notifications, on the folded subject
 # without the order name, in order of precedence.
@@ -364,8 +379,16 @@ def _order_name(text: str) -> str | None:
     return f"#{match.group('name')}" if match else None
 
 
-def _items(text: str, folded: str) -> tuple[str, ...]:
-    """Return the product titles of the line items."""
+def _items(message: MailMessage, folded: str) -> tuple[str, ...]:
+    """Return the product titles of the line items.
+
+    Products below a recommendations heading ("You may also like") weren't
+    ordered; a link's text (a "Buy again" button) is never that heading.
+    """
+    text = before_recommendations(
+        message.text, buttons=[link.text for link in message.links]
+    )
+    folded = folded[: len(text)]
     items: list[str] = []
     for match in _ITEM_LINE_RE.finditer(text):
         add_item(items, match.group("title"))
@@ -373,7 +396,7 @@ def _items(text: str, folded: str) -> tuple[str, ...]:
             break
     if not items:
         quantity_items(text, folded, items)
-    return tuple(items)
+    return tuple(unique_items(items))
 
 
 def _store_name(message: MailMessage) -> str | None:
@@ -407,17 +430,44 @@ def _eta(
     return eta
 
 
-def _numbers(message: MailMessage, folded: str, order: str | None) -> list[FoundNumber]:
-    """Return the validated tracking numbers of a shipping notification."""
+def _numbers(message: MailMessage, plain: str, order: str | None) -> list[FoundNumber]:
+    """Return the validated tracking numbers of a shipping notification.
+
+    ``plain`` is the body with its delivery codes hidden.
+    """
     exclude = frozenset({order.lstrip("#").upper()}) if order else frozenset()
     return find_numbers(
-        message.text,
-        folded,
+        plain,
+        fold_text(plain),
         message.links,
         exclude=exclude,
         window=100,
         allow_other=True,
     )[:_MAX_SHIPMENTS]
+
+
+def _order_and_numbers(
+    message: MailMessage, kind: MailKind
+) -> tuple[tuple[str, ...], list[FoundNumber], str | None]:
+    """Return the order names, the tracking numbers and the delivery code.
+
+    Codes are hidden before the order name and the numbers are read, and a
+    code equal to either is never taken.
+    """
+    locker = kind in _LOCKER_KINDS
+    plain = mask_codes(message.text, locker=locker)
+    order = _order_name(mask_codes(message.subject, locker=locker)) or _order_name(
+        plain
+    )
+    orders = (order,) if order else ()
+    numbers = [] if kind in _ORDER_KINDS else _numbers(message, plain, order)
+    code: str | None = None
+    if kind not in _NO_CODE_KINDS:
+        exclude = [*orders, *(found.number for found in numbers)]
+        code = find_code(message.text, exclude=exclude, locker=locker) or find_code(
+            message.subject, exclude=exclude, locker=locker
+        )
+    return orders, numbers, code
 
 
 def _shipments(
@@ -429,6 +479,7 @@ def _shipments(
     numbers: list[FoundNumber],
     orders: tuple[str, ...],
     items: tuple[str, ...],
+    code: str | None = None,
 ) -> list[ParsedShipment]:
     """Build one shipment per tracking number (or one without a number)."""
     if kind in _ORDER_KINDS:
@@ -436,20 +487,23 @@ def _shipments(
             ParsedShipment(
                 kind=MailKind.ORDER if kind is MailKind.ORDER else None,
                 eta=_eta(kind, message, tz, lang),
+                pickup_code=code,
                 order_numbers=orders,
                 items=items,
             )
         ]
     eta = _eta(kind, message, tz, lang)
     when = event_time(folded, kind, message, tz, lang)
-    point, code = (
-        pickup_details(message.text, folded)
+    point = (
+        pickup_point(message.text, folded)
         if kind is MailKind.READY_FOR_PICKUP
-        else (None, None)
+        else None
     )
+    shipment_kind = MailKind.CODE if kind is MailKind.CODE else None
     if not numbers:
         return [
             ParsedShipment(
+                kind=shipment_kind,
                 eta=eta,
                 event_time=when,
                 pickup_point=point,
@@ -463,6 +517,7 @@ def _shipments(
         ParsedShipment(
             carrier=found.carrier,
             tracking_number=found.number,
+            kind=shipment_kind,
             eta=eta,
             event_time=when,
             pickup_point=point,
@@ -481,25 +536,28 @@ def parse_shopify(
     """Parse a notification sent by a Shopify store.
 
     Returns None when the e-mail isn't one of Shopify's order or shipping
-    notifications (marketing, account e-mails, unknown layouts).
+    notifications (marketing, account e-mails, unknown layouts). An e-mail
+    that only gives a delivery code for an order or a tracking number is a
+    CODE result.
     """
-    order = _order_name(message.subject) or _order_name(message.text)
     subject = _ORDER_NAME_RE.sub(" ", fold_text(message.subject))
     folded = fold_text(message.text)
     pattern, from_subject = detect_kind(
         subject, folded, _SHOPIFY_SUBJECT, _SHOPIFY_BODY
     )
-    if pattern is None:
-        return None
-    kind = pattern.kind
-    orders = (order,) if order else ()
-    numbers = [] if kind in _ORDER_KINDS else _numbers(message, folded, order)
+    # Without a status, the e-mail can only be about a delivery code.
+    kind = pattern.kind if pattern is not None else MailKind.CODE
+    orders, numbers, code = _order_and_numbers(message, kind)
     if not orders and not numbers:
         return None
-    lang = message.language or pattern.lang
-    items = _items(message.text, folded)
+    if kind is MailKind.CODE and code is None:
+        return None
+    lang = message.language or (pattern.lang if pattern is not None else None)
+    items = _items(message, folded)
     validated = any(found.carrier != "other" for found in numbers)
-    if kind in _ORDER_KINDS:
+    if kind is MailKind.CODE:
+        confidence = _CODE_CONFIDENCE[has_code_label(message.subject)]
+    elif kind in _ORDER_KINDS:
         confidence = 0.9 if from_subject else 0.6
     elif from_subject:
         confidence = 0.9 if validated else 0.7
@@ -510,7 +568,9 @@ def parse_shopify(
         kind=kind,
         merchant=_store_name(message),
         order_numbers=orders,
-        shipments=_shipments(kind, message, tz, lang, folded, numbers, orders, items),
+        shipments=_shipments(
+            kind, message, tz, lang, folded, numbers, orders, items, code
+        ),
         items=items,
         confidence=confidence,
         language=lang,
@@ -544,7 +604,8 @@ def parse_shop(
     """Parse a delivery update sent by the Shop app.
 
     The store the order came from is the merchant. Returns None for e-mails
-    that aren't delivery updates.
+    that aren't delivery updates; an e-mail that only gives a delivery code
+    for an order or a tracking number is a CODE result.
     """
     folded_subject = fold_text(message.subject)
     store, (start, end) = _shop_store(message.subject, folded_subject)
@@ -555,17 +616,18 @@ def parse_shop(
     subject = folded_subject[:start] + " " * (end - start) + folded_subject[end:]
     subject = _ORDER_NAME_RE.sub(" ", subject)
     pattern, from_subject = detect_kind(subject, folded, _SHOP_PATTERNS, _SHOP_PATTERNS)
-    if pattern is None:
+    # Without a status, the e-mail can only be about a delivery code.
+    kind = pattern.kind if pattern is not None else MailKind.CODE
+    orders, numbers, code = _order_and_numbers(message, kind)
+    if kind is MailKind.CODE and (code is None or not (numbers or orders)):
         return None
-    kind = pattern.kind
-    order = _order_name(message.subject) or _order_name(message.text)
-    orders = (order,) if order else ()
-    numbers = _numbers(message, folded, order)
     if not (numbers or orders or store):
         return None
-    lang = message.language or pattern.lang
-    items = _items(message.text, folded)
-    if not from_subject:
+    lang = message.language or (pattern.lang if pattern is not None else None)
+    items = _items(message, folded)
+    if kind is MailKind.CODE:
+        confidence = _CODE_CONFIDENCE[has_code_label(message.subject)]
+    elif not from_subject:
         confidence = 0.5
     elif any(found.carrier != "other" for found in numbers):
         confidence = 0.9
@@ -578,7 +640,9 @@ def parse_shop(
         kind=kind,
         merchant=store,
         order_numbers=orders,
-        shipments=_shipments(kind, message, tz, lang, folded, numbers, orders, items),
+        shipments=_shipments(
+            kind, message, tz, lang, folded, numbers, orders, items, code
+        ),
         items=items,
         confidence=confidence,
         language=lang,

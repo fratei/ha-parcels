@@ -1,0 +1,171 @@
+Return-Path: <20261120081251a1b2c3@bounces.amazon.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.es header.s=sel1amz header.b=gKycGuYC;
+       dkim=pass header.i=@amazonses.com header.s=ug7nbtf4 header.b=gKycGuYC;
+       spf=pass (google.com: domain of 20261120081251a1b2c3@bounces.amazon.es designates 192.0.2.74 as permitted sender) smtp.mailfrom=20261120081251a1b2c3@bounces.amazon.es;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.es
+Received: from a48-34.smtp-out.eu-west-1.amazonses.com (a48-34.smtp-out.eu-west-1.amazonses.com. [192.0.2.74])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Fri, 20 Nov 2026 08:12:51 +0000
+From: "Amazon.es" <envio@amazon.es>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Saiu_para_entrega=3A_=22Coluna_Bluetooth_port=C3=A1til_?=
+ =?utf-8?q?=C3=A0_prova_de_=C3=A1gua=2E=2E=2E=22?=
+Date: Fri, 20 Nov 2026 08:12:51 +0000
+Message-ID: <010201920261120081251.out-for-delivery-code-pt-000000@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Amazon.es
+As suas encomendas | A sua conta
+
+Ol=C3=A1 Alex,
+
+A sua encomenda saiu para entrega.
+
+Chegada:
+hoje, at=C3=A9 =C3=A0s 21:00
+
+Esta entrega precisa de um c=C3=B3digo. Partilhe o c=C3=B3digo de entrega c=
+om o estafeta quando ele chegar.
+
+C=C3=B3digo de entrega: 4821
+
+Acompanhar encomenda: https://www.amazon.es/gp/r.html?C=3D34T7Q9X1M4K8B&K=
+=3D1V3JZ9Q7R2XW5&M=3Durn:rtn:msg:2026111634a1b2c3d4e5f601&R=3D3HXK2P8Q5N7MZ=
+&T=3DC&U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fprogress-tracker%2Fpackage%2Fref%3=
+Dpe_2848631_123456789_TE_SIMP_typ%3F_encoding%3DUTF8%26orderId%3D406-275019=
+3-9918274%26shipmentId%3DWm5RbQ7tL%26packageIndex%3D0&H=3DQZXWTGBHJKL0PQ5RS=
+01&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Encomenda n.=C2=BA 406-2750193-9918274
+
+Coluna Bluetooth port=C3=A1til =C3=A0 prova de =C3=A1gua, 20 W, azul
+Quantidade: 1
+https://www.amazon.es/gp/r.html?C=3D34T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:2026111634a1b2c3d4e5f602&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.es%2Fdp%2FB0D9QW2E5T%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=3DQ=
+ZXWTGBHJKL0PQ5RS02&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Este e-mail foi enviado a partir de um endere=C3=A7o que apenas envia notif=
+ica=C3=A7=C3=B5es e n=C3=A3o aceita mensagens. N=C3=A3o responda a esta men=
+sagem.
+
+Aviso de privacidade
+
+=C2=A9 2026 Amazon.com, Inc. ou as suas afiliadas. Todos os direitos reserv=
+ados.
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"pt">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DUTF-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1.=
+0">
+<title>Amazon.es</title>
+<style type=3D"text/css">
+body { margin: 0; padding: 0; background-color: #ffffff; }
+table { border-collapse: collapse; }
+.container { width: 600px; font-family: Arial, Helvetica, sans-serif; color=
+: #0f1111; }
+.h1 { font-size: 20px; font-weight: bold; margin: 16px 0 8px; }
+.h2 { font-size: 16px; font-weight: bold; margin: 16px 0 8px; color: #067d6=
+2; }
+.kv td { padding: 2px 8px 2px 0; font-size: 14px; }
+.button { background-color: #ffd814; border-radius: 20px; color: #0f1111;
+  padding: 8px 18px; text-decoration: none; display: inline-block; }
+.item td { vertical-align: top; padding: 8px 8px 8px 0; font-size: 14px; }
+.nav a { color: #0f1111; font-size: 13px; text-decoration: none; }
+.footer { font-size: 11px; color: #565959; padding-top: 24px; }
+</style>
+</head>
+<body>
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0"><tr>
+<td align=3D"center">
+<table role=3D"presentation" class=3D"container" width=3D"600" cellpadding=
+=3D"0"
+ cellspacing=3D"0">
+<tr><td class=3D"header"><a href=3D"https://www.amazon.es/gp/r.html?C=3D34T=
+7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111634a1b2c3d4e5f6=
+04&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fre=
+f%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0PQ5RS04&amp;ref_=
+=3Dpe_2848631_123456789_TE_SIMP_typ"><img
+ src=3D"https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo.=
+_CB485934981_.png"
+ alt=3D"Amazon.es" width=3D"98" height=3D"30" border=3D"0"></a></td>
+<td class=3D"nav" align=3D"right"><a href=3D"https://www.amazon.es/gp/r.htm=
+l?C=3D34T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111634a1b=
+2c3d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazo=
+n.es%2Fgp%2Fcss%2Forder-history%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&a=
+mp;H=3DQZXWTGBHJKL0PQ5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>As suas encomendas</a> | <a href=3D"https://www.amazon.es/gp/r.html?C=3D34=
+T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111634a1b2c3d4e5f=
+606&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fg=
+p%2Fcss%2Fhomepage.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQ=
+ZXWTGBHJKL0PQ5RS06&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>A sua conta</a></td></tr>
+<tr><td class=3D"content" colspan=3D"2">
+<p>Ol=C3=A1 Alex,</p>
+<h1 class=3D"h1">A sua encomenda saiu para entrega.</h1>
+<div class=3D"eta"><span class=3D"label">Chegada:</span><br><span class=3D"=
+value"><b>hoje, at=C3=A9 =C3=A0s 21:00</b></span></div>
+<p>Esta entrega precisa de um c=C3=B3digo. Partilhe o c=C3=B3digo de entreg=
+a com o estafeta quando ele chegar.</p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">C=C3=B3digo de entrega:</td><td class=3D"v"><b>4821<=
+/b></td></tr></table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.es/gp/r.htm=
+l?C=3D34T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111634a1b=
+2c3d4e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazo=
+n.es%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_2848631_123456789_TE_SIMP_typ%=
+3F_encoding%3DUTF8%26orderId%3D406-2750193-9918274%26shipmentId%3DWm5RbQ7tL=
+%26packageIndex%3D0&amp;H=3DQZXWTGBHJKL0PQ5RS01&amp;ref_=3Dpe_2848631_12345=
+6789_TE_SIMP_typ">Acompanhar encomenda</a></p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Encomenda n.=C2=BA</td><td class=3D"v"><b>406-275019=
+3-9918274</b></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D34T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111634a1b2c3=
+d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB0D9QW2E5T%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTGBHJK=
+L0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"https://=
+m.media-amazon.com/images/I/419QW2E5L._SS142_.jpg" alt=3D"Coluna Bluetooth =
+port=C3=A1til =C3=A0 prova de =C3=A1gua, 20 W, azul" width=3D"90" height=3D=
+"90" border=3D"0"></a></td><td class=3D"desc"><a href=3D"https://www.amazon=
+.es/gp/r.html?C=3D34T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2=
+026111634a1b2c3d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F=
+%2Fwww.amazon.es%2Fdp%2FB0D9QW2E5T%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp=
+;H=3DQZXWTGBHJKL0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Colun=
+a Bluetooth port=C3=A1til =C3=A0 prova de =C3=A1gua, 20 W, azul</a><br><spa=
+n>Quantidade: 1</span></td></tr></table>
+</td></tr>
+<tr><td class=3D"footer" colspan=3D"2">
+<p>Este e-mail foi enviado a partir de um endere=C3=A7o que apenas envia no=
+tifica=C3=A7=C3=B5es e n=C3=A3o aceita mensagens. N=C3=A3o responda a esta =
+mensagem.</p>
+<p><a href=3D"https://www.amazon.es/gp/r.html?C=3D34T7Q9X1M4K8B&amp;K=3D1V3=
+JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111634a1b2c3d4e5f603&amp;R=3D3HXK2P8Q5N7=
+MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fgp%2Fhelp%2Fcustomer%2Fd=
+isplay.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0P=
+Q5RS03&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Aviso de privacidade</a=
+></p>
+<p>=C2=A9 2026 Amazon.com, Inc. ou as suas afiliadas. Todos os direitos res=
+ervados.</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

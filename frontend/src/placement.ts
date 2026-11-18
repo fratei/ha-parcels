@@ -6,6 +6,7 @@ import {
   maxYmd,
   weekDates,
 } from "./dates.ts";
+import { byId, groupItems, shipmentKey } from "./groups.ts";
 import { parcelTitle } from "./labels.ts";
 import { etaRange } from "./parcels.ts";
 import type { Parcel } from "./types.ts";
@@ -66,7 +67,10 @@ export function placeParcel(parcel: Parcel, context: PlacementContext): Placemen
 }
 
 export interface WeekItem {
+  /** The parcel, or the first package of a shipment shown as one box. */
   parcel: Parcel;
+  /** The packages in the box, by ID; just the parcel when it's alone. */
+  members: Parcel[];
   placement: Placement;
   /** First and last day column (0 = Monday … 6 = Sunday) after clipping to the week. */
   startCol: number;
@@ -115,7 +119,11 @@ function compareItems(a: WeekItem, b: WeekItem): number {
   );
 }
 
-/** Places parcels on the week that starts on the Monday `weekStart` and packs them into lanes. */
+/**
+ * Places parcels on the week that starts on the Monday `weekStart` and packs
+ * them into lanes. Packages of one shipment with the same status on the same
+ * days share one box.
+ */
 export function layoutWeek(
   parcels: readonly Parcel[],
   weekStart: string,
@@ -124,7 +132,7 @@ export function layoutWeek(
 ): WeekLayout {
   const days = weekDates(weekStart);
   const weekEnd = addDays(weekStart, 6);
-  const items: WeekItem[] = [];
+  const placed: WeekItem[] = [];
   for (const parcel of parcels) {
     if (parcel.archived && !options.showArchived) {
       continue;
@@ -137,8 +145,9 @@ export function layoutWeek(
     ) {
       continue;
     }
-    items.push({
+    placed.push({
       parcel,
+      members: [parcel],
       placement,
       startCol: Math.max(0, diffDays(weekStart, placement.from)),
       endCol: Math.min(6, diffDays(weekStart, placement.to)),
@@ -147,6 +156,12 @@ export function layoutWeek(
       lane: 0,
     });
   }
+  const items = groupItems(placed, (item) =>
+    shipmentKey(item.parcel, item.placement.kind, item.placement.from, item.placement.to),
+  ).map((box): WeekItem => {
+    const first = box.reduce((min, item) => (byId(item.parcel, min.parcel) < 0 ? item : min));
+    return { ...first, members: box.map((item) => item.parcel).sort(byId) };
+  });
   items.sort(compareItems);
   const laneEnds: number[] = [];
   for (const item of items) {

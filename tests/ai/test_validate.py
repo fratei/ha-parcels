@@ -11,6 +11,7 @@ from custom_components.parcels.ai.validate import (
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
     NOTE_ADDED_BY_DETECTOR,
+    NOTE_ITEM_RECOMMENDED,
     Validation,
     carrier_scan_text,
     map_carrier,
@@ -604,6 +605,119 @@ def test_items_are_limited() -> None:
     assert len(result.items) == 9
     assert result.items[0] == "x" * 79 + "\u2026"
     assert result.items[1:] == tuple(f"Artigo {n}" for n in range(2, 10))
+
+
+ORDERED_ITEM = "Ejemplo Sartén Origen, 24 cm, antiadherente"
+RECOMMENDED_ITEMS = (
+    "Tazas de café para expreso, juego de 6",
+    "Pilas alcalinas AA, pack de 8",
+    "Bolsas de basura 30 L, 50 unidades",
+)
+
+
+@pytest.mark.parametrize(
+    "heading", ["Inspirado en tus compras", "Compra de nuevo", "Recommended for you"]
+)
+def test_recommended_items_are_dropped(heading: str) -> None:
+    """Products listed only under a recommendations heading weren't ordered."""
+    text = "\n".join(
+        [
+            "Hola, Alex:",
+            f"Tu paquete se ha enviado. Número de seguimiento: {S10}",
+            ORDERED_ITEM,
+            heading,
+            *RECOMMENDED_ITEMS,
+        ]
+    )
+    result = checked(
+        answer(
+            kind="shipped",
+            tracking_numbers=[S10],
+            # The last one isn't written word for word, so it stays.
+            items=[ORDERED_ITEM, *RECOMMENDED_ITEMS, "Sartén Ejemplo"],
+        ),
+        text,
+        language="es",
+    )
+    assert result.items == (ORDERED_ITEM, "Sartén Ejemplo")
+    assert result.shipments[0].items == result.items
+    assert result.notes == (NOTE_ITEM_RECOMMENDED,)
+    assert result.confidence == CONFIDENCE_HIGH
+
+
+def test_repeated_items_are_merged() -> None:
+    """The same product named twice, once cut short, is one item."""
+    full = "Exemplo Frigideira Origem, 24 cm, antiaderente, indução"
+    result = checked(
+        answer(kind="shipped", items=["Exemplo Frigideira Origem 24...", full, full]),
+        f"Enviado: Exemplo Frigideira Origem 24...\n{full}",
+    )
+    assert result.items == (full,)
+
+
+def test_pickup_code_is_never_a_tracking_number() -> None:
+    """A tracking number the model also gave as the code isn't the code."""
+    result = checked(
+        answer(kind="out_for_delivery", tracking_numbers=[S10], pickup_code=S10),
+        f"O objeto {S10} está em distribuição.",
+    )
+    assert "pickup_code_is_number" in result.notes
+    (shipment,) = result.shipments
+    assert shipment.tracking_number == S10
+    assert shipment.pickup_code is None
+
+
+def test_pickup_code_is_never_an_order_number() -> None:
+    """An order number the model also gave as the code isn't the code."""
+    result = checked(
+        answer(kind="shipped", order_numbers=["4512345"], pickup_code="4512345"),
+        "Encomenda n.º 4512345 enviada.",
+    )
+    assert "pickup_code_is_number" in result.notes
+    assert result.order_numbers == ("4512345",)
+    assert result.shipments[0].pickup_code is None
+
+
+def test_unlabelled_code_is_the_tracking_number() -> None:
+    """A carrier's number the model also gave as the code stays the number."""
+    result = checked(
+        answer(kind="out_for_delivery", pickup_code=DPD_NUMBER),
+        f"A sua encomenda {DPD_NUMBER} será entregue hoje.",
+        sender="naoresponder@dpd.pt",
+        sender_name="DPD Portugal",
+    )
+    assert "pickup_code_is_number" in result.notes
+    (shipment,) = result.shipments
+    assert shipment.tracking_number == DPD_NUMBER
+    assert shipment.pickup_code is None
+
+
+def test_delivery_pin_is_never_a_tracking_number() -> None:
+    """A delivery PIN the model took for a tracking number is left out."""
+    result = checked(
+        answer(kind="out_for_delivery", tracking_numbers=[S10, "48291375"]),
+        f"O objeto {S10} está em distribuição.\nCódigo de entrega: 48291375",
+    )
+    assert "tracking_is_pickup_code" in result.notes
+    assert [s.tracking_number for s in result.shipments] == [S10]
+
+
+def test_delivery_pin_is_never_an_order_number() -> None:
+    """A delivery PIN the model also gave as an order number is left out."""
+    result = checked(
+        answer(
+            kind="out_for_delivery",
+            tracking_numbers=[S10],
+            order_numbers=["4512345", "482913"],
+            pickup_code="482913",
+        ),
+        f"Encomenda n.º 4512345, objeto {S10}.\nPIN de entrega: 482913",
+    )
+    assert "order_is_pickup_code" in result.notes
+    assert result.order_numbers == ("4512345",)
+    (shipment,) = result.shipments
+    assert shipment.tracking_number == S10
+    assert shipment.pickup_code == "482913"
 
 
 def test_pickup_code_must_be_in_text() -> None:

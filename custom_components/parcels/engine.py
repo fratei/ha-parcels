@@ -111,7 +111,12 @@ from .parsers import NOTE_KNOWN_SENDER_UNPARSED, parse_message
 from .parsers.auth import verify_sender
 from .parsers.base import MailMessage, ParseResult, SenderVerdict, message_hash
 from .parsers.prefilter import is_candidate
-from .parsers.senders import is_free_mail, lookup, organizational_domain
+from .parsers.senders import (
+    is_free_mail,
+    lookup,
+    organizational_domain,
+    ships_with_many,
+)
 from .parsers.tracking import (
     MAX_NUMBER_CHARS,
     detect_carrier,
@@ -811,7 +816,9 @@ class ParcelsEngine:
             owner=owners[0] if owners else None,
             confirmed=confirmed,
         ):
-            touched.add(apply_contribution(self.data, contribution, now).parcel_id)
+            applied = apply_contribution(self.data, contribution, now)
+            if applied.parcel_id is not None:
+                touched.add(applied.parcel_id)
         for owner in owners[1:]:
             touched |= add_owner(self.data, record.hash, owner, now)
         record.state = MessageState.APPLIED
@@ -821,7 +828,9 @@ class ParcelsEngine:
         """Fill in the carrier the user chose before, or the sender's carrier."""
         prefs = self.data.senders.get(organizational_domain(domain))
         info = lookup(domain)
-        carrier = (prefs.carrier if prefs else None) or (info.carrier if info else None)
+        carrier = (prefs.carrier if prefs else None) or (
+            info.carrier if info is not None and not ships_with_many(domain) else None
+        )
         if not carrier:
             return suggestion
         if suggestion is None:
@@ -1012,7 +1021,7 @@ class ParcelsEngine:
             prefs.accepted += 1
             if item.suggestion is not None and suggestion != item.suggestion:
                 prefs.corrections += 1
-            if suggestion.carrier:
+            if suggestion.carrier and not ships_with_many(org):
                 prefs.carrier = suggestion.carrier
             prefs.updated = now
         self.async_changed()
@@ -1113,6 +1122,29 @@ class ParcelsEngine:
         self.add_review(item, record)
         self.async_changed()
         return item.id
+
+    def filtered_clear(self, filtered_id: str) -> None:
+        """Drop a filtered e-mail; its hash stays, so it's never read again."""
+        data = self.data
+        if (entry := data.filtered.pop(filtered_id, None)) is None:
+            raise validation_error("unknown_filtered")
+        self._dismiss_message(entry.message)
+        self.async_changed()
+
+    def filtered_clear_all(self) -> int:
+        """Drop every filtered e-mail; returns how many there were."""
+        data = self.data
+        entries = list(data.filtered.values())
+        data.filtered.clear()
+        for entry in entries:
+            self._dismiss_message(entry.message)
+        if entries:
+            self.async_changed()
+        return len(entries)
+
+    def _dismiss_message(self, key: str) -> None:
+        if (record := self.data.messages.get(key)) is not None:
+            record.state = MessageState.DISMISSED
 
     def message_hashes(
         self,

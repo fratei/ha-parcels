@@ -92,6 +92,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_review_trust_sender,
         ws_review_ignore_sender,
         ws_review_restore,
+        ws_filtered_clear,
+        ws_filtered_clear_all,
         ws_suggestion_accept,
         ws_suggestion_dismiss,
     ):
@@ -290,6 +292,39 @@ def ws_review_restore(
     """Move an e-mail that was filtered out to the review list."""
     review_id = _engine(hass).filtered_restore(msg["filtered_id"])
     connection.send_result(msg["id"], {"review_id": review_id})
+
+
+@websocket_api.websocket_command(
+    {
+        p.Required("type"): f"{DOMAIN}/filtered/clear",
+        p.Required("filtered_id"): cv.string,
+    }
+)
+@websocket_api.require_admin
+@_expected_errors
+@callback
+def ws_filtered_clear(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Drop an e-mail that was filtered out; it isn't read again."""
+    _engine(hass).filtered_clear(msg["filtered_id"])
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({p.Required("type"): f"{DOMAIN}/filtered/clear_all"})
+@websocket_api.require_admin
+@_expected_errors
+@callback
+def ws_filtered_clear_all(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Drop every e-mail that was filtered out; none of them is read again."""
+    cleared = _engine(hass).filtered_clear_all()
+    connection.send_result(msg["id"], {"cleared": cleared})
 
 
 def _check_suggestion(

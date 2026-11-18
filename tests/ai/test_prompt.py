@@ -74,7 +74,7 @@ def test_ollama_receives_the_expected_json_schema() -> None:
         openapi_version="3.1.0",
     )
     assert set(EXPECTED_TYPES["kind"]["enum"]) == {
-        kind.value for kind in MailKind if kind is not MailKind.UNKNOWN
+        kind.value for kind in MailKind if kind not in (MailKind.UNKNOWN, MailKind.CODE)
     }
     assert schema == {
         "type": "object",

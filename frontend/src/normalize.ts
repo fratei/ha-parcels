@@ -43,6 +43,14 @@ function id(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
+function count(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : 0;
+}
+
+function seconds(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 function list<T>(value: unknown, convert: (item: unknown) => T | null): T[] {
   if (!Array.isArray(value)) {
     return [];
@@ -94,6 +102,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     inferred: raw.inferred === true,
     pickup_point: str(raw.pickup_point),
     pickup_code: str(raw.pickup_code),
+    has_code: raw.has_code === true,
     order_numbers: strs(raw.order_numbers),
     items: strs(raw.items),
     private: raw.private === true,
@@ -104,6 +113,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     provisional: raw.provisional === true,
     archived: raw.archived === true,
     origins: strs(raw.origins),
+    shipment_group: id(raw.shipment_group),
     restricted: raw.restricted === true,
   };
 }
@@ -208,6 +218,8 @@ export function normalizeSettings(raw: unknown, now: number = Date.now()): Setti
     user_is_admin: settings.user_is_admin === true,
     ai_enabled: settings.ai_enabled === true,
     ai_mode: aiMode(settings.ai_mode),
+    ai_queue: count(settings.ai_queue),
+    ai_queue_seconds: seconds(settings.ai_queue_seconds),
     dashboard_url: text(settings.dashboard_url),
     seventeentrack: settings.seventeentrack === true,
     time_zone: timeZone,

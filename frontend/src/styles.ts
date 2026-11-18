@@ -407,6 +407,11 @@ export const chipStyles = css`
     flex: 1 1 auto;
     font-weight: 500;
   }
+  .merge-note .merge-detail {
+    color: var(--secondary-text-color, #727272);
+    font-weight: 400;
+    overflow-wrap: anywhere;
+  }
 `;
 
 export const dialogStyles = css`

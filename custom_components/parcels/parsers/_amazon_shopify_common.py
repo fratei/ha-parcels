@@ -15,6 +15,7 @@ from urllib.parse import SplitResult, parse_qsl, urlsplit
 from ..const import CARRIER_NAMES, MailKind
 from . import tracking
 from .base import Eta, Link, MailMessage, SenderVerdict
+from .items import same_item
 from .lang import fold_aligned
 from .senders import organizational_domain
 
@@ -541,11 +542,19 @@ def clean_item(text: str) -> str | None:
 
 
 def add_item(items: list[str], text: str) -> None:
-    """Append a cleaned title unless it's a duplicate or the list is full."""
-    if len(items) >= MAX_ITEMS or (title := clean_item(text)) is None:
+    """Append a cleaned title unless the list has it already or is full.
+
+    A title that is the same item as one in the list (``same_item``: equal
+    words, or one cut short of the other) replaces it when it's longer.
+    """
+    if (title := clean_item(text)) is None:
         return
-    key = fold_text(title)
-    if all(fold_text(item) != key for item in items):
+    for index, item in enumerate(items):
+        if same_item(item, title):
+            if len(title) > len(item):
+                items[index] = title
+            return
+    if len(items) < MAX_ITEMS:
         items.append(title)
 
 
@@ -572,13 +581,6 @@ def quantity_items(text: str, folded: str, items: list[str]) -> None:
 
 # --- Pickup -----------------------------------------------------------------
 
-_PICKUP_CODE_RE = re.compile(
-    r"(?<![a-z0-9])(?:pick\s?-?up\s+(?:code|pin)|collection\s+code"
-    r"|codigo\s+(?:de\s+(?:levantamento|recolha|recogida)|pin)|abholcode|abhol-?pin"
-    r"|code\s+de\s+(?:retrait|recuperation)|codice\s+(?:di\s+ritiro|pin)"
-    r"|ophaalcode|afhaalcode)(?![a-z0-9])\s*:?"
-)
-_CODE_VALUE_RE = re.compile(r"(?<![0-9A-Z])(?=[0-9A-Z]*\d)[0-9A-Z]{4,12}(?![0-9A-Z])")
 _PICKUP_POINT_RE = re.compile(
     r"(?<![a-z0-9])(?:pick\s?-?up\s+(?:location|point|address)|collection\s+point"
     r"|local\s+de\s+(?:levantamento|recolha)|ponto\s+de\s+(?:levantamento|recolha)"
@@ -588,19 +590,15 @@ _PICKUP_POINT_RE = re.compile(
 )
 
 
-def pickup_details(text: str, folded: str) -> tuple[str | None, str | None]:
-    """Return the pickup point and the pickup code after their labels."""
-    code: str | None = None
-    for value in label_values(text, folded, _PICKUP_CODE_RE):
-        if match := _CODE_VALUE_RE.search(value.value.upper()):
-            code = match.group(0)
-            break
-    point: str | None = None
+def pickup_point(text: str, folded: str) -> str | None:
+    """Return the pickup point written after its label.
+
+    Pickup and delivery codes are read by ``codes.find_code``.
+    """
     for value in label_values(text, folded, _PICKUP_POINT_RE):
         if candidate := clip(value.value, MAX_POINT_CHARS).rstrip("."):
-            point = candidate
-            break
-    return point, code
+            return candidate
+    return None
 
 
 # --- Kinds ------------------------------------------------------------------

@@ -296,6 +296,15 @@ def lookup(domain: str) -> SenderInfo | None:
     return KNOWN_SENDERS.get(organizational_domain(domain.rpartition("@")[2]))
 
 
+def ships_with_many(domain: str) -> bool:
+    """Return True for a shop whose parcels go with several carriers.
+
+    Its own carrier delivers only some of them, so one of its e-mails doesn't
+    tell who delivers the next.
+    """
+    return (info := lookup(domain)) is not None and info.kind == "merchant"
+
+
 # Free mail providers: anyone can send from them, so they can't be trusted
 # or ignored as a whole. Matched on the registrable domain or its first label.
 FREE_MAIL_NAMES = frozenset(

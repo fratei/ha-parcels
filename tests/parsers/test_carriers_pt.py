@@ -34,6 +34,15 @@ CASES = (
         eta=eta("2026-11-17", "13:00", "17:00"),
         merchant="Fnac Portugal",
     ),
+    # A delivery PIN in a status e-mail: the status stays, the PIN is kept.
+    Case(
+        "ctt_out_for_delivery_code_pt",
+        "ctt",
+        MailKind.OUT_FOR_DELIVERY,
+        "RR739204180PT",
+        eta=eta("2026-11-19", "09:00", "13:00"),
+        pickup_code="5937",
+    ),
     Case(
         "ctt_delivered_pt",
         "ctt",

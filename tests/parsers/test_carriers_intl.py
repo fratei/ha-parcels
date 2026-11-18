@@ -24,6 +24,14 @@ CASES = (
         eta=eta("2026-11-17", "13:00", "14:00"),
         merchant="Zalando",
     ),
+    # Its only news is the delivery PIN of a parcel it names.
+    Case(
+        "dpd_delivery_code_pt",
+        "dpd",
+        MailKind.CODE,
+        "09381726450517",
+        pickup_code="4821",
+    ),
     Case(
         "dpd_predict_en",
         "dpd",

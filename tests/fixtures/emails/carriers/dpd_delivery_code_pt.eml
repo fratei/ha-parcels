@@ -1,0 +1,65 @@
+Return-Path: <bounce-7a03e9d215@bounces.dpd.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@dpd.pt header.s=sel1 header.b=KmEg8a2U;
+       spf=pass (google.com: domain of bounce-7a03e9d215@bounces.dpd.pt designates 192.0.2.9 as permitted sender) smtp.mailfrom=bounce-7a03e9d215@bounces.dpd.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=dpd.pt
+Received: from mta9.bounces.dpd.pt (mta9.bounces.dpd.pt. [192.0.2.9])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Thu, 19 Nov 2026 07:41:00 +0000
+From: DPD Portugal <noreply@dpd.pt>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?C=C3=B3digo_de_entrega_da_sua_encomenda_DPD_09381726450?=
+ =?utf-8?q?517?=
+Date: Thu, 19 Nov 2026 07:41:00 +0000
+Message-ID: <20261119074100.9b1d@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+O seu c=C3=B3digo de entrega
+
+Ol=C3=A1 Alex Doe,
+
+O c=C3=B3digo de entrega da sua encomenda 09381726450517 =C3=A9 4821.
+
+Indique-o ao estafeta DPD no momento da entrega. Por seguran=C3=A7a, n=C3=
+=A3o partilhe este c=C3=B3digo por telefone nem por e-mail.
+
+Seguir encomenda: https://tracking.dpd.pt/track-and-trace?reference=3D09381=
+726450517
+
+DPD Portugal =C2=B7 Rua Exemplo 1, 1000-001 Lisboa
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"pt">
+<head>
+<meta charset=3D"utf-8">
+<title>C=C3=B3digo de entrega</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,sans-serif}.wrap{=
+max-width:600px;margin:0 auto;background:#fff;padding:24px}h1{color:#dc0032=
+}.button{display:inline-block;padding:12px 24px;background:#dc0032;color:#f=
+ff;text-decoration:none}</style>
+</head>
+<body>
+<div class=3D"wrap">
+<h1 class=3D"h1">O seu c=C3=B3digo de entrega</h1>
+<p>Ol=C3=A1 Alex Doe,</p>
+<p>O c=C3=B3digo de entrega da sua encomenda 09381726450517 =C3=A9 4821.</p>
+<p>Indique-o ao estafeta DPD no momento da entrega. Por seguran=C3=A7a, n=
+=C3=A3o partilhe este c=C3=B3digo por telefone nem por e-mail.</p>
+<p class=3D"cta"><a class=3D"button" href=3D"https://tracking.dpd.pt/track-=
+and-trace?reference=3D09381726450517">Seguir encomenda</a></p>
+<p>DPD Portugal =C2=B7 Rua Exemplo 1, 1000-001 Lisboa</p>
+</div>
+</body>
+</html>
+--=_parcels_b1--
