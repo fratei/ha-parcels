@@ -52,6 +52,14 @@ from custom_components.parcels.notifier import (
 )
 from custom_components.parcels.parsers.base import Eta
 
+from .common import (
+    FakeMailClient,
+    add_hub,
+    add_mailbox,
+    async_setup_parcels,
+    patch_mail_clients,
+)
+
 S = ParcelStatus
 TZ = ZoneInfo("Europe/Lisbon")
 # A Thursday in summer time (UTC+1), to catch UTC/local mix-ups.
@@ -452,6 +460,20 @@ async def test_routing(env: Env, hass: HomeAssistant) -> None:
     await env.settle()
     assert iphone.take() == ipad.take() == android.take() == []
     assert mac.calls == excluded.calls == stranger.calls == everyone == []
+
+
+async def test_phone_registered_again(env: Env, hass: HomeAssistant) -> None:
+    """A phone registered again is notified, though its old device has the same ID."""
+    old = env.phone("Alex iPhone", ALEX, service=False)
+    dr.async_get(hass).async_update_device(
+        old.device_id, disabled_by=dr.DeviceEntryDisabler.USER
+    )
+    phone = env.phone("Alex iPhone", ALEX)
+    assert phone.device_id != old.device_id
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert summary(phone.take()) == [(tag_of(parcel), f"Expected today{SEP}DPD")]
 
 
 async def test_test_mode(env: Env, hass: HomeAssistant) -> None:
@@ -1084,3 +1106,44 @@ async def test_damaged_state_is_dropped(env: Env) -> None:
     assert "test" not in env.host.data.engine[STATE_KEY]
     await env.goto(at(8))
     assert summary(phone.take()) == [(tag_of(parcel), f"Expected today{SEP}DPD")]
+
+
+async def test_no_deprecated_api(
+    env: Env, hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Setting up the hub and notifying a delivery day use no deprecated API."""
+    # The day of the e-mail: DPD delivers today from 13:00 to 14:00.
+    await env.goto(datetime(2026, 11, 17, 8, 30, tzinfo=TZ))
+    phone = env.phone("Alex iPhone", ALEX)
+    add_hub(hass, **{CONF_NOTIFY_PERSONS: [ALEX]})
+    add_mailbox(hass, owner=ALEX)
+    client = FakeMailClient()
+    client.add("carriers/dpd_predict_pt.eml")
+    with patch_mail_clients(client):
+        engine = await async_setup_parcels(hass)
+        await env.settle()
+
+    [parcel] = engine.data.parcels.values()
+    assert phone.take() == [
+        activity(
+            tag_of(parcel),
+            "Zalando",
+            f"Out for delivery 13:00{DASH}14:00{SEP}DPD",
+            f"13{DASH}14h",
+            3,
+            OUT,
+            0.9,
+        )
+    ]
+    assert "Zalando" in (persistent(hass) or "")
+    # How Home Assistant reports deprecated usage: frame.report_usage, and the
+    # deprecation helpers for constants, functions, classes and entity members.
+    marks = (
+        "Detected that custom integration",
+        "Detected code that",
+        "The deprecated ",
+        " provides the deprecated ",
+        " is deprecated. Please rename ",
+    )
+    messages = [record.getMessage() for record in caplog.records]
+    assert [m for m in messages if any(mark in m for mark in marks)] == []

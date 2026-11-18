@@ -171,7 +171,10 @@ If Google reports a problem:
   The list under **View issues**, such as "The website of the home page URL is
   not registered to you", comes from Google's optional brand verification.
   That check can't pass with `home-assistant.io`, and personal use doesn't
-  need it. Never select **Verify branding**, **Request re-verification** or
+  need it. As
+  [Google's Branding help](https://support.google.com/cloud/answer/15549049)
+  says, "Without verification, only your application domain will be visible
+  to users." Never select **Verify branding**, **Request re-verification** or
   **Request additional review**. If a verification is in progress, select
   **Cancel** first: Google blocks Branding changes while it runs. The "not
   registered to you" item may stay listed; it's harmless.
@@ -179,10 +182,9 @@ If Google reports a problem:
   of the `gmail.readonly` scope. An app for personal use, with fewer than 100
   users, may stay unverified, as
   [Google explains](https://support.google.com/cloud/answer/13464323).
-- **Sign-in stops at "Access blocked … Error 403: access_denied".** Remove any
-  logo under **Branding** and select **Save**, then check that **Audience**
-  says **In production**. While the app is in **Testing**, only the accounts
-  listed under **Test users** can sign in.
+- **Sign-in stops at "Access blocked … Error 403: access_denied".** Check
+  that **Audience** says **In production**. While the app is in **Testing**,
+  only the accounts listed under **Test users** can sign in.
 
 ### 3. Add the application credentials
 

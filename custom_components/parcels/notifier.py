@@ -1285,11 +1285,15 @@ class Notifier:
     def _registry_device(
         registry: dr.DeviceRegistry, entry: ConfigEntry
     ) -> dr.DeviceEntry | None:
-        """Return the registry device of a mobile_app config entry."""
+        """Return the registry device of a mobile_app config entry.
+
+        Device identifiers are only unique within a config entry, so the device is
+        looked up among the entry's own devices.
+        """
         device_id = entry.data.get("device_id")
         if isinstance(device_id, str) and device_id:
-            device = registry.async_get_device(
-                identifiers={(MOBILE_APP_DOMAIN, device_id)}
+            device = registry.async_get_device_by_identifier(
+                (MOBILE_APP_DOMAIN, device_id), entry.entry_id
             )
             if device is not None:
                 return device
