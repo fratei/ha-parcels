@@ -193,7 +193,7 @@ async def test_suggest_mode_offers_the_answer(
     record = engine.data.messages[message.hash]
     assert record.state is MessageState.QUEUED
     assert engine.ai.queue_size == 1
-    generate.return_value = result(kind="shipped")
+    generate.return_value = result(kind="in_transit")
 
     assert await engine.ai._async_step() == 0
 
@@ -204,7 +204,7 @@ async def test_suggest_mode_offers_the_answer(
     assert item.reason == REASON_AI_SUGGESTION
     assert item.source is Source.AI
     assert item.suggestion is not None
-    assert item.suggestion.kind is MailKind.SHIPPED
+    assert item.suggestion.kind is MailKind.IN_TRANSIT
     assert item.suggestion.tracking_numbers == (TRACKING,)
     assert engine.ai.queue_size == 0
     assert not engine.data.parcels
@@ -311,7 +311,9 @@ async def test_answer_failing_checks_is_offered_as_rejected(
     """An answer that fails a check goes to review, with the values that passed."""
     engine = await async_setup(hass, client, ctt_message(), mode=mode)
     # A valid S10 number that isn't in the e-mail.
-    generate.return_value = result(kind="shipped", tracking_numbers=["RR123456785PT"])
+    generate.return_value = result(
+        kind="in_transit", tracking_numbers=["RR123456785PT"]
+    )
 
     await engine.ai._async_step()
 
@@ -319,7 +321,7 @@ async def test_answer_failing_checks_is_offered_as_rejected(
     assert item.reason == REASON_AI_REJECTED
     assert item.source is Source.AI
     assert item.suggestion is not None
-    assert item.suggestion.kind is MailKind.SHIPPED
+    assert item.suggestion.kind is MailKind.IN_TRANSIT
     assert "RR123456785PT" not in item.suggestion.tracking_numbers
     assert not engine.data.parcels
     assert engine.ai.today()["rejected"] == 1
@@ -676,7 +678,7 @@ async def test_reprocess_with_the_ai_reads_a_parsed_email(
     (entry,) = engine.ai.queue
     assert entry["forced"] is True
     assert engine.ai.diagnostics()["queue_forced"] == 1
-    generate.return_value = result(kind="delivered", tracking_numbers=[TRACKING])
+    generate.return_value = result(kind="in_transit", tracking_numbers=[TRACKING])
 
     await engine.ai._async_step()
 
@@ -684,7 +686,7 @@ async def test_reprocess_with_the_ai_reads_a_parsed_email(
     (item,) = engine.data.review.values()
     assert item.reason == REASON_AI_SUGGESTION
     assert item.suggestion is not None
-    assert item.suggestion.kind is MailKind.DELIVERED
+    assert item.suggestion.kind is MailKind.IN_TRANSIT
 
 
 async def test_ignoring_a_sender_drops_its_emails(
@@ -721,7 +723,7 @@ async def test_ignoring_a_sender_drops_its_emails(
             ),
             "agree",
         ),
-        (answer(kind="delivered", tracking_numbers=[TRACKING]), "disagree"),
+        (answer(kind="not_parcel"), "disagree"),
         ("not JSON", "disagree"),
     ],
 )

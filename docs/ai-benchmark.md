@@ -27,7 +27,10 @@ The report shows each field twice:
   carrier sent the e-mail, the carrier is the sender's; the model's carrier
   is kept only when the e-mail names it or one of its numbers belongs to
   it; otherwise Parcels infers it from the sender's name or the tracking
-  number. The bar is judged on this column.
+  number. The kind, the delivery dates, the merchant and the pickup point
+  are also checked against the e-mail's own wording (see
+  [below](#what-the-first-full-run-showed)). The bar is judged on this
+  column.
 
 How answers are compared:
 
@@ -192,6 +195,30 @@ The model never sets the confidence. Parcels computes it:
   for an e-mail that isn't about a parcel;
 - 0.5 otherwise, below the 0.7 that Parcels needs to apply an answer
   without review.
+
+### What the first full run showed
+
+The first run of the whole set (`qwen3:4b-instruct`) failed the bar on
+dates and kinds. Its mistakes were patterns, not one-offs, so each one has a
+short rule in the instructions and a check in code. The checks only drop a
+value, move it to another field or take it from the e-mail's own text; they
+never invent one.
+
+| Observed | What Parcels does |
+|---|---|
+| Deadlines came back as delivery dates: the last day to collect a parcel, to pay import duties, or to return an item or get a refund. | The instructions say a deadline is never a delivery date. Parcels reads every date in the e-mail with its parsers' date reader, which tells delivery dates from deadlines (a "deadline", "last day" or "Frist" word, or "until", "by", "até", "hasta", "bis", "jusqu'au", "entro", "tot" with a collect, pay, return or hold wording), order and shipping dates, and replaced dates ("foi adiada", "bisher", "vom … auf …", "was"). A model date the e-mail gives only as one of those is dropped, and so is a model date that had passed when the e-mail arrived or one in an e-mail that mentions no date, weekday or span at all. Ready for pickup, customs, delivered, return, cancelled and not-a-parcel e-mails get no delivery date. |
+| Spans such as "3–5 business days" or "quinta a sábado" were counted wrongly. | When the e-mail writes a delivery date or span next to a delivery phrase, Parcels works it out from the received date and uses it instead of a different model date. |
+| Kinds jumped a step: an order confirmation came back as shipped, out for delivery as delivered, a missed delivery as out for delivery. | The instructions ask for the latest step the e-mail says has happened. When the parsers' keyword detector finds a kind, the model's kind stays only if the e-mail's wording gives it too and it takes precedence over the detected one; otherwise the detected kind is used. "On its way" alone doesn't decide between shipped and in transit. |
+| In carriers' e-mails, the parcel number came back as an order number. | The instructions say a carrier's parcel number is a tracking number. A model order number that Parcels' detector reads as the sending carrier's tracking number, or that a tracking link carries, moves to the tracking numbers unless the e-mail labels it as an order. |
+| Long order numbers were copied with a digit missing or changed. | An order number that isn't in the e-mail becomes the e-mail's number when exactly one number is one character away (two from 12 characters on) and the e-mail doesn't give it as a tracking number, code, date, phone or tax number. Otherwise it is dropped. |
+| The carrier came back as the merchant when no shop was named, and the sender's domain came back instead of the shop's name. | The instructions say the merchant is never the delivery company or a web domain. The e-mail's carrier is dropped as merchant, unless it is also a shop (Amazon). A domain becomes the shop's name when the sender name or a line of the e-mail spells it. |
+| A shop's own address came back as the pickup point. | Unless the parcel waits for pickup or missed its delivery, a pickup point must be written as one: a pickup, locker or collection word on its line or the line before. A kind of place ("eine Filiale", "a post office") isn't a pickup point. |
+
+Scored again with these checks, that run's answers pass the bar (tracking
+numbers right in 41 of 41 e-mails, dates 74 of 74, kinds 41 of 41). The
+checks were written from that run's mistakes, though, so only a new run,
+ideally with e-mails from outside the set as well, shows how well they
+hold.
 
 ## Results
 

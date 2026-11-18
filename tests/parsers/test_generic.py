@@ -21,6 +21,7 @@ from custom_components.parcels.parsers.generic import (
     detect_kind,
     find_order_numbers,
     parse_generic,
+    text_kinds,
 )
 
 REF = datetime(2026, 11, 17, 9, 12, tzinfo=UTC)
@@ -667,6 +668,80 @@ def test_detect_kind_from_body() -> None:
 
 
 @pytest.mark.parametrize(
+    ("text", "lang", "kind"),
+    [
+        ("A sua encomenda saiu do nosso armazém.", "pt", MailKind.SHIPPED),
+        ("Tu pedido ha salido de nuestro almacén.", "es", MailKind.SHIPPED),
+        ("Ihr Paket wurde an DHL übergeben.", "de", MailKind.SHIPPED),
+        ("Il tuo pacco è partito.", "it", MailKind.SHIPPED),
+        (
+            "Il tuo pacco è partito dal centro di smistamento.",
+            "it",
+            MailKind.IN_TRANSIT,
+        ),
+        (
+            "A sua encomenda está a caminho. Se não estiver em casa, fica "
+            "disponível para levantamento num ponto de recolha.",
+            "pt",
+            MailKind.SHIPPED,
+        ),
+        ("Import VAT is due on your parcel.", "en", MailKind.CUSTOMS),
+        (
+            "É necessário pagar o IVA de importação da sua encomenda.",
+            "pt",
+            MailKind.CUSTOMS,
+        ),
+        ("Debes pagar los aranceles de tu paquete.", "es", MailKind.CUSTOMS),
+        ("Für Ihr Paket sind noch Zollgebühren offen.", "de", MailKind.CUSTOMS),
+        ("Des droits de douane sont à payer pour votre colis.", "fr", MailKind.CUSTOMS),
+        ("Devi pagare i dazi doganali per il tuo pacco.", "it", MailKind.CUSTOMS),
+        ("Je moet nog invoerrechten betalen voor je pakket.", "nl", MailKind.CUSTOMS),
+    ],
+)
+def test_departure_and_customs_from_body(text: str, lang: str, kind: MailKind) -> None:
+    """Departures, duties to pay and pickup only if absent, in the body."""
+    assert detect_kind("Update", text, lang=lang) == (kind, "body")
+
+
+def test_order_with_a_dutch_condition() -> None:
+    """Dutch "indien" (if) makes the shipping phrase a condition, not a kind."""
+    assert detect_kind(
+        "Bestelling 12345",
+        "Bedankt voor je bestelling. Indien je pakket is verzonden, sturen we "
+        "je een bericht.",
+        lang="nl",
+    ) == (MailKind.ORDER, "body")
+
+
+@pytest.mark.parametrize(
+    ("subject", "lang"),
+    [
+        ("Your parcel is on its way", "en"),
+        ("A sua encomenda está a caminho", "pt"),
+        ("Tu pedido está en camino", "es"),
+        ("Ihr Paket ist unterwegs", "de"),
+        ("Votre colis est en route", "fr"),
+        ("Il tuo pacco è in viaggio", "it"),
+        ("Je pakket is onderweg", "nl"),
+    ],
+)
+def test_on_its_way_can_be_left_out(subject: str, lang: str) -> None:
+    """On its way is SHIPPED, unless the caller treats it as unclear."""
+    assert detect_kind(subject, lang=lang) == (MailKind.SHIPPED, "subject")
+    assert detect_kind(subject, lang=lang, on_the_way=False) == (None, "")
+
+
+def test_text_kinds_lists_every_kind() -> None:
+    """The text backs both the picked kind and a less specific one."""
+    text = "Il tuo pacco è partito dal centro di smistamento."
+    assert detect_kind("Update", text, lang="it") == (MailKind.IN_TRANSIT, "body")
+    assert text_kinds("Update", text, lang="it") == {
+        MailKind.IN_TRANSIT,
+        MailKind.SHIPPED,
+    }
+
+
+@pytest.mark.parametrize(
     ("subject", "text", "lang"),
     [
         ("Your parcel will be delivered tomorrow", "", "en"),
@@ -678,6 +753,19 @@ def test_detect_kind_from_body() -> None:
             "Update",
             "Sobald die Sendung zugestellt wurde, erhalten Sie eine E-Mail.",
             "de",
+        ),
+        ("Update", "U hoeft geen invoerrechten te betalen.", "nl"),
+        ("Update", "Mogelijk moet je invoerrechten betalen.", "nl"),
+        (
+            "Update",
+            "Als er invoerrechten betaald moeten worden, ontvang je een e-mail.",
+            "nl",
+        ),
+        ("Update", "Als je pakket is bezorgd, laat ons dan een review achter.", "nl"),
+        (
+            "Update",
+            "Indien je pakket is verzonden, sturen we je een bericht.",
+            "nl",
         ),
     ],
 )

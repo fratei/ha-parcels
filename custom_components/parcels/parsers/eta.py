@@ -218,8 +218,63 @@ WEAK_ANCHORS: tuple[str, ...] = (
     "bezorgen",
     "liefern",
 )
+# Phrases that introduce a changed delivery date. They win over the other
+# anchors, so "Entrega prevista: 20/11 ... Nova data: 24/11" gives 24/11.
+NEW_DATE_ANCHORS: tuple[str, ...] = (
+    "new delivery date",
+    "new delivery day",
+    "new date",
+    "rescheduled to",
+    "rescheduled for",
+    "postponed to",
+    "postponed until",
+    "delayed until",
+    "nova data",
+    "nova previsao",
+    "adiada para",
+    "adiado para",
+    "reagendada para",
+    "reagendado para",
+    "remarcada para",
+    "remarcado para",
+    "nueva fecha",
+    "aplazada al",
+    "aplazado al",
+    "aplazada para",
+    "aplazado para",
+    "aplazada hasta",
+    "aplazado hasta",
+    "reprogramada para",
+    "reprogramado para",
+    "neuer liefertermin",
+    "neuer zustelltermin",
+    "neuer termin",
+    "neues lieferdatum",
+    "neues zustelldatum",
+    "neues datum",
+    "verschoben auf",
+    "verlegt auf",
+    "nouvelle date",
+    "reportee au",
+    "reporte au",
+    "decalee au",
+    "decale au",
+    "nuova data",
+    "posticipata al",
+    "posticipato al",
+    "rinviata al",
+    "rinviato al",
+    "nieuwe datum",
+    "nieuwe bezorgdatum",
+    "nieuwe leverdatum",
+    "uitgesteld naar",
+    "uitgesteld tot",
+    "verplaatst naar",
+    "verschoven naar",
+)
 STRONG_MAX_GAP_WORDS = 8
 WEAK_MAX_GAP_WORDS = 3
+NEW_DATE_MAX_GAP_WORDS = 3
 VERB_FINAL_AUXILIARIES: tuple[str, ...] = ("wird", "werden", "wordt", "worden")
 VERB_FINAL_PARTICIPLES: tuple[str, ...] = (
     "zugestellt",
@@ -420,6 +475,21 @@ _NUM_YEAR_RE = re.compile(
 )
 _NUM_SLASH_RE = re.compile(r"(?<![\d/.,:-])(?P<d>[0-3]?\d)/(?P<m>[01]?\d)(?![\d/])")
 _NUM_DOT_RE = re.compile(r"(?<![\d/.,:-])(?P<d>[0-3]?\d)\.(?P<m>[01]?\d)\.(?!\d)")
+# A day range on a numeric date: "26-28/11", "26 a 28/11", "26.-28.11.".
+_RANGE_FIRST_DAY = (
+    r"(?<![\d/.,:-])(?P<a>[0-3]?\d)\.?\s*"
+    rf"(?:-|(?<![a-z])(?:{_SEP_WORDS})(?![a-z]))\s*(?:{_ARTICLES}\s+)?"
+)
+_NUM_RANGE_RES = (
+    re.compile(
+        rf"{_RANGE_FIRST_DAY}(?P<d>[0-3]?\d)/(?P<m>[01]?\d)"
+        r"(?:/(?P<y>(?:19|20)\d{2}|\d{2}))?(?![\d/])"
+    ),
+    re.compile(
+        rf"{_RANGE_FIRST_DAY}(?P<d>[0-3]?\d)\.(?P<m>[01]?\d)\."
+        r"(?:(?P<y>(?:19|20)\d{2}|\d{2})(?!\d))?(?!\d)"
+    ),
+)
 _WEEKDAY_RE = re.compile(rf"(?<![a-z])(?P<wd>{_WEEKDAY})(?![a-z])")
 _WEEKDAY_PREFIX_RE = re.compile(
     rf"(?<![a-z])(?:(?P<wd>{_WEEKDAY})|(?P<wda>{_WEEKDAY_ABBR})\.?)\s*,?\s*"
@@ -462,7 +532,7 @@ _BUSINESS_UNITS = (
 _CALENDAR_UNITS = r"days?|dias?|tagen?|jours?|giorni|giorno|dagen|dag"
 _SPAN_RE = re.compile(
     rf"(?<![a-z0-9])(?:(?P<within>{_alternation(_WITHIN_WORDS)})\s+"
-    rf"|(?:{_alternation(_IN_WORDS)})\s+)?"
+    rf"|(?P<inside>{_alternation(_IN_WORDS)})\s+)?"
     r"(?P<a>\d{1,2})(?:(?:\s*[-~]\s*|\s+(?:a|to|or|ou|o|e|y|et|bis|und|oder|tot|en"
     r"|of|al)\s+)(?P<b>\d{1,2}))?\s*"
     rf"(?:(?P<bd>{_BUSINESS_UNITS})|(?P<cd>{_CALENDAR_UNITS}))(?![a-z])"
@@ -474,6 +544,9 @@ _RANGE_SEP_RE = re.compile(
 _DAY_BEFORE_RE = re.compile(
     rf"(?<![a-z0-9.,:/])(?P<d>[0-3]?\d){_ORDINAL}\.?\s*"
     rf"(?:[-~]|(?<![a-z])(?:{_SEP_WORDS}))\s*(?:{_ARTICLES}\s+)?\Z"
+)
+_WEEKDAY_RANGE_SEP_RE = re.compile(
+    rf"\s*,?\s*(?:-|(?<![a-z])(?:{_SEP_WORDS})(?![a-z]))\s*(?:{_ARTICLES}\s+)?"
 )
 _DAY_AFTER_RE = re.compile(
     r"\s*(?:[-~]|(?:to|till|until|through|thru|and)(?![a-z]))\s*(?:the\s+)?"
@@ -558,6 +631,7 @@ _WORD_RE = re.compile(r"[a-z0-9']+")
 
 _STRONG_RE = re.compile(rf"(?<![a-z])(?:{_alternation(STRONG_ANCHORS)})(?![a-z])")
 _WEAK_RE = re.compile(rf"(?<![a-z])(?:{_alternation(WEAK_ANCHORS)})(?![a-z])")
+_NEW_DATE_RE = re.compile(rf"(?<![a-z])(?:{_alternation(NEW_DATE_ANCHORS)})(?![a-z])")
 _OTHER_DATE_RE = re.compile(
     rf"(?<![a-z])(?:{_alternation(OTHER_DATE_PHRASES)})(?![a-z])"
 )
@@ -586,8 +660,12 @@ class _Atom:
     high: int = 0
     business: bool = False
     within: bool = False
+    # A number of days with no "in" or "within" before it: a duration.
+    bare: bool = False
     month_first: bool = False
     named_month: bool = False
+    # The first day of a range written on the date: 26 in "26-28/11".
+    first_day: int = 0
 
 
 def _reference_date(reference: datetime, tz: tzinfo) -> date:
@@ -694,6 +772,13 @@ def _find_atoms(
         for match in regex.finditer(s, start, end):
             if atom := _date_atom(match, s):
                 found.append(atom)
+    for regex in _NUM_RANGE_RES:
+        for match in regex.finditer(s, start, end):
+            if atom := _date_atom(match, s):
+                # A weekday in front names the first day, not the last.
+                atom.weekday = None
+                atom.first_day = int(match.group("a"))
+                found.append(atom)
     for match in _WEEKDAY_RE.finditer(s, start, end):
         name = " ".join(match.group("wd").split())
         if name in _PT_SHORT_WEEKDAYS and (
@@ -728,6 +813,7 @@ def _find_atoms(
                 high=high,
                 business=business,
                 within=match.group("within") is not None,
+                bare=match.group("within") is None and match.group("inside") is None,
             )
         )
     found.sort(key=lambda atom: (atom.start, atom.start - atom.end))
@@ -847,11 +933,13 @@ def _expression(
     atom = atoms[index]
     span_start, span_end = atom.start, atom.end
     if atom.kind == "span":
+        # "within 5 days" starts tomorrow; "within 3-5 days" on day 3.
+        low = 1 if atom.within and atom.low == atom.high else atom.low
         if atom.business:
-            first = add_business_days(ref, 1 if atom.within else atom.low)
+            first = add_business_days(ref, low)
             last = add_business_days(ref, atom.high)
         else:
-            first = ref + timedelta(days=1 if atom.within else atom.low)
+            first = ref + timedelta(days=low)
             last = ref + timedelta(days=atom.high)
         return first, max(first, last), span_start, span_end
 
@@ -877,21 +965,17 @@ def _expression(
         else:
             end = _resolve_point(following, ref, after=start) or start
         span_end = following.end
+    elif atom.kind == "date" and atom.first_day:
+        if first := _range_start(start, atom.first_day):
+            start = first
     elif atom.kind == "date" and atom.named_month and not atom.month_first:
         before = _DAY_BEFORE_RE.search(s, max(0, atom.start - 40), atom.start)
-        if before and atom.weekday is None:
-            first_day = int(before.group("d"))
-            if 1 <= first_day < start.day:
-                start, end = start.replace(day=first_day), start
-                span_start = before.start()
-            elif first_day > start.day:
-                # "30 - 2 December" starts in the previous month.
-                previous = (start.replace(day=1) - timedelta(days=1)).replace(day=1)
-                with contextlib.suppress(ValueError):
-                    first = previous.replace(day=first_day)
-                    if (start - first).days <= MAX_CALENDAR_DAYS:
-                        start, end = first, start
-                        span_start = before.start()
+        if (
+            before
+            and atom.weekday is None
+            and (first := _range_start(start, int(before.group("d"))))
+        ):
+            start, span_start = first, before.start()
     elif atom.kind == "date" and atom.month_first:
         after = _DAY_AFTER_RE.match(s, atom.end)
         if after:
@@ -918,9 +1002,48 @@ def _expression(
         if after and (found := _weekday_with_day(atom, int(after.group("d")), ref)):
             start = end = found
             span_end = after.end()
+            # "entre el jueves 26 y el sabado 28 de noviembre"
+            if (
+                following is not None
+                and _WEEKDAY_RANGE_SEP_RE.fullmatch(s, span_end, following.start)
+                and (last := _range_end(following, s, start))
+            ):
+                end, span_end = last
     if end < start:
         start, end = end, start
     return start, end, span_start, span_end
+
+
+def _range_start(last: date, first_day: int) -> date | None:
+    """Return the first date of a range that ends on ``last`` ("26-28 Nov")."""
+    if 1 <= first_day < last.day:
+        return last.replace(day=first_day)
+    if first_day > last.day:
+        # "30 - 2 December" starts in the previous month.
+        previous = (last.replace(day=1) - timedelta(days=1)).replace(day=1)
+        with contextlib.suppress(ValueError):
+            first = previous.replace(day=first_day)
+            if (last - first).days <= MAX_CALENDAR_DAYS:
+                return first
+    return None
+
+
+def _range_end(atom: _Atom, s: str, start: date) -> tuple[date, int] | None:
+    """Return the last date of a range that starts on ``start``, and its end.
+
+    ``atom`` is the date or the weekday with a day that ends the range.
+    """
+    if atom.kind == "date" and not atom.first_day:
+        last = _date_on_or_after(atom, start)
+        end = atom.end
+    elif atom.kind == "weekday" and (after := _WEEKDAY_DAY_RE.match(s, atom.end)):
+        last = _weekday_with_day(atom, int(after.group("d")), start)
+        end = after.end()
+    else:
+        return None
+    if last is None or not 0 < (last - start).days <= MAX_CALENDAR_DAYS:
+        return None
+    return last, end
 
 
 def _mask(s: str, spans: Iterable[tuple[int, int]], start: int, end: int) -> str:
@@ -937,11 +1060,14 @@ def _eta_from(
 ) -> Eta | None:
     """Return the first ETA among the atoms; with ``max_gap``, it must be near."""
     for index, atom in enumerate(atoms):
+        expression = _expression(atoms, index, s, ref)
         if max_gap is not None:
-            gap = s[start : atom.start]
+            # A range starts before its date: "zwischen dem 26. und 28. November".
+            gap = s[
+                start : min(atom.start, expression[2]) if expression else atom.start
+            ]
             if _OTHER_DATE_RE.search(gap) or len(_WORD_RE.findall(gap)) > max_gap:
                 return None
-        expression = _expression(atoms, index, s, ref)
         if expression is None:
             continue
         first, last, span_start, span_end = expression
@@ -1006,6 +1132,7 @@ def find_eta(
     s = _prepare(text)
     ref = _reference_date(reference, tz)
     for anchor_re, max_gap in (
+        (_NEW_DATE_RE, NEW_DATE_MAX_GAP_WORDS),
         (_STRONG_RE, STRONG_MAX_GAP_WORDS),
         (_VERB_FINAL_RE, STRONG_MAX_GAP_WORDS),
         (_WEAK_RE, WEAK_MAX_GAP_WORDS),
@@ -1033,6 +1160,705 @@ def find_eta(
                     eta = Eta(eta.start, eta.end, window[0], window[1])
             return eta
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class DateExpression:
+    """A date or date range written in an e-mail."""
+
+    start: date
+    end: date
+    # A date to collect, pay, return or be refunded by, or a hold period.
+    deadline: bool = False
+    # An order, shipping, offer or superseded delivery date.
+    other: bool = False
+
+
+# What a deadline is about. Stems match the start of a word; a stem only
+# makes a deadline with a limit word ("until", "até", "bis zum", ...) right
+# before the date, or before a number of days.
+_DEADLINE_STEMS = (
+    # Collect.
+    "collect",
+    "pick up",
+    "pick it up",
+    "pickup",
+    "pick-up",
+    "levant",
+    "recolh",
+    "recoge",
+    "recogi",
+    "recoj",
+    "retir",
+    "ritir",
+    "recuper",
+    "abhol",
+    "abzuhol",
+    "ophal",
+    "afhal",
+    "op te halen",
+    # Hold.
+    "held",
+    "kept",
+    "stored",
+    "guardad",
+    "reservad",
+    "conserv",
+    "custodi",
+    "giacenz",
+    "aufbewahr",
+    "gelagert",
+    "bewaar",
+    "bewaren",
+    # Pay.
+    "pay",
+    "paid",
+    "paga",
+    "pague",
+    "paghi",
+    "bezahl",
+    "zahl",
+    "begleich",
+    "entricht",
+    "paie",
+    "paiement",
+    "payer",
+    "regler",
+    "reglez",
+    "reglement",
+    "acquitt",
+    "saldar",
+    "abonar",
+    "abone",
+    "betal",
+    "betaal",
+    "voldoen",
+    "settle",
+    # Duties and taxes.
+    "duty",
+    "duties",
+    "import fee",
+    "import charge",
+    "import tax",
+    "direitos aduaneiros",
+    "direitos de importacao",
+    "taxas aduaneiras",
+    "arancel",
+    "derechos de aduana",
+    "derechos de importacion",
+    "impost",
+    "impuest",
+    "einfuhrabgab",
+    "zollgebuhr",
+    "zollabgab",
+    "droits de douane",
+    "droits d'importation",
+    "dazi",
+    "dazio",
+    "diritti doganali",
+    "invoerrecht",
+    "inklaringskosten",
+    "heffing",
+    # Available (at a pickup point).
+    "availab",
+    "dispon",
+    "verfugbar",
+    "beschikbaar",
+    # Return.
+    "return",
+    "send back",
+    "send it back",
+    "drop off",
+    "devol",
+    "zuruck",
+    "rucksend",
+    "ruckgabe",
+    "retour",
+    "renvo",
+    "restitu",
+    "rispedi",
+    "terugstur",
+    "terugzend",
+    "inlever",
+    "depos",
+    "abgeb",
+    # Refund.
+    "refund",
+    "reembols",
+    "erstatt",
+    "gutschrift",
+    "gutgeschrieben",
+    "rembours",
+    "rimbors",
+    "terugbetal",
+    "terugstort",
+    # Cancel.
+    "cancel",
+    "annul",
+    "anula",
+    "storn",
+    # Expire.
+    "expir",
+    "valid",
+    "gultig",
+    "ablauf",
+    "verfall",
+    "valabl",
+    "scad",
+    "caduc",
+    "vence",
+    "vencim",
+    "verloop",
+    "verval",
+    "geldig",
+)
+_DEADLINE_WORDS = (
+    "hole",
+    "holen",
+    "haal",
+    "garde",
+    "gardee",
+    "gardons",
+    "garder",
+    "pago",
+    "reso",
+    "resi",
+)
+# These make a deadline on their own.
+_DEADLINE_NOUNS = (
+    "deadline",
+    "last day",
+    "limit",
+    "limite",
+    "data limite",
+    "prazo limite",
+    "ultimo dia",
+    "fecha limite",
+    "plazo limite",
+    "frist",
+    "fristen",
+    "letzter tag",
+    "date limite",
+    "dernier jour",
+    "termine ultimo",
+    "ultimo giorno",
+    "uiterste datum",
+    "laatste dag",
+)
+_LIMIT_WORDS = (
+    "until",
+    "till",
+    "by",
+    "before",
+    "no later than",
+    "at the latest",
+    "ate",
+    "antes de",
+    "antes do",
+    "antes da",
+    "o mais tardar",
+    "hasta",
+    "antes del",
+    "a mas tardar",
+    "bis",
+    "bis spatestens",
+    "spatestens",
+    "vor",
+    "jusqu'au",
+    "jusqu'a",
+    "avant",
+    "au plus tard",
+    "entro",
+    "fino al",
+    "fino a",
+    "prima del",
+    "prima di",
+    "al piu tardi",
+    "tot",
+    "tot en met",
+    "t/m",
+    "voor",
+    "uiterlijk",
+)
+# Before a number of days ("kept for 14 days", "reservada durante 7 dias").
+_PERIOD_WORDS = (
+    "for",
+    "during",
+    "up to",
+    "durante",
+    "por",
+    "no prazo de",
+    "num prazo de",
+    "en el plazo de",
+    "fur",
+    "pendant",
+    "dans un delai de",
+    "per",
+    "nel termine di",
+    "gedurende",
+    "binnen een termijn van",
+)
+_LIMIT_FILLERS = (
+    r"(?:the|o|a|ao|dia|el|la|le|il|lo|al|del|zum|zur|den|dem|de|het|on|op|am|em)"
+)
+# Next to these, a date is when the order was placed or sent. Stems match
+# the start of a word, words the whole word.
+_SHIP_STEMS = (
+    "enviad",
+    "expedid",
+    "despachad",
+    "encomendad",
+    "efetuad",
+    "realizad",
+    "comprad",
+    "expedie",
+    "envoye",
+    "spedit",
+    "inviat",
+    "ordinat",
+    "acquistat",
+    "effettuat",
+)
+_SHIP_WORDS = (
+    "shipped",
+    "dispatched",
+    "sent",
+    "posted",
+    "ordered",
+    "placed",
+    "purchased",
+    "bought",
+    "versandt",
+    "verschickt",
+    "versendet",
+    "bestellt",
+    "aufgegeben",
+    "gekauft",
+    "verzonden",
+    "verstuurd",
+    "besteld",
+    "geplaatst",
+    "gekocht",
+)
+# German and Dutch put these after the date ("ist am 15.11. versandt").
+_SHIP_AFTER_WORDS = (
+    "versandt",
+    "verschickt",
+    "versendet",
+    "bestellt",
+    "aufgegeben",
+    "gekauft",
+    "verzonden",
+    "verstuurd",
+    "besteld",
+    "geplaatst",
+    "gekocht",
+)
+# A delivery date that has been replaced. Stems match the start of a word.
+_SUPERSEDED_STEMS = (
+    "original",
+    "originar",
+    "previous",
+    "initial",
+    "inicial",
+    "inizial",
+    "anterior",
+    "preced",
+    "ursprungl",
+    "bisher",
+    "oorspronkelijk",
+    "aanvankelijk",
+    "auparavant",
+)
+_SUPERSEDED_BEFORE = (
+    "was due",
+    "were due",
+    "was scheduled",
+    "was expected",
+    "was planned",
+    "old delivery",
+    "estava prevista",
+    "estava previsto",
+    "estava agendada",
+    "estava agendado",
+    "estava marcada",
+    "estava marcado",
+    "estava programada",
+    "estava programado",
+    "estaba prevista",
+    "estaba previsto",
+    "estaba programada",
+    "estaba programado",
+    "war fur",
+    "war am",
+    "alter liefertermin",
+    "alten liefertermin",
+    "etait prevue",
+    "etait prevu",
+    "ancienne date",
+    "era prevista",
+    "era previsto",
+    "in origine",
+    "stond gepland",
+    "was gepland",
+    "was verwacht",
+)
+# After a superseded word, these make the date the new one ("previously
+# announced delivery has been moved to 24/11").
+_CHANGED_STEMS = (
+    "moved",
+    "changed",
+    "reschedul",
+    "postpon",
+    "delayed",
+    "adiad",
+    "reagendad",
+    "remarcad",
+    "alterad",
+    "aplazad",
+    "reprogramad",
+    "retrasad",
+    "cambiad",
+    "verschoben",
+    "verlegt",
+    "geandert",
+    "reporte",
+    "decale",
+    "modifi",
+    "posticipat",
+    "rinviat",
+    "spostat",
+    "uitgesteld",
+    "verschoven",
+    "gewijzigd",
+    "verplaatst",
+)
+_NEW_WORDS = (
+    "new",
+    "now",
+    "nova",
+    "novo",
+    "agora",
+    "nueva",
+    "nuevo",
+    "ahora",
+    "neu",
+    "neue",
+    "neuer",
+    "neues",
+    "neuen",
+    "nun",
+    "jetzt",
+    "nouvelle",
+    "nouveau",
+    "maintenant",
+    "desormais",
+    "nuova",
+    "nuovo",
+    "ora",
+    "adesso",
+    "nieuw",
+    "nieuwe",
+    "nu",
+)
+_SUPERSEDED_AFTER = (
+    "was delayed",
+    "is delayed",
+    "has been delayed",
+    "was postponed",
+    "has been postponed",
+    "was rescheduled",
+    "has been rescheduled",
+    "was changed",
+    "has changed",
+    "has been changed",
+    "was moved",
+    "has been moved",
+    "foi adiada",
+    "foi adiado",
+    "foi reagendada",
+    "foi reagendado",
+    "foi remarcada",
+    "foi remarcado",
+    "foi alterada",
+    "foi alterado",
+    "se ha retrasado",
+    "se ha aplazado",
+    "ha sido aplazada",
+    "ha sido aplazado",
+    "ha sido retrasada",
+    "ha sido retrasado",
+    "ha sido reprogramada",
+    "ha sido reprogramado",
+    "ha cambiado",
+    "fue aplazada",
+    "fue retrasada",
+    "wurde verschoben",
+    "wurde geandert",
+    "hat sich verzogert",
+    "verzogert sich",
+    "verschiebt sich",
+    "a ete reportee",
+    "a ete reporte",
+    "a ete decalee",
+    "a ete decale",
+    "est reportee",
+    "est reporte",
+    "a ete modifiee",
+    "a ete modifie",
+    "e stata posticipata",
+    "e stato posticipato",
+    "e stata rinviata",
+    "e stato rinviato",
+    "e stata spostata",
+    "e stato spostato",
+    "e stata modificata",
+    "e slittata",
+    "e slittato",
+    "is uitgesteld",
+    "is verschoven",
+    "is gewijzigd",
+    "is verplaatst",
+)
+_CLAUSE_BREAK_RE = re.compile(r"[!?;\n|\u2022]|\.\s+")
+_AFTER_BREAK_RE = re.compile(r"[,.;:!?\n|()\u2022-]")
+# A German date's own full stop ("am 20.11. zugestellt") ends no clause.
+_DATE_DOT_RE = re.compile(r"\.[ \t]+(?=[^\W\d_])")
+_DEADLINE_STEM_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation(_DEADLINE_STEMS)}"
+    rf"|(?:{_alternation(_DEADLINE_WORDS)})(?![a-z]))"
+)
+_DEADLINE_NOUN_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation(_DEADLINE_NOUNS)})(?![a-z])"
+)
+_LIMIT_END_RE = re.compile(
+    rf"(?<![a-z'/])(?:{_alternation(_LIMIT_WORDS)})"
+    rf"(?:\s+{_LIMIT_FILLERS})*\s*[,:]?\s*\Z"
+)
+_PERIOD_END_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation(_PERIOD_WORDS)})(?:\s+{_LIMIT_FILLERS})?\s*\Z"
+)
+_SHIP_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation(_SHIP_STEMS)}"
+    rf"|(?:{_alternation(_SHIP_WORDS)})(?![a-z]))"
+)
+_SHIP_AFTER_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation(_SHIP_AFTER_WORDS)})(?![a-z])"
+)
+_SUPERSEDED_BEFORE_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation(_SUPERSEDED_STEMS)}"
+    rf"|(?:{_alternation(_SUPERSEDED_BEFORE)})(?![a-z]))"
+)
+_CHANGED_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation(_CHANGED_STEMS)}"
+    rf"|(?:{_alternation(_NEW_WORDS)})(?![a-z]))"
+)
+_SUPERSEDED_AFTER_RE = re.compile(rf"\s*(?:{_alternation(_SUPERSEDED_AFTER)})(?![a-z])")
+# "vom 20.11. auf den 24.11. verschoben", "van 20/11 naar 24/11 verplaatst":
+# the first date is the replaced one.
+_MOVED_FROM_RE = re.compile(r"(?<![a-z])(?:vom|van)\s*\Z")
+_MOVED_TO_RE = re.compile(r"\s*(?:auf|naar)\s+(?:(?:den|dem|de|het)\s+)?\d")
+# A date right after a past "was" is no pending delivery date: "Expected
+# delivery was 20 November", "A entrega prevista era 20/11", "Der
+# Liefertermin war der 20.11.".
+_WAS_RE = re.compile(
+    r"(?<![a-z])(?:was|were|era|estava|estaba|war|etait)\s+"
+    r"(?:(?:the|on|o|a|dia|el|der|den|am|le|il|op|para|per|pour)\s+)?\Z"
+)
+_PARTICIPLE_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation(VERB_FINAL_PARTICIPLES)})(?![a-z])"
+)
+_CONJUNCTION_RE = re.compile(
+    r"(?<![a-z])(?:and|und|en|et|e|y|ed|or|oder|of|ou|o)(?![a-z])"
+)
+# A delivery word in a place ("ponto de entrega", "adresse de livraison",
+# "delivery address") doesn't introduce a delivery date.
+_PLACE_BEFORE_RE = re.compile(
+    r"(?<![a-z])(?:pontos?|puntos?|points?|local|lugar|morada|endereco"
+    r"|direccion|adresse|indirizzo|centro|centre|oficina|bureau|ufficio)"
+    r"\s+(?:(?:de|di|du|da|do|del|della|de\s+la)\s+|d')?\Z"
+)
+_PLACE_AFTER_RE = re.compile(r"\s*(?:point|address|location|adres)(?![a-z])")
+_SALE_DAY_RE = re.compile(r"(?<![a-z])(?:black|cyber)\s*\Z")
+CLAUSE_MAX_CHARS = 160
+DEADLINE_MAX_WORDS = 10
+OTHER_MAX_WORDS = 5
+SHIP_MAX_WORDS = 3
+AFTER_MAX_WORDS = 4
+
+
+def _clause_start(s: str, text: str, pos: int) -> int:
+    """Return where the clause that ends at ``pos`` starts.
+
+    A clause ends at a line break, at ``!?;|`` or at a full stop followed
+    by a capital letter in the original text.
+    """
+    start = max(0, pos - CLAUSE_MAX_CHARS)
+    for match in _CLAUSE_BREAK_RE.finditer(s, start, pos):
+        end = match.end()
+        if match.group(0)[0] != "." or (end < len(text) and text[end].isupper()):
+            start = end
+    return start
+
+
+def _last_words(s: str, count: int) -> str:
+    """Return the end of ``s`` that holds its last ``count`` words."""
+    words = list(_WORD_RE.finditer(s))
+    return s[words[-count].start() :] if len(words) > count else s
+
+
+def _first_words(s: str, count: int) -> str:
+    """Return the start of ``s`` that holds its first ``count`` words."""
+    words = list(_WORD_RE.finditer(s))[:count]
+    return s[: words[-1].end()] if words else ""
+
+
+def _after_anchor(s: str) -> str:
+    """Return the text after the last delivery phrase in ``s``.
+
+    A delivery word in a place ("ponto de entrega") is no delivery phrase.
+    """
+    end = 0
+    for regex in (_STRONG_RE, _WEAK_RE):
+        for match in regex.finditer(s):
+            if _PLACE_BEFORE_RE.search(
+                s, max(0, match.start() - 30), match.start()
+            ) or _PLACE_AFTER_RE.match(s, match.end()):
+                continue
+            end = max(end, match.end())
+    return s[end:]
+
+
+def _date_dot(text: str, pos: int) -> bool:
+    """Return True when a full stop at ``pos`` belongs to a German date."""
+    match = _DATE_DOT_RE.match(text, pos)
+    return bool(match and text[match.end()].islower())
+
+
+def _is_deadline(before: str, after: str, atom: _Atom) -> bool:
+    """Return True when the words around a date make it a deadline."""
+    tail = _last_words(_after_anchor(before), DEADLINE_MAX_WORDS)
+    if _DEADLINE_NOUN_RE.search(tail):
+        return True
+    limited = bool(_LIMIT_END_RE.search(before))
+    if atom.kind == "span":
+        limited = (
+            limited or atom.within or atom.bare or bool(_PERIOD_END_RE.search(before))
+        )
+    if not limited:
+        return False
+    if _DEADLINE_STEM_RE.search(tail):
+        return True
+    # "hasta el 28/11 para recogerlo", "until 30 November to collect it".
+    following = _first_words(after, AFTER_MAX_WORDS)
+    return bool(
+        _DEADLINE_STEM_RE.search(following)
+        and not _STRONG_RE.search(following)
+        and not _WEAK_RE.search(following)
+    )
+
+
+def _delivered_after(after: str) -> bool:
+    """Return True when a delivery participle follows the date in its clause.
+
+    "versandt und am 20.11. zugestellt": the date is the delivery's.
+    """
+    following = _first_words(after, AFTER_MAX_WORDS)
+    match = _PARTICIPLE_RE.search(following)
+    return bool(match and not _CONJUNCTION_RE.search(following, 0, match.start()))
+
+
+def _is_other(before: str, after: str, atom: _Atom) -> bool:
+    """Return True when the words around a date make it a non-delivery date."""
+    tail = _after_anchor(before)
+    if _OTHER_DATE_RE.search(_last_words(tail, OTHER_MAX_WORDS)):
+        return True
+    near = tail.rsplit(",", 1)[-1]
+    if not _delivered_after(after) and (
+        _SHIP_RE.search(_last_words(near, SHIP_MAX_WORDS))
+        or _SHIP_AFTER_RE.search(_first_words(after, SHIP_MAX_WORDS))
+    ):
+        return True
+    recent = _last_words(before, DEADLINE_MAX_WORDS)
+    superseded = [match.end() for match in _SUPERSEDED_BEFORE_RE.finditer(recent)]
+    if superseded and not _CHANGED_RE.search(recent, superseded[-1]):
+        return True
+    if _SUPERSEDED_AFTER_RE.match(after):
+        return True
+    if _MOVED_FROM_RE.search(before) and _MOVED_TO_RE.match(after):
+        return True
+    if _WAS_RE.search(before):
+        return True
+    return atom.kind == "weekday" and bool(_SALE_DAY_RE.search(before))
+
+
+def _located_expressions(
+    text: str, reference: datetime, tz: tzinfo, lang: str | None
+) -> list[tuple[DateExpression, int, int]]:
+    """Return the date expressions in ``text`` with where each one is."""
+    text = text[:MAX_FIND_CHARS]
+    s = _prepare(text)
+    ref = _reference_date(reference, tz)
+    atoms = _find_atoms(s, text, 0, len(s), lang)
+    found: list[tuple[DateExpression, int, int]] = []
+    previous_end = 0
+    for index, atom in enumerate(atoms):
+        if atom.start < previous_end:
+            continue
+        expression = _expression(atoms, index, s, ref)
+        if expression is None:
+            continue
+        first, last, span_start, span_end = expression
+        before = s[max(previous_end, _clause_start(s, text, span_start)) : span_start]
+        rest = s[span_end : span_end + CLAUSE_MAX_CHARS]
+        if _date_dot(text, span_end):
+            rest = " " + rest[1:]
+        after = _AFTER_BREAK_RE.split(rest)[0]
+        found.append(
+            (
+                DateExpression(
+                    first,
+                    last,
+                    deadline=_is_deadline(before, after, atom),
+                    other=_is_other(before, after, atom),
+                ),
+                span_start,
+                span_end,
+            )
+        )
+        previous_end = span_end
+    return found
+
+
+def date_expressions(
+    text: str, reference: datetime, tz: tzinfo, lang: str | None = None
+) -> list[DateExpression]:
+    """Return the dates and date ranges written in an e-mail, in order.
+
+    Each one says whether its words make it a deadline (a date to collect,
+    pay, return or be refunded by, or the end of a hold period) or another
+    date that isn't a delivery date (an order, shipping, offer or
+    superseded date). Words before a date belong to it only when no other
+    date comes between them.
+    """
+    return [found for found, _, _ in _located_expressions(text, reference, tz, lang)]
+
+
+def find_delivery_eta(
+    text: str, reference: datetime, tz: tzinfo, lang: str | None = None
+) -> Eta | None:
+    """Find a delivery date like :func:`find_eta`, skipping other dates.
+
+    Deadlines and order, shipping, offer or superseded dates are blanked
+    out first, so a delivery phrase never takes them ("Entrega prevista
+    para 20/11 foi adiada. Nova data: 24/11" gives 24/11).
+    """
+    text = text[:MAX_FIND_CHARS]
+    chars = list(text)
+    for found, start, end in _located_expressions(text, reference, tz, lang):
+        if found.deadline or found.other:
+            chars[start:end] = " " * (end - start)
+    return find_eta("".join(chars), reference, tz, lang)
 
 
 _TIME = (

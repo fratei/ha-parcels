@@ -4,6 +4,9 @@ The answer is untrusted. ``validate_output`` keeps only the values it can
 check and records an error code for every value it drops:
 
 * ``kind`` must be one of ``MailKind``; otherwise the answer is unusable.
+  When the parsers' keyword detector finds a kind in the e-mail, the
+  model's kind stays only if the e-mail's wording also gives it and it
+  takes precedence over the detected one; else the detected kind is used.
 * Tracking and order numbers must be written in the e-mail (sender name,
   subject, body or the tracking numbers in its links), allowing the spaces,
   dashes and dots the e-mail printed. Tracking numbers must also pass the
@@ -11,10 +14,18 @@ check and records an error code for every value it drops:
   reads the subject and body as well, so a number the model missed is still
   found; the model's numbers are only extra candidates. Values marked as
   order, phone or tax numbers, or written only as a delivery or pickup
-  code, are excluded.
+  code, are excluded. An order number the model miscopied by a character
+  becomes the e-mail's number when exactly one number is that close. In a
+  carrier's e-mail, an "order" that is the carrier's tracking number and
+  isn't labelled as an order moves to the tracking numbers.
 * Dates and times are normalized in code from the forms models write
   (``9h``, ``09:00:00.000Z``, ``19/11``, ``19 de novembro``, ``amanhã``),
   and dates must fall between 2 days before and 60 days after the e-mail.
+  Kinds with no pending delivery have no delivery date. A date the e-mail
+  gives only as a deadline (to collect, pay, return or be refunded by), an
+  order or shipping date or a replaced date is dropped, and the date next
+  to a delivery phrase, as the parsers read it, replaces a model date that
+  differs from it (business days are counted here, not by the model).
 * The carrier comes from the sender's domain when it is a carrier's, else
   from the model's answer when the e-mail names that carrier, else from the
   sender name, else from each tracking number's format.
@@ -22,7 +33,13 @@ check and records an error code for every value it drops:
   the pickup code (a pickup code, delivery PIN or one-time code) must be
   written in the e-mail and can't be one of the tracking or order numbers.
   Items the e-mail lists only under a recommendations heading ("Buy again",
-  "Recommended for you") are dropped, and repeated items are merged.
+  "Recommended for you") are dropped, and repeated items are merged. The
+  e-mail's carrier is never the merchant (unless it is also a shop, like
+  Amazon), and a merchant given as a domain becomes the name the e-mail
+  spells for it. Unless the parcel waits for pickup or missed its
+  delivery, a pickup point must be written as one (a pickup, locker or
+  collection word on its line or the line before) and name a place, not a
+  kind of place ("a post office").
 
 The confidence is computed here, never taken from the model: 0.8 when no
 value was dropped and the result has a grounded identifier, else 0.5.
@@ -40,12 +57,31 @@ import unicodedata
 from ..const import CARRIER_NAMES, MailKind
 from ..parsers.amazon import product_buttons
 from ..parsers.base import Eta, MailMessage, ParsedShipment, ParseResult
-from ..parsers.carriers import brand_carriers
+from ..parsers.carriers import brand_carriers, phrase_regex
+from ..parsers.carriers._phrases import PICKUP_NAME_LABELS, PICKUP_POINT_LABELS
 from ..parsers.codes import code_spans, compact_code, mask_codes
-from ..parsers.eta import parse_eta, parse_time_window
+from ..parsers.eta import (
+    date_expressions,
+    find_delivery_eta,
+    parse_eta,
+    parse_time_window,
+)
+from ..parsers.generic import (
+    KIND_BODY_CHARS,
+    KIND_PRECEDENCE,
+    clean_sender_name,
+    detect_kind,
+    text_kinds,
+)
 from ..parsers.items import drop_recommended, unique_items
-from ..parsers.lang import MONTHS, WEEKDAY_ABBREVIATIONS, WEEKDAYS, fold
-from ..parsers.senders import lookup, organizational_domain
+from ..parsers.lang import (
+    MONTHS,
+    WEEKDAY_ABBREVIATIONS,
+    WEEKDAYS,
+    detect_language,
+    fold,
+)
+from ..parsers.senders import KNOWN_SENDERS, lookup, organizational_domain
 from ..parsers.tracking import (
     detect_carrier,
     find_tracking_numbers,
@@ -66,15 +102,45 @@ MAX_ORDER_NUMBERS = 10
 MAX_ITEMS = 10
 MAX_ITEM_CHARS = 80
 MAX_MERCHANT_CHARS = 60
+# A shop's name is read from a line only for domains this long ("ab.pt" no).
+MIN_DOMAIN_NAME_CHARS = 4
 MAX_PICKUP_POINT_CHARS = 120
 MAX_PICKUP_CODE_CHARS = 20
 LABEL_WINDOW_CHARS = 40
 
 NOTE_ADDED_BY_DETECTOR = "tracking_added_by_detector"
 NOTE_ITEM_RECOMMENDED = "item_recommended"
+NOTE_KIND_FROM_TEXT = "kind_from_text"
+NOTE_ETA_DROPPED_FOR_KIND = "eta_dropped_for_kind"
+NOTE_ETA_FROM_TEXT = "eta_from_text"
+NOTE_ORDER_MOVED_TO_TRACKING = "order_moved_to_tracking"
+NOTE_ORDER_FROM_TEXT = "order_from_text"
+NOTE_MERCHANT_IS_CARRIER = "merchant_is_carrier"
+NOTE_MERCHANT_FROM_SENDER = "merchant_from_sender_name"
+NOTE_MERCHANT_FROM_TEXT = "merchant_from_text"
+NOTE_PICKUP_POINT_DROPPED = "pickup_point_not_pickup"
+NOTE_PICKUP_POINT_GENERIC = "pickup_point_generic"
+
+# A miscopied order number is repaired only when it is this long, and only
+# by this many changed characters (more from REPAIR_LONG_CHARS on).
+REPAIR_MIN_CHARS = 6
+REPAIR_LONG_CHARS = 12
 
 # In these e-mails a bare "Code:" names the code to collect the parcel.
 _LOCKER_KINDS = frozenset({MailKind.READY_FOR_PICKUP, MailKind.ATTEMPTED})
+# No delivery is pending in these e-mails, so their dates are deadlines
+# (to collect, pay or return by) or past dates, never delivery dates.
+_NO_ETA_KINDS = frozenset(
+    {
+        MailKind.READY_FOR_PICKUP,
+        MailKind.CUSTOMS,
+        MailKind.DELIVERED,
+        MailKind.RETURN,
+        MailKind.CANCELLED,
+        MailKind.NOT_PARCEL,
+    }
+)
+_ETA_FIELDS = ("eta_start", "eta_end", "window_start", "window_end")
 
 # Carrier domains that aren't listed as carriers in parsers/senders.py.
 EXTRA_CARRIER_DOMAINS: dict[str, str] = {"sda.it": "sda", "vintedgo.com": "vinted_go"}
@@ -224,6 +290,80 @@ _NUMBER_RE = re.compile(r"^[0-9A-Z]{4,40}$")
 _ORDER_RE = re.compile(r"^(?=[^0-9]*[0-9])[0-9A-Za-z]{3,40}$")
 _PICKUP_CODE_RE = re.compile(r"^[0-9A-Za-z]{3,20}$")
 _LIST_SPLIT_RE = re.compile(r"[,;\n]+")
+# Numbers written in the e-mail, to repair a miscopied order number.
+_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Za-z]+(?:[\-./][0-9A-Za-z]+)*")
+_DATE_TOKEN_RE = re.compile(r"^\d{1,4}[\-./]\d{1,2}(?:[\-./]\d{1,4})?$")
+# A shop written as its domain ("loja-exemplo.example").
+_DOMAIN_RE = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}", re.IGNORECASE
+)
+# Words that make a place a pickup point: labels, lockers and the verbs to
+# collect a parcel, folded.
+_PICKUP_WORDS_RE = phrase_regex(
+    (
+        *PICKUP_POINT_LABELS,
+        *PICKUP_NAME_LABELS,
+        "levant*",
+        "recolh*",
+        "recog*",
+        "retir*",
+        "punto pack",
+        "pickup",
+        "pick-up",
+        "pick up",
+        "collect",
+        "for collection",
+        "abhol*",
+        "retrait",
+        "relais",
+        "ritir*",
+        "ophal*",
+        "ophaal*",
+        "afhaal*",
+        "afhal*",
+    )
+)
+# Articles, possessives and "nearest" around a kind of place, folded.
+_PICKUP_FILLER_WORDS = frozenset(
+    {
+        *("a", "an", "the", "your", "our", "nearest", "closest", "local"),
+        *("o", "os", "as", "um", "uma", "no", "na", "num", "numa", "ao", "seu"),
+        *("sua", "mais", "proximo", "proxima", "perto"),
+        *("el", "la", "los", "las", "un", "una", "al", "su", "cercano"),
+        *("cercana", "de", "del"),
+        *("ein", "eine", "einer", "einem", "einen", "der", "die", "das"),
+        *("den", "dem", "ihre", "ihrer", "ihrem", "nachste", "nachsten"),
+        *("nachstgelegene", "nachstgelegenen", "in"),
+        *("le", "les", "l", "une", "votre", "plus", "proche", "au", "du"),
+        *("il", "lo", "gli", "uno", "vostro", "vicino", "vicina", "piu"),
+        *("alla", "nel", "nella"),
+        *("het", "een", "uw", "dichtstbijzijnde", "bij"),
+    }
+)
+_PLACE_SPLIT_RE = re.compile(r"[\s'\u2019]+")
+
+
+def _place_words(text: str) -> tuple[str, ...]:
+    """Return the folded words of a place, without articles and the like."""
+    words = (word.strip('.,;:!?()[]"') for word in _PLACE_SPLIT_RE.split(fold(text)))
+    return tuple(word for word in words if word and word not in _PICKUP_FILLER_WORDS)
+
+
+# A kind of place, not a place: "eine Filiale", "the nearest pickup point".
+_GENERIC_PICKUP_PLACES = frozenset(
+    _place_words(label)
+    for label in (
+        *PICKUP_POINT_LABELS,
+        *PICKUP_NAME_LABELS,
+        "post office",
+        "postamt",
+        "bureau de poste",
+        "ufficio postale",
+        "oficina de correos",
+        "estacao de correios",
+        "postkantoor",
+    )
+)
 
 # Times
 _NOON_WORDS = frozenset(
@@ -296,6 +436,24 @@ _WEEKDAY_PREFIX_RE = re.compile(
 _DATE_ARTICLE_RE = re.compile(
     r"^(?:(?:on|the|le|el|il|lo|o|a|am|op|dia|den|dem|der|de|jour)\s+)+(?=\d)"
 )
+# Signs that an e-mail talks about a date at all, beyond what the ETA parser
+# reads: a day and month, an ordinal day, a month or weekday name, or a
+# number of days, weeks or months.
+_DATE_EVIDENCE_RE = re.compile(
+    r"(?<![\d.,])(?:[0-2]?\d|3[01])\s*[./-]\s*(?:0?[1-9]|1[0-2])(?![\d,])"
+    r"|(?<![\d.,])(?:[0-2]?\d|3[01])(?:st|nd|rd|th|er|eme|o|a)(?![a-z])"
+    rf"|(?<![a-z])(?:{'|'.join(sorted({*MONTHS, *WEEKDAYS}, key=len, reverse=True))})"
+    r"(?![a-z])"
+    r"|(?<![a-z])(?:weeks?|semanas?|wochen?|semaines?|settiman[ae]|weken|months?"
+    r"|mes|meses|monate?n?|mois|mesi|mese|maanden|maand|business|working|uteis|util"
+    r"|laborables?|habiles?|werktag\w*|arbeitstag\w*|ouvr\w*|lavorativ\w*|feriali"
+    r"|werkdag\w*|lendemain|next day|dia seguinte|dia siguiente|giorno successivo"
+    r"|nachsten tag|volgende dag)(?![a-z])"
+    # A promise in hours: "24/48h", "48 horas", "24 Stunden".
+    r"|(?<![\d.,:])(?:24|36|48|72|96)\s*(?:(?:[-/]|\s(?:a|to|or|e|y|o|ou|et|bis"
+    r"|oder|tot|of)\s)\s*(?:24|36|48|72|96)\s*)?"
+    r"(?:h|hrs?|horas?|hours?|heures?|ore|stunden|std|uur)(?![a-z])"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,6 +518,16 @@ def map_carrier(name: str, *, prefix: bool = True) -> str | None:
         ):
             best = (alias, carrier)
     return best[1] if best else None
+
+
+# Carriers that are also shops: "Amazon" stays the merchant of an Amazon
+# Logistics parcel.
+_SHOP_CARRIERS = frozenset(
+    carrier
+    for info in KNOWN_SENDERS.values()
+    if info.kind == "merchant"
+    and (carrier := map_carrier(info.name, prefix=False)) is not None
+)
 
 
 def sender_carrier(message: MailMessage) -> str | None:
@@ -596,6 +764,9 @@ class _Checker:
         self.reference = self.received.date()
         subject = message.subject or ""
         text = message.text or ""
+        self.language = message.language or detect_language(
+            f"{subject}\n{text[:KIND_BODY_CHARS]}"
+        )
         body = email_body(message)
         self.links = link_entries(link.url for link in message.links)
         link_numbers = [number for _, numbers in self.links for number in numbers]
@@ -644,11 +815,13 @@ class _Checker:
         self.read_codes(kind)
         merchant = self.merchant()
         items = self.items()
-        pickup_point = self.pickup_point()
+        pickup_point = self.pickup_point(kind)
         pickup_code = self.pickup_code()
         orders = self.orders()
         carrier = self.carrier()
-        numbers, detected = self.tracking_numbers(carrier, orders)
+        merchant = self.checked_merchant(merchant, carrier)
+        orders, moved = self.carrier_orders(orders, carrier)
+        numbers, detected = self.tracking_numbers(carrier, orders, moved)
         strong = {number for number, _ in numbers if is_strong_number(number)}
         kept_orders = []
         for order in orders:
@@ -665,7 +838,7 @@ class _Checker:
             # A tracking or order number is never the code.
             self.error("pickup_code_is_number")
             pickup_code = None
-        eta = self.eta()
+        eta = self.checked_eta(kind)
         if kind is MailKind.NOT_PARCEL:
             if any(n not in detected or n in strong for n, _ in numbers):
                 self.error("not_parcel_has_tracking")
@@ -700,9 +873,46 @@ class _Checker:
         if not isinstance(value, str):
             return None
         try:
-            return MailKind(re.sub(r"[\s\-]+", "_", value.strip().lower()))
+            kind = MailKind(re.sub(r"[\s\-]+", "_", value.strip().lower()))
         except ValueError:
             return None
+        return self.checked_kind(kind)
+
+    def checked_kind(self, kind: MailKind) -> MailKind:
+        """Return the kind the e-mail's own wording gives, if it disagrees.
+
+        Models tend to read a later step into an e-mail: an order
+        confirmation becomes "shipped", "out for delivery" becomes
+        "delivered". When the parsers' keyword detector finds a kind, the
+        model's kind stays only if the e-mail's wording also gives it and it
+        takes precedence over the detected one; "not a parcel" and "unknown"
+        always stay. A replaced kind is a note, not an error.
+        """
+        if kind not in KIND_PRECEDENCE:
+            return kind
+        subject = self.message.subject or ""
+        text = self.message.text or ""
+        lang = self.language
+        # "On its way" fits a parcel just shipped as well as one in transit:
+        # it alone doesn't decide between them.
+        found = {
+            detect_kind(subject, text, lang=lang)[0],
+            detect_kind(subject, text, lang=lang, on_the_way=False)[0],
+        }
+        detected = next((k for k in KIND_PRECEDENCE if k in found), None)
+        if detected is None or detected is kind:
+            return kind
+        supported = text_kinds(subject, text, lang=lang, on_the_way=False)
+        if MailKind.SHIPPED not in supported and MailKind.SHIPPED in text_kinds(
+            subject, text, lang=lang
+        ):
+            supported |= {MailKind.SHIPPED, MailKind.IN_TRANSIT}
+        if kind in supported and (
+            KIND_PRECEDENCE.index(kind) <= KIND_PRECEDENCE.index(detected)
+        ):
+            return kind
+        self.notes.append(NOTE_KIND_FROM_TEXT)
+        return detected
 
     def read_codes(self, kind: MailKind) -> None:
         """Find the values the e-mail writes as a delivery or pickup code."""
@@ -740,6 +950,57 @@ class _Checker:
             return None
         return text
 
+    def checked_merchant(self, merchant: str | None, carrier: str | None) -> str | None:
+        """Drop the carrier given as the merchant; name a shop given as a domain.
+
+        The merchant is the shop. A merchant that is this e-mail's carrier
+        ("YunExpress" in YunExpress's own e-mail) is dropped, unless that
+        carrier is also a shop (Amazon). A merchant written as a domain
+        ("loja-exemplo.example") becomes the shop's name when the sender's
+        display name or a line of the e-mail spells the domain ("Loja
+        Exemplo").
+        """
+        if merchant is None:
+            return None
+        named = map_carrier(merchant)
+        if (
+            named is not None
+            and named not in _SHOP_CARRIERS
+            and named in {carrier, self.sender_hint, self.name_carrier}
+        ):
+            self.notes.append(NOTE_MERCHANT_IS_CARRIER)
+            return None
+        if _DOMAIN_RE.fullmatch(merchant) and (found := self.domain_name(merchant)):
+            name, note = found
+            if name != merchant:
+                self.notes.append(note)
+            return name
+        return merchant
+
+    def domain_name(self, domain: str) -> tuple[str, str] | None:
+        """Return the shop's name as the e-mail spells ``domain``'s name.
+
+        The sender's display name comes first ("Loja Exemplo" for
+        loja-exemplo.example); otherwise a line that is only that name, such
+        as the shop's signature. Returns the name and the note to add.
+        """
+        label = organizational_domain(domain.lower()).partition(".")[0]
+        key = _alnum(label)
+        name = clean_sender_name(self.message.sender_name or "")
+        if name is not None and map_carrier(name) is None and _alnum(name) == key:
+            return name, NOTE_MERCHANT_FROM_SENDER
+        if len(key) < MIN_DOMAIN_NAME_CHARS:
+            return None
+        for line in (self.message.text or "").splitlines():
+            line = " ".join(line.split())
+            if (
+                0 < len(line) <= MAX_MERCHANT_CHARS
+                and _alnum(line) == key
+                and map_carrier(line) is None
+            ):
+                return line, NOTE_MERCHANT_FROM_TEXT
+        return None
+
     def items(self) -> tuple[str, ...]:
         values = _as_list(self.data.get("items"))
         if values is None:
@@ -770,7 +1031,7 @@ class _Checker:
             self.notes.append(NOTE_ITEM_RECOMMENDED)
         return tuple(unique_items(kept))
 
-    def pickup_point(self) -> str | None:
+    def pickup_point(self, kind: MailKind) -> str | None:
         try:
             text = _text_value(self.data.get("pickup_point"))
         except _Unreadable:
@@ -781,7 +1042,38 @@ class _Checker:
         if len(text) > MAX_PICKUP_POINT_CHARS or not _is_plain(text):
             self.error("pickup_point_invalid")
             return None
+        if kind not in _LOCKER_KINDS and not self.written_as_pickup(text):
+            # A shop's or the customer's address isn't a pickup point.
+            self.notes.append(NOTE_PICKUP_POINT_DROPPED)
+            return None
+        if kind not in _LOCKER_KINDS and _generic_place(text):
+            # "eine Filiale" where the parcel may go if nobody is home.
+            self.notes.append(NOTE_PICKUP_POINT_GENERIC)
+            return None
         return text
+
+    def written_as_pickup(self, value: str) -> bool:
+        """Return True when the e-mail writes ``value`` as a pickup point.
+
+        A pickup, locker or collection word must be on the value's line or
+        the line before; when the value isn't found in the e-mail, anywhere.
+        """
+        lines = [
+            " ".join(line.split())
+            for line in fold(
+                f"{self.message.subject or ''}\n{self.message.text or ''}"
+            ).splitlines()
+        ]
+        lines = [line for line in lines if line]
+        head = " ".join(fold(value).split(",")[0].split())
+        rows = [index for index, line in enumerate(lines) if head and head in line]
+        if not rows:
+            return any(_PICKUP_WORDS_RE.search(line) for line in lines)
+        return any(
+            _PICKUP_WORDS_RE.search(line)
+            for index in rows
+            for line in lines[max(0, index - 1) : index + 1]
+        )
 
     def pickup_code(self) -> str | None:
         try:
@@ -826,14 +1118,73 @@ class _Checker:
                     self.error("order_invalid")
                     continue
                 match = _written_pattern(compact, r"\s\-./").search(self.number_text)
-                if match is None:
+                if match is not None:
+                    printed = "".join(match.group(0).split())
+                elif (printed := self.repaired_order(compact)) is not None:
+                    if NOTE_ORDER_FROM_TEXT not in self.notes:
+                        self.notes.append(NOTE_ORDER_FROM_TEXT)
+                    compact = _compact(printed)
+                else:
                     self.error("order_not_in_email")
                     continue
-                printed = "".join(match.group(0).split())
                 if compact.upper() not in seen:
                     seen.add(compact.upper())
                     orders.append(printed)
         return orders
+
+    def repaired_order(self, compact: str) -> str | None:
+        """Return the e-mail's number that the model miscopied as ``compact``.
+
+        Small models drop or change a digit when they copy a long number.
+        When exactly one number in the e-mail is one character away (two
+        from 12 characters on), and the e-mail doesn't give it as a tracking
+        number, a code, a date or a phone or tax number, that number is used.
+        """
+        if len(compact) < REPAIR_MIN_CHARS:
+            return None
+        limit = 1 if len(compact) < REPAIR_LONG_CHARS else 2
+        tracking = self.tracking_candidates()
+        best: dict[str, str] = {}
+        best_distance = limit + 1
+        for match in _TOKEN_RE.finditer(self.detector_text):
+            token = match.group(0)
+            candidate = _compact(token).upper()
+            if (
+                len(candidate) < REPAIR_MIN_CHARS
+                or not _ORDER_RE.match(candidate)
+                or _DATE_TOKEN_RE.match(token)
+                or candidate in tracking
+                or is_strong_number(candidate)
+                or compact_code(candidate) in self.code_values
+                or _labelled(
+                    self.detector_text,
+                    _written_pattern(candidate, r"\s\-./"),
+                    _OTHER_NUMBER_LABEL_RE,
+                )
+            ):
+                continue
+            distance = _edit_distance(compact.upper(), candidate, limit)
+            if distance < best_distance:
+                best_distance = distance
+                best = {candidate: token}
+            elif distance == best_distance:
+                best[candidate] = token
+        if len(best) != 1:
+            return None
+        return next(iter(best.values()))
+
+    def tracking_candidates(self) -> set[str]:
+        """Return the numbers the e-mail or the model give as tracking numbers."""
+        numbers = {match.number for match in find_tracking_numbers(self.scan_text)}
+        numbers.update(number for _, found in self.links for number in found)
+        values = _as_list(self.data.get("tracking_numbers")) or []
+        numbers.update(
+            normalize_tracking_number(piece.rpartition(":")[2].strip().lstrip("#"))
+            for value in values
+            if isinstance(value, str)
+            for piece in _LIST_SPLIT_RE.split(value)
+        )
+        return {_compact(number).upper() for number in numbers}
 
     def sender_name_carrier(self) -> str | None:
         """Return the carrier named as the sender ("DPD Portugal").
@@ -877,17 +1228,55 @@ class _Checker:
         numbers += [number for _, found in self.links for number in found]
         return any(detect_carrier(number) == carrier for number in numbers)
 
+    def carrier_orders(
+        self, orders: list[str], carrier: str | None
+    ) -> tuple[list[str], list[str]]:
+        """Move the parcel's own number out of the orders of a carrier's e-mail.
+
+        Models read "Your parcel 123…" in a carrier's e-mail as an order
+        number. A model order that the detector reads as this carrier's
+        tracking number, or that a tracking link carries, is the parcel's
+        number unless the e-mail labels it as an order: it is moved to the
+        tracking numbers. Returns the orders left and the numbers moved.
+        """
+        if carrier is None or not (self.sender_hint or self.name_carrier):
+            return orders, []
+        found = {
+            match.number
+            for match in find_tracking_numbers(self.scan_text, carrier=carrier)
+        }
+        found.update(number for _, numbers in self.links for number in numbers)
+        kept: list[str] = []
+        moved: list[str] = []
+        for order in orders:
+            number = normalize_tracking_number(order)
+            if (
+                number in found
+                and _number_carrier(number, carrier)[0]
+                and not self.code_only(number)
+                and not _labelled(
+                    self.detector_text, _tracking_pattern(number), _ORDER_LABEL_RE
+                )
+            ):
+                moved.append(number)
+            else:
+                kept.append(order)
+        if moved:
+            self.notes.append(NOTE_ORDER_MOVED_TO_TRACKING)
+        return kept, moved
+
     def tracking_numbers(
-        self, carrier: str | None, orders: list[str]
+        self, carrier: str | None, orders: list[str], moved: list[str]
     ) -> tuple[list[tuple[str, str | None]], set[str]]:
         """Return the final numbers and carriers, and those only code found.
 
         The model's numbers count when they are written in the e-mail and
         pass the carrier's rules; the code's detector adds what it finds.
+        ``moved`` holds the model's orders that are tracking numbers.
         """
         orders_compact = {_compact(order).upper() for order in orders}
         found: dict[str, str | None] = {}
-        for number in self.ai_numbers():
+        for number in [*self.ai_numbers(), *moved]:
             if number in found:
                 continue
             valid, number_carrier = _number_carrier(number, carrier)
@@ -958,6 +1347,81 @@ class _Checker:
         if _labelled(self.detector_text, pattern, _OTHER_NUMBER_LABEL_RE):
             return "tracking_is_other_number"
         return None
+
+    def checked_eta(self, kind: MailKind) -> Eta | None:
+        """Return the delivery date, checked against the dates in the e-mail.
+
+        Models take deadlines (to collect, pay, return or be refunded by),
+        hold periods and replaced dates for delivery dates, and count
+        business days wrongly. So:
+
+        * kinds with no pending delivery have no delivery date;
+        * the model's date stays when the e-mail writes exactly that date
+          or range, and it isn't a deadline, an order or shipping date or a
+          replaced date;
+        * otherwise the date next to a delivery phrase, as the parsers read
+          it, is used;
+        * otherwise the model's date is dropped when it has passed, when the
+          e-mail gives it only as one of those other dates, or when the
+          e-mail mentions no date at all.
+        """
+        if kind in _NO_ETA_KINDS:
+            if any(self.data.get(field) for field in _ETA_FIELDS):
+                self.notes.append(NOTE_ETA_DROPPED_FOR_KIND)
+            return None
+        eta = self.eta()
+        subject = self.message.subject or ""
+        text = self.message.text or ""
+        expressions = date_expressions(
+            f"{subject}\n{text}", self.received, self.tz, self.language
+        )
+        candidates = {
+            (found.start, found.end)
+            for found in expressions
+            if not (found.deadline or found.other) and found.end >= self.reference
+        }
+        flagged = {
+            (found.start, found.end)
+            for found in expressions
+            if found.deadline or found.other
+        } - candidates
+        if eta is not None and (eta.start, eta.end) in candidates:
+            return eta
+        found = find_delivery_eta(
+            text, self.received, self.tz, self.language
+        ) or find_delivery_eta(subject, self.received, self.tz, self.language)
+        if (
+            found is not None
+            and found.end >= self.reference
+            and (found.start, found.end) not in flagged
+        ):
+            if eta is None or (found.start, found.end) != (eta.start, eta.end):
+                self.notes.append(NOTE_ETA_FROM_TEXT)
+            if eta is None or found.window_start or found.window_end:
+                return found
+            return Eta(found.start, found.end, eta.window_start, eta.window_end)
+        if eta is None:
+            return None
+        if not any(
+            start <= eta.end and eta.start <= end for start, end in candidates
+        ) and (
+            eta.end < self.reference
+            or (eta.start, eta.end) in flagged
+            or eta.end in {end for _, end in flagged}
+        ):
+            self.error("eta_not_delivery_date")
+            return None
+        if (
+            not expressions
+            and not _DATE_EVIDENCE_RE.search(fold(f"{subject}\n{text}"))
+            and not (
+                kind is MailKind.OUT_FOR_DELIVERY
+                and eta.start == eta.end == self.reference
+            )
+        ):
+            self.error("eta_not_in_text")
+            return None
+        return eta
 
     def eta(self) -> Eta | None:
         start_span = self.date_span("eta_start")
@@ -1077,6 +1541,44 @@ class _Checker:
 
 def _compact(value: str) -> str:
     return re.sub(r"[^0-9A-Za-z]", "", value)
+
+
+def _alnum(text: str) -> str:
+    return re.sub(r"[^0-9a-z]", "", fold(text))
+
+
+def _generic_place(text: str) -> bool:
+    """Return True when ``text`` names a kind of place, not a place.
+
+    "eine Filiale" or "the nearest DHL Packstation" says nothing about where
+    the parcel is; "Packstation 123" or "Kiosk Beispiel" does.
+    """
+    words = _place_words(text)
+    if words in _GENERIC_PICKUP_PLACES:
+        return True
+    named = tuple(word for word in words if map_carrier(word, prefix=False) is None)
+    return bool(named) and named in _GENERIC_PICKUP_PLACES
+
+
+def _edit_distance(first: str, second: str, limit: int) -> int:
+    """Return the Levenshtein distance, or ``limit + 1`` when it is larger."""
+    if abs(len(first) - len(second)) > limit:
+        return limit + 1
+    previous = list(range(len(second) + 1))
+    for row, char in enumerate(first, 1):
+        current = [row]
+        for column, other in enumerate(second, 1):
+            current.append(
+                min(
+                    previous[column] + 1,
+                    current[column - 1] + 1,
+                    previous[column - 1] + (char != other),
+                )
+            )
+        if min(current) > limit:
+            return limit + 1
+        previous = current
+    return min(previous[-1], limit + 1)
 
 
 def _number_carrier(number: str, carrier: str | None) -> tuple[bool, str | None]:

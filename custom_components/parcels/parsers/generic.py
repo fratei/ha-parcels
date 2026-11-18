@@ -83,6 +83,33 @@ NO_ETA_KINDS = frozenset({MailKind.DELIVERED, MailKind.RETURN, MailKind.CANCELLE
 # Kinds whose e-mails may give a locker code under a bare "Code:" label.
 _LOCKER_KINDS = frozenset({MailKind.READY_FOR_PICKUP, MailKind.ATTEMPTED})
 
+# "On its way" is SHIPPED for the parsers, but it fits a parcel in transit
+# as well; ``detect_kind(..., on_the_way=False)`` leaves these out.
+ON_THE_WAY_PHRASES: tuple[str, ...] = (
+    r"(?:order|package|parcel|shipment|item|items)s? (?:is|are) (?:now )?on"
+    r" (?:its|their|the) way",
+    r"on (?:its|their) way to you",
+    r"(?:esta|estao|vai|segue|seguiu) a caminho",
+    r"(?:esta|estan|va|van) en camino",
+    r"(?:sendung|paket|bestellung|lieferung)(?:en)? (?:ist|sind) (?:jetzt |nun )?"
+    r"(?:unterwegs|auf dem weg)",
+    r"auf dem weg zu (?:ihnen|dir)",
+    r"(?:est|sont) (?:en route|en chemin)",
+    r"(?:e|sono) in (?:viaggio|arrivo)",
+    r"(?:pakket|pakketje|bestelling|zending)(?:en)? (?:is|zijn) (?:nu )?onderweg",
+    r"(?:is|zijn) onderweg naar (?:je|jou|u)(?: toe)?",
+)
+ON_THE_WAY_KEYWORDS: tuple[str, ...] = (
+    r"on (?:its|the|their) way",
+    r"a caminho",
+    r"(?:en|de) camino",
+    r"unterwegs",
+    r"auf dem weg",
+    r"en (?:route|chemin)",
+    r"in (?:arrivo|viaggio)",
+    r"onderweg",
+)
+
 KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
     MailKind.CANCELLED: (
         r"(?:has|have) been cancell?ed",
@@ -178,6 +205,54 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"(?:vastgehouden|tegengehouden) (?:door|bij) de douane",
         r"(?:is|ligt) bij de douane",
         r"inklaring (?:vereist|in behandeling)",
+        # Import charges to pay before delivery. Each phrase starts at its
+        # verb or noun, so "may need to pay" and "wenn ... fällig" stay guarded.
+        r"(?:a |the )?(?:fee|charges?|payment) (?:is |are )?(?:now )?(?:due|outstanding"
+        r"|required) (?:on|for) (?:your|this|the) (?:item|parcel|package|shipment)",
+        r"(?:import|customs) (?:vat|duty|duties|charges?|fees?|taxes|tax)"
+        r" (?:is |are )?(?:now )?(?:due|payable|outstanding|unpaid)",
+        r"(?:need|needs|have|has|must|required) to pay (?:the |a |an |your |any )?"
+        r"(?:import|customs) (?:vat|duty|duties|charges?|fees?|taxes|tax)",
+        r"(?:e necessario|tem de|tem que|precisa de|deve) pagar (?:o )?iva",
+        r"(?:e necessario|tem de|tem que|precisa de|deve) pagar (?:os |as |o |a )?"
+        r"(?:impostos?|taxas?|direitos|despesas) (?:de importacao|aduaneir[oa]s"
+        r"|alfandegari[oa]s|de desalfandegamento)",
+        r"(?:iva de importacao|(?:impostos?|taxas?|direitos|despesas) (?:de importacao"
+        r"|aduaneir[oa]s|alfandegari[oa]s|de desalfandegamento))"
+        r" (?:a pagar|por pagar|em divida|pendentes?)",
+        r"(?:aguarda|a aguardar|pendente de) (?:o )?pagamento (?:de |do |dos |da |das )?"
+        r"(?:iva|impostos?|taxas?|direitos|despesas)",
+        r"(?:debe|debes|tiene que|tienes que|es necesario|necesitas|necesita)"
+        r" (?:pagar|abonar) (?:el |los |la |las )?(?:iva|aranceles|(?:impuestos?"
+        r"|derechos|tasas|gastos) (?:de importacion|aduaner[oa]s|de aduanas?))",
+        r"(?:iva de importacion|aranceles|(?:impuestos?|derechos|tasas|gastos)"
+        r" (?:de importacion|aduaner[oa]s|de aduanas?))"
+        r" (?:pendientes? de pago|a pagar|por pagar)",
+        r"pendiente del? pago de (?:los |las |el |la )?(?:iva|impuestos?|aranceles"
+        r"|derechos|tasas|gastos)",
+        r"(?:zollgebuhren|einfuhrabgaben|einfuhrumsatzsteuer|zollabgaben|importgebuhren)"
+        r" (?:sind |ist )?(?:noch )?(?:offen|fallig|zu (?:be)?zahlen|ausstehend)",
+        r"(?:bezahlen|zahlen|begleichen|entrichten) sie (?:bitte )?(?:die |den )?"
+        r"(?:zollgebuhren|einfuhrabgaben|einfuhrumsatzsteuer|zollabgaben|importgebuhren)",
+        r"(?:droits|frais|taxes|tva) (?:de douane|d'importation|douaniers"
+        r"|a l'importation) (?:sont |est )?(?:a payer|a regler|dus|impayes"
+        r"|en attente de paiement)",
+        r"(?:devez|merci de|veuillez) (?:payer|regler|acquitter) (?:les |la |des )?"
+        r"(?:droits|frais|taxes|tva) (?:de douane|d'importation|douaniers"
+        r"|a l'importation)",
+        r"en attente (?:de |du )?paiement (?:des |de la |du )?(?:droits|frais|taxes|tva)",
+        r"(?:devi|deve|e necessario|occorre) pagare (?:i |gli |le |l'|la )?"
+        r"(?:dazi(?: doganali)?|(?:oneri|tasse|diritti) (?:doganali|di importazione)"
+        r"|iva (?:all'importazione|di importazione))",
+        r"(?:dazi(?: doganali)?|(?:oneri|tasse|diritti) (?:doganali|di importazione))"
+        r" (?:da pagare|in sospeso|non pagati)",
+        r"in attesa (?:del )?pagamento (?:dei |degli |delle |del |della )?"
+        r"(?:dazi|oneri|tasse|diritti|iva)",
+        r"(?:betaal|betalen|voldoe|voldoen) (?:de |je |uw )?(?:invoerkosten"
+        r"|invoerrechten|inklaringskosten|douanekosten|importkosten)",
+        r"(?:invoerkosten|invoerrechten|inklaringskosten|douanekosten|importkosten)"
+        r" (?:moeten |moet )?(?:nog )?(?:worden )?(?:betaald|te betalen|betalen"
+        r"|openstaand|verschuldigd)",
     ),
     MailKind.READY_FOR_PICKUP: (
         r"ready (?:for|to be) (?:pick ?-?up|picked up|collect(?:ed|ion))",
@@ -421,6 +496,8 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"dedouanee?s?",
         r"dedouanement (?:termine|effectue)",
         r"(?:e|sono) in transito",
+        r"(?:e|sono) partit[oaie] (?:dal|dall'|dallo|dalla|dai|dagli|dalle) ?(?:centro"
+        r"|hub|deposito|filiale)",
         r"sdoganat[oaie]",
         r"(?:is |wordt |werd )?gesorteerd",
         r"(?:in|bij) (?:het|ons) (?:sorteercentrum|distributiecentrum)",
@@ -434,48 +511,43 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"(?:order|package|parcel|item|items|shipment)s? (?:has|have) been"
         r" (?:sent|posted)",
         r"(?:shipping|shipment|dispatch) (?:confirmation|notification|notice)",
-        r"(?:order|package|parcel|shipment|item|items)s? (?:is|are) (?:now )?on"
-        r" (?:its|their|the) way",
-        r"on (?:its|their) way to you",
+        *ON_THE_WAY_PHRASES,
         r"(?:order|package|parcel|shipment)s? (?:has|have) left",
         r"handed (?:over )?to (?:the )?(?:carrier|courier)",
         r"we(?:'ve| have) (?:just )?(?:shipped|sent|dispatched|posted) your",
         r"(?:foi|foram) (?:enviad|expedid|despachad)[ao]s?",
-        r"(?:esta|estao|vai|segue|seguiu) a caminho",
         r"(?:enviamos|expedimos|despachamos) (?:a sua|o seu|a tua|o teu)",
         r"confirmacao de (?:envio|expedicao)",
         r"entregue (?:a|ao) (?:transportadora|transportador|estafeta)",
+        r"saiu (?:do|dos) (?:nosso|nossos) armaz(?:em|ens)",
         r"(?:ha|han) sido (?:enviad|expedid|despachad)[oa]s?",
         r"(?:fue|fueron) (?:enviad|expedid)[oa]s?",
-        r"(?:esta|estan|va|van) en camino",
         r"(?:hemos enviado|enviamos) (?:tu|su)",
         r"confirmacion de envio",
         r"entregad[oa] al transportista",
+        r"(?:ha|han) salido de (?:nuestro|nuestros) (?:almacen|almacenes)",
+        r"(?:ha|han) salido de nuestras instalaciones",
         r"(?:wurde|wurden|ist|sind) (?:heute |soeben |bereits |jetzt )*(?:versendet"
         r"|verschickt|versandt|abgeschickt)",
         r"versandbestatigung",
         r"versandbenachrichtigung",
-        r"(?:sendung|paket|bestellung|lieferung)(?:en)? (?:ist|sind) (?:jetzt |nun )?"
-        r"(?:unterwegs|auf dem weg)",
-        r"auf dem weg zu (?:ihnen|dir)",
         r"(?:hat|haben) (?:unser|das) lager verlassen",
         r"an (?:den |unseren )?(?:versanddienstleister|versandpartner|paketdienst"
-        r"|logistikpartner) ubergeben",
+        r"|logistikpartner|dhl|hermes|dpd|gls|ups|fedex|tnt|deutsche post"
+        r"|go express) ubergeben",
         r"(?:a|ont) ete (?:expediee?s?|envoyee?s?)",
-        r"(?:est|sont) (?:en route|en chemin)",
         r"(?:confirmation|avis) d'expedition",
         r"(?:a|ont) quitte (?:notre|nos) entrepots?",
         r"remise? (?:au|a votre) (?:transporteur|livreur)",
         r"(?:e|sono) stat[oaie] (?:spedit|inviat)[oaie]",
-        r"(?:e|sono) in (?:viaggio|arrivo)",
+        r"(?:spedizion[ei]|pacc(?:o|hi)|ordin[ei]|coll[oi])(?: n\.? ?[a-z0-9-]+)?"
+        r" (?:e|sono) partit[oaie]",
         r"abbiamo spedito",
         r"conferma di spedizione",
         r"(?:affidat|consegnat)[oaie] al corriere",
         r"(?:ha|hanno) lasciato il (?:nostro )?magazzino",
         r"(?:is|zijn|werd|werden) (?:vandaag |zojuist )*(?:verzonden|verstuurd)",
         r"verzendbevestiging",
-        r"(?:pakket|pakketje|bestelling|zending)(?:en)? (?:is|zijn) (?:nu )?onderweg",
-        r"(?:is|zijn) onderweg naar (?:je|jou|u)(?: toe)?",
         r"(?:we|wij) hebben (?:je|jouw|uw) (?:bestelling|pakket) (?:verzonden|verstuurd)",
         r"(?:overgedragen|meegegeven) aan (?:de )?(?:vervoerder|bezorger|postnl|dhl"
         r"|dpd|gls|ups)",
@@ -593,6 +665,18 @@ SUBJECT_KEYWORDS: dict[MailKind, tuple[str, ...]] = {
         r"dazi",
         r"inklaring",
         r"invoerrechten",
+        r"aduaneir[oa]s?",
+        r"alfandegari[oa]s?",
+        r"import (?:vat|duty|duties|charges?|fees?|taxes)",
+        r"iva de importa(?:cao|cion)",
+        r"iva all'importazione",
+        r"aranceles",
+        r"einfuhrumsatzsteuer",
+        r"tva a l'importation",
+        r"(?:frais|droits|taxes) d'importation",
+        r"invoerkosten",
+        r"inklaringskosten",
+        r"douanekosten",
     ),
     MailKind.READY_FOR_PICKUP: (
         r"pick ?-?up (?:code|reminder|notice|notification|available)",
@@ -688,28 +772,21 @@ SUBJECT_KEYWORDS: dict[MailKind, tuple[str, ...]] = {
     MailKind.SHIPPED: (
         r"shipped",
         r"dispatched",
-        r"on (?:its|the|their) way",
+        *ON_THE_WAY_KEYWORDS,
         r"(?:shipping|shipment|dispatch) (?:confirmation|notification|update)",
         r"enviad[oa]s?",
         r"expedid[oa]s?",
         r"despachad[oa]s?",
-        r"a caminho",
-        r"(?:en|de) camino",
         r"versendet",
         r"verschickt",
         r"versandt",
-        r"unterwegs",
-        r"auf dem weg",
         r"versand(?:bestatigung|benachrichtigung|info)",
         r"expediee?s?",
         r"envoyee?s?",
-        r"en (?:route|chemin)",
         r"spedit[oaie]",
         r"inviat[oaie]",
-        r"in (?:arrivo|viaggio)",
         r"verzonden",
         r"verstuurd",
-        r"onderweg",
     ),
     MailKind.ORDER: (
         r"(?:order|pedido|encomenda|bestellung|commande|ordine|bestelling)"
@@ -763,15 +840,66 @@ CONDITIONAL_WORDS: frozenset[str] = frozenset(
         *("zodra", "wanneer", "nadat", "totdat", "geval"),
     }
 )
-# "If" is "si" in Spanish and French, "se" in Portuguese and Italian; the
-# same words are reflexive pronouns in the other languages.
+# "If" is "si" in Spanish and French, "se" in Portuguese and Italian and
+# "als" in Dutch; the same words are pronouns or "as" in the other
+# languages. Dutch puts "mogelijk" (possibly) a few words before the verb.
 CONDITIONAL_BY_LANGUAGE: dict[str, frozenset[str]] = {
     "es": frozenset({"si"}),
     "fr": frozenset({"si"}),
     "pt": frozenset({"se"}),
     "it": frozenset({"se"}),
+    "nl": frozenset(
+        {"als", "indien", "mocht", "mochten", "mogelijk", "misschien", "eventueel"}
+    ),
 }
 GUARD_WINDOW = 48
+
+# "Not at home?" and "if you're away" open a what-if: a pickup point in what
+# follows ("then we take it to a branch, where it waits 7 days") is an
+# option, not where the parcel is. Folded text.
+ABSENCE_PHRASES: tuple[str, ...] = (
+    r"not (?:at )?home",
+    r"not (?:going to |gonna )?be (?:at )?(?:home|in|there|around)",
+    r"(?:won't|wont|will not) be (?:at )?(?:home|in|there|around)",
+    r"(?:be|are|re|you) away",
+    r"(?:nobody|no one|no-one) (?:is |will be )?(?:at )?home",
+    r"nao (?:vai |vais |vao )?(?:estar|esta|estas|estara|estiver|estiveres|esteja"
+    r"|estejas) em casa",
+    r"no (?:vas a |va a |vais a |van a )?(?:estar|estas|esta|estaras|estara|estes"
+    r"|este) en casa",
+    r"ausentes?",
+    r"nicht (?:zu ?hause|daheim|da|anwesend)",
+    r"abwesend",
+    r"pas (?:chez (?:vous|toi)|a (?:la maison|domicile))",
+    r"(?:etes|serez|seras|es) pas la",
+    r"absente?s?",
+    r"non (?:sei|sarai|e|sara|siete|sarete) (?:a casa|in casa|presente)",
+    r"assent[ei]",
+    r"niet thuis",
+    r"afwezig",
+)
+# Past forms and words for a delivery attempt ("were you not at home?",
+# "absent lors de notre passage ?") describe what happened instead.
+ABSENCE_PAST_WORDS: frozenset[str] = frozenset(
+    {
+        *("was", "were", "wasn", "weren", "visit", "visited", "called", "came"),
+        *("tried", "attempt", "attempted"),
+        *("estava", "estavas", "estavam", "esteve", "estiveste", "tentativa"),
+        *("passamos", "tentamos"),
+        *("estaba", "estabas", "estaban", "estuvo", "estuviste", "intento"),
+        *("pasamos", "intentamos"),
+        *("war", "waren", "warst", "wart", "gewesen", "versucht"),
+        *("etais", "etait", "etiez", "etaient", "ete", "passage"),
+        *("eri", "era", "eravate", "erano", "stato", "stata", "stati"),
+        *("passaggio", "tentativo"),
+        *("geweest", "poging", "langs"),
+    }
+)
+# Dutch "if" words, only counted as a condition before an absence.
+_ABSENCE_CONDITIONS = frozenset({"als", "indien", "mocht", "mochten"})
+# A question covers the next sentences, a condition its own sentence.
+ABSENCE_QUESTION_SENTENCES = 2
+ABSENCE_REACH = 240
 
 # "Delivered to the carrier / pickup point / depot" is not a delivery to the
 # customer. Checked right after a DELIVERED match, pickup places first so
@@ -939,6 +1067,20 @@ _SUBJECT_RES: dict[MailKind, re.Pattern[str]] = {
     for kind in KIND_PRECEDENCE
     if kind in SUBJECT_KEYWORDS
 }
+_ON_THE_WAY = frozenset((*ON_THE_WAY_PHRASES, *ON_THE_WAY_KEYWORDS))
+_NEUTRAL_PHRASE_RES: dict[MailKind, re.Pattern[str]] = {
+    **_PHRASE_RES,
+    MailKind.SHIPPED: _compile(set(KIND_PHRASES[MailKind.SHIPPED]) - _ON_THE_WAY),
+}
+_NEUTRAL_SUBJECT_RES: dict[MailKind, re.Pattern[str]] = {
+    **_SUBJECT_RES,
+    MailKind.SHIPPED: _compile(set(SUBJECT_KEYWORDS[MailKind.SHIPPED]) - _ON_THE_WAY),
+}
+_ABSENCE_RE = _compile(ABSENCE_PHRASES)
+_QUESTION_TAIL_RE = re.compile(r"[^.!?\n]{0,40}\?")
+_CLAUSE_TAIL_RE = re.compile(r"[^.!?\n,;:]{0,40}")
+_SENTENCE_END_RE = re.compile(r"[.!?\n][\s.!?]*")
+_SENTENCE_START_RE = re.compile(r"[.!?\n](?=[^.!?\n]*$)")
 _HANDOVER_RES: tuple[tuple[MailKind, re.Pattern[str]], ...] = tuple(
     (
         kind,
@@ -987,6 +1129,47 @@ def _delivered_to(folded: str, end: int) -> MailKind | None:
     return None
 
 
+def _sentences_end(folded: str, start: int, count: int) -> int:
+    """Return where the ``count``-th sentence from ``start`` ends."""
+    limit = min(len(folded), start + ABSENCE_REACH)
+    position = start + len(folded[start:limit]) - len(folded[start:limit].lstrip())
+    for _ in range(count):
+        found = _SENTENCE_END_RE.search(folded, position, limit)
+        if found is None:
+            return limit
+        position = found.end()
+    return position
+
+
+def _absence_scopes(folded: str, conditional: frozenset[str]) -> list[tuple[int, int]]:
+    """Return the spans that "not at home?" or "if you're away" make a what-if.
+
+    A question covers the sentences after it, a condition its own sentence.
+    Past forms ("were you not at home?") describe what happened, so they
+    open no span.
+    """
+    scopes: list[tuple[int, int]] = []
+    for match in _ABSENCE_RE.finditer(folded):
+        head = folded[max(0, match.start() - GUARD_WINDOW) : match.start()]
+        cut = _SENTENCE_START_RE.search(head)
+        if cut is not None:
+            head = head[cut.end() :]
+        before = _TOKEN_RE.findall(head)[-4:]
+        question = _QUESTION_TAIL_RE.match(folded, match.end())
+        tail = question or _CLAUSE_TAIL_RE.match(folded, match.end())
+        words = [*before[-3:], *_TOKEN_RE.findall(tail.group() if tail else "")]
+        if any(word in ABSENCE_PAST_WORDS for word in words):
+            continue
+        if question is not None:
+            start = question.end()
+            end = _sentences_end(folded, start, ABSENCE_QUESTION_SENTENCES)
+            scopes.append((start, end))
+        elif any(word in conditional or word in _ABSENCE_CONDITIONS for word in before):
+            start = match.start() - len(head)
+            scopes.append((start, _sentences_end(folded, match.end(), 1)))
+    return scopes
+
+
 def _kinds(
     folded: str,
     regexes: Mapping[MailKind, re.Pattern[str]],
@@ -994,17 +1177,22 @@ def _kinds(
 ) -> set[MailKind]:
     """Return every kind with an unguarded match in folded text."""
     found: set[MailKind] = set()
+    scopes: list[tuple[int, int]] | None = None
     for kind, regex in regexes.items():
         for match in regex.finditer(folded):
             if _guarded(folded, match.start(), conditional):
                 continue
+            real = kind
             if kind is MailKind.DELIVERED:
-                other = _delivered_to(folded, match.end())
-                if other is not None:
-                    found.add(other)
+                real = _delivered_to(folded, match.end()) or kind
+            if real is MailKind.READY_FOR_PICKUP:
+                if scopes is None:
+                    scopes = _absence_scopes(folded, conditional)
+                if any(start <= match.start() < end for start, end in scopes):
                     continue
-            found.add(kind)
-            break
+            found.add(real)
+            if real is kind:
+                break
     return found
 
 
@@ -1013,29 +1201,71 @@ def _pick(kinds: set[MailKind]) -> MailKind | None:
     return next((kind for kind in KIND_PRECEDENCE if kind in kinds), None)
 
 
+def _conditional(lang: str | None) -> frozenset[str]:
+    """Return the words that make a following keyword a condition."""
+    return CONDITIONAL_WORDS | CONDITIONAL_BY_LANGUAGE.get(lang or "", frozenset())
+
+
+def _tables(
+    on_the_way: bool,
+) -> tuple[Mapping[MailKind, re.Pattern[str]], Mapping[MailKind, re.Pattern[str]]]:
+    """Return the phrase and subject regexes, with or without "on its way"."""
+    if on_the_way:
+        return _PHRASE_RES, _SUBJECT_RES
+    return _NEUTRAL_PHRASE_RES, _NEUTRAL_SUBJECT_RES
+
+
 def detect_kind(
-    subject: str, text: str = "", *, lang: str | None = None
+    subject: str,
+    text: str = "",
+    *,
+    lang: str | None = None,
+    on_the_way: bool = True,
 ) -> tuple[MailKind | None, str]:
     """Return the kind of a shipping e-mail and where it was found.
 
     The subject's phrases and keywords are checked first, then the phrases
     in the start of the body. Returns ``(kind, "subject")``,
     ``(kind, "body")`` or ``(None, "")``. ``lang`` decides whether "si" or
-    "se" means "if".
+    "se" means "if". With ``on_the_way=False``, "on its way" alone is no
+    evidence of SHIPPED.
     """
-    conditional = CONDITIONAL_WORDS | CONDITIONAL_BY_LANGUAGE.get(
-        lang or "", frozenset()
-    )
+    conditional = _conditional(lang)
+    phrases, keywords = _tables(on_the_way)
     folded_subject = fold(subject[:MAX_SUBJECT_CHARS])
-    for regexes in (_PHRASE_RES, _SUBJECT_RES):
+    for regexes in (phrases, keywords):
         kind = _pick(_kinds(folded_subject, regexes, conditional))
         if kind is not None:
             return kind, "subject"
     body = fold(_blank_links(text[:KIND_BODY_CHARS]))
-    kind = _pick(_kinds(body, _PHRASE_RES, conditional))
+    kind = _pick(_kinds(body, phrases, conditional))
     if kind is not None:
         return kind, "body"
     return None, ""
+
+
+def text_kinds(
+    subject: str,
+    text: str = "",
+    *,
+    lang: str | None = None,
+    on_the_way: bool = True,
+) -> set[MailKind]:
+    """Return every kind whose wording appears unguarded in an e-mail.
+
+    Unlike ``detect_kind``, which picks one kind, this returns all of them
+    from the subject's phrases and keywords and the start of the body, so a
+    caller can tell whether another reading is backed by the text too.
+    """
+    conditional = _conditional(lang)
+    phrases, keywords = _tables(on_the_way)
+    folded_subject = fold(subject[:MAX_SUBJECT_CHARS])
+    body = fold(_blank_links(text[:KIND_BODY_CHARS]))
+    return (
+        _kinds(folded_subject, phrases, conditional)
+        | _kinds(folded_subject, keywords, conditional)
+        | _kinds(body, phrases, conditional)
+    )
 
 
 # Order numbers: full labels ("Order number", "Número de pedido",

@@ -11,7 +11,17 @@ from custom_components.parcels.ai.validate import (
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
     NOTE_ADDED_BY_DETECTOR,
+    NOTE_ETA_DROPPED_FOR_KIND,
+    NOTE_ETA_FROM_TEXT,
     NOTE_ITEM_RECOMMENDED,
+    NOTE_KIND_FROM_TEXT,
+    NOTE_MERCHANT_FROM_SENDER,
+    NOTE_MERCHANT_FROM_TEXT,
+    NOTE_MERCHANT_IS_CARRIER,
+    NOTE_ORDER_FROM_TEXT,
+    NOTE_ORDER_MOVED_TO_TRACKING,
+    NOTE_PICKUP_POINT_DROPPED,
+    NOTE_PICKUP_POINT_GENERIC,
     Validation,
     carrier_scan_text,
     map_carrier,
@@ -164,7 +174,10 @@ def test_normalize_date_rejects(value: str) -> None:
 
 
 def test_corrupted_date_is_rejected_by_range() -> None:
-    """A date such as 1911-11-20 for 2026-11-19 falls outside the range."""
+    """A date such as 1911-11-20 for 2026-11-19 falls outside the range.
+
+    The date the e-mail gives next to a delivery phrase replaces it.
+    """
     result = checked(
         answer(
             kind="shipped",
@@ -176,7 +189,8 @@ def test_corrupted_date_is_rejected_by_range() -> None:
     )
     assert "eta_start_out_of_range" in result.notes
     assert "eta_end_out_of_range" in result.notes
-    assert result.shipments[0].eta is None
+    assert NOTE_ETA_FROM_TEXT in result.notes
+    assert result.shipments[0].eta == Eta(NOV_19, NOV_19)
     assert result.confidence == CONFIDENCE_LOW
 
 
@@ -191,41 +205,69 @@ def test_corrupted_date_is_rejected_by_range() -> None:
 )
 def test_date_range(value: str, accepted: bool) -> None:
     """Dates must lie between 2 days before and 60 days after the e-mail."""
-    result = checked(answer(kind="shipped", eta_start=value, eta_end=value))
-    eta = result.shipments[0].eta
-    if accepted:
-        assert eta == Eta(date.fromisoformat(value), date.fromisoformat(value))
+    day = date.fromisoformat(value)
+    result = checked(
+        answer(kind="shipped", eta_start=value, eta_end=value),
+        f"Entrega prevista a {day:%d/%m/%Y}.",
+    )
+    assert ("eta_start_out_of_range" in result.notes) is not accepted
+    if accepted and day >= REFERENCE:
+        assert result.shipments[0].eta == Eta(day, day)
         assert result.notes == ()
-    else:
-        assert eta is None
-        assert "eta_start_out_of_range" in result.notes
 
 
 def test_end_before_start() -> None:
     """An end date before the start is dropped."""
     result = checked(
-        answer(kind="shipped", eta_start="2026-11-20", eta_end="2026-11-19")
+        answer(kind="shipped", eta_start="2026-11-20", eta_end="2026-11-19"),
+        "Entrega prevista a 20/11.",
     )
     assert "eta_end_before_start" in result.notes
     assert result.shipments[0].eta == Eta(date(2026, 11, 20), date(2026, 11, 20))
 
 
 @pytest.mark.parametrize(
-    ("start", "end", "language", "expected"),
+    ("start", "end", "language", "text", "expected"),
     [
-        ("chega entre quinta e sábado", "", "pt", (NOV_19, date(2026, 11, 21))),
-        ("3\u20135 business days", "", "en", (date(2026, 11, 23), date(2026, 11, 25))),
-        ("amanhã", "amanhã", "pt", (NOV_19, NOV_19)),
-        ("quinta-feira, 19 de novembro", "", "pt", (NOV_19, NOV_19)),
-        ("", "2026-11-21", "pt", (date(2026, 11, 21), date(2026, 11, 21))),
+        (
+            "chega entre quinta e sábado",
+            "",
+            "pt",
+            "A encomenda chega entre quinta e sábado.",
+            (NOV_19, date(2026, 11, 21)),
+        ),
+        (
+            "3\u20135 business days",
+            "",
+            "en",
+            "Delivery in 3\u20135 business days.",
+            (date(2026, 11, 23), date(2026, 11, 25)),
+        ),
+        ("amanhã", "amanhã", "pt", "Chega amanhã.", (NOV_19, NOV_19)),
+        (
+            "quinta-feira, 19 de novembro",
+            "",
+            "pt",
+            "Entrega na quinta-feira, 19 de novembro.",
+            (NOV_19, NOV_19),
+        ),
+        (
+            "",
+            "2026-11-21",
+            "pt",
+            "Entrega prevista a 21/11.",
+            (date(2026, 11, 21), date(2026, 11, 21)),
+        ),
     ],
 )
 def test_free_text_dates(
-    start: str, end: str, language: str, expected: tuple[date, date]
+    start: str, end: str, language: str, text: str, expected: tuple[date, date]
 ) -> None:
     """Free-text dates are read relative to the e-mail's date."""
     result = checked(
-        answer(kind="shipped", eta_start=start, eta_end=end), language=language
+        answer(kind="shipped", eta_start=start, eta_end=end),
+        text,
+        language=language,
     )
     assert result.notes == ()
     assert result.shipments[0].eta == Eta(*expected)
@@ -263,7 +305,8 @@ def test_time_window(
             eta_end="2026-11-19",
             window_start=window_start,
             window_end=window_end,
-        )
+        ),
+        "Entrega a 19/11.",
     )
     assert result.notes == ()
     assert result.shipments[0].eta == Eta(NOV_19, NOV_19, *expected)
@@ -277,7 +320,8 @@ def test_window_end_before_start() -> None:
             eta_start="2026-11-19",
             window_start="13:00",
             window_end="09:00",
-        )
+        ),
+        "Entrega a 19/11.",
     )
     assert "window_end_before_start" in result.notes
     assert result.shipments[0].eta == Eta(NOV_19, NOV_19)
@@ -293,10 +337,174 @@ def test_window_without_date() -> None:
 def test_unreadable_window() -> None:
     """A window value that isn't a time is dropped."""
     result = checked(
-        answer(kind="shipped", eta_start="2026-11-19", window_start="de manhã")
+        answer(kind="shipped", eta_start="2026-11-19", window_start="de manhã"),
+        "Entrega a 19/11.",
     )
     assert "window_start_unparsed" in result.notes
     assert result.shipments[0].eta == Eta(NOV_19, NOV_19)
+
+
+# Delivery dates against the e-mail's dates
+
+
+@pytest.mark.parametrize(
+    ("kind", "text"),
+    [
+        (
+            "ready_for_pickup",
+            "A sua encomenda está pronta para levantamento. Levante-a até 25/11.",
+        ),
+        (
+            "customs",
+            "A sua encomenda está retida na alfândega. Pague os direitos até 25/11.",
+        ),
+        ("delivered", "A sua encomenda foi entregue. Pode devolvê-la até 25/11."),
+        ("return", "Recebemos a sua devolução. O reembolso será feito até 25/11."),
+        (
+            "cancelled",
+            "A sua encomenda foi cancelada. O reembolso será feito até 25/11.",
+        ),
+    ],
+)
+def test_no_delivery_date_without_pending_delivery(kind: str, text: str) -> None:
+    """Dates in these e-mails are deadlines or past, never delivery dates."""
+    result = checked(
+        answer(kind=kind, eta_start="2026-11-25", eta_end="2026-11-25"), text
+    )
+    assert result.kind is MailKind(kind)
+    assert NOTE_ETA_DROPPED_FOR_KIND in result.notes
+    assert result.shipments[0].eta is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "day", "text", "language"),
+    [
+        (
+            "attempted",
+            "2026-11-25",
+            "Tentámos entregar a sua encomenda mas não estava ninguém em casa. "
+            "Pode levantá-la na loja CTT Arroios até 25/11.",
+            "pt",
+        ),
+        (
+            "shipped",
+            "2026-12-18",
+            "A sua encomenda foi enviada. Tem 30 dias para a devolver, até 18/12.",
+            "pt",
+        ),
+        (
+            "in_transit",
+            "2026-11-25",
+            "Your parcel is in transit. Import VAT must be paid by 25/11.",
+            "en",
+        ),
+        ("order", "2026-11-18", "Data da encomenda: 18/11/2026. Obrigado!", "pt"),
+    ],
+)
+def test_deadline_is_not_a_delivery_date(
+    kind: str, day: str, text: str, language: str
+) -> None:
+    """A date to collect, return or pay by, or the order date, is dropped."""
+    result = checked(
+        answer(kind=kind, eta_start=day, eta_end=day), text, language=language
+    )
+    assert "eta_not_delivery_date" in result.notes
+    assert result.shipments[0].eta is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "model", "text", "language", "expected"),
+    [
+        (
+            "shipped",
+            ("2026-12-18", "2026-12-18"),
+            "A sua encomenda foi enviada. Entrega prevista: 20/11. "
+            "Pode devolvê-la até 18/12.",
+            "pt",
+            (date(2026, 11, 20), date(2026, 11, 20)),
+        ),
+        (
+            "delayed",
+            ("2026-11-20", "2026-11-20"),
+            "A entrega prevista para 20/11 foi adiada. Nova data de entrega: 24/11.",
+            "pt",
+            (date(2026, 11, 24), date(2026, 11, 24)),
+        ),
+        (
+            "delayed",
+            ("2026-11-20", "2026-11-20"),
+            "Tu entrega del 20/11 se ha aplazado al 24/11.",
+            "es",
+            (date(2026, 11, 24), date(2026, 11, 24)),
+        ),
+        (
+            "shipped",
+            ("2026-11-19", "2026-11-21"),
+            "A sua encomenda foi enviada e será entregue em 2 a 3 dias úteis.",
+            "pt",
+            (date(2026, 11, 20), date(2026, 11, 23)),
+        ),
+        (
+            "shipped",
+            ("2026-11-21", "2026-11-23"),
+            "Your order has shipped. Delivery in 3-5 business days.",
+            "en",
+            (date(2026, 11, 23), date(2026, 11, 25)),
+        ),
+    ],
+)
+def test_delivery_date_from_text(
+    kind: str,
+    model: tuple[str, str],
+    text: str,
+    language: str,
+    expected: tuple[date, date],
+) -> None:
+    """The date next to a delivery phrase replaces a deadline, a replaced
+    date or a miscounted span of business days."""
+    result = checked(
+        answer(kind=kind, eta_start=model[0], eta_end=model[1]),
+        text,
+        language=language,
+    )
+    assert NOTE_ETA_FROM_TEXT in result.notes
+    assert result.shipments[0].eta == Eta(*expected)
+
+
+def test_written_range_is_kept() -> None:
+    """A range the e-mail writes is the model's answer as it stands."""
+    result = checked(
+        answer(kind="shipped", eta_start="2026-11-20", eta_end="2026-11-22"),
+        "Entrega entre 20/11 e 22/11.",
+    )
+    assert result.notes == ()
+    assert result.shipments[0].eta == Eta(date(2026, 11, 20), date(2026, 11, 22))
+
+
+@pytest.mark.parametrize(
+    ("kind", "day", "text", "kept"),
+    [
+        ("shipped", "2026-11-20", "A sua encomenda foi enviada.", False),
+        (
+            "out_for_delivery",
+            "2026-11-19",
+            "A sua encomenda está em distribuição.",
+            False,
+        ),
+        (
+            "out_for_delivery",
+            "2026-11-18",
+            "A sua encomenda está em distribuição.",
+            True,
+        ),
+    ],
+)
+def test_date_not_in_text(kind: str, day: str, text: str, kept: bool) -> None:
+    """A date the e-mail doesn't give is dropped; out for delivery means today."""
+    result = checked(answer(kind=kind, eta_start=day, eta_end=day), text)
+    assert ("eta_not_in_text" in result.notes) is not kept
+    expected = Eta(date.fromisoformat(day), date.fromisoformat(day))
+    assert result.shipments[0].eta == (expected if kept else None)
 
 
 # Carriers
@@ -357,7 +565,7 @@ def test_carrier_from_sender_name() -> None:
     """A carrier's name as the sender counts when its domain isn't known."""
     result = checked(
         answer(kind="shipped", tracking_numbers=[GLS_NUMBER]),
-        f"O seu envio {GLS_NUMBER} chega amanhã.",
+        f"O seu envio {GLS_NUMBER} está a caminho.",
         sender="avisos@envios-notificacoes.pt",
         sender_name="GLS",
     )
@@ -499,6 +707,116 @@ def test_order_numbers_are_checked() -> None:
     assert "order_not_in_email" in result.notes
 
 
+@pytest.mark.parametrize(
+    ("answered", "expected"),
+    [
+        ("450123457", "4501234567"),
+        ("4501234667", "4501234567"),
+        ("PO-211-4567980", "PO-211-4567890"),
+    ],
+)
+def test_miscopied_order_number_is_repaired(answered: str, expected: str) -> None:
+    """A long order number the model miscopied is taken as the e-mail prints it."""
+    result = checked(
+        answer(kind="order", order_numbers=[answered]),
+        f"Encomenda n.º {expected} confirmada.",
+    )
+    assert result.order_numbers == (expected,)
+    assert NOTE_ORDER_FROM_TEXT in result.notes
+    assert "order_not_in_email" not in result.notes
+
+
+@pytest.mark.parametrize(
+    ("answered", "text"),
+    [
+        ("450123456", "Encomendas n.º 4501234567 e 4501234568 confirmadas."),
+        ("12346", "Encomenda n.º 12345 confirmada."),
+        ("RR12345678PT", f"Objeto {S10} enviado."),
+        ("91234567", "Telefone: 912345678"),
+        ("1811202", "Encomenda confirmada em 18-11-2026."),
+    ],
+)
+def test_order_number_is_not_guessed(answered: str, text: str) -> None:
+    """No repair with two candidates, a short number, or a tracking number,
+    phone number or date."""
+    result = checked(answer(kind="order", order_numbers=[answered]), text)
+    assert result.order_numbers == ()
+    assert "order_not_in_email" in result.notes
+    assert NOTE_ORDER_FROM_TEXT not in result.notes
+
+
+@pytest.mark.parametrize(
+    ("number", "carrier", "text", "sender", "sender_name", "links"),
+    [
+        (
+            DPD_NUMBER,
+            "",
+            f"A sua encomenda {DPD_NUMBER} está a caminho.",
+            "naoresponder@dpd.pt",
+            "DPD Portugal",
+            (),
+        ),
+        (
+            "123456789012",
+            "FedEx",
+            "O seu envio 123456789012 está em trânsito.",
+            "notifications@fedex.example",
+            "FedEx",
+            ("https://www.fedex.com/fedextrack/?trknbr=123456789012",),
+        ),
+    ],
+)
+def test_carrier_number_given_as_order_is_tracked(
+    number: str,
+    carrier: str,
+    text: str,
+    sender: str,
+    sender_name: str,
+    links: tuple[str, ...],
+) -> None:
+    """In a carrier's e-mail, its unlabelled number is the tracking number."""
+    result = checked(
+        answer(kind="in_transit", carrier=carrier, order_numbers=[number]),
+        text,
+        sender=sender,
+        sender_name=sender_name,
+        links=links,
+    )
+    assert result.order_numbers == ()
+    assert NOTE_ORDER_MOVED_TO_TRACKING in result.notes
+    (shipment,) = result.shipments
+    assert shipment.tracking_number == number
+    assert shipment.carrier == ("dpd" if number == DPD_NUMBER else "fedex")
+
+
+@pytest.mark.parametrize(
+    ("text", "sender", "sender_name"),
+    [
+        (
+            f"Pedido n.º {DPD_NUMBER} da Loja Exemplo está a caminho.",
+            "naoresponder@dpd.pt",
+            "DPD Portugal",
+        ),
+        (
+            f"A sua encomenda {DPD_NUMBER} foi enviada.",
+            "encomendas@loja-exemplo.pt",
+            "Loja Exemplo",
+        ),
+    ],
+)
+def test_order_number_stays_an_order(text: str, sender: str, sender_name: str) -> None:
+    """A labelled order number, or a number in a shop's e-mail, stays an order."""
+    result = checked(
+        answer(kind="shipped", order_numbers=[DPD_NUMBER]),
+        text,
+        sender=sender,
+        sender_name=sender_name,
+    )
+    assert result.order_numbers == (DPD_NUMBER,)
+    assert NOTE_ORDER_MOVED_TO_TRACKING not in result.notes
+    assert result.shipments[0].tracking_number is None
+
+
 def test_detector_recovers_missed_dpd_number() -> None:
     """A DPD number the model missed in "A sua encomenda …" is still found."""
     result = checked(
@@ -592,6 +910,66 @@ def test_carrier_is_not_the_merchant() -> None:
     result = checked(answer(kind="shipped", merchant="GLS PT Informa"))
     assert result.merchant is None
     assert "merchant_invalid" not in result.notes
+
+
+def test_carrier_of_the_email_is_not_the_merchant() -> None:
+    """In a carrier's e-mail that names no shop, the carrier isn't the merchant."""
+    result = checked(
+        answer(kind="in_transit", merchant="YunExpress", carrier="YunExpress"),
+        "YunExpress: your parcel is in transit.",
+        sender="noreply@track-example.com",
+        language="en",
+    )
+    assert result.merchant is None
+    assert NOTE_MERCHANT_IS_CARRIER in result.notes
+
+
+def test_shop_that_delivers_stays_the_merchant() -> None:
+    """Amazon is the shop even when Amazon Logistics delivers."""
+    result = checked(
+        answer(kind="shipped", merchant="Amazon", carrier="Amazon Logistics"),
+        "Your Amazon order has shipped with Amazon Logistics.",
+        sender="ship-confirm@amazon.example",
+        language="en",
+    )
+    assert result.merchant == "Amazon"
+    assert NOTE_MERCHANT_IS_CARRIER not in result.notes
+
+
+@pytest.mark.parametrize(
+    ("sender_name", "text", "note"),
+    [
+        ("Loja Exemplo", "A sua encomenda foi enviada.", NOTE_MERCHANT_FROM_SENDER),
+        (
+            "",
+            "A sua encomenda foi enviada.\n\nObrigado,\nLoja Exemplo\n"
+            "Rua das Flores 12, Lisboa",
+            NOTE_MERCHANT_FROM_TEXT,
+        ),
+    ],
+)
+def test_merchant_domain_becomes_the_shop_name(
+    sender_name: str, text: str, note: str
+) -> None:
+    """A merchant given as a domain is named as the e-mail spells the shop."""
+    result = checked(
+        answer(kind="shipped", merchant="loja-exemplo.pt"),
+        text,
+        sender_name=sender_name,
+    )
+    assert result.merchant == "Loja Exemplo"
+    assert note in result.notes
+
+
+def test_short_domain_name_is_not_read_from_text() -> None:
+    """A line such as "AB" is too short to name the shop of ab.pt."""
+    result = checked(
+        answer(kind="shipped", merchant="ab.pt"),
+        "A sua encomenda foi enviada.\n\nAB\n",
+        sender="noreply@ab.pt",
+    )
+    assert result.merchant == "ab.pt"
+    assert NOTE_MERCHANT_FROM_TEXT not in result.notes
 
 
 def test_items_are_limited() -> None:
@@ -753,6 +1131,76 @@ def test_long_pickup_point_is_dropped() -> None:
     assert result.shipments[0].pickup_point is None
 
 
+def test_shop_address_is_not_a_pickup_point() -> None:
+    """The shop's own address in its signature isn't a pickup point."""
+    result = checked(
+        answer(kind="shipped", pickup_point="Rua das Flores 12, 1000-001 Lisboa"),
+        "A sua encomenda foi enviada.\n\nObrigado,\nLoja Exemplo\n"
+        "Rua das Flores 12, 1000-001 Lisboa",
+    )
+    assert result.shipments[0].pickup_point is None
+    assert NOTE_PICKUP_POINT_DROPPED in result.notes
+
+
+@pytest.mark.parametrize(
+    ("place", "text", "language"),
+    [
+        (
+            "the nearest pickup point",
+            "Your parcel is in transit. If you're not at home, we'll leave it at "
+            "the nearest pickup point.",
+            "en",
+        ),
+        (
+            "eine DHL Filiale",
+            "Ihr Paket ist unterwegs. Falls Sie nicht zu Hause sind, bringen wir "
+            "es in eine DHL Filiale zur Abholung.",
+            "de",
+        ),
+    ],
+)
+def test_generic_pickup_place_is_dropped(place: str, text: str, language: str) -> None:
+    """Where a parcel may go if nobody is home isn't its pickup point."""
+    result = checked(
+        answer(kind="in_transit", pickup_point=place), text, language=language
+    )
+    assert result.shipments[0].pickup_point is None
+    assert NOTE_PICKUP_POINT_GENERIC in result.notes
+
+
+@pytest.mark.parametrize(
+    ("kind", "place", "text", "language"),
+    [
+        (
+            "in_transit",
+            "Papelaria Exemplo, Rua Nova 5, Lisboa",
+            "A sua encomenda vai ser entregue no ponto de recolha:\n"
+            "Papelaria Exemplo, Rua Nova 5, Lisboa",
+            "pt",
+        ),
+        (
+            "in_transit",
+            "Packstation 123",
+            "Ihr Paket ist unterwegs zur Packstation 123.",
+            "de",
+        ),
+        (
+            "ready_for_pickup",
+            "ponto de recolha mais próximo",
+            "A sua encomenda está disponível para levantamento no ponto de "
+            "recolha mais próximo.",
+            "pt",
+        ),
+    ],
+)
+def test_pickup_point_is_kept(kind: str, place: str, text: str, language: str) -> None:
+    """A named pickup point or locker stays, as does any place to collect from."""
+    result = checked(answer(kind=kind, pickup_point=place), text, language=language)
+    assert result.shipments[0].pickup_point == place
+    assert NOTE_PICKUP_POINT_DROPPED not in result.notes
+    assert NOTE_PICKUP_POINT_GENERIC not in result.notes
+
+
 # Kinds and confidence
 
 
@@ -772,6 +1220,75 @@ def test_bad_kind(kind: Any) -> None:
 def test_kind_written_with_spaces() -> None:
     """Kinds written with spaces or dashes are accepted."""
     assert checked(answer(kind="Out for delivery")).kind is MailKind.OUT_FOR_DELIVERY
+
+
+@pytest.mark.parametrize(
+    ("kind", "subject", "text", "language", "expected"),
+    [
+        (
+            "shipped",
+            "Confirmação da encomenda 4501234",
+            "Obrigado pela sua encomenda! Vamos prepará-la.",
+            "pt",
+            MailKind.ORDER,
+        ),
+        (
+            "delivered",
+            "",
+            "A sua encomenda está em distribuição.",
+            "pt",
+            MailKind.OUT_FOR_DELIVERY,
+        ),
+        (
+            "in_transit",
+            "",
+            "A sua encomenda saiu do nosso armazém.",
+            "pt",
+            MailKind.SHIPPED,
+        ),
+        ("in_transit", "", "Ihr Paket wurde an DHL übergeben.", "de", MailKind.SHIPPED),
+        (
+            "in_transit",
+            "",
+            "Your parcel has left our warehouse.",
+            "en",
+            MailKind.SHIPPED,
+        ),
+        (
+            "shipped",
+            "Bedankt voor je bestelling",
+            "Bedankt voor je bestelling. Indien je pakket is verzonden, sturen we "
+            "je een bericht.",
+            "nl",
+            MailKind.ORDER,
+        ),
+    ],
+)
+def test_kind_from_text(
+    kind: str, subject: str, text: str, language: str, expected: MailKind
+) -> None:
+    """A later step the e-mail doesn't state gives way to the e-mail's wording."""
+    result = checked(answer(kind=kind), text, subject=subject, language=language)
+    assert result.kind is expected
+    assert NOTE_KIND_FROM_TEXT in result.notes
+
+
+@pytest.mark.parametrize(
+    ("kind", "text", "language"),
+    [
+        ("shipped", "Your parcel is on its way.", "en"),
+        ("in_transit", "Your parcel is on its way.", "en"),
+        ("in_transit", "A sua encomenda foi enviada e está em trânsito.", "pt"),
+        ("delivered", "A sua encomenda foi entregue.", "pt"),
+        ("not_parcel", "A sua encomenda foi enviada.", "pt"),
+        ("unknown", "A sua encomenda foi enviada.", "pt"),
+    ],
+)
+def test_kind_given_by_text_is_kept(kind: str, text: str, language: str) -> None:
+    """The model's kind stays when the e-mail's wording also gives it."""
+    result = checked(answer(kind=kind), text, language=language)
+    assert result.kind is MailKind(kind)
+    assert NOTE_KIND_FROM_TEXT not in result.notes
 
 
 def test_result_fields() -> None:

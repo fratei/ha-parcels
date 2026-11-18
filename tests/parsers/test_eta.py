@@ -10,6 +10,8 @@ import pytest
 from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.parsers.eta import (
     add_business_days,
+    date_expressions,
+    find_delivery_eta,
     find_eta,
     parse_eta,
     parse_time_window,
@@ -78,6 +80,11 @@ def test_absolute_dates(text: str, tz: ZoneInfo) -> None:
         ("Thursday - Saturday", (_day(19), _day(21))),
         ("entre quinta e sábado", (_day(19), _day(21))),
         ("zwischen Donnerstag und Samstag", (_day(19), _day(21))),
+        ("26-28/11", (_day(26), _day(28))),
+        ("26 a 28/11", (_day(26), _day(28))),
+        ("26.-28.11.", (_day(26), _day(28))),
+        ("26 - 28/11/2026", (_day(26), _day(28))),
+        ("entre el jueves 19 y el sábado 21 de noviembre", (_day(19), _day(21))),
     ],
 )
 def test_ranges(text: str, expected: tuple[date, date], tz: ZoneInfo) -> None:
@@ -218,6 +225,7 @@ def test_business_days(text: str, tz: ZoneInfo) -> None:
         ("within 2 business days", (_day(18), _day(19))),
         ("2-4 business days", (_day(19), _day(23))),
         ("3-5 days", (_day(20), _day(22))),
+        ("within 3-5 days", (_day(20), _day(22))),
     ],
 )
 def test_day_spans(text: str, expected: tuple[date, date], tz: ZoneInfo) -> None:
@@ -432,6 +440,12 @@ def test_not_time_windows(text: str) -> None:
             "Offer valid until 30/11. Delivery in 3-5 business days.",
             Eta(_day(20), _day(24)),
         ),
+        (
+            "Die Zustellung erfolgt zwischen dem 19. und 21. November.",
+            Eta(_day(19), _day(21)),
+        ),
+        ("Entrega prevista: 26-28/11", Eta(_day(26), _day(28))),
+        ("Lieferung: 26.-28.11.", Eta(_day(26), _day(28))),
     ],
 )
 def test_find_eta_anchored(text: str, expected: Eta, tz: ZoneInfo) -> None:
@@ -464,3 +478,139 @@ def test_find_eta_anchored(text: str, expected: Eta, tz: ZoneInfo) -> None:
 def test_find_eta_ignores_unanchored_dates(text: str, tz: ZoneInfo) -> None:
     """Order dates, footers, offers, deadlines and negations are no ETA."""
     assert find_eta(text, REF, tz) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        ("Your delivery on 20 November has been rescheduled to 24 November.", "en"),
+        ("Entrega de 20/11 adiada. Nova data: 24/11.", "pt"),
+        ("Tu entrega del 20/11 se ha aplazado al 24/11.", "es"),
+        ("Ursprünglich geplant war der 20.11., neuer Termin ist der 24.11.", "de"),
+        (
+            "Livraison prévue le 20/11 reportée. Nouvelle date de livraison : 24/11.",
+            "fr",
+        ),
+        ("La consegna prevista per il 20/11 è stata posticipata al 24/11.", "it"),
+        ("De bezorging stond gepland op 20/11 en is verplaatst naar 24/11.", "nl"),
+    ],
+)
+def test_find_eta_takes_the_new_date(text: str, lang: str, tz: ZoneInfo) -> None:
+    """A new or moved-to date wins over the date it replaces."""
+    assert _dates(find_eta(text, REF, tz, lang)) == (_day(24), _day(24))
+    assert _dates(find_delivery_eta(text, REF, tz, lang)) == (_day(24), _day(24))
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        (
+            "Rescheduled to a later slot after the storm of 20 November. "
+            "Arriving: 24 November.",
+            "en",
+        ),
+        (
+            "Nueva fecha: la tienda cierra por inventario el 20/11. Llegada: 24/11.",
+            "es",
+        ),
+    ],
+)
+def test_new_date_phrase_needs_a_close_date(text: str, lang: str, tz: ZoneInfo) -> None:
+    """A new-date phrase only takes a date at most three words after it."""
+    assert _dates(find_eta(text, REF, tz, lang)) == (_day(24), _day(24))
+
+
+@pytest.mark.parametrize(
+    ("text", "lang", "day"),
+    [
+        ("Pode levantá-la até 25/11.", "pt", _day(25)),
+        ("A encomenda fica disponível até 25/11 para levantar.", "pt", _day(25)),
+        ("Pode devolvê-la até 18/12.", "pt", _day(18, 12)),
+        ("Tienes hasta el 28/11 para recogerlo.", "es", _day(28)),
+        ("Sie können es bis zum 25.11. abholen.", "de", _day(25)),
+        ("Please pay the import VAT by 25/11.", "en", _day(25)),
+        ("Votre colis est disponible jusqu'au 25/11 au point relais.", "fr", _day(25)),
+        ("Il pacco resterà in giacenza fino al 25/11.", "it", _day(25)),
+        ("Je kunt het pakket tot 25/11 ophalen.", "nl", _day(25)),
+    ],
+)
+def test_deadlines(text: str, lang: str, day: date, tz: ZoneInfo) -> None:
+    """Dates to collect, return or pay by, and hold periods, are deadlines."""
+    (found,) = date_expressions(text, REF, tz, lang)
+    assert (found.start, found.end) == (day, day)
+    assert found.deadline
+    assert not found.other
+
+
+@pytest.mark.parametrize(
+    ("text", "lang", "other"),
+    [
+        ("Bestelldatum: 16.11.2026", "de", [True]),
+        ("Shipped on 16 November", "en", [True]),
+        (
+            "A entrega prevista para 20/11 foi adiada. Nova data de entrega: 24/11.",
+            "pt",
+            [True, False],
+        ),
+        ("Neuer Liefertermin: 24.11. (bisher 20.11.)", "de", [False, True]),
+        (
+            "Die Zustellung wurde vom 20.11. auf den 24.11. verschoben.",
+            "de",
+            [True, False],
+        ),
+        ("De bezorging is van 20/11 naar 24/11 verplaatst.", "nl", [True, False]),
+        ("Entrega prevista: 20/11.", "pt", [False]),
+    ],
+)
+def test_other_dates(text: str, lang: str, other: list[bool], tz: ZoneInfo) -> None:
+    """Order, shipping and replaced dates are other dates; a delivery isn't."""
+    found = date_expressions(text, REF, tz, lang)
+    assert [expression.other for expression in found] == other
+    assert not any(expression.deadline for expression in found)
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        ("Expected delivery was 20 November, but your parcel is delayed.", "en"),
+        ("A entrega prevista era 20/11, mas a encomenda está atrasada.", "pt"),
+        ("La entrega prevista era el 20/11, pero tu paquete se ha retrasado.", "es"),
+        ("Der geplante Liefertermin war der 20.11., Ihr Paket verspätet sich.", "de"),
+        ("La livraison prévue était le 20/11, mais votre colis a du retard.", "fr"),
+        ("La consegna prevista era il 20/11, ma il pacco è in ritardo.", "it"),
+        ("De verwachte bezorgdatum was 20/11, maar je pakket is vertraagd.", "nl"),
+    ],
+)
+def test_past_date_is_other(text: str, lang: str, tz: ZoneInfo) -> None:
+    """A date right after a past "was" is no pending delivery date."""
+    (found,) = date_expressions(text, REF, tz, lang)
+    assert found.other
+    assert find_delivery_eta(text, REF, tz, lang) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "lang", "expected"),
+    [
+        ("A entrega prevista para 20/11 foi adiada.", "pt", None),
+        ("La entrega prevista para el 20/11 se ha aplazado.", "es", None),
+        ("Die Zustellung am 20.11. wurde verschoben.", "de", None),
+        ("La livraison prévue le 20/11 a été reportée.", "fr", None),
+        ("La consegna prevista per il 20/11 è stata rinviata.", "it", None),
+        ("De bezorging van 20/11 is uitgesteld.", "nl", None),
+        (
+            "Entrega prevista: 20/11. Pode devolvê-la até 18/12.",
+            "pt",
+            (_day(20), _day(20)),
+        ),
+        (
+            "Expected delivery was 20 November. It will now arrive on 24 November.",
+            "en",
+            (_day(24), _day(24)),
+        ),
+    ],
+)
+def test_find_delivery_eta(
+    text: str, lang: str, expected: tuple[date, date] | None, tz: ZoneInfo
+) -> None:
+    """Replaced dates are skipped; the delivery date is still found."""
+    assert _dates(find_delivery_eta(text, REF, tz, lang)) == expected

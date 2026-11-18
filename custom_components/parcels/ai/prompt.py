@@ -90,25 +90,31 @@ Rules:
 - Copy numbers and codes exactly as written.
 - Dates as YYYY-MM-DD. Work out "today", "tomorrow", weekdays and spans \
 such as "3-5 business days" from the received date, not from today's date.
+- A deadline to collect, pay, return or get a refund is never a delivery \
+date.
 - Times as HH:MM, 24-hour clock.
 
 Fields:
-- kind: one of order (placed or confirmed, not shipped yet), shipped \
-(handed to the carrier), in_transit, out_for_delivery (arrives today), \
-delivered, attempted (delivery failed or missed), ready_for_pickup (waiting \
-at a pickup point or locker), delayed, customs (customs or import duties), \
-return (a parcel sent back or a return label), cancelled, not_parcel (no \
-parcel: newsletter, advert, invoice, account e-mail).
-- merchant: the shop or seller.
+- kind: the latest step the e-mail says has happened: order (placed or \
+confirmed, not shipped yet), shipped (handed to the carrier), in_transit, \
+out_for_delivery (arrives today), delivered, attempted (delivery failed or \
+missed), ready_for_pickup (waiting at a pickup point or locker), delayed, \
+customs (customs or import duties), return (a parcel sent back or a return \
+label), cancelled, not_parcel (no parcel: newsletter, advert, invoice, \
+account e-mail).
+- merchant: the shop or seller's name; never the delivery company or a web \
+domain.
 - carrier: the delivery company, such as CTT, DPD, GLS or UPS, also when \
 it only appears in the sender name, sender domain or subject.
-- tracking_numbers: the parcel tracking numbers.
-- order_numbers: the shop's order numbers.
+- tracking_numbers: the parcel tracking numbers. In a carrier's e-mail, the \
+parcel or shipment number is one.
+- order_numbers: the shop's order numbers, never a carrier's parcel number.
 - eta_start, eta_end: the first and last expected delivery date; the same \
 date twice for a single day.
 - window_start, window_end: the delivery time window, such as 09:00 and \
 13:00.
-- pickup_point: the name and address of the pickup point or locker.
+- pickup_point: the name and address of the pickup point or locker for this \
+parcel, never a shop or home address.
 - pickup_code: a code the customer needs for this parcel, in any kind of \
 e-mail: the code to collect it, or a delivery PIN or one-time code to give \
 the courier. Never a tracking or order number.
@@ -125,7 +131,7 @@ SERVICE_STRUCTURE: dict[str, dict[str, Any]] = {
         "selector": {"select": {"options": list(KINDS)}},
     },
     "merchant": {
-        "description": f"Shop or seller name; {_EMPTY_TEXT}.",
+        "description": f"Shop or seller name, never the carrier; {_EMPTY_TEXT}.",
         "required": True,
         "selector": {"text": {}},
     },
@@ -140,7 +146,9 @@ SERVICE_STRUCTURE: dict[str, dict[str, Any]] = {
         "selector": {"text": {"multiple": True}},
     },
     "order_numbers": {
-        "description": f"Shop order numbers exactly as written; {_EMPTY_LIST}.",
+        "description": (
+            f"Shop order numbers exactly as written, not parcel numbers; {_EMPTY_LIST}."
+        ),
         "required": True,
         "selector": {"text": {"multiple": True}},
     },
@@ -165,7 +173,9 @@ SERVICE_STRUCTURE: dict[str, dict[str, Any]] = {
         "selector": {"text": {}},
     },
     "pickup_point": {
-        "description": f"Pickup point or locker name and address; {_EMPTY_TEXT}.",
+        "description": (
+            f"Pickup point or locker for this parcel, name and address; {_EMPTY_TEXT}."
+        ),
         "required": True,
         "selector": {"text": {}},
     },

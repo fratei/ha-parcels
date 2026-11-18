@@ -486,7 +486,11 @@ logs of the Ollama, AI task and conversation integrations.
 Parcels checks every answer: tracking numbers must appear in the e-mail as
 written and match their carrier's format, check digit included where there is
 one, and dates must fall between 2 days before and 60 days after the e-mail.
-Its own tracking number detector always runs as well.
+Its own tracking number detector always runs as well. The kind, the delivery
+date, the merchant and the pickup point are checked against the e-mail's own
+wording: a date to collect, pay or return by is never taken as a delivery
+date, and when the e-mail's words give a kind, a kind they don't support is
+replaced by it. [docs/ai-benchmark.md](docs/ai-benchmark.md) lists the checks.
 
 Limits: 5 minutes per e-mail, one retry, 50 e-mails a day, and only the last
 14 days during a mailbox's first sync. E-mails still waiting after a day go to
