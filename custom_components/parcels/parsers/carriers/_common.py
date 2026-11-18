@@ -152,7 +152,9 @@ _PUNCT = str.maketrans(
 )
 _WORD_GAP = r"[^\S\n]+"
 _URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
-_EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
+# An address starts where a run of address characters starts, so a long run
+# without an "@" is read once, not once per character.
+_EMAIL_RE = re.compile(r"(?<![\w.+\-])[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 _BOUNDARY_RE = re.compile(r"[!?;\n]|\.(?!\d)")
 _TOKEN_RE = re.compile(r"[a-z0-9']+")
 _ALNUM3_RE = re.compile(r"[0-9A-Za-z]{3,}")

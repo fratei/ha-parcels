@@ -92,6 +92,33 @@ async def test_calls_python_api(
     assert events == []
 
 
+async def test_answer_is_checked_outside_the_event_loop(
+    hass: HomeAssistant,
+    fake_ai_task: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The checks, which scan the whole e-mail, don't block the event loop."""
+    entity_id = loaded_ai_task(hass)
+    data = answer(kind="shipped", tracking_numbers=[S10])
+    fake_ai_task.async_generate_data.return_value = FakeResult("c1", data)
+    in_loop: list[bool] = []
+
+    def checked(*args: Any) -> Any:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            in_loop.append(False)
+        else:
+            in_loop.append(True)
+        return validate_output(*args)
+
+    monkeypatch.setattr(client, "validate_output", checked)
+    validation = await async_extract(hass, entity_id, secret_message(), TZ)
+
+    assert in_loop == [False]
+    assert validation.result is not None
+
+
 async def test_refused_check(
     hass: HomeAssistant, fake_ai_task: types.ModuleType
 ) -> None:

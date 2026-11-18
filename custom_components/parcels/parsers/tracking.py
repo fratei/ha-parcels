@@ -766,7 +766,9 @@ _TOKEN_RE = re.compile(
     r"|(?P<plain>[0-9A-Z]{8,35}))" + _E
 )
 _URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
-_EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
+# An address starts where a run of address characters starts, so a long run
+# without an "@" is read once, not once per character.
+_EMAIL_RE = re.compile(r"(?<![\w.+\-])[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 _PHONE_BEFORE_RE = re.compile(r"(?:\+\s?\d{1,4}|\(0\)|\(\d{2,5}\))[\s.\-]*$")
 _INTL_PHONE_RE = re.compile(r"00[1-9]\d{9,12}")
 _PRICE_AFTER_RE = re.compile(

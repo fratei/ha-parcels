@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from time import perf_counter
+
 import pytest
 
 from custom_components.parcels.parsers.tracking import (
@@ -222,6 +224,23 @@ def test_find_tracking_numbers(
 def test_find_tracking_numbers_false_positives(text: str) -> None:
     """Order numbers, phones, prices, IBANs, dates, postcodes and links."""
     assert _found(text) == []
+
+
+@pytest.mark.parametrize(
+    "run",
+    ["26-" * 20_000, "." * 60_000, "ab" * 30_000],
+    ids=["dates", "dots", "word"],
+)
+def test_long_run_without_an_address_is_read_once(run: str) -> None:
+    """A long run of letters, digits, dots or hyphens with no "@" stays fast.
+
+    Blanking e-mail addresses used to read such a run again from each of its
+    characters: about 7 seconds for 60,000 characters.
+    """
+    start = perf_counter()
+    found = _found(f"{run}\nTracking number RR123456785PT")
+    assert perf_counter() - start < 2
+    assert found == [("RR123456785PT", "ctt", True)]
 
 
 def test_find_with_carrier_hint() -> None:

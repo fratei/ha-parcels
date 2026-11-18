@@ -8,10 +8,11 @@ zone of a user who gets e-mails in that language.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time
 import logging
 from pathlib import Path
+from time import perf_counter
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -314,6 +315,24 @@ def test_number_with_a_bad_check_digit_is_not_used() -> None:
     assert result.shipments[0].tracking_url is None
     assert result.notes == ("no_tracking_number",)
     assert result.confidence < CONFIDENCE_APPLY
+
+
+def test_long_run_without_an_address_is_read_once() -> None:
+    """A long run with no "@" doesn't slow a carrier e-mail down.
+
+    Blanking e-mail addresses used to read such a run again from each of its
+    characters: about 7 seconds for 60,000 characters.
+    """
+    message = _out_for_delivery("RR123456785PT")
+    message = replace(message, text=message.text + "26-" * 20_000)
+    start = perf_counter()
+    result = parse_carrier(message, CTT, LISBON, "ctt")
+    assert perf_counter() - start < 2
+    assert result is not None
+    assert result.kind is MailKind.OUT_FOR_DELIVERY
+    assert [shipment.tracking_number for shipment in result.shipments] == [
+        "RR123456785PT"
+    ]
 
 
 def test_code_only_email_gives_the_code_of_its_parcel() -> None:

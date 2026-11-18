@@ -140,7 +140,9 @@ async def async_extract(
         data = await _async_generate(hass, entity_id, build_prompt(message, tz))
     if not isinstance(data, Mapping):
         raise AIBadOutput(("not_a_mapping",))
-    validation = validate_output(data, message, tz)
+    # The checks scan up to 100,000 characters, which can take a while on a
+    # slow host, so they run outside the event loop.
+    validation = await hass.async_add_executor_job(validate_output, data, message, tz)
     if validation.result is None:
         raise AIBadOutput(validation.errors)
     return validation
