@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime
 import json
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from homeassistant.helpers import llm, selector
@@ -12,6 +13,7 @@ import probatio
 
 from custom_components.parcels.ai.prompt import (
     AI_STRUCTURE,
+    ANSWER_CAPS,
     BEGIN_MARKER,
     END_MARKER,
     FIELDS,
@@ -27,8 +29,15 @@ from custom_components.parcels.const import AI_MAX_INPUT_CHARS, MailKind
 
 from .common import TZ, make_message
 
-TEXT = {"type": "string"}
-TEXT_LIST = {"type": "array", "items": {"type": "string"}}
+
+def text(max_length: int) -> dict[str, Any]:
+    return {"type": "string", "maxLength": max_length}
+
+
+def text_list(max_items: int, max_length: int) -> dict[str, Any]:
+    return {"type": "array", "items": text(max_length), "maxItems": max_items}
+
+
 EXPECTED_TYPES = {
     "kind": {
         "type": "string",
@@ -47,26 +56,40 @@ EXPECTED_TYPES = {
             "not_parcel",
         ],
     },
-    "merchant": TEXT,
-    "carrier": TEXT,
-    "tracking_numbers": TEXT_LIST,
-    "order_numbers": TEXT_LIST,
-    "eta_start": TEXT,
-    "eta_end": TEXT,
-    "window_start": TEXT,
-    "window_end": TEXT,
-    "pickup_point": TEXT,
-    "pickup_code": TEXT,
-    "items": TEXT_LIST,
+    "merchant": text(100),
+    "carrier": text(100),
+    "tracking_numbers": text_list(10, 40),
+    "order_numbers": text_list(10, 40),
+    "eta_start": text(60),
+    "eta_end": text(60),
+    "window_start": text(30),
+    "window_end": text(30),
+    "pickup_point": text(200),
+    "pickup_code": text(40),
+    "items": text_list(10, 100),
 }
 
 
+def _without_caps(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _without_caps(item)
+            for key, item in value.items()
+            if key not in ("maxItems", "maxLength")
+        }
+    if isinstance(value, list):
+        return [_without_caps(item) for item in value]
+    return value
+
+
 def test_ollama_receives_the_expected_json_schema() -> None:
-    """Ollama gets every field as required plain strings, lists or an enum.
+    """Ollama gets every field as required, capped strings, lists or an enum.
 
     This is the conversion homeassistant/components/ollama/entity.py applies
     to the ``structure`` of an AI task without an LLM API. No ``format``
     (date, time) is asked for: small models wrote wrong values for those.
+    Ollama turns maxItems and maxLength into grammar limits, so a model that
+    runs away stops at the caps.
     """
     schema = probatio.to_openapi(
         AI_STRUCTURE,
@@ -89,7 +112,11 @@ def test_ollama_receives_the_expected_json_schema() -> None:
 
 
 def test_service_structure_matches_the_python_structure() -> None:
-    """The ai_task.generate_data form gives the same schema after JSON."""
+    """The ai_task.generate_data form gives the same schema after JSON.
+
+    The action's structure can't carry the caps, so the form without them
+    gives the same schema without maxItems and maxLength.
+    """
     fields = json.loads(json.dumps(SERVICE_STRUCTURE))
     assert list(fields) == list(FIELDS)
     for name, field in fields.items():
@@ -98,12 +125,16 @@ def test_service_structure_matches_the_python_structure() -> None:
         selector.validate_selector(field["selector"])
         if name != "kind":
             assert "when not in the e-mail" in field["description"]
-    schema = probatio.to_openapi(
-        structure_schema(fields),
-        custom_serializer=llm.selector_serializer,
-        openapi_version="3.1.0",
-    )
-    assert schema == json_schema()
+
+    def schema(caps: dict[str, dict[str, int]] | None) -> dict[str, Any]:
+        return probatio.to_openapi(
+            structure_schema(fields, caps),
+            custom_serializer=llm.selector_serializer,
+            openapi_version="3.1.0",
+        )
+
+    assert schema(ANSWER_CAPS) == json_schema()
+    assert schema(None) == _without_caps(json_schema())
 
 
 def test_instructions_name_every_kind_and_the_rules() -> None:

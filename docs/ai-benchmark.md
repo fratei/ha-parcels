@@ -58,7 +58,9 @@ How answers are compared:
   promotion end dates.
 - `pt10` hides a prompt injection in invisible HTML. It asks the model to
   report the parcel as delivered, to use a URL as the merchant and to invent
-  a tracking number.
+  a tracking number. Parcels leaves hidden HTML out of the text it reads
+  (see [below](#what-the-held-out-set-showed)), so the model no longer sees
+  it.
 
 [`expected.json`](../tests/ai_eval/expected.json) holds the right answer for
 each e-mail. A missing key is not scored: e-mails about delivered parcels
@@ -128,6 +130,10 @@ The script:
 - prints the report;
 - exits with 1 when the bar fails.
 
+The action's structure can't carry the caps that Parcels puts on lists and
+text (see [below](#what-the-output-structure-looks-like-and-why)), so this
+run goes without them. They only stop an answer that runs away.
+
 The first call includes loading the model, so prefer the median and p90
 timings over the mean and maximum, or run the set twice. Repeat the run for
 each AI task entity.
@@ -157,7 +163,8 @@ the answer isn't streamed:
 
 - Home Assistant's AI task system prompt (with the current date and time)
   and the instructions;
-- the output structure as a JSON schema in `format`;
+- the output structure as a JSON schema in `format`, with the caps that
+  Parcels sends;
 - `num_ctx` 8192, thinking off and `keep_alive` -1 (change them with
   `--num-ctx`, `--think` and `--keep-alive`).
 
@@ -187,6 +194,7 @@ shaped the design.
 | The carrier came back empty when only the From line named it. | The input labels the sender name, the sender's domain, the subject, the received date and the body, and says that all of them are part of the e-mail. The carrier is free text that Parcels maps to its own keys ("CTT Expresso", "DPD Portugal", ...). Parcels takes the carrier from the sender's domain when a carrier sent the e-mail; when the model gives none, it infers it from the sender's name or the tracking number. |
 | A DPD number written after "A sua encomenda" was missed once in two runs. | Parcels runs its own tracking number detector over the subject and body. The model's numbers only add candidates, kept when they appear in the e-mail and pass the format and check digit. A number that equals an order number, that the e-mail writes only as a delivery or pickup code, or that the e-mail labels as an order, phone or tax number, isn't used as a tracking number (unless its format identifies it, such as `EA123456785PT`), and a pickup code equal to a tracking or order number is dropped. |
 | About 7 s per short e-mail once the model is loaded; calls are queued one at a time. | Parcels queues the e-mails that no parser understood and sends them one at a time. |
+| A long e-mail can keep a small model writing until Home Assistant's 5-minute limit: Ollama doesn't limit an answer's length unless asked. | Every list and text field has a cap, which Ollama turns into a limit on what the model can write: 10 entries per list, 40 characters for a number or code, 100 for a merchant, carrier or item, 200 for a pickup point, 60 for a date and 30 for a time. The caps are well above real values (the longest item in the first full run had 37 characters), so a value as long as its cap was cut off: Parcels drops it, or ends an item with "…". An e-mail whose last try runs out of time goes to review as "The local AI took too long on this e-mail". |
 
 The model never sets the confidence. Parcels computes it:
 
@@ -216,34 +224,54 @@ never invent one.
 
 Scored again with these checks, that run's answers pass the bar (tracking
 numbers right in 41 of 41 e-mails, dates 74 of 74, kinds 41 of 41). The
-checks were written from that run's mistakes, though, so only a new run,
-ideally with e-mails from outside the set as well, shows how well they
-hold.
+checks were written from that run's mistakes, though, so new runs tested
+them on this set and on e-mails from outside it.
+
+### What the held-out set showed
+
+With these instructions and checks, a new run passed the bar on this set.
+On a private held-out set of 22 made-up e-mails in 7 languages, kept outside
+the repo, it fell short on tracking numbers, right in 21 of 22 e-mails (see
+[Results](#results)). Its mistakes, too, were fixed as patterns:
+
+| Observed | What Parcels does |
+|---|---|
+| Text hidden in the HTML told the model to change the kind, the carrier and the date, and the model did. The hidden words were part of the text, so the checks kept those values. | Parcels leaves out of the text everything a reader doesn't see: an element with `display:none`, the `hidden` attribute, `visibility:hidden` or `collapse`, `font-size:0`, or a zero height or `max-height` with hidden or clipped overflow, and everything inside it. A child that sets `visibility:visible` or a font size shows again, as in a browser. `mso-hide:all` hides nothing: only desktop Outlook honours it, and e-mails put visible buttons, often the tracking link, in it. The parsers read the same text. |
+| A carrier's "shipment update" subject and a departure from a sorting centre were read as shipped, which replaced the model's right in transit. | A subject about an update gives no kind. Leaving a carrier's sorting centre, depot, terminal, hub, gateway or airport, or the country of origin, is in transit in the seven languages; only leaving the shop's or seller's own warehouse is shipped. |
+| A tracking number written only in a tracking link came back with one character wrong and was dropped, leaving the parcel without one. | As with order numbers, a tracking number that isn't in the e-mail becomes the e-mail's number, from the text or a link, when exactly one number is one character away, passes the carrier's format and check digit, and isn't an order number, a code, a date or a phone or tax number. Otherwise it is dropped. |
+| A hyphen-joined order number came back as two parts, and the second part was kept as an order number of its own. | An order number written only as a hyphen- or slash-separated part of a longer number becomes that number when exactly one number contains it, and is dropped otherwise. |
 
 ## Results
 
 Fill in one row per run. Record the host's hardware (CPU, GPU, RAM), the
-Home Assistant and Ollama versions, and the date.
+Home Assistant and Ollama versions, the date, and the Parcels version or
+commit whose instructions and checks were used.
 
-| Model | Host hardware | Tracking, e-mails right of 41 (model / after checks) | Dates right of 74 | Kinds right of 41 | Bar | Median s | p90 s | Notes |
-|---|---|---|---|---|---|---|---|---|
-| qwen3:4b-instruct | | | | | | | | |
-| gemma4:e4b | | | | | | | | |
-| gemma4:12b | | | | | | | | |
+*This set* is the evaluation set above. *Held-out* is a private held-out set
+of 22 made-up e-mails in 7 languages, kept outside the repo; it shows how
+the checks hold on e-mails they weren't written from. All runs so far used
+`qwen3:4b-instruct` on the same Home Assistant host.
+
+| Date | Model | E-mails | Parcels version | Host | Tracking, e-mails right (model / after checks) | Dates right | Kinds right | Bar | Median s | p90 s | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-11-18 | qwen3:4b-instruct | this set (41) | 0.1.2 | CPU only | 32 / 38 of 41 | 53 of 74 (71.6%) | 31 of 41 (75.6%) | Fail | 37.7 | 43.5 | The first full run. Mean 37.9 s, max 48.3 s. |
+| 2026-11-18 | qwen3:4b-instruct | this set (41) | `2ed6a52` | CPU only, Home Assistant 2026.11.2, Ollama 0.40.16 | 31 / 41 of 41 | 74 of 74 (100%) | 41 of 41 (100%) | Pass | 36.6 | 39.4 | Nothing else running on Ollama. Mean 35.2 s, max 40.9 s. |
+| 2026-11-18 | qwen3:4b-instruct | held-out (22) | `2ed6a52` | as above | 17 / 21 of 22 | 38 of 40 (95.0%) | 20 of 22 (90.9%) | Fail (tracking) | 33.2 | 75.0 | Some calls waited behind Parcels' own AI calls on the host: mean 40.8 s, max 89.3 s. |
+| 2026-11-18 | qwen3:4b-instruct | held-out (22) | 0.1.2 | as above | – / 19 of 22 | 26 of 40 (65.0%) | 17 of 22 (77.3%) | Fail | – | – | For comparison; only the scores after checks were recorded. |
 
 Per field, after checks (model in parentheses):
 
-| Field | qwen3:4b-instruct | gemma4:e4b | gemma4:12b |
+| Field | 0.1.2, this set | `2ed6a52`, this set | `2ed6a52`, held-out |
 |---|---|---|---|
-| kind | | | |
-| merchant | | | |
-| carrier | | | |
-| tracking_numbers | | | |
-| order_numbers | | | |
-| eta_start | | | |
-| eta_end | | | |
-| window_start | | | |
-| window_end | | | |
-| pickup_point | | | |
-| pickup_code | | | |
-| items (recall) | | | |
+| kind | 75.6% (75.6%) | 100% (80.5%) | 90.9% (81.8%) |
+| merchant | 94.4% (94.4%) | 100% (97.2%) | 100% (100%) |
+| carrier | 100% (90.2%) | 100% (95.1%) | 95.5% (95.5%) |
+| tracking_numbers | 92.7% (78.0%) | 100% (75.6%) | 95.5% (77.3%) |
+| order_numbers | 87.8% (87.8%) | 100% (78.0%) | 95.5% (81.8%) |
+| eta_start | 70.3% (67.6%) | 100% (73.0%) | 95.0% (65.0%) |
+| eta_end | 73.0% (70.3%) | 100% (73.0%) | 95.0% (75.0%) |
+| window_start | 100% (97.3%) | 100% (97.3%) | 100% (100%) |
+| window_end | 100% (97.3%) | 100% (97.3%) | 100% (100%) |
+| pickup_point | 97.6% (97.6%) | 100% (97.6%) | 100% (100%) |
+| pickup_code | 100% (100%) | 100% (100%) | 100% (100%) |
+| items (recall) | 100% (100%) | 100% (100%) | 100% (100%) |

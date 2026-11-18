@@ -475,29 +475,36 @@ Parcels only sends e-mails from senders whose DKIM or DMARC passes, one at a
 time and newest first.
 
 **What the AI sees**: the day the e-mail arrived, the sender's name and
-domain, the subject and the text, with each link reduced to its domain and the
-numbers in it, up to 6,000 characters. It never sees your address, the other
-headers, images or attachments. Parcels calls the AI task directly, not
-through an action, so the e-mail isn't written to the recorder. Home Assistant
-keeps the conversation in memory for up to 10 minutes, where administrators
-can watch it, and Parcels removes the e-mail text from the debug and error
-logs of the Ollama, AI task and conversation integrations.
+domain, the subject and the text a reader sees (text the HTML hides is left
+out), with each link reduced to its domain and the numbers in it, up to 6,000
+characters. It never sees your address, the other headers, images or
+attachments. Parcels calls the AI task directly, not through an action, so the
+e-mail isn't written to the recorder. Home Assistant keeps the conversation in
+memory for up to 10 minutes, where administrators can watch it, and Parcels
+removes the e-mail text from the debug and error logs of the Ollama, AI task
+and conversation integrations.
 
 Parcels checks every answer: tracking numbers must appear in the e-mail as
 written and match their carrier's format, check digit included where there is
 one, and dates must fall between 2 days before and 60 days after the e-mail.
-Its own tracking number detector always runs as well. The kind, the delivery
-date, the merchant and the pickup point are checked against the e-mail's own
-wording: a date to collect, pay or return by is never taken as a delivery
-date, and when the e-mail's words give a kind, a kind they don't support is
-replaced by it. [docs/ai-benchmark.md](docs/ai-benchmark.md) lists the checks.
+A number the model miscopied by one character becomes the e-mail's own when
+exactly one number in it is that close, and so does an order number given as
+only a part of a hyphen- or slash-joined number. Parcels' own tracking number
+detector always runs as well. The kind, the delivery date, the merchant and
+the pickup point are checked against the e-mail's own wording: a date to
+collect, pay or return by is never taken as a delivery date, and when the
+e-mail's words give a kind, a kind they don't support is replaced by it.
+[docs/ai-benchmark.md](docs/ai-benchmark.md) lists the checks.
 
 Limits: 5 minutes per e-mail, one retry, 50 e-mails a day, and only the last
-14 days during a mailbox's first sync. E-mails still waiting after a day go to
-**Needs review**. On a typical Home Assistant host's CPU, a short e-mail takes
-several seconds, and a long one about a minute. The review card shows how many
-e-mails are waiting and about how long they'll take, from the average time
-of the last 14 days' calls.
+14 days during a mailbox's first sync. An e-mail whose retry fails as well
+goes to **Needs review**, marked "The local AI took too long on this e-mail"
+when the last try ran out of time; so do e-mails still waiting after a day.
+Every list and text in an answer has a length cap well above real values, so
+an answer that runs away stops at the cap. On a typical Home Assistant host's
+CPU, a short e-mail takes several seconds, and a long one about a minute. The
+review card shows how many e-mails are waiting and about how long they'll
+take, from the average time of the last 14 days' calls.
 
 In Suggest mode, Parcels also gives the AI up to 5 e-mails a day that a parser
 already read, and counts how often the two agree; those answers are never

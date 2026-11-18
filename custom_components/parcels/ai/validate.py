@@ -14,10 +14,15 @@ check and records an error code for every value it drops:
   reads the subject and body as well, so a number the model missed is still
   found; the model's numbers are only extra candidates. Values marked as
   order, phone or tax numbers, or written only as a delivery or pickup
-  code, are excluded. An order number the model miscopied by a character
-  becomes the e-mail's number when exactly one number is that close. In a
-  carrier's e-mail, an "order" that is the carrier's tracking number and
-  isn't labelled as an order moves to the tracking numbers.
+  code, are excluded. A number the model miscopied by a character becomes
+  the e-mail's number when exactly one number is that close (for tracking
+  numbers, one that passes the carrier's rules, in the text or a link). An
+  order number written only as a part of a longer number joined by hyphens
+  or slashes ("4567890" in "PO-211-4567890") becomes that number when
+  exactly one such number can be an order number, and is dropped
+  otherwise. In a carrier's e-mail, an "order" that is the carrier's
+  tracking number and isn't labelled as an order moves to the tracking
+  numbers.
 * Dates and times are normalized in code from the forms models write
   (``9h``, ``09:00:00.000Z``, ``19/11``, ``19 de novembro``, ``amanhã``),
   and dates must fall between 2 days before and 60 days after the e-mail.
@@ -40,6 +45,9 @@ check and records an error code for every value it drops:
   delivery, a pickup point must be written as one (a pickup, locker or
   collection word on its line or the line before) and name a place, not a
   kind of place ("a post office").
+* Ollama stops each value at its cap in ``prompt.ANSWER_CAPS``, well above
+  real values, so a value as long as its cap was cut. It is dropped, except
+  an item, which keeps its start and ends with "…".
 
 The confidence is computed here, never taken from the model: 0.8 when no
 value was dropped and the result has a grounded identifier, else 0.5.
@@ -47,9 +55,11 @@ value was dropped and the result has a grounded identifier, else 0.5.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, time, timedelta, tzinfo
+from functools import cached_property
 import re
 from typing import Any
 import unicodedata
@@ -89,7 +99,14 @@ from ..parsers.tracking import (
     tracking_url,
     validate_tracking_number,
 )
-from .prompt import email_body, is_strong_number, link_entries, received_at
+from .prompt import (
+    ANSWER_CAPS,
+    email_body,
+    is_strong_number,
+    link_entries,
+    received_at,
+    text_link_numbers,
+)
 
 CONFIDENCE_HIGH = 0.8
 CONFIDENCE_LOW = 0.5
@@ -115,6 +132,7 @@ NOTE_ETA_DROPPED_FOR_KIND = "eta_dropped_for_kind"
 NOTE_ETA_FROM_TEXT = "eta_from_text"
 NOTE_ORDER_MOVED_TO_TRACKING = "order_moved_to_tracking"
 NOTE_ORDER_FROM_TEXT = "order_from_text"
+NOTE_TRACKING_FROM_TEXT = "tracking_from_text"
 NOTE_MERCHANT_IS_CARRIER = "merchant_is_carrier"
 NOTE_MERCHANT_FROM_SENDER = "merchant_from_sender_name"
 NOTE_MERCHANT_FROM_TEXT = "merchant_from_text"
@@ -293,6 +311,11 @@ _LIST_SPLIT_RE = re.compile(r"[,;\n]+")
 # Numbers written in the e-mail, to repair a miscopied order number.
 _TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Za-z]+(?:[\-./][0-9A-Za-z]+)*")
 _DATE_TOKEN_RE = re.compile(r"^\d{1,4}[\-./]\d{1,2}(?:[\-./]\d{1,4})?$")
+# Numbers joined by hyphens or slashes ("PO-211-4567890", "2026/4501").
+_JOINED_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Za-z]+(?:[\-/][0-9A-Za-z]+)+")
+_JOINED_SPLIT_RE = re.compile(r"[\-/]")
+# Label abbreviations that aren't part of a number ("Ref-4501").
+_LABEL_PARTS = frozenset({"ID", "NO", "NR", "NUM", "REF"})
 # A shop written as its domain ("loja-exemplo.example").
 _DOMAIN_RE = re.compile(
     r"(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}", re.IGNORECASE
@@ -714,6 +737,18 @@ def _as_list(value: Any) -> list[Any] | None:
     return None
 
 
+def _is_number(joined: str) -> bool:
+    """Return whether parts joined by hyphens or slashes form one number.
+
+    A part with letters only must be a short code ("PO", "INV"), not a word
+    or a label joined to a number ("Pedido-4501", "Ref-4501").
+    """
+    return all(
+        not part.isalpha() or (len(part) <= 4 and part.upper() not in _LABEL_PARTS)
+        for part in _JOINED_SPLIT_RE.split(joined)
+    )
+
+
 def _written_pattern(value: str, separators: str) -> re.Pattern[str]:
     gap = f"[{separators}]{{0,3}}"
     body = gap.join(re.escape(char) for char in value)
@@ -770,6 +805,8 @@ class _Checker:
         body = email_body(message)
         self.links = link_entries(link.url for link in message.links)
         link_numbers = [number for _, numbers in self.links for number in numbers]
+        # Tracking numbers in links and in URLs written in the text.
+        self.url_numbers = {*link_numbers, *text_link_numbers(text)}
         self.number_text = "\n".join(
             [message.sender_name or "", subject, text, body, *link_numbers]
         )
@@ -806,9 +843,42 @@ class _Checker:
         if code not in self.errors:
             self.errors.append(code)
 
+    def note(self, code: str) -> None:
+        if code not in self.notes:
+            self.notes.append(code)
+
+    def without_cut_values(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        """Drop the values Ollama may have cut at their caps.
+
+        Ollama stops each value at its cap in ``ANSWER_CAPS``, which is well
+        above real values, so a value as long as its cap was cut, and a cut
+        number, date or name is wrong. A cut item ends with "…", like the
+        long items that ``items`` shortens.
+        """
+        kept = dict(data)
+        for name, cap in ANSWER_CAPS.items():
+            limit = cap.get("max_length")
+            value = kept.get(name)
+            if limit is None or value is None:
+                continue
+            values = []
+            for entry in value if isinstance(value, list) else [value]:
+                if not isinstance(entry, str) or len(entry) < limit:
+                    values.append(entry)
+                elif name == "items":
+                    values.append(entry.rstrip() + "\u2026")
+                else:
+                    self.error(f"{name}_cut")
+            if isinstance(value, list):
+                kept[name] = values
+            else:
+                kept[name] = values[0] if values else None
+        return kept
+
     def run(self) -> Validation:
         if not isinstance(self.data, Mapping):
             return Validation(None, ("not_a_mapping",))
+        self.data = self.without_cut_values(self.data)
         kind = self.kind()
         if kind is None:
             return Validation(None, ("kind_invalid",))
@@ -1117,20 +1187,82 @@ class _Checker:
                 if not _ORDER_RE.match(compact) or len(piece) > 60:
                     self.error("order_invalid")
                     continue
-                match = _written_pattern(compact, r"\s\-./").search(self.number_text)
-                if match is not None:
-                    printed = "".join(match.group(0).split())
-                elif (printed := self.repaired_order(compact)) is not None:
-                    if NOTE_ORDER_FROM_TEXT not in self.notes:
-                        self.notes.append(NOTE_ORDER_FROM_TEXT)
-                    compact = _compact(printed)
-                else:
-                    self.error("order_not_in_email")
+                printed = self.printed_order(compact)
+                if printed is None:
                     continue
+                compact = _compact(printed)
                 if compact.upper() not in seen:
                     seen.add(compact.upper())
                     orders.append(printed)
         return orders
+
+    def printed_order(self, compact: str) -> str | None:
+        """Return a model's order number as the e-mail prints it, or None.
+
+        A number written on its own is kept. One written only as a part of
+        longer numbers joined by hyphens or slashes ("4567890" in
+        "PO-211-4567890") becomes the longer number when exactly one of
+        them can be an order number, and is dropped otherwise. A number
+        that isn't written at all may be a miscopy (see ``repaired_order``).
+        """
+        starts, joined = self.joined_numbers
+        wholes: dict[str, str] = {}
+        for match in _written_pattern(compact, r"\s\-./").finditer(self.number_text):
+            index = bisect_right(starts, match.start()) - 1
+            whole = joined[index] if index >= 0 else None
+            if (
+                whole is None
+                or whole.end() < match.end()
+                or whole.span() == match.span()
+            ):
+                return "".join(match.group(0).split())
+            wholes[_compact(whole.group(0)).upper()] = whole.group(0)
+        if wholes:
+            tracking = self.tracking_candidates()
+            numbers = [
+                token
+                for token in wholes.values()
+                if self.order_candidate(token, tracking)
+            ]
+            if len(numbers) == 1:
+                self.note(NOTE_ORDER_FROM_TEXT)
+                return numbers[0]
+            self.error("order_is_part")
+            return None
+        if (printed := self.repaired_order(compact)) is not None:
+            self.note(NOTE_ORDER_FROM_TEXT)
+            return printed
+        self.error("order_not_in_email")
+        return None
+
+    @cached_property
+    def joined_numbers(self) -> tuple[list[int], list[re.Match[str]]]:
+        """Return the numbers joined by hyphens or slashes outside links, and
+        their offsets in ``number_text``."""
+        text = _URL_TEXT_RE.sub(lambda url: " " * len(url.group(0)), self.number_text)
+        joined = [
+            match for match in _JOINED_RE.finditer(text) if _is_number(match.group(0))
+        ]
+        return [match.start() for match in joined], joined
+
+    def order_candidate(self, token: str, tracking: set[str]) -> bool:
+        """Return whether a number written in the e-mail can be an order number.
+
+        Tracking numbers, dates, codes and phone or tax numbers can't.
+        """
+        candidate = _compact(token).upper()
+        return not (
+            not _ORDER_RE.match(candidate)
+            or _DATE_TOKEN_RE.match(token)
+            or candidate in tracking
+            or is_strong_number(candidate)
+            or compact_code(candidate) in self.code_values
+            or _labelled(
+                self.detector_text,
+                _written_pattern(candidate, r"\s\-./"),
+                _OTHER_NUMBER_LABEL_RE,
+            )
+        )
 
     def repaired_order(self, compact: str) -> str | None:
         """Return the e-mail's number that the model miscopied as ``compact``.
@@ -1149,18 +1281,8 @@ class _Checker:
         for match in _TOKEN_RE.finditer(self.detector_text):
             token = match.group(0)
             candidate = _compact(token).upper()
-            if (
-                len(candidate) < REPAIR_MIN_CHARS
-                or not _ORDER_RE.match(candidate)
-                or _DATE_TOKEN_RE.match(token)
-                or candidate in tracking
-                or is_strong_number(candidate)
-                or compact_code(candidate) in self.code_values
-                or _labelled(
-                    self.detector_text,
-                    _written_pattern(candidate, r"\s\-./"),
-                    _OTHER_NUMBER_LABEL_RE,
-                )
+            if len(candidate) < REPAIR_MIN_CHARS or not self.order_candidate(
+                token, tracking
             ):
                 continue
             distance = _edit_distance(compact.upper(), candidate, limit)
@@ -1276,7 +1398,7 @@ class _Checker:
         """
         orders_compact = {_compact(order).upper() for order in orders}
         found: dict[str, str | None] = {}
-        for number in [*self.ai_numbers(), *moved]:
+        for number in [*self.ai_numbers(carrier, orders_compact), *moved]:
             if number in found:
                 continue
             valid, number_carrier = _number_carrier(number, carrier)
@@ -1300,7 +1422,7 @@ class _Checker:
             detected.add(number)
         return list(found.items()), detected
 
-    def ai_numbers(self) -> list[str]:
+    def ai_numbers(self, carrier: str | None, orders: set[str]) -> list[str]:
         values = _as_list(self.data.get("tracking_numbers"))
         if values is None:
             self.error("tracking_numbers_invalid")
@@ -1322,10 +1444,45 @@ class _Checker:
                     self.error("tracking_invalid")
                     continue
                 if not _tracking_pattern(number).search(self.number_text):
-                    self.error("tracking_not_in_email")
-                    continue
+                    repaired = self.repaired_tracking(number, carrier, orders)
+                    if repaired is None:
+                        self.error("tracking_not_in_email")
+                        continue
+                    self.note(NOTE_TRACKING_FROM_TEXT)
+                    number = repaired
                 numbers.append(number)
         return numbers
+
+    def repaired_tracking(
+        self, number: str, carrier: str | None, orders: set[str]
+    ) -> str | None:
+        """Return the e-mail's tracking number that the model miscopied.
+
+        As with order numbers, a character gets changed, dropped or added,
+        often when the number is only in a tracking link. When exactly one
+        number in the text or in a link's tracking parameters is one
+        character away, passes the carrier's format and check-digit rules,
+        and isn't an order number, a code, a date or a phone or tax number,
+        that number is used.
+        """
+        candidates = {
+            _compact(match.group(0)).upper()
+            for match in _TOKEN_RE.finditer(self.detector_text)
+            if not _DATE_TOKEN_RE.match(match.group(0))
+        }
+        candidates.update(
+            match.number
+            for match in find_tracking_numbers(self.scan_text, carrier=carrier)
+        )
+        candidates.update(self.url_numbers)
+        close = {
+            candidate
+            for candidate in candidates
+            if _edit_distance(number, candidate, 1) == 1
+            and _number_carrier(candidate, carrier)[0]
+            and self.exclusion(candidate, orders) is None
+        }
+        return close.pop() if len(close) == 1 else None
 
     def exclusion(self, number: str, orders: set[str]) -> str | None:
         """Return why a tracking number must not be used, or None.

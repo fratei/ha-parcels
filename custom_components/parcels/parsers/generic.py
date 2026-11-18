@@ -110,6 +110,58 @@ ON_THE_WAY_KEYWORDS: tuple[str, ...] = (
     r"onderweg",
 )
 
+# Leaving a carrier's facility, a hub or the country of origin is
+# IN_TRANSIT; leaving the shop's own warehouse ("has left our warehouse")
+# stays SHIPPED. In English up to two words may name the place ("the DHL
+# hub", "FedEx origin facility"), but not the shop's own premises.
+_EN_PLACE_WORDS = (
+    r"(?:(?!(?:our|the|a|an|in|at|on|to|for|by|with|and|or|of|from|warehouse"
+    r"|fulfil+ment|seller|store|shop|logistics) )[a-z]+ ){0,2}?"
+)
+_EN_LEFT = r"(?:(?:has |have |had )?(?:left|departed)(?: from)?|departure from)"
+_EN_PLACES = (
+    r"(?:(?:sorting|sort|distribution|processing|parcel|delivery|transit|transfer"
+    r"|exchange|regional|local|national|international|export|import|origin"
+    r"|destination|network|carrier|courier|postal|mail) (?:centre|center|facility"
+    r"|hub|depot|terminal|station|office|unit|location)|hubs?|depots?|terminals?"
+    r"|gateway|airport)"
+)
+_PT_PLACES = (
+    r"(?:centro (?:operacional|de distribuicao|de triagem|de tratamento|de operacoes"
+    r"|de processamento|de transito)|hub|terminal|aeroporto|plataforma"
+    r"(?! logistica)|delegacao|pais (?:de origem|de expedicao|de envio|de partida))"
+)
+_ES_PLACES = (
+    r"(?:centro (?:de clasificacion|de distribucion|de tratamiento|operativo"
+    r"|de operaciones|de procesamiento|de transito)|delegacion|plataforma"
+    r"(?! logistica)|hub|terminal|aeropuerto|agencia|franquicia|pais (?:de origen"
+    r"|de envio|de expedicion|de procedencia))"
+)
+_DE_PLACES = (
+    r"(?:[a-z]+(?:-| ))?(?:(?:start|ziel|abgangs|eingangs|ausgangs)-?)?"
+    r"(?:paketzentrum|paketverteilzentrum|verteilzentrum|sortierzentrum|briefzentrum"
+    r"|frachtzentrum|umschlagzentrum|zustellbasis|zustellstutzpunkt|umschlagbasis"
+    r"|depot|hub|terminal|flughafen|ursprungsland|herkunftsland|abgangsland"
+    r"|ausgangsland|exportland|versandland|absendeland)"
+)
+_FR_PLACES = (
+    r"(?:centre (?:de tri|de distribution|de traitement|colis|d'exploitation"
+    r"|de transit|operationnel)|plate-?forme(?! logistique)(?: de tri"
+    r"| de distribution| colis)?|site (?:de tri|de distribution|colis)|agence|hub"
+    r"|depot|terminal|aeroport|pays (?:d'origine|d'expedition|de depart"
+    r"|de provenance))"
+)
+_IT_PLACES = (
+    r"(?:centro(?! logistico)|hub|deposito|filiale|terminale?|aeroporto"
+    r"|polo(?! logistico)|piattaforma(?! logistica)|paese (?:d'origine|di origine"
+    r"|di partenza|di provenienza))"
+)
+_NL_PLACES = (
+    r"(?:[a-z]+(?:-| ))?(?:(?:sorteer|distributie|verdeel|post|pakket)centrum"
+    r"|(?:sorteer|distributie)locatie|depot|hub|terminal|luchthaven|vliegveld"
+    r"|land van (?:herkomst|oorsprong|verzending|vertrek))"
+)
+
 KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
     MailKind.CANCELLED: (
         r"(?:has|have) been cancell?ed",
@@ -476,31 +528,54 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"(?:is|are) (?:now |currently |still )?in transit",
         r"(?:has |have )?arrived at (?:the |our |a )?(?:sorting|distribution|delivery"
         r"|local|regional) (?:centre|center|facility|hub|depot|office)",
-        r"(?:has |have )?(?:left|departed) (?:the |our |a )?(?:sorting|distribution)"
-        r" (?:centre|center|facility|hub)",
+        _EN_LEFT + r" (?:the |our |a |an |its |their )?" + _EN_PLACE_WORDS + _EN_PLACES,
+        r"departed(?: from)? (?:the |a |an )?"
+        + _EN_PLACE_WORDS
+        + r"(?:facility|location)",
+        _EN_LEFT + r" (?:the |its |their )?(?:country of (?:origin|departure|export"
+        r"|dispatch)|(?:origin|export|departure|sending) country)",
         r"(?:has )?cleared customs",
         r"customs (?:clearance )?(?:cleared|completed|complete|done)",
         r"(?:esta|encontra-se|segue) em transito",
         r"(?:chegou|deu entrada) (?:ao|no|na) (?:centro|armazem)",
+        r"(?:(?:saiu|partiu|saida|partida) (?:do|da|dos|das)|deixou (?:o|a|os|as))"
+        r" (?:nosso |nossa |seu |sua )?" + _PT_PLACES,
         r"desalfandegad[ao]",
         r"desalfandegamento (?:concluido|efetuado|efectuado|realizado)",
         r"(?:esta|se encuentra|sigue) en transito",
         r"(?:ha )?llegado (?:al|a la) (?:centro|delegacion|almacen|plataforma)",
+        r"(?:(?:ha |han )?(?:salido|partido)|salio|salieron|partio|partieron|salida)"
+        r" (?:del|de (?:la|los|las|nuestro|nuestra|su)) " + _ES_PLACES,
         r"(?:despachad[oa]|liberad[oa]) (?:de|por|en) (?:la )?aduana",
         r"(?:im|ins) (?:start-?|ziel-?)?paketzentrum",
         r"(?:im|ins) (?:verteil|sortier)zentrum",
+        r"(?:hat|haben) (?:(?:heute|soeben|gerade|bereits|jetzt|nun) )?(?:das|den|die"
+        r"|unser|unseren|unsere) " + _DE_PLACES + r"(?: in [a-z\-]+)? verlassen",
+        r"verliess(?:en)? (?:das|den|die|unser|unseren|unsere) " + _DE_PLACES,
         r"zollabfertigung abgeschlossen",
         r"verzollt",
         r"(?:est|sont) (?:actuellement )?en transit",
         r"(?:est|sont) en cours d'acheminement",
+        r"(?:a|ont) quitte (?:le |la |l'|les |son |sa |notre |nos |leur )?"
+        + _FR_PLACES,
+        r"(?:(?:est|sont) (?:parti|sorti)e?s?|depart|sortie) (?:du |de la |de l'|des "
+        r"|de (?:notre|nos|son|sa|leur) )" + _FR_PLACES,
         r"dedouanee?s?",
         r"dedouanement (?:termine|effectue)",
         r"(?:e|sono) in transito",
-        r"(?:e|sono) partit[oaie] (?:dal|dall'|dallo|dalla|dai|dagli|dalle) ?(?:centro"
-        r"|hub|deposito|filiale)",
+        r"(?:(?:e|sono) (?:partit|uscit)[oaie]|partenza|uscita) (?:dal|dall'|dallo"
+        r"|dalla|dai|dagli|dalle) ?" + _IT_PLACES,
+        r"(?:ha|hanno) lasciato (?:il|lo|la|l'|i|gli|le) ?(?:nostro |nostra )?"
+        + _IT_PLACES,
         r"sdoganat[oaie]",
         r"(?:is |wordt |werd )?gesorteerd",
         r"(?:in|bij) (?:het|ons) (?:sorteercentrum|distributiecentrum)",
+        r"(?:heeft|hebben) (?:(?:vandaag|zojuist|net|nu) )?(?:het|de|ons|onze) "
+        + _NL_PLACES
+        + r"(?: in [a-z\-]+)? verlaten",
+        r"(?:(?:is |zijn )?vertrokken|vertrek) (?:uit|van|vanuit|vanaf) (?:het|de|ons"
+        r"|onze) " + _NL_PLACES,
+        r"verliet(?:en)? (?:het|de|ons|onze) " + _NL_PLACES,
         r"ingeklaard",
     ),
     MailKind.SHIPPED: (
@@ -773,7 +848,8 @@ SUBJECT_KEYWORDS: dict[MailKind, tuple[str, ...]] = {
         r"shipped",
         r"dispatched",
         *ON_THE_WAY_KEYWORDS,
-        r"(?:shipping|shipment|dispatch) (?:confirmation|notification|update)",
+        # Not "shipment update": carriers send it at every step.
+        r"(?:shipping|shipment|dispatch) (?:confirmation|notification)",
         r"enviad[oa]s?",
         r"expedid[oa]s?",
         r"despachad[oa]s?",

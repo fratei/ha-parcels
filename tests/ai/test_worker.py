@@ -44,6 +44,7 @@ from custom_components.parcels.const import (
     ISSUE_AI_UNAVAILABLE,
     REASON_AI_REJECTED,
     REASON_AI_SUGGESTION,
+    REASON_AI_TIMEOUT,
     REASON_AI_UNAVAILABLE,
     REASON_UNKNOWN_FORMAT,
     MailKind,
@@ -457,9 +458,16 @@ async def test_failed_call_is_retried_once(
 
 
 async def test_timed_out_call_is_retried_without_a_pause(
-    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+    hass: HomeAssistant,
+    client: FakeMailClient,
+    generate: AsyncMock,
+    freezer: FrozenDateTimeFactory,
 ) -> None:
-    """A call that takes too long is tried again later; the queue keeps going."""
+    """A call that takes too long is tried again later; the queue keeps going.
+
+    When the last try takes too long as well, the review item says so: the
+    AI was there, but too slow for this e-mail.
+    """
     engine = await async_setup(hass, client, ctt_message())
     generate.side_effect = TimeoutError
 
@@ -473,6 +481,14 @@ async def test_timed_out_call_is_retried_without_a_pause(
     assert engine.ai.diagnostics()["last_error"] == "AITimeout"
     # Nothing is due before the retry.
     assert await engine.ai._async_step() == 1800
+
+    freezer.tick(timedelta(minutes=30))
+    await engine.ai._async_step()
+
+    assert engine.ai.queue_size == 0
+    (item,) = engine.data.review.values()
+    assert item.reason == REASON_AI_TIMEOUT
+    assert engine.ai.today()["failed"] == 2
 
 
 async def test_daily_limit_stops_the_calls_until_midnight(

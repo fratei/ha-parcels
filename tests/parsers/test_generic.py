@@ -696,11 +696,112 @@ def test_detect_kind_from_body() -> None:
         ("Des droits de douane sont à payer pour votre colis.", "fr", MailKind.CUSTOMS),
         ("Devi pagare i dazi doganali per il tuo pacco.", "it", MailKind.CUSTOMS),
         ("Je moet nog invoerrechten betalen voor je pakket.", "nl", MailKind.CUSTOMS),
+        ("Departed from the sorting centre in Lyon.", "en", MailKind.IN_TRANSIT),
+        ("Your parcel has left the hub in Porto.", "en", MailKind.IN_TRANSIT),
+        ("Your parcel has left the DHL Leipzig hub.", "en", MailKind.IN_TRANSIT),
+        ("Departed Facility in Leipzig - Germany", "en", MailKind.IN_TRANSIT),
+        ("Departed FedEx location MEMPHIS, TN", "en", MailKind.IN_TRANSIT),
+        ("Your parcel has left the country of origin.", "en", MailKind.IN_TRANSIT),
+        (
+            "O seu envio saiu do centro de distribuição de Lisboa.",
+            "pt",
+            MailKind.IN_TRANSIT,
+        ),
+        ("A encomenda saiu do país de origem.", "pt", MailKind.IN_TRANSIT),
+        (
+            "Tu envío ha salido del centro de clasificación de Madrid.",
+            "es",
+            MailKind.IN_TRANSIT,
+        ),
+        ("Salida de la delegación de Valencia.", "es", MailKind.IN_TRANSIT),
+        (
+            "Die Sendung hat das GLS-Paketzentrum in Leipzig verlassen.",
+            "de",
+            MailKind.IN_TRANSIT,
+        ),
+        ("Die Sendung hat das Ursprungsland verlassen.", "de", MailKind.IN_TRANSIT),
+        ("Das Paket verließ das Verteilzentrum Hamburg.", "de", MailKind.IN_TRANSIT),
+        ("Votre colis a quitté le centre de tri de Lyon.", "fr", MailKind.IN_TRANSIT),
+        ("Votre colis est parti du dépôt.", "fr", MailKind.IN_TRANSIT),
+        (
+            "Il pacco ha lasciato il centro di smistamento di Bologna.",
+            "it",
+            MailKind.IN_TRANSIT,
+        ),
+        ("Il pacco ha lasciato il paese d'origine.", "it", MailKind.IN_TRANSIT),
+        (
+            "Je pakket is vertrokken uit het sorteercentrum in Utrecht.",
+            "nl",
+            MailKind.IN_TRANSIT,
+        ),
+        (
+            "Je pakket heeft het land van herkomst verlaten.",
+            "nl",
+            MailKind.IN_TRANSIT,
+        ),
+        (
+            "Je pakket heeft het PostNL sorteercentrum in Utrecht verlaten.",
+            "nl",
+            MailKind.IN_TRANSIT,
+        ),
+        ("Het pakket verliet het distributiecentrum.", "nl", MailKind.IN_TRANSIT),
+        ("Your order has left our warehouse.", "en", MailKind.SHIPPED),
+        ("Your parcel has left the Amazon fulfilment centre.", "en", MailKind.SHIPPED),
+        ("Your order has left our logistics centre.", "en", MailKind.SHIPPED),
+        ("Ihre Bestellung hat unser Lager verlassen.", "de", MailKind.SHIPPED),
+        ("Votre commande a quitté notre entrepôt.", "fr", MailKind.SHIPPED),
+        ("Il tuo ordine ha lasciato il nostro magazzino.", "it", MailKind.SHIPPED),
+        ("Je bestelling heeft ons magazijn verlaten.", "nl", MailKind.SHIPPED),
     ],
 )
 def test_departure_and_customs_from_body(text: str, lang: str, kind: MailKind) -> None:
-    """Departures, duties to pay and pickup only if absent, in the body."""
+    """Departures, duties to pay and pickup only if absent, in the body.
+
+    Leaving a carrier's facility, a hub or the country of origin is in
+    transit; leaving the shop's own warehouse is shipped.
+    """
     assert detect_kind("Update", text, lang=lang) == (kind, "body")
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Shipment update",
+        "Shipping update for your parcel",
+        "Dispatch update",
+        "Atualização do envio",
+        "Actualización del envío",
+        "Sendungsupdate",
+        "Update zu Ihrer Sendung",
+        "Mise à jour de votre colis",
+        "Aggiornamento sulla spedizione",
+        "Update over je zending",
+    ],
+)
+def test_update_subject_gives_no_kind(subject: str) -> None:
+    """Carriers send a "shipment update" at every step: it says no kind."""
+    assert detect_kind(subject) == (None, "")
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        ("Your order has left our logistics hub.", "en"),
+        ("Your order has left the fulfilment hub.", "en"),
+        ("A encomenda saiu da plataforma logística.", "pt"),
+        ("El pedido ha salido de la plataforma logística.", "es"),
+        ("Das Paket hat unser Logistikzentrum verlassen.", "de"),
+        ("Votre commande a quitté la plateforme logistique.", "fr"),
+        ("L'ordine ha lasciato il centro logistico.", "it"),
+        ("L'ordine ha lasciato il polo logistico.", "it"),
+        ("Il pacco è uscito dalla piattaforma logistica.", "it"),
+        ("Your order has departed from our facility.", "en"),
+        ("Your parcel has departed the Amazon warehouse facility.", "en"),
+    ],
+)
+def test_leaving_a_logistics_centre_is_not_in_transit(text: str, lang: str) -> None:
+    """A shop's own logistics or fulfilment centre isn't a carrier's facility."""
+    assert MailKind.IN_TRANSIT not in text_kinds("Update", text, lang=lang)
 
 
 def test_order_with_a_dutch_condition() -> None:
@@ -767,6 +868,23 @@ def test_text_kinds_lists_every_kind() -> None:
             "Indien je pakket is verzonden, sturen we je een bericht.",
             "nl",
         ),
+        ("Update", "Your parcel has not yet left the hub.", "en"),
+        ("Update", "We will tell you once it has left the sorting centre.", "en"),
+        ("Update", "Your parcel was left at the depot.", "en"),
+        ("Update", "A encomenda ainda não saiu do centro de distribuição.", "pt"),
+        (
+            "Update",
+            "Tu pedido todavía no ha salido del centro de clasificación.",
+            "es",
+        ),
+        ("Update", "Die Sendung hat das Paketzentrum noch nicht verlassen.", "de"),
+        ("Update", "Votre colis n'a pas encore quitté le centre de tri.", "fr"),
+        (
+            "Update",
+            "Il pacco non ha ancora lasciato il centro di smistamento.",
+            "it",
+        ),
+        ("Update", "Het pakket heeft het sorteercentrum nog niet verlaten.", "nl"),
     ],
 )
 def test_detect_kind_guards(subject: str, text: str, lang: str) -> None:

@@ -253,6 +253,7 @@ export const REASON_LABELS: Readonly<Record<string, string>> = {
   unknown_format: "Unknown e-mail format",
   ai_suggestion: "Read by the local AI",
   ai_unavailable: "The local AI wasn't available",
+  ai_timeout: "The local AI took too long on this e-mail",
   ai_rejected: "The local AI's answer didn't pass the checks",
   restored: "Moved back from Filtered",
 };

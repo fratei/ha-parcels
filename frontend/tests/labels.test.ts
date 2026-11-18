@@ -115,6 +115,9 @@ describe("labels", () => {
     assert.equal(kindLabel("not_parcel"), "Not about a parcel");
     assert.equal(sourceLabel("seventeentrack"), "17TRACK");
     assert.equal(reasonLabel("unknown_sender"), "Unknown sender");
+    assert.equal(reasonLabel("ai_timeout"), "The local AI took too long on this e-mail");
+    // Items stored before the timeout reason existed keep their label.
+    assert.equal(reasonLabel("ai_unavailable"), "The local AI wasn't available");
     assert.equal(reasonLabel("brand_new_reason"), "Brand new reason");
     assert.equal(reasonLabel("The sender isn't known."), "The sender isn't known.");
     assert.equal(reasonLabel(""), "");

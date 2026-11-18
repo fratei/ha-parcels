@@ -7,6 +7,7 @@ never fetched, and images are never loaded.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 import contextlib
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ from typing import Any
 
 from .auth import parse_authentication_results
 from .base import Link, MailMessage
+from .css import GONE, INVISIBLE, element_masks, masks
 from .lang import LANGUAGES, detect_language
 
 MAX_HTML_CHARS = 2_000_000
@@ -40,11 +42,11 @@ KEPT_HEADERS: tuple[str, ...] = (
     "return-path",
 )
 
+# Elements whose content is never shown; the head is tracked on its own.
 _SKIP_TAGS = frozenset(
     {
         "script",
         "style",
-        "head",
         "title",
         "noscript",
         "template",
@@ -117,12 +119,17 @@ _VOID_TAGS = frozenset(
     {
         "area",
         "base",
+        "basefont",
+        "bgsound",
         "br",
         "col",
         "embed",
+        "frame",
         "hr",
+        "image",
         "img",
         "input",
+        "keygen",
         "link",
         "meta",
         "param",
@@ -131,6 +138,126 @@ _VOID_TAGS = frozenset(
         "wbr",
     }
 )
+# HTML's special elements that can be open; they bound where end tags reach.
+_SPECIAL = frozenset(
+    {
+        "address",
+        "applet",
+        "article",
+        "aside",
+        "blockquote",
+        "button",
+        "caption",
+        "center",
+        "colgroup",
+        "dd",
+        "details",
+        "dir",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "frameset",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hgroup",
+        "li",
+        "listing",
+        "main",
+        "marquee",
+        "menu",
+        "nav",
+        "ol",
+        "p",
+        "plaintext",
+        "pre",
+        "search",
+        "section",
+        "select",
+        "summary",
+        "table",
+        "tbody",
+        "td",
+        "textarea",
+        "tfoot",
+        "th",
+        "thead",
+        "tr",
+        "ul",
+    }
+)
+# A new li, dd or dt closes an open one unless one of these comes first.
+_LIST_ITEM_STOPS = _SPECIAL - {"address", "div", "p"}
+# End tags don't reach past these, except the tables' own parts.
+_SCOPE_BARRIERS = frozenset({"applet", "caption", "marquee", "table", "td", "th"})
+_TABLE_SCOPED = frozenset(
+    {"caption", "colgroup", "table", "tbody", "td", "tfoot", "th", "thead", "tr"}
+)
+_CLOSES_P = frozenset(
+    {
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "center",
+        "dd",
+        "details",
+        "dialog",
+        "dir",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hgroup",
+        "hr",
+        "li",
+        "listing",
+        "main",
+        "menu",
+        "nav",
+        "ol",
+        "p",
+        "plaintext",
+        "pre",
+        "search",
+        "section",
+        "summary",
+        "table",
+        "ul",
+    }
+)
+_ROW_GROUP_PARTS = ("tbody", "thead", "tfoot", "tr", "td", "th")
+# The open parts of the current table that a new table part closes.
+_TABLE_SIBLINGS: dict[str, tuple[str, ...]] = {
+    "td": ("td", "th"),
+    "th": ("td", "th"),
+    "tr": ("tr", "td", "th"),
+    "tbody": _ROW_GROUP_PARTS,
+    "thead": _ROW_GROUP_PARTS,
+    "tfoot": _ROW_GROUP_PARTS,
+}
+# Deeper elements, and everything after them, are dropped.
+MAX_DEPTH = 1024
 
 # Zero-width and invisible characters, often used as preview padding.
 _INVISIBLE_RE = re.compile(
@@ -165,7 +292,14 @@ def _clean_url(url: str) -> str | None:
 
 
 class _TextExtractor(HTMLParser):
-    """Collect visible text and links from HTML."""
+    """Collect the text and links a reader sees in HTML.
+
+    Open elements are kept on one stack with their state, which combines the
+    parent's state with the element's inline style and ``hidden`` attribute
+    (see ``css``). Text, links and image alt texts are kept only while the
+    state shows them. Unclosed elements are closed as browsers do for lists,
+    paragraphs, table parts and options; other repairs aren't emulated.
+    """
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -173,8 +307,21 @@ class _TextExtractor(HTMLParser):
         self.size = 0
         self.links: list[Link] = []
         self._skip: list[str] = []
+        self._skipping: Counter[str] = Counter()
+        self._in_head = False
+        self._too_deep = False
+        # Open elements as (tag, state), innermost last, with the positions of
+        # each tag, of the special elements and of the scope barriers.
+        self._stack: list[tuple[str, int]] = []
+        self._open: dict[str, list[int]] = {}
+        self._special: list[int] = []
+        self._stops: list[int] = []
+        self._barriers: list[int] = []
+        self._root_attrs: dict[str, dict[str, str]] = {"html": {}, "body": {}}
+        self._root = 0
         self._pre = 0
         self._href: str | None = None
+        self._link_seen = False
         self._link_text: list[str] = []
         self._link_alt: str = ""
         self._line_start = True
@@ -200,95 +347,229 @@ class _TextExtractor(HTMLParser):
                 self._link_text.append(" ")
 
     def finish_link(self) -> None:
-        """Store the link that is open, if any."""
-        if self._href is not None and len(self.links) < MAX_LINKS:
+        """Store the link that is open, if a reader could see it."""
+        if self._href is not None and self._link_seen and len(self.links) < MAX_LINKS:
             text = " ".join(_INVISIBLE_RE.sub("", "".join(self._link_text)).split())
             text = text or " ".join(self._link_alt.split())
             self.links.append(Link(self._href, text[:MAX_LINK_TEXT_CHARS]))
         self._href = None
+        self._link_seen = False
         self._link_text = []
         self._link_alt = ""
 
+    def _state(self) -> int:
+        return self._stack[-1][1] if self._stack else self._root
+
+    def _last(self, tag: str) -> int:
+        """Return the position of the innermost open ``tag``, or -1."""
+        positions = self._open.get(tag)
+        return positions[-1] if positions else -1
+
+    def _push(self, tag: str, state: int) -> None:
+        if len(self._stack) >= MAX_DEPTH:
+            self._too_deep = True
+            return
+        position = len(self._stack)
+        self._stack.append((tag, state))
+        self._open.setdefault(tag, []).append(position)
+        if tag in _SPECIAL:
+            self._special.append(position)
+            if tag in _LIST_ITEM_STOPS:
+                self._stops.append(position)
+            if tag in _SCOPE_BARRIERS:
+                self._barriers.append(position)
+        if tag == "pre":
+            self._pre += 1
+
+    def _pop_to(self, position: int) -> None:
+        """Close the element at ``position`` and everything inside it."""
+        while len(self._stack) > position:
+            tag, _ = self._stack.pop()
+            self._open[tag].pop()
+            if tag in _SPECIAL:
+                self._special.pop()
+                if tag in _LIST_ITEM_STOPS:
+                    self._stops.pop()
+                if tag in _SCOPE_BARRIERS:
+                    self._barriers.pop()
+            if tag == "pre":
+                self._pre -= 1
+
+    def _close_implied(self, tag: str) -> None:
+        """Close the elements that a start tag ends without an end tag."""
+        if tag in ("li", "dd", "dt") and self._stops:
+            open_tag = self._stack[self._stops[-1]][0]
+            if open_tag == tag or (tag != "li" and open_tag in ("dd", "dt")):
+                self._pop_to(self._stops[-1])
+        if tag in _CLOSES_P:
+            barrier = self._barriers[-1] if self._barriers else -1
+            p = self._last("p")
+            if p > max(barrier, self._last("button")):
+                self._pop_to(p)
+        if (siblings := _TABLE_SIBLINGS.get(tag)) is not None:
+            table = self._last("table")
+            open_parts = [p for p in map(self._last, siblings) if p > table]
+            if open_parts:
+                self._pop_to(min(open_parts))
+        if tag == "option" and self._stack and self._stack[-1][0] == "option":
+            self._pop_to(len(self._stack) - 1)
+
+    def _end_target(self, tag: str) -> int:
+        """Return the position of the element an end tag closes, or -1."""
+        target = self._last(tag)
+        if target < 0:
+            return -1
+        if tag in _TABLE_SCOPED:
+            return target if target >= self._last("table") else -1
+        if tag in _SPECIAL:
+            barrier = self._barriers[-1] if self._barriers else -1
+            if tag == "p":
+                barrier = max(barrier, self._last("button"))
+            elif tag == "li":
+                barrier = max(barrier, self._last("ol"), self._last("ul"))
+            return target if barrier <= target else -1
+        # Other end tags don't reach past an open special element.
+        return target if not self._special or self._special[-1] < target else -1
+
+    def _set_root(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Merge repeated html and body tags' attributes; the first one wins."""
+        merged = self._root_attrs[tag]
+        changed = False
+        for name, value in attrs:
+            if name in ("style", "hidden") and name not in merged:
+                merged[name] = value or ""
+                changed = True
+        if changed:
+            state = 0
+            for root in ("html", "body"):
+                found = self._root_attrs[root]
+                keep, add = masks(root, found.get("style"), found.get("hidden"))
+                state = (state & keep) | add
+            self._root = state
+
     def _leave_head(self) -> None:
-        if self._skip == ["head"]:
-            self._skip.clear()
+        if self._in_head and not self._skip:
+            self._in_head = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self._too_deep:
+            return
         if tag in ("body", "html"):
-            self._skip = [t for t in self._skip if t != "head"]
+            self._in_head = False
+            self._set_root(tag, attrs)
+            return
+        if tag == "head":
+            self._in_head = self._in_head or not self._skip
             return
         if tag not in _HEAD_TAGS:
             self._leave_head()
         if tag in _SKIP_TAGS:
+            if len(self._skip) >= MAX_DEPTH:
+                self._too_deep = True
+                return
             self._skip.append(tag)
+            self._skipping[tag] += 1
             return
-        if self._skip:
+        if self._skip or self._in_head:
             return
-        if tag in _BLOCK_TAGS:
-            self._break(hard=tag == "br")
-            if tag == "pre":
-                self._pre += 1
-        elif tag in _CELL_TAGS:
-            self._emit(" ")
-        elif tag == "a":
-            self.finish_link()
-            href = next((v for k, v in attrs if k == "href" and v), None)
-            if href and (url := _clean_url(href)):
-                self._href = url
-        elif tag == "img" and self._href is not None and not self._link_alt:
-            self._link_alt = next((v for k, v in attrs if k == "alt" and v), "")
-
-    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in _SKIP_TAGS or tag in ("body", "html"):
-            return
-        if tag not in _HEAD_TAGS:
-            self._leave_head()
-        if self._skip:
-            return
-        if tag in _BLOCK_TAGS:
-            self._break(hard=tag == "br")
-        elif tag in _CELL_TAGS:
-            self._emit(" ")
-        elif tag == "a":
-            self.finish_link()
-        elif tag == "img":
-            self.handle_starttag(tag, attrs)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in _SKIP_TAGS:
-            if tag in self._skip:
-                while self._skip and self._skip.pop() != tag:
-                    pass
-            return
-        if self._skip:
-            return
+        self._close_implied(tag)
+        keep, add = element_masks(tag, attrs)
+        state = (self._state() & keep) | add
+        if tag not in _VOID_TAGS:
+            self._push(tag, state)
+            if self._too_deep:
+                return
         if tag == "a":
             self.finish_link()
+            href = next((v for k, v in attrs if k == "href" and v), None)
+            if not state & GONE and href and (url := _clean_url(href)):
+                self._href = url
+                # A link in hidden text counts once something in it shows.
+                self._link_seen = not state
+        elif tag == "img":
+            if self._href is not None and not state & (GONE | INVISIBLE):
+                self._link_seen = True
+                if not self._link_alt:
+                    self._link_alt = next((v for k, v in attrs if k == "alt" and v), "")
+        elif state & GONE:
+            return
         elif tag in _BLOCK_TAGS:
             self._break(hard=tag == "br")
-            if tag == "pre" and self._pre:
-                self._pre -= 1
         elif tag in _CELL_TAGS:
             self._emit(" ")
 
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in ("svg", "math"):
+            # Only foreign elements really close themselves.
+            if not self._too_deep:
+                self._leave_head()
+            return
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._too_deep:
+            return
+        if tag == "head":
+            if self._in_head:
+                self._in_head = False
+                self._skip.clear()
+                self._skipping.clear()
+            return
+        if tag in _SKIP_TAGS:
+            if self._skipping[tag]:
+                while (open_tag := self._skip.pop()) != tag:
+                    self._skipping[open_tag] -= 1
+                self._skipping[tag] -= 1
+            return
+        if self._skip or self._in_head or tag in ("body", "html"):
+            return
+        target = self._end_target(tag)
+        state = self._stack[target][1] if target >= 0 else self._state()
+        if tag == "a":
+            self.finish_link()
+        elif state & GONE:
+            pass
+        elif tag in _BLOCK_TAGS:
+            self._break(hard=tag == "br")
+        elif tag in _CELL_TAGS:
+            self._emit(" ")
+        if target >= 0:
+            self._pop_to(target)
+
     def handle_data(self, data: str) -> None:
-        if self._skip == ["head"] and data.strip():
-            self._skip.clear()
-        if self._skip:
+        if self._too_deep:
+            return
+        if self._in_head and not self._skip and data.strip():
+            self._in_head = False
+        if self._skip or self._in_head:
+            return
+        if state := self._state():
+            if state == INVISIBLE:
+                # Invisible text still takes its place: keep words apart.
+                self._emit(" ")
             return
         if self._pre:
             self._emit(data)
         else:
             self._emit(_WHITESPACE_RE.sub(" ", data))
+        if (
+            self._href is not None
+            and not self._link_seen
+            and _INVISIBLE_RE.sub("", data).strip()
+        ):
+            self._link_seen = True
 
 
 def html_to_text(html: str) -> tuple[str, tuple[Link, ...]]:
     """Convert HTML to plain text and the links it contains. Never fetches.
 
-    Scripts, styles, the head and similar elements are dropped; block
-    elements become line breaks and table cells are separated by spaces.
-    Only http(s) links are kept, with their visible text. Images are
-    ignored.
+    Only what a reader sees is kept. Scripts, styles, the head and similar
+    elements are dropped, and so is text that inline styles or the ``hidden``
+    attribute hide: ``display:none``, ``visibility:hidden``, ``font-size:0``
+    and a zero (maximum) height with hidden overflow. Block elements become
+    line breaks and table cells are separated by spaces. Only http(s) links
+    a reader could see are kept, with their visible text or image alt text.
+    Images are otherwise ignored.
     """
     parser = _TextExtractor()
     # Malformed HTML keeps whatever was read before the error.

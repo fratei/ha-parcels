@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from custom_components.parcels.ai.prompt import ANSWER_CAPS
 from custom_components.parcels.ai.validate import (
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
@@ -22,6 +23,7 @@ from custom_components.parcels.ai.validate import (
     NOTE_ORDER_MOVED_TO_TRACKING,
     NOTE_PICKUP_POINT_DROPPED,
     NOTE_PICKUP_POINT_GENERIC,
+    NOTE_TRACKING_FROM_TEXT,
     Validation,
     carrier_scan_text,
     map_carrier,
@@ -745,6 +747,161 @@ def test_order_number_is_not_guessed(answered: str, text: str) -> None:
     assert NOTE_ORDER_FROM_TEXT not in result.notes
 
 
+DPD_LINK = f"https://tracking.dpd.example/status?parcelNumber={DPD_NUMBER}"
+S10_LINK = f"https://www.ctt.pt/feapl_2/app/open/objectSearch/x?objects={S10}"
+
+
+@pytest.mark.parametrize(
+    ("answered", "text", "links", "expected"),
+    [
+        ("09123456789112", "O seu envio está a caminho.", [DPD_LINK], DPD_NUMBER),
+        ("0912345678912", f"Siga o envio em {DPD_LINK} .", [], DPD_NUMBER),
+        ("09123456789112", f"Detalhes:\n{DPD_NUMBER}\nChega amanhã.", [], DPD_NUMBER),
+        (S10_BAD_CHECK_DIGIT, "Siga o envio no link abaixo.", [S10_LINK], S10),
+        ("RR123456786PT", "Número de objeto: RR 1234 5678 5 PT", [], S10),
+        (f"{UPS_NUMBER}5", f"Envio {UPS_NUMBER} a caminho.", [], UPS_NUMBER),
+    ],
+    ids=["href", "text-url", "text", "check-digit", "spaced", "extra-char"],
+)
+def test_miscopied_tracking_number_is_repaired(
+    answered: str, text: str, links: list[str], expected: str
+) -> None:
+    """A tracking number the model miscopied is taken as the e-mail gives it,
+    also when it is only in a tracking link."""
+    result = checked(
+        answer(kind="shipped", tracking_numbers=[answered]), text, links=links
+    )
+    assert [s.tracking_number for s in result.shipments] == [expected]
+    assert NOTE_TRACKING_FROM_TEXT in result.notes
+    assert "tracking_not_in_email" not in result.notes
+    assert NOTE_ADDED_BY_DETECTOR not in result.notes
+    assert result.confidence == CONFIDENCE_HIGH
+
+
+def test_miscopied_tracking_numbers_are_each_repaired() -> None:
+    """Each miscopied number is repaired on its own; the note is kept once."""
+    result = checked(
+        answer(
+            kind="shipped", tracking_numbers=["09123456789112", S10_BAD_CHECK_DIGIT]
+        ),
+        "Os seus envios estão a caminho.",
+        links=[DPD_LINK, S10_LINK],
+    )
+    assert [s.tracking_number for s in result.shipments] == [DPD_NUMBER, S10]
+    assert result.notes == (NOTE_TRACKING_FROM_TEXT,)
+
+
+@pytest.mark.parametrize(
+    ("answered", "text", "links", "orders"),
+    [
+        (
+            "09123456789013",
+            "Os seus envios estão a caminho.",
+            [DPD_LINK, DPD_LINK.replace("9012", "9014")],
+            [],
+        ),
+        ("09123456789302", "O seu envio está a caminho.", [DPD_LINK], []),
+        (S10, f"Objeto {S10_BAD_CHECK_DIGIT} enviado.", [], []),
+        ("4501234568", "Encomenda n.º 4501234567 enviada.", [], []),
+        ("4501234568", "Referência 4501234567.", [], ["4501234567"]),
+        ("48291376", "Código de entrega: 48291375", [], []),
+        ("912345679", "Telefone: 912345678", [], []),
+        ("18112027", "Enviado a 18-11-2026.", [], []),
+    ],
+    ids=[
+        "two-close",
+        "two-away",
+        "bad-check-digit",
+        "order-label",
+        "model-order",
+        "code",
+        "phone",
+        "date",
+    ],
+)
+def test_tracking_number_is_not_guessed(
+    answered: str, text: str, links: list[str], orders: list[str]
+) -> None:
+    """No repair with two close numbers, two changes, a number that fails its
+    check digit, or an order number, code, phone number or date."""
+    result = checked(
+        answer(kind="shipped", tracking_numbers=[answered], order_numbers=orders),
+        text,
+        links=links,
+    )
+    assert [s.tracking_number for s in result.shipments] == [None]
+    assert "tracking_not_in_email" in result.notes
+    assert NOTE_TRACKING_FROM_TEXT not in result.notes
+
+
+@pytest.mark.parametrize(
+    ("answered", "text", "expected"),
+    [
+        (
+            ["PO-2026-11884", "118844"],
+            "Encomenda n.º PO-2026-118844 confirmada.",
+            "PO-2026-118844",
+        ),
+        (["4501"], "Pedido n.º 2026/4501 registado.", "2026/4501"),
+        (["211"], "Encomenda n.º PO-211-4567890 confirmada.", "PO-211-4567890"),
+        (
+            ["1234567-7654321"],
+            "Bestellung Nr. 405-1234567-7654321 bestätigt.",
+            "405-1234567-7654321",
+        ),
+    ],
+    ids=["front-and-back", "slash", "middle", "two-parts"],
+)
+def test_order_number_part_becomes_the_number(
+    answered: list[str], text: str, expected: str
+) -> None:
+    """A part of a number joined by hyphens or slashes becomes that number."""
+    result = checked(answer(kind="order", order_numbers=answered), text)
+    assert result.order_numbers == (expected,)
+    assert NOTE_ORDER_FROM_TEXT in result.notes
+    assert "order_is_part" not in result.notes
+
+
+@pytest.mark.parametrize(
+    ("answered", "text"),
+    [
+        ("4501", "Encomendas n.º 2026/4501 e 2025/4501 confirmadas."),
+        ("2026", "Encomenda confirmada em 18-11-2026."),
+        ("123456785", "Objeto RR-123456785-PT enviado. Encomenda confirmada."),
+        ("4501", "Encomenda confirmada. Telefone: 21-555-4501"),
+    ],
+    ids=["two-numbers", "date", "tracking", "phone"],
+)
+def test_order_number_part_is_dropped(answered: str, text: str) -> None:
+    """A part of two numbers, or of a date, tracking or phone number, is
+    dropped."""
+    result = checked(answer(kind="order", order_numbers=[answered]), text)
+    assert result.order_numbers == ()
+    assert "order_is_part" in result.notes
+    assert "order_not_in_email" not in result.notes
+    assert NOTE_ORDER_FROM_TEXT not in result.notes
+
+
+@pytest.mark.parametrize(
+    ("answered", "text"),
+    [
+        ("4501", "Fatura 2026/4501 emitida. Pedido n.º 4501 confirmado."),
+        ("4501", "Pedido-4501 confirmado."),
+        ("4501", "Ref-4501: pedido confirmado."),
+        ("4501", "Veja o pedido em https://loja.example/?n=2026-4501"),
+        ("PO-211-4567890", "Encomenda n.º PO-211-4567890 confirmada."),
+    ],
+    ids=["also-alone", "word", "label", "link", "whole"],
+)
+def test_order_number_written_alone_is_kept(answered: str, text: str) -> None:
+    """A number also written on its own, joined only to a word or label or
+    inside a link, or given whole, is kept as written."""
+    result = checked(answer(kind="order", order_numbers=[answered]), text)
+    assert result.order_numbers == (answered,)
+    assert "order_is_part" not in result.notes
+    assert NOTE_ORDER_FROM_TEXT not in result.notes
+
+
 @pytest.mark.parametrize(
     ("number", "carrier", "text", "sender", "sender_name", "links"),
     [
@@ -983,6 +1140,84 @@ def test_items_are_limited() -> None:
     assert len(result.items) == 9
     assert result.items[0] == "x" * 79 + "\u2026"
     assert result.items[1:] == tuple(f"Artigo {n}" for n in range(2, 10))
+
+
+CUT_TEXT = (
+    "A encomenda 4501234567 está pronta para levantamento.\n"
+    "Ponto de recolha: Papelaria Central, Rua das Flores 12, Lisboa.\n"
+    "Código de levantamento: 4821\n"
+    "Artigos: Tapete de banho"
+)
+
+
+def padded(name: str, value: str, short: int = 0) -> str:
+    """Return ``value`` and the spaces a runaway model writes, up to its cap."""
+    return value.ljust(ANSWER_CAPS[name]["max_length"] - short)
+
+
+def test_values_as_long_as_their_caps_were_cut() -> None:
+    """Ollama stops a value at its cap; a value that long is dropped as cut.
+
+    The spaces collapse, so without that rule the checks would read the
+    start of the value as if it were whole. A cut item ends with "…".
+    """
+
+    def result(short: int) -> ParseResult:
+        return checked(
+            answer(
+                kind="ready_for_pickup",
+                merchant=padded("merchant", "Loja Exemplo", short),
+                order_numbers=[padded("order_numbers", "4501234567", short)],
+                pickup_point=padded("pickup_point", "Papelaria Central", short),
+                pickup_code=padded("pickup_code", "4821", short),
+                items=[padded("items", "Tapete de banho", short)],
+            ),
+            CUT_TEXT,
+            sender="noreply@loja-exemplo.pt",
+        )
+
+    whole = result(short=1)
+    assert whole.merchant == "Loja Exemplo"
+    assert whole.order_numbers == ("4501234567",)
+    assert whole.shipments[0].pickup_point == "Papelaria Central"
+    assert whole.shipments[0].pickup_code == "4821"
+    assert whole.items == ("Tapete de banho",)
+    assert not [note for note in whole.notes if note.endswith("_cut")]
+
+    cut = result(short=0)
+    assert cut.merchant is None
+    assert cut.order_numbers == ()
+    assert cut.shipments[0].pickup_point is None
+    assert cut.shipments[0].pickup_code is None
+    assert cut.items == ("Tapete de banho\u2026",)
+    assert set(cut.notes) >= {
+        "merchant_cut",
+        "order_numbers_cut",
+        "pickup_point_cut",
+        "pickup_code_cut",
+    }
+    assert cut.confidence == CONFIDENCE_LOW
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("carrier", "CTT Expresso"),
+        ("eta_start", "2026-11-19"),
+        ("eta_end", "2026-11-19"),
+        ("window_start", "09:00"),
+        ("window_end", "13:00"),
+    ],
+)
+def test_carrier_dates_and_times_as_long_as_their_caps_were_cut(
+    name: str, value: str
+) -> None:
+    """A carrier, date or time as long as its cap is dropped as cut."""
+    text = "A sua encomenda chega quinta-feira, 19/11, entre as 9h e as 13h (CTT)."
+    whole = checked(answer(kind="shipped", **{name: padded(name, value, 1)}), text)
+    cut = checked(answer(kind="shipped", **{name: padded(name, value)}), text)
+    assert f"{name}_cut" not in whole.notes
+    assert f"{name}_cut" in cut.notes
 
 
 ORDERED_ITEM = "Ejemplo Sartén Origen, 24 cm, antiadherente"
@@ -1289,6 +1524,43 @@ def test_kind_given_by_text_is_kept(kind: str, text: str, language: str) -> None
     result = checked(answer(kind=kind), text, language=language)
     assert result.kind is MailKind(kind)
     assert NOTE_KIND_FROM_TEXT not in result.notes
+
+
+@pytest.mark.parametrize(
+    ("kind", "subject", "text", "language"),
+    [
+        (
+            "in_transit",
+            "Shipment update",
+            "Departed from the sorting centre in Lyon.",
+            "en",
+        ),
+        (
+            "shipped",
+            "Shipment update",
+            "Departed from the sorting centre in Lyon.",
+            "en",
+        ),
+        (
+            "shipped",
+            "Atualização do envio",
+            "O envio saiu do centro de distribuição de Braga.",
+            "pt",
+        ),
+        (
+            "shipped",
+            "Sendungsupdate",
+            "Die Sendung hat das Paketzentrum in Kassel verlassen.",
+            "de",
+        ),
+    ],
+)
+def test_carrier_departure_is_in_transit(
+    kind: str, subject: str, text: str, language: str
+) -> None:
+    """A "shipment update" saying a parcel left a carrier's centre is in transit."""
+    result = checked(answer(kind=kind), text, subject=subject, language=language)
+    assert result.kind is MailKind.IN_TRANSIT
 
 
 def test_result_fields() -> None:

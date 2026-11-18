@@ -32,6 +32,7 @@ from .ai import (
     AIBadOutput,
     AIError,
     AIRefused,
+    AITimeout,
     AIUnavailable,
     async_extract,
     install_log_filter,
@@ -46,6 +47,7 @@ from .const import (
     ISSUE_AI_UNAVAILABLE,
     REASON_AI_REJECTED,
     REASON_AI_SUGGESTION,
+    REASON_AI_TIMEOUT,
     REASON_AI_UNAVAILABLE,
     REASON_UNKNOWN_FORMAT,
     SIGNAL_AI_UPDATED,
@@ -519,12 +521,19 @@ class AIWorker:
         if notify:
             self.engine.async_changed()
 
-    def _retry_or_review(self, entry: dict[str, Any], now: datetime) -> None:
-        """Count a failed call; retry later, or give up after the last try."""
+    def _retry_or_review(
+        self, entry: dict[str, Any], now: datetime, *, timed_out: bool = False
+    ) -> None:
+        """Count a failed call; retry later, or give up after the last try.
+
+        The review reason tells a last try that took too long from one that
+        failed.
+        """
         entry["attempts"] = int(entry.get("attempts", 0)) + 1
         self._count("failed")
         if entry["attempts"] >= MAX_ATTEMPTS:
-            self._to_review(entry, now, reason=REASON_AI_UNAVAILABLE)
+            reason = REASON_AI_TIMEOUT if timed_out else REASON_AI_UNAVAILABLE
+            self._to_review(entry, now, reason=reason)
             return
         entry["not_before"] = dt_to_str(now + AI_RETRY_DELAY)
         self.engine.async_schedule_save()
@@ -614,7 +623,9 @@ class AIWorker:
         except AIError as err:
             self._last_error = type(err).__name__
             if self._current(entry):
-                self._retry_or_review(entry, dt_util.utcnow())
+                self._retry_or_review(
+                    entry, dt_util.utcnow(), timed_out=isinstance(err, AITimeout)
+                )
             return
         self._last_error = None
         self._clear_issues()

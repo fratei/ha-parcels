@@ -10,7 +10,9 @@ The output structure asks for every field and uses only text and select
 selectors: optional fields were left out by small models, and the date and
 time selectors made them write values such as ``1911-11-20`` or
 ``09:00:00.000Z``. Dates, times and carriers are normalized and checked in
-code (see ``validate``).
+code (see ``validate``). Every list and text field has a cap well above real
+values, which Ollama turns into grammar limits: a model that runs away stops
+at a cap instead of running until the AI task times out.
 """
 
 from __future__ import annotations
@@ -197,22 +199,64 @@ SERVICE_STRUCTURE: dict[str, dict[str, Any]] = {
     },
 }
 
+# Entries per list and characters per text, sent as maxItems and maxLength:
+# Ollama stops a value at its cap, so a model that runs away can't write
+# until the AI task times out. Every cap is well above real values (dates
+# and times included, which models also write out as "20 de novembro" or
+# "9h30"), so the checks treat a value as long as its cap as cut: they drop
+# it, or end an item with "…" (items keep at most 80 characters anyway). The
+# detector still adds tracking numbers the model leaves out. The
+# ai_task.generate_data action can't carry caps, so only AI_STRUCTURE has them.
+ANSWER_CAPS: dict[str, dict[str, int]] = {
+    "merchant": {"max_length": 100},
+    "carrier": {"max_length": 100},
+    "tracking_numbers": {"max_items": 10, "max_length": 40},
+    "order_numbers": {"max_items": 10, "max_length": 40},
+    "eta_start": {"max_length": 60},
+    "eta_end": {"max_length": 60},
+    "window_start": {"max_length": 30},
+    "window_end": {"max_length": 30},
+    "pickup_point": {"max_length": 200},
+    "pickup_code": {"max_length": 40},
+    "items": {"max_items": 10, "max_length": 100},
+}
 
-def structure_schema(fields: Mapping[str, Mapping[str, Any]]) -> probatio.Schema:
+
+def structure_schema(
+    fields: Mapping[str, Mapping[str, Any]],
+    caps: Mapping[str, Mapping[str, int]] | None = None,
+) -> probatio.Schema:
     """Turn a structure in the ``ai_task.generate_data`` format into a schema.
 
-    This mirrors what the AI task service does with its ``structure`` field.
+    This mirrors what the AI task service does with its ``structure`` field,
+    plus the ``caps``, which that format can't express.
     """
     schema: dict[Any, Any] = {}
     for name, spec in fields.items():
         marker = probatio.Required if spec.get("required", False) else probatio.Optional
-        schema[marker(name, description=spec.get("description"))] = selector.selector(
-            spec["selector"]
+        schema[marker(name, description=spec.get("description"))] = _field_schema(
+            spec["selector"], (caps or {}).get(name, {})
         )
     return probatio.Schema(schema, extra=probatio.PREVENT_EXTRA)
 
 
-AI_STRUCTURE: probatio.Schema = structure_schema(SERVICE_STRUCTURE)
+def _field_schema(config: Mapping[str, Any], cap: Mapping[str, int]) -> Any:
+    """Return a field's selector, limited by its caps."""
+    text = config.get("text")
+    if not cap or text is None or not text.get("multiple"):
+        return _limited(selector.selector(config), cap.get("max_length"))
+    single = {key: value for key, value in text.items() if key != "multiple"}
+    item = _limited(selector.selector({"text": single}), cap.get("max_length"))
+    return _limited([item], cap.get("max_items"))
+
+
+def _limited(validator: Any, maximum: int | None) -> Any:
+    if maximum is None:
+        return validator
+    return probatio.All(validator, probatio.Length(max=maximum))
+
+
+AI_STRUCTURE: probatio.Schema = structure_schema(SERVICE_STRUCTURE, ANSWER_CAPS)
 
 
 def json_schema() -> dict[str, Any]:
@@ -357,17 +401,36 @@ def link_entries(urls: Iterable[str]) -> list[tuple[str, tuple[str, ...]]]:
     return [(domain, tuple(numbers)) for domain, numbers in ordered][:MAX_LINK_ENTRIES]
 
 
-def _replace_url(match: re.Match[str]) -> str:
-    raw = match.group(0)
+def _text_link(raw: str) -> tuple[str, str, tuple[str, ...]] | None:
+    """Return a URL written in text, its domain and its tracking numbers."""
     url = raw.rstrip(_URL_TRAILING)
     domain = link_domain(url)
     if domain is None:
+        return None
+    return url, domain, link_numbers(url if "://" in url else f"http://{url}")
+
+
+def _replace_url(match: re.Match[str]) -> str:
+    raw = match.group(0)
+    link = _text_link(raw)
+    if link is None:
         return raw
-    numbers = link_numbers(url if "://" in url else f"http://{url}")
+    url, domain, numbers = link
     label = (
         f"[link: {domain}: {', '.join(numbers)}]" if numbers else f"[link: {domain}]"
     )
     return label + raw[len(url) :]
+
+
+def text_link_numbers(text: str) -> list[str]:
+    """Return the tracking numbers in the links written in plain text."""
+    numbers: list[str] = []
+    for match in _URL_RE.finditer(neutralize(text)):
+        link = _text_link(match.group(0))
+        for number in link[2] if link else ():
+            if number not in numbers:
+                numbers.append(number)
+    return numbers
 
 
 def _trim(text: str, limit: int) -> str:
