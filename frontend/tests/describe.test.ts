@@ -49,6 +49,14 @@ describe("describeParcel", () => {
     );
   });
 
+  test("says when a delivery was only inferred", () => {
+    const parcel = makeParcel({ ...shop, status: "delivered", inferred: true });
+    assert.equal(
+      describeParcel(parcel, { locale: GB }),
+      "Example Shop, DHL, Delivered, delivery inferred, please check",
+    );
+  });
+
   test("reveals nothing but the carrier and status of a restricted parcel", () => {
     const parcel = makeParcel({
       carrier: "dhl",
@@ -56,6 +64,7 @@ describe("describeParcel", () => {
       private: true,
       ai: true,
       auto_merged: MERGED,
+      inferred: true,
     });
     assert.equal(describeParcel(parcel, { locale: GB }), "Private parcel, DHL, In transit, private");
     assert.equal(chipMeta(parcel, { locale: GB }), "DHL");

@@ -28,7 +28,8 @@ from pytest_homeassistant.common import (
     async_mock_service,
 )
 
-from custom_components.parcels.const import DOMAIN, ParcelStatus
+from custom_components.parcels.const import DOMAIN, MailKind, ParcelStatus
+from custom_components.parcels.dedup import apply_contribution
 from custom_components.parcels.engine import ParcelsEngine
 from custom_components.parcels.models import Eta, MessageState, Parcel, Source
 
@@ -41,6 +42,7 @@ from .common import (
     async_setup_parcels,
     patch_mail_clients,
 )
+from .factories import contribution
 
 NOW = "2026-11-17 10:00:00+00:00"
 CTT_NUMBER = "RR482915732PT"
@@ -533,6 +535,69 @@ async def test_confirm_merge(hass: HomeAssistant, engine: ParcelsEngine) -> None
     await refused(hass, "undo_merge", {"parcel_id": parcel_id}, "nothing_to_undo")
 
 
+async def test_inferred_delivery(hass: HomeAssistant, engine: ParcelsEngine) -> None:
+    """An inferred delivery can be kept, or undone once and not inferred again.
+
+    Two Amazon orders were due on 12 November and the carrier delivered an
+    Amazon parcel on the 13th, so both count as delivered, without merging.
+    """
+    data = engine.data
+    now = dt_util.utcnow()
+    delivered = dt_util.parse_datetime("2026-11-13 11:28:00+00:00")
+    assert delivered is not None
+    apply_contribution(
+        data,
+        contribution(
+            "msg:carrier#0",
+            kind=MailKind.DELIVERED,
+            time=delivered,
+            carrier="ctt_expresso",
+            number="EX123456789012",
+            merchant="Amazon",
+            label="cttexpresso.pt",
+        ),
+        now,
+    )
+    kept, undone = (
+        apply_contribution(
+            data,
+            contribution(
+                f"msg:order{n}#0",
+                time=delivered - timedelta(days=2, hours=n),
+                merchant="Amazon.es",
+                orders=[f"171-000000{n}-000000{n}"],
+                eta=Eta(start=date(2026, 11, 12), end=date(2026, 11, 12)),
+                label="amazon.es",
+            ),
+            now,
+        ).parcel_id
+        for n in (1, 2)
+    )
+    assert kept != undone
+
+    engine.async_changed()
+
+    assert len(data.parcels) == 3
+    for parcel_id in (kept, undone):
+        state = data.parcels[parcel_id].state
+        assert state.status is ParcelStatus.DELIVERED
+        assert state.inferred
+
+    await call(hass, "update", {"parcel_id": kept, "confirm_delivery": True})
+    state = data.parcels[kept].state
+    assert state.status is ParcelStatus.DELIVERED
+    assert not state.inferred
+    await refused(hass, "undo_delivery", {"parcel_id": kept}, "no_inferred_delivery")
+
+    await call(hass, "undo_delivery", {"parcel_id": undone})
+    parcel = data.parcels[undone]
+    assert parcel.state.status is ParcelStatus.SHIPPED
+    assert parcel.delivery_rejected
+    engine.async_changed()
+    assert parcel.state.status is ParcelStatus.SHIPPED
+    await refused(hass, "undo_delivery", {"parcel_id": undone}, "no_inferred_delivery")
+
+
 # -- E-mails ------------------------------------------------------------------
 
 
@@ -714,6 +779,7 @@ async def test_sender_bad_input(
         ("mark_delivered", {}),
         ("archive", {}),
         ("undo_merge", {}),
+        ("undo_delivery", {}),
         ("split", {"origins": ["man:p_1"]}),
     ],
 )

@@ -413,6 +413,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
           </div>`
         : nothing}
       ${!restricted && parcel.auto_merged ? this._renderMergeNotice(parcel) : nothing}
+      ${!restricted && parcel.inferred ? this._renderInferredNotice(parcel) : nothing}
       ${!restricted && parcel.provisional
         ? html`<p class="hint">${STRINGS.provisionalHint}</p>`
         : nothing}
@@ -459,6 +460,33 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
         aria-label=${fmt(STRINGS.keepMergeLabel, { title })}
         aria-disabled=${busy}
         @click=${this._keepMerge}
+      >
+        ${STRINGS.keep}
+      </button>
+    </div>`;
+  }
+
+  private _renderInferredNotice(parcel: Parcel): TemplateResult {
+    const busy = this._busy ? "true" : "false";
+    const title = parcelTitle(parcel);
+    return html`<div class="alert warning">
+      <ha-icon icon="mdi:package-variant-closed-check" aria-hidden="true"></ha-icon>
+      <span class="grow">${STRINGS.inferredNotice}</span>
+      <button
+        type="button"
+        class="btn"
+        aria-label=${fmt(STRINGS.undoInferredLabel, { title })}
+        aria-disabled=${busy}
+        @click=${this._undoInferred}
+      >
+        ${STRINGS.undo}
+      </button>
+      <button
+        type="button"
+        class="btn"
+        aria-label=${fmt(STRINGS.keepInferredLabel, { title })}
+        aria-disabled=${busy}
+        @click=${this._keepInferred}
       >
         ${STRINGS.keep}
       </button>
@@ -810,6 +838,14 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
 
   private _keepMerge(): void {
     this._parcelService("update", { confirm_merge: true });
+  }
+
+  private _undoInferred(): void {
+    this._parcelService("undo_delivery", {});
+  }
+
+  private _keepInferred(): void {
+    this._parcelService("update", { confirm_delivery: true });
   }
 
   private _markDelivered(): void {

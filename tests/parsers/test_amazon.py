@@ -110,10 +110,14 @@ def test_kind_language_and_order(
         ("delivered_nl", "nl", [("Pv2LnR8cJ", None)]),
     ],
 )
-def test_amazon_logistics_shipments(
+def test_amazon_shipments(
     parse: Parse, name: str, tld: str, expected: list[tuple[str, Eta | None]]
 ) -> None:
-    """Shipment IDs come from the "Track package" links, one per package."""
+    """Shipment IDs come from the "Track package" links, one per package.
+
+    Amazon hands parcels to other carriers too, so the carrier stays unknown
+    when the e-mail doesn't name one, and the Amazon link is kept.
+    """
     result = parse(name)
     order = result.order_numbers[0]
     assert [
@@ -121,13 +125,40 @@ def test_amazon_logistics_shipments(
     ] == expected
     for index, shipment in enumerate(result.shipments):
         assert shipment.kind is None
-        assert shipment.carrier == "amazon"
+        assert shipment.carrier is None
         assert shipment.tracking_number is None
         assert shipment.event_time is None
         assert shipment.tracking_url == (
             f"https://www.amazon.{tld}/progress-tracker/package?orderId={order}"
             f"&shipmentId={shipment.amazon_shipment_id}&packageIndex={index}"
         )
+
+
+@pytest.mark.parametrize(
+    ("extra", "number"),
+    [
+        ("Entregado por Amazon Logistics.", None),
+        ("ID de seguimiento: TBA312345678901", "TBA312345678901"),
+    ],
+)
+def test_amazon_logistics_named(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    extra: str,
+    number: str | None,
+) -> None:
+    """Amazon's own delivery service counts when named or by its number."""
+    message = load_eml("amazon/delivered_photo_es.eml")
+    message = dataclasses.replace(message, text=f"{message.text}\n{extra}\n")
+    result = parse_amazon(message, verdict_for(message), tz)
+    assert result is not None
+    [shipment] = result.shipments
+    assert shipment.carrier == "amazon"
+    assert shipment.tracking_number == number
+    assert shipment.amazon_shipment_id == "Tq8ZmX3vB"
+    assert shipment.tracking_url is not None
+    assert shipment.tracking_url.startswith("https://www.amazon.es/progress-tracker/")
 
 
 def test_two_packages_split_items(parse: Parse) -> None:
@@ -261,7 +292,7 @@ def test_ready_for_pickup(
 ) -> None:
     """Pickup e-mails carry the pickup point and code."""
     [shipment] = parse(name).shipments
-    assert shipment.carrier == "amazon"
+    assert shipment.carrier is None
     assert shipment.pickup_point == point
     assert shipment.pickup_code == code
     assert shipment.eta is None

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, date, datetime
+from typing import Any
 from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
@@ -14,7 +16,14 @@ from homeassistant.setup import async_setup_component
 import pytest
 
 from custom_components.parcels.const import DOMAIN, PERSISTENT_NOTIFICATION_ID
+from custom_components.parcels.dedup import (
+    REPAIR_KEY,
+    REPAIR_VERSION,
+    apply_contribution,
+)
 from custom_components.parcels.engine import ParcelsEngine, get_engine
+from custom_components.parcels.models import ParcelsData
+from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.store import ParcelsStore
 
 from .common import (
@@ -25,6 +34,7 @@ from .common import (
     async_wait_for_mail,
     patch_mail_clients,
 )
+from .factories import contribution
 
 NOW = "2026-11-17 10:00:00+00:00"
 
@@ -236,3 +246,49 @@ async def test_remove_hub_deletes_data(hass: HomeAssistant) -> None:
     )
     stored = await ParcelsStore(hass).async_load()
     assert stored.parcels == {}
+
+
+async def test_start_repairs_stored_parcels_once(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """Parcels an earlier release stored are fixed once, without reading mail."""
+    data = ParcelsData()
+    when = datetime(2026, 11, 16, 9, tzinfo=UTC)
+    # What 0.1.0 stored for Amazon's e-mail without a carrier number.
+    parcel_id = apply_contribution(
+        data,
+        contribution(
+            "msg:amazon#0",
+            time=when,
+            carrier="amazon",
+            merchant="Amazon.es",
+            orders=["171-0000001-0000001"],
+            eta=Eta(start=date(2026, 11, 19), end=date(2026, 11, 19)),
+            label="amazon.es",
+        ),
+        when,
+    ).parcel_id
+    assert parcel_id is not None
+    hass_storage["parcels"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "parcels",
+        "data": data.as_dict(),
+    }
+    hub = add_hub(hass)
+
+    engine = await async_setup_parcels(hass)
+
+    parcel = engine.data.parcels[parcel_id]
+    assert parcel.state.carrier is None
+    assert parcel.state.merchant == "Amazon"
+    assert engine.data.engine[REPAIR_KEY] == REPAIR_VERSION
+
+    with patch("custom_components.parcels.engine.repair_store") as repair:
+        assert await hass.config_entries.async_reload(hub.entry_id)
+        await hass.async_block_till_done()
+
+    repair.assert_not_called()
+    engine = get_engine(hass)
+    assert engine is not None
+    assert engine.data.parcels[parcel_id].state.carrier is None

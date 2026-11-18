@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import tzinfo
 import logging
+import re
 from typing import Final
 
 from ..base import MailMessage, ParseResult, SenderVerdict
@@ -27,7 +28,7 @@ from . import (
     seur,
     ups,
 )
-from ._common import CarrierSpec, parse_with_spec
+from ._common import CarrierSpec, fold_text, parse_with_spec, phrase_regex
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,6 +49,29 @@ _SPECS: Final[dict[str, CarrierSpec]] = {
 }
 
 CARRIER_PARSERS: frozenset[str] = frozenset(_SPECS)
+
+_BRAND_REGEXES: Final[dict[str, re.Pattern[str]]] = {
+    carrier: phrase_regex(spec.brands) for carrier, spec in _SPECS.items()
+}
+
+
+def brand_carriers(name: str | None) -> tuple[str, ...]:
+    """Return the carriers whose brand a name contains, e.g. "GLS PT Informa".
+
+    When several carriers match, only those with the longest brand are kept:
+    "CTT Expresso" is CTT Expresso, while "CTT" stays both CTT carriers.
+    """
+    if not name:
+        return ()
+    folded = fold_text(name)
+    lengths: dict[str, int] = {}
+    for carrier, regex in _BRAND_REGEXES.items():
+        if found := [len(match.group()) for match in regex.finditer(folded)]:
+            lengths[carrier] = max(found)
+    if not lengths:
+        return ()
+    longest = max(lengths.values())
+    return tuple(sorted(c for c, length in lengths.items() if length == longest))
 
 
 def parse_carrier(

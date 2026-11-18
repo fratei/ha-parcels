@@ -34,6 +34,8 @@ def contribution(
     source: Source = Source.PARSER,
     status: ParcelStatus | None = None,
     private: bool = False,
+    label: str = "",
+    items: Iterable[str] = (),
 ) -> Contribution:
     """Build what one e-mail says about one parcel."""
     message = origin_id.removeprefix("msg:").split("#")[0]
@@ -41,11 +43,13 @@ def contribution(
         id=origin_id,
         source=source,
         time=time,
+        label=label,
         carrier=carrier,
         tracking_number=number,
         amazon_shipment_id=shipment_id,
         merchant=merchant,
         order_numbers=tuple(orders),
+        items=tuple(items),
         message=message,
         owners=(owner,) if owner else (),
     )

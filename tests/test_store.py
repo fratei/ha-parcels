@@ -116,6 +116,53 @@ def test_parcel_retention() -> None:
     assert not apply_retention(data, T0).changed
 
 
+def _untracked(
+    data: ParcelsData,
+    name: str,
+    eta_day: int,
+    *,
+    days: float = -20,
+    mail: str | None = None,
+    **kwargs,
+) -> str:
+    """Add a shop's parcel without a tracking number, due on ``eta_day`` Oct."""
+    due = date(2026, 10, eta_day)
+    applied = apply_contribution(
+        data,
+        contribution(
+            f"msg:{mail or name}#0",
+            time=at(days=days),
+            merchant=f"Shop {name}",
+            orders=[f"#{name}"],
+            eta=Eta(due, due),
+            **kwargs,
+        ),
+        at(days=days),
+    )
+    assert applied.parcel_id
+    return applied.parcel_id
+
+
+def test_untracked_parcels_archived_a_week_after_their_dates() -> None:
+    """Nothing reports the delivery of a parcel without a tracking number."""
+    data = ParcelsData()
+    overdue = _untracked(data, "u1", 26)
+    six_days = _untracked(data, "u2", 27)
+    rejected = _untracked(data, "u3", 26)
+    data.parcels[rejected].delivery_rejected = True
+    late_news = _untracked(data, "u4", 20)
+    news = _untracked(data, "u4", 20, days=-6, mail="u5", kind=MailKind.IN_TRANSIT)
+    assert news == late_news
+    assert len(data.parcels) == 4
+    due = date(2026, 10, 26)
+    tracked = _parcel(data, "t1", MailKind.SHIPPED, -20, eta=Eta(due, due))
+
+    assert apply_retention(data, T0).archived == [overdue]
+    assert apply_retention(data, at(days=1)).archived == [six_days, late_news]
+    for parcel_id in (rejected, tracked):
+        assert data.parcels[parcel_id].archived is None
+
+
 def test_retention_options() -> None:
     """The archive and purge periods are options."""
     data = ParcelsData()

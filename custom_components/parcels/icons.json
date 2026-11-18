@@ -64,6 +64,9 @@
     "undo_merge": {
       "service": "mdi:call-split"
     },
+    "undo_delivery": {
+      "service": "mdi:package-variant-closed-remove"
+    },
     "merge": {
       "service": "mdi:call-merge"
     },

@@ -7,6 +7,7 @@ import type {
   AiMode,
   AutoMerged,
   FilteredItem,
+  MergeSuggestion,
   OrderInfo,
   OriginInfo,
   Parcel,
@@ -90,6 +91,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     window_start: str(raw.window_start),
     window_end: str(raw.window_end),
     delivered_at: str(raw.delivered_at),
+    inferred: raw.inferred === true,
     pickup_point: str(raw.pickup_point),
     pickup_code: str(raw.pickup_code),
     order_numbers: strs(raw.order_numbers),
@@ -167,6 +169,27 @@ export function normalizeFilteredItem(raw: unknown): FilteredItem | null {
   };
 }
 
+/** A merge suggestion; null without an id, its parcel or any candidate. */
+export function normalizeMergeSuggestion(raw: unknown): MergeSuggestion | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  const suggestionId = id(raw.id);
+  const parcel = normalizeParcel(raw.parcel);
+  const candidates = list(raw.candidates, normalizeParcel);
+  if (!suggestionId || !parcel || !candidates.length) {
+    return null;
+  }
+  return {
+    id: suggestionId,
+    reason: text(raw.reason),
+    merchant: str(raw.merchant),
+    day: isYmd(raw.day) ? raw.day : null,
+    parcel,
+    candidates,
+  };
+}
+
 function aiMode(value: unknown): AiMode {
   return value === "suggest" || value === "auto" ? value : "off";
 }
@@ -197,6 +220,7 @@ export function normalizeSnapshot(raw: unknown, now: number = Date.now()): Snaps
   return {
     parcels: list(snapshot.parcels, normalizeParcel),
     review: list(snapshot.review, normalizeReviewItem),
+    merge_suggestions: list(snapshot.merge_suggestions, normalizeMergeSuggestion),
     filtered: list(snapshot.filtered, normalizeFilteredItem),
     settings: normalizeSettings(snapshot.settings, now),
   };
@@ -209,7 +233,7 @@ function timelineEntry(raw: unknown): TimelineEntry | null {
   return {
     time: text(raw.time),
     status: text(raw.status) as ParcelStatus,
-    source: source(raw.source),
+    source: raw.source === "inferred" ? "inferred" : source(raw.source),
     label: text(raw.label),
   };
 }

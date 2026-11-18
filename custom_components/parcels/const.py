@@ -8,7 +8,7 @@ from typing import Final
 
 DOMAIN: Final = "parcels"
 NAME: Final = "Parcels"
-VERSION: Final = "0.1.0"
+VERSION: Final = "0.1.1"
 
 STORAGE_KEY: Final = "parcels"
 STORAGE_VERSION: Final = 1
@@ -65,6 +65,9 @@ FILTERED_RETENTION: Final = timedelta(days=14)
 REVIEW_RETENTION: Final = timedelta(days=30)
 # Parcels still open with no news for this long are archived as stale.
 STALE_ARCHIVE: Final = timedelta(days=30)
+# Parcels without a carrier tracking number are archived this long after
+# their last expected day, when there's been no news since.
+UNTRACKED_GRACE: Final = timedelta(days=7)
 
 
 class AIMode(StrEnum):

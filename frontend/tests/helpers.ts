@@ -16,6 +16,7 @@ export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
     window_start: null,
     window_end: null,
     delivered_at: null,
+    inferred: false,
     pickup_point: null,
     pickup_code: null,
     order_numbers: [],

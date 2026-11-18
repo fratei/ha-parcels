@@ -21,13 +21,29 @@ existing parcels:
 * heuristics, which flag the parcel "auto-merged" so the user can undo them:
   the same long tracking number from carriers of different families, or the
   same merchant with overlapping delivery dates when only one parcel fits.
+
+After a sync, :func:`reconcile` looks at whole parcels again, because e-mails
+arrive in any order and a shop's e-mail rarely names the carrier's number:
+
+* a shop's single parcel without a tracking number joins the tracked
+  shipments that the same sender domain announces within a few days;
+* a parcel without a tracking number joins the tracked parcel of the same
+  merchant delivered on its date, when they are the only two that fit. When
+  more fit, the user gets merge suggestions instead.
+
+:func:`infer_deliveries` then closes parcels without a tracking number whose
+date has passed when the same merchant delivered another parcel then. Shops
+pack several orders in one carrier parcel, so these are marked as inferred,
+not merged.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
-from datetime import datetime
+from collections import defaultdict
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, timedelta
+import hashlib
 from typing import Any
 
 from .const import MailKind, ParcelStatus
@@ -40,16 +56,40 @@ from .models import (
     ParcelsData,
     Source,
     date_from_str,
+    local_date,
     merchant_key,
     new_id,
     order_key,
     time_from_str,
 )
 from .parsers.base import Eta
-from .parsers.tracking import detect_carrier, is_s10, normalize_tracking_number
+from .parsers.carriers import brand_carriers
+from .parsers.senders import is_free_mail, lookup, organizational_domain
+from .parsers.tracking import (
+    detect_carrier,
+    is_s10,
+    normalize_tracking_number,
+    tracking_url,
+    validate_tracking_number,
+)
 
 REASON_SAME_MERCHANT_ETA = "same_merchant_eta"
 REASON_SAME_NUMBER = "same_number"
+REASON_SAME_MERCHANT_DAY = "same_merchant_day"
+REASON_SAME_MERCHANT_DOMAIN = "same_merchant_domain"
+
+# How far back reconcile() looks, and how soon after a shop's order e-mails
+# its tracked shipments must follow to absorb the order's parcel.
+RECONCILE_WINDOW = timedelta(days=30)
+DOMAIN_ABSORB_WINDOW = timedelta(days=7)
+# A delivery this many days around a parcel's dates counts for inference.
+INFER_MARGIN = timedelta(days=1)
+
+# Engine-state keys: pairs of origins the user keeps apart, and the version
+# of the one-time repair of stored parcels.
+KEPT_APART = "kept_apart"
+REPAIR_KEY = "repair"
+REPAIR_VERSION = 1
 
 # Shorter numbers from carriers of different families are not linked.
 LOOSE_MIN_LENGTH = 10
@@ -232,10 +272,20 @@ def _overlap(first: Eta, second: Eta) -> bool:
 
 
 def _contribution_eta(events: Iterable[ParcelEvent]) -> Eta | None:
+    events = list(events)
     dated = [event for event in events if event.eta is not None]
-    if not dated:
+    if dated:
+        return max(dated, key=lambda event: event.time).eta
+    # A carrier's "out for delivery" or "delivered" e-mail dates the parcel.
+    done = [
+        event
+        for event in events
+        if event.status in (ParcelStatus.OUT_FOR_DELIVERY, ParcelStatus.DELIVERED)
+    ]
+    if not done:
         return None
-    return max(dated, key=lambda event: event.time).eta
+    day = local_date(max(done, key=lambda event: event.time).time)
+    return Eta(start=day, end=day)
 
 
 def _untracked(parcel: Parcel) -> bool:
@@ -376,6 +426,8 @@ def apply_contribution(
     """
     origin = contribution.origin
     _normalise(origin)
+    _brand_carrier(origin)
+    _name_merchant(data, origin)
     events = contribution.events
     for event in events:
         event.origin = origin.id
@@ -451,7 +503,10 @@ def apply_contribution(
         origin.owners = tuple(sorted(set(existing.owners) | set(origin.owners)))
         origin.confirmed = origin.confirmed or existing.confirmed
     parcel.origins[origin.id] = origin
-    parcel.events = [e for e in parcel.events if e.origin != origin.id]
+    # News about the parcel replaces a delivery Parcels only inferred.
+    parcel.events = [
+        e for e in parcel.events if e.origin != origin.id and not e.inferred
+    ]
     parcel.events.extend(events)
     parcel.private = parcel.private or contribution.private
     if reason and parcel.auto_merged is None:
@@ -467,12 +522,24 @@ def apply_contribution(
 
 
 def merge_parcels(
-    data: ParcelsData, target_id: str, other_ids: Iterable[str], now: datetime
+    data: ParcelsData,
+    target_id: str,
+    other_ids: Iterable[str],
+    now: datetime,
+    *,
+    keep_archived: bool = False,
 ) -> Parcel:
-    """Merge parcels into ``target_id``; the others are deleted."""
+    """Merge parcels into ``target_id``; the others are deleted.
+
+    The result is archived only when every parcel was, unless
+    ``keep_archived`` keeps the target's own state. Inferred deliveries are
+    dropped: they were guesses about one of the parcels.
+    """
     target = data.parcels[target_id]
     others = [data.parcels[pid] for pid in dict.fromkeys(other_ids) if pid != target_id]
-    if any(parcel.archived is None for parcel in (target, *others)):
+    if not keep_archived and any(
+        parcel.archived is None for parcel in (target, *others)
+    ):
         target.archived = None
     for other in others:
         for origin_id, origin in other.origins.items():
@@ -480,10 +547,13 @@ def merge_parcels(
         known = {event.id for event in target.events}
         target.events.extend(e for e in other.events if e.id not in known)
         target.private = target.private or other.private
+        target.delivery_rejected = target.delivery_rejected or other.delivery_rejected
         target.created = min(target.created, other.created)
         if target.auto_merged is None:
             target.auto_merged = other.auto_merged
         del data.parcels[other.id]
+    if others:
+        target.events = [event for event in target.events if not event.inferred]
     target.touch(now)
     _record_orders(data, target, now)
     return target
@@ -494,10 +564,11 @@ def split_parcel(
 ) -> Parcel:
     """Move origins and their events out of a parcel into a new one.
 
-    The user's edits stay with the original parcel. Raises DedupError when
-    the split is impossible: nothing to move, nothing left behind, or the two
-    sides share a tracking number or shipment (the next e-mail would merge
-    them again).
+    The user's edits stay with the original parcel, and the two parcels are
+    kept apart, so reconciling doesn't merge them again. Raises DedupError
+    when the split is impossible: nothing to move, nothing left behind, or
+    the two sides share a tracking number or shipment (the next e-mail would
+    merge them again).
     """
     parcel = data.parcels[parcel_id]
     moving = set(origin_ids)
@@ -521,31 +592,35 @@ def split_parcel(
         new.origins[oid] = parcel.origins.pop(oid)
     new.events = [event for event in parcel.events if event.origin in moving]
     parcel.events = [event for event in parcel.events if event.origin not in moving]
-    if parcel.auto_merged and parcel.auto_merged.origin in moving:
+    if parcel.auto_merged and parcel.auto_merged.all_origins & moving:
         parcel.auto_merged = None
     data.parcels[new.id] = new
     parcel.touch(now)
     new.touch(now)
     _record_orders(data, parcel, now)
     _record_orders(data, new, now)
+    keep_apart(data, parcel, new)
     return new
 
 
 def undo_auto_merge(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel | None:
     """Undo a heuristic merge, returning the parcel that was split off.
 
-    The origin that was linked by the heuristic leaves together with every
-    origin that shares its tracking number or shipment. When nothing would be
-    left behind, only the flag is cleared and None is returned.
+    The origins that were linked by the heuristic leave together with every
+    origin that shares their tracking number or shipment. When nothing would
+    be left behind, only the flag is cleared and None is returned. The two
+    parcels are then kept apart, so they aren't merged again.
     """
     parcel = data.parcels[parcel_id]
     flag = parcel.auto_merged
     parcel.auto_merged = None
     parcel.touch(now)
-    if flag is None or flag.origin not in parcel.origins:
+    if flag is None:
         return None
-    component = {flag.origin}
-    pending = [parcel.origins[flag.origin]]
+    component = flag.all_origins & parcel.origins.keys()
+    if not component:
+        return None
+    pending = [parcel.origins[oid] for oid in component]
     while pending:
         current = pending.pop()
         for oid, other in parcel.origins.items():
@@ -578,8 +653,14 @@ def remove_message(data: ParcelsData, message_hash: str, now: datetime) -> set[s
         for oid in removed:
             del parcel.origins[oid]
         parcel.events = [e for e in parcel.events if e.origin not in removed]
-        if parcel.auto_merged and parcel.auto_merged.origin in removed:
-            parcel.auto_merged = None
+        if (flag := parcel.auto_merged) is not None:
+            if flag.origin in removed:
+                parcel.auto_merged = None
+            elif set(flag.origins) & removed:
+                parcel.auto_merged = replace(
+                    flag,
+                    origins=tuple(oid for oid in flag.origins if oid not in removed),
+                )
         if parcel.origins:
             parcel.touch(now)
             _record_orders(data, parcel, now)
@@ -622,8 +703,9 @@ def update_parcel(
 
     A key that is present with the value None clears that field. Changing the
     tracking number to one another parcel already has merges the two.
-    Besides the fields, ``confirm`` confirms what the local AI found and
-    ``confirm_merge`` keeps an automatic merge.
+    Besides the fields, ``confirm`` confirms what the local AI found,
+    ``confirm_merge`` keeps an automatic merge and ``confirm_delivery`` keeps
+    an inferred delivery.
     """
     parcel = data.parcels[parcel_id]
     edits = {key: changes[key] for key in UPDATABLE_FIELDS if key in changes}
@@ -644,6 +726,13 @@ def update_parcel(
                 origin.confirmed = True
     if changes.get("confirm_merge"):
         parcel.auto_merged = None
+    if changes.get("confirm_delivery"):
+        origin = _edit_origin(parcel, now)
+        for event in parcel.events:
+            if event.inferred:
+                event.inferred = False
+                event.source = Source.MANUAL
+                event.origin = origin.id
     parcel.touch(now)
 
     if edits.get("tracking_number") and (
@@ -730,3 +819,712 @@ def archive_parcel(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel:
         parcel.archived = now
         parcel.updated = now
     return parcel
+
+
+# --- Parcels the user keeps apart ----------------------------------------------
+
+
+def _kept_apart_pairs(
+    data: ParcelsData,
+) -> list[tuple[frozenset[str], frozenset[str]]]:
+    """Return the pairs of origin sets that the user keeps apart."""
+    raw = data.engine.get(KEPT_APART)
+    pairs: list[tuple[frozenset[str], frozenset[str]]] = []
+    if not isinstance(raw, list):
+        return pairs
+    for entry in raw:
+        if not isinstance(entry, list | tuple) or len(entry) != 2:
+            continue
+        sides = [
+            frozenset(str(item) for item in side if item)
+            for side in entry
+            if isinstance(side, list | tuple)
+        ]
+        if len(sides) == 2 and all(sides):
+            pairs.append((sides[0], sides[1]))
+    return pairs
+
+
+def keep_apart(data: ParcelsData, first: Parcel, second: Parcel) -> None:
+    """Remember that two parcels differ, so they aren't merged again.
+
+    The pair is stored by origin IDs, which survive merges with other parcels.
+    """
+    left, right = frozenset(first.origins), frozenset(second.origins)
+    if not left or not right or left & right:
+        return
+    pairs = _kept_apart_pairs(data)
+    if (left, right) in pairs or (right, left) in pairs:
+        return
+    pairs.append((left, right))
+    data.engine[KEPT_APART] = [[sorted(a), sorted(b)] for a, b in pairs]
+
+
+def prune_kept_apart(data: ParcelsData) -> None:
+    """Forget pairs whose parcels are gone or were merged after all."""
+    pairs = _kept_apart_pairs(data)
+    owner = {
+        origin_id: parcel.id
+        for parcel in data.parcels.values()
+        for origin_id in parcel.origins
+    }
+    kept: list[list[list[str]]] = []
+    for pair in pairs:
+        left, right = ({oid for oid in side if oid in owner} for side in pair)
+        if (
+            left
+            and right
+            and not {owner[oid] for oid in left} & {owner[oid] for oid in right}
+        ):
+            kept.append([sorted(left), sorted(right)])
+    if kept:
+        data.engine[KEPT_APART] = kept
+    else:
+        data.engine.pop(KEPT_APART, None)
+
+
+def _apart_checker(data: ParcelsData) -> Callable[[Parcel, Parcel], bool]:
+    """Return a test for two parcels that the user keeps apart."""
+    pairs = _kept_apart_pairs(data)
+
+    def apart(first: Parcel, second: Parcel) -> bool:
+        one, two = first.origins.keys(), second.origins.keys()
+        return any(
+            (not left.isdisjoint(one) and not right.isdisjoint(two))
+            or (not left.isdisjoint(two) and not right.isdisjoint(one))
+            for left, right in pairs
+        )
+
+    return apart
+
+
+# --- Shops, carriers and their names -------------------------------------------
+
+
+def _all_origins(data: ParcelsData) -> Iterator[Origin]:
+    for parcel in data.parcels.values():
+        yield from parcel.origins.values()
+
+
+def _is_shop(label: str) -> bool:
+    """Return True for a sender domain of a shop Parcels doesn't know."""
+    return bool(label) and lookup(label) is None and not is_free_mail(label)
+
+
+def _domain_like(merchant: str, label: str) -> bool:
+    """Return True when a merchant name is just the sender's domain."""
+    text = merchant.strip().casefold()
+    if text == label.casefold():
+        return True
+    return "." in text and " " not in text and organizational_domain(text) == label
+
+
+def _merchant_names(
+    origins: Iterable[Origin], wanted: str | None = None
+) -> dict[str, str]:
+    """Return, per sender domain, the merchant name its e-mails agree on.
+
+    Names that only add words agree: ``Casa Verde`` and ``Casa Verde
+    Portugal`` give ``Casa Verde``. A domain with unrelated names, carrier
+    brands or bare domains only has none.
+    """
+    found: dict[str, dict[str, tuple[datetime, str]]] = defaultdict(dict)
+    for origin in origins:
+        label = origin.label
+        if origin.message is None or not label or (wanted and label != wanted):
+            continue
+        name = (origin.merchant or "").strip()
+        if not name or _domain_like(name, label) or brand_carriers(name):
+            continue
+        if not (key := merchant_key(name)):
+            continue
+        names = found[label]
+        if (seen := names.get(key)) is None or (origin.time, name) < seen:
+            names[key] = (origin.time, name)
+    agreed: dict[str, str] = {}
+    for label, names in found.items():
+        shortest = min(names, key=lambda key: (len(key), key))
+        if all(key.startswith(shortest) for key in names):
+            agreed[label] = names[shortest][1]
+    return agreed
+
+
+def known_merchant(data: ParcelsData, label: str) -> str | None:
+    """Return the merchant name that e-mails from a sender domain gave."""
+    if not label:
+        return None
+    return _merchant_names(_all_origins(data), label).get(label)
+
+
+def _brand_carrier(origin: Origin) -> bool:
+    """Take an e-mail's carrier from a carrier brand in its sender name.
+
+    Shops forward their carrier's notices under the carrier's name, e.g.
+    "GLS PT Informa" from the shop's own domain. The brand counts when the
+    tracking number fits exactly one of its carriers. Returns True on change.
+    """
+    number = origin.tracking_number
+    if origin.message is None or origin.carrier or not number or not origin.merchant:
+        return False
+    fits = [
+        carrier
+        for carrier in brand_carriers(origin.merchant)
+        if validate_tracking_number(number, carrier)
+    ]
+    if len(fits) != 1:
+        return False
+    origin.carrier = fits[0]
+    if not origin.tracking_url or origin.tracking_url == tracking_url(None, number):
+        origin.tracking_url = tracking_url(origin.carrier, number)
+    return True
+
+
+def _name_merchant(
+    data: ParcelsData, origin: Origin, names: Mapping[str, str] | None = None
+) -> bool:
+    """Name the merchant of a shop's e-mail after the shop, never its carrier.
+
+    A carrier brand ("GLS PT Informa") or a bare domain is replaced by the
+    name the shop's other e-mails give. Without one, a brand is replaced by
+    the shop's domain. ``names`` caches :func:`_merchant_names`. Returns True
+    on change.
+    """
+    label = origin.label
+    if origin.message is None or not _is_shop(label):
+        return False
+    merchant = (origin.merchant or "").strip()
+    brand = bool(merchant) and bool(brand_carriers(merchant))
+    if merchant and not brand and not _domain_like(merchant, label):
+        return False
+    known = names.get(label) if names is not None else known_merchant(data, label)
+    if brand:
+        # A domain of the carrier itself has no shop to name.
+        name = known or (None if brand_carriers(label) else label)
+    else:
+        name = known or origin.merchant
+    if name == origin.merchant:
+        return False
+    origin.merchant = name
+    return True
+
+
+# --- Reconciling whole parcels ---------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class MergeSuggestion:
+    """Parcels that are probably one, for the user to merge or keep apart.
+
+    ``parcel_id`` is the parcel with the tracking number; ``candidates`` are
+    the parcels without one that may belong to it.
+    """
+
+    id: str
+    parcel_id: str
+    candidates: tuple[str, ...]
+    merchant: str | None
+    day: date | None
+    reason: str
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialise the suggestion."""
+        return {
+            "id": self.id,
+            "parcel_id": self.parcel_id,
+            "candidates": list(self.candidates),
+            "merchant": self.merchant,
+            "day": self.day.isoformat() if self.day else None,
+            "reason": self.reason,
+        }
+
+
+@dataclass(slots=True)
+class Reconciled:
+    """What :func:`reconcile` did."""
+
+    changed: set[str] = field(default_factory=set)
+    removed: set[str] = field(default_factory=set)
+    suggestions: list[MergeSuggestion] = field(default_factory=list)
+
+
+def _news_times(parcel: Parcel) -> list[datetime]:
+    return [
+        origin.time
+        for origin in parcel.origins.values()
+        if origin.source is not Source.MANUAL
+    ]
+
+
+def _first_news(parcel: Parcel) -> datetime | None:
+    """Return when Parcels first heard of a parcel from a mailbox or 17TRACK."""
+    return min(_news_times(parcel), default=None)
+
+
+def _last_activity(parcel: Parcel) -> datetime | None:
+    """Return the time of the latest news, not counting the user's edits."""
+    times = _news_times(parcel)
+    times.extend(
+        event.time
+        for event in parcel.events
+        if not event.inferred and event.source is not Source.MANUAL
+    )
+    return max(times, default=None)
+
+
+def _real_delivery(parcel: Parcel) -> datetime | None:
+    """Return when a parcel was delivered, unless that was only inferred."""
+    state = parcel.state
+    if state.status is ParcelStatus.DELIVERED and not state.inferred:
+        return state.delivered_at
+    return None
+
+
+def _reported_delivery(parcel: Parcel) -> datetime | None:
+    """Return when an e-mail or 17TRACK said a parcel was delivered.
+
+    A delivery the user marked or confirmed doesn't say which carrier's
+    package it was, so it never pairs parcels or infers other deliveries.
+    """
+    if (delivered := _real_delivery(parcel)) is None:
+        return None
+    for event in parcel.events:
+        if (
+            event.time == delivered
+            and event.status is ParcelStatus.DELIVERED
+            and event.source is not Source.MANUAL
+            and not event.inferred
+        ):
+            return delivered
+    return None
+
+
+def _parcels_conflict(first: Parcel, second: Parcel) -> bool:
+    """Return True when two parcels can't be the same parcel."""
+    one, two = first.state, second.state
+    if one.tracking_number and two.tracking_number:
+        return True
+    if (
+        one.amazon_shipment_ids
+        and two.amazon_shipment_ids
+        and not set(one.amazon_shipment_ids) & set(two.amazon_shipment_ids)
+    ):
+        return True
+    orders_one, orders_two = parcel_order_keys(first), parcel_order_keys(second)
+    return bool(orders_one and orders_two and not orders_one & orders_two)
+
+
+def _keys_compatible(first: str, second: str) -> bool:
+    return (
+        not first or not second or first.startswith(second) or second.startswith(first)
+    )
+
+
+def _components(edges: Mapping[str, set[str]]) -> list[set[str]]:
+    """Return the connected components of an undirected graph."""
+    seen: set[str] = set()
+    components: list[set[str]] = []
+    for start in sorted(edges):
+        if start in seen:
+            continue
+        component = {start}
+        pending = [start]
+        while pending:
+            for other in edges[pending.pop()]:
+                if other not in component:
+                    component.add(other)
+                    pending.append(other)
+        seen |= component
+        components.append(component)
+    return components
+
+
+def _suggestion(
+    target: Parcel, candidates: Iterable[Parcel], day: date | None, reason: str
+) -> MergeSuggestion:
+    ordered = sorted(
+        candidates,
+        key=lambda parcel: (_first_news(parcel) or parcel.created, parcel.id),
+    )
+    ids = tuple(parcel.id for parcel in ordered)
+    digest = hashlib.sha1(
+        "|".join((target.id, *sorted(ids))).encode(), usedforsecurity=False
+    ).hexdigest()[:12]
+    return MergeSuggestion(
+        id=f"m{digest}",
+        parcel_id=target.id,
+        candidates=ids,
+        merchant=target.state.merchant,
+        day=day,
+        reason=reason,
+    )
+
+
+def _auto_merge(
+    data: ParcelsData,
+    target: Parcel,
+    other: Parcel,
+    reason: str,
+    now: datetime,
+    result: Reconciled,
+) -> None:
+    """Merge a parcel without a tracking number into one with, undoably."""
+    moving = sorted(other.origins.values(), key=lambda origin: (origin.time, origin.id))
+    first = next(
+        (origin for origin in moving if origin.source is not Source.MANUAL), moving[0]
+    )
+    merge_parcels(data, target.id, (other.id,), now, keep_archived=True)
+    target.auto_merged = AutoMerge(
+        origin=first.id,
+        at=now,
+        reason=reason,
+        origins=tuple(origin.id for origin in moving if origin.id != first.id),
+    )
+    result.changed.add(target.id)
+    result.removed.add(other.id)
+
+
+def _reconcile_pool(data: ParcelsData, start: datetime) -> list[Parcel]:
+    """Return the parcels with recent news that can still be reconciled."""
+    return sorted(
+        (
+            parcel
+            for parcel in data.parcels.values()
+            if parcel.state.status
+            not in (ParcelStatus.CANCELLED, ParcelStatus.RETURNED)
+            and any(time >= start for time in _news_times(parcel))
+        ),
+        key=lambda parcel: (parcel.created, parcel.id),
+    )
+
+
+def _absorb_by_domain(
+    data: ParcelsData,
+    pool: list[Parcel],
+    apart: Callable[[Parcel, Parcel], bool],
+    now: datetime,
+    result: Reconciled,
+) -> None:
+    """Let a shop's tracked shipments absorb its parcel without a number.
+
+    A shop often sends an order's "shipped" e-mail without a tracking number
+    and then forwards the carrier's notices from its own domain, without the
+    order number. The parcel of the "shipped" e-mail joins the shipments that
+    follow within a few days, when it's the only such parcel. With several,
+    the user gets a suggestion.
+    """
+    untracked: dict[str, list[Parcel]] = defaultdict(list)
+    tracked: dict[str, list[tuple[datetime, Parcel]]] = defaultdict(list)
+    for parcel in pool:
+        state = parcel.state
+        shop_mail: dict[str, datetime] = {}
+        for origin in parcel.origins.values():
+            if origin.message is not None and _is_shop(origin.label):
+                when = shop_mail.get(origin.label)
+                shop_mail[origin.label] = min(when or origin.time, origin.time)
+        for label, when in shop_mail.items():
+            if state.tracking_number:
+                tracked[label].append((when, parcel))
+            elif not state.amazon_shipment_ids and not state.terminal:
+                untracked[label].append(parcel)
+
+    edges: dict[str, set[str]] = defaultdict(set)
+    first_mail: dict[str, datetime] = {}
+    for label, parcels in untracked.items():
+        for parcel in parcels:
+            first = _first_news(parcel)
+            last = _last_activity(parcel)
+            if first is None or last is None:
+                continue
+            key = merchant_key(parcel.state.merchant)
+            for when, other in tracked.get(label, ()):
+                if (
+                    first < when <= last + DOMAIN_ABSORB_WINDOW
+                    and _keys_compatible(key, merchant_key(other.state.merchant))
+                    and not _parcels_conflict(parcel, other)
+                    and not apart(parcel, other)
+                ):
+                    edges[parcel.id].add(other.id)
+                    edges[other.id].add(parcel.id)
+                    first_mail[other.id] = min(first_mail.get(other.id, when), when)
+
+    for component in _components(edges):
+        targets = sorted(
+            (pid for pid in component if pid in first_mail),
+            key=lambda pid: (first_mail[pid], pid),
+        )
+        sources = sorted(pid for pid in component if pid not in first_mail)
+        target = data.parcels[targets[0]]
+        parcels = [data.parcels[pid] for pid in sources]
+        if len(parcels) == 1 and not (target.auto_merged or parcels[0].auto_merged):
+            _auto_merge(
+                data, target, parcels[0], REASON_SAME_MERCHANT_DOMAIN, now, result
+            )
+            continue
+        if open_parcels := [parcel for parcel in parcels if parcel.archived is None]:
+            result.suggestions.append(
+                _suggestion(target, open_parcels, None, REASON_SAME_MERCHANT_DOMAIN)
+            )
+
+
+def _expected_days(parcel: Parcel) -> tuple[date, date] | None:
+    """Return the days a parcel without a tracking number arrived or was due."""
+    if (delivered := _reported_delivery(parcel)) is not None:
+        day = local_date(delivered)
+        return day, day
+    if (eta := parcel.state.eta) is not None:
+        return eta.start, eta.end
+    return None
+
+
+def _delivery_day(parcel: Parcel) -> date | None:
+    """Return the day a tracked parcel was delivered or is out for delivery."""
+    state = parcel.state
+    if (delivered := _real_delivery(parcel)) is not None:
+        return local_date(delivered)
+    if state.status is ParcelStatus.OUT_FOR_DELIVERY:
+        if state.eta is not None:
+            return state.eta.end
+        if state.status_time is not None:
+            return local_date(state.status_time)
+    return None
+
+
+def _pair_by_day(
+    data: ParcelsData,
+    pool: list[Parcel],
+    apart: Callable[[Parcel, Parcel], bool],
+    now: datetime,
+    result: Reconciled,
+) -> None:
+    """Pair parcels without a tracking number with a carrier's delivery.
+
+    A shop's e-mail rarely names the carrier's number, and the carrier's
+    e-mail doesn't name the order, so the same package shows twice: once
+    from the shop and once from the carrier, with the shop's name. When the
+    carrier delivers (or is delivering) on the shop's date and they're the
+    only two that fit, they merge. Otherwise the user gets suggestions.
+    """
+    untracked: list[tuple[Parcel, str, date, date, datetime]] = []
+    tracked: list[tuple[Parcel, str, date]] = []
+    for parcel in pool:
+        state = parcel.state
+        if not (key := merchant_key(state.merchant)):
+            continue
+        if state.tracking_number:
+            if (day := _delivery_day(parcel)) is not None:
+                tracked.append((parcel, key, day))
+        elif (expected := _expected_days(parcel)) is not None and (
+            first := _first_news(parcel)
+        ) is not None:
+            untracked.append((parcel, key, *expected, first))
+
+    edges: dict[str, set[str]] = defaultdict(set)
+    days: dict[str, date] = {}
+    for parcel, key, start, end, first in untracked:
+        for other, other_key, day in tracked:
+            delivered = _real_delivery(other)
+            if (
+                key == other_key
+                and start <= day <= end
+                and (delivered is None or first < delivered)
+                and not _parcels_conflict(parcel, other)
+                and not apart(parcel, other)
+            ):
+                edges[parcel.id].add(other.id)
+                edges[other.id].add(parcel.id)
+                days[other.id] = day
+
+    for component in _components(edges):
+        targets = sorted(pid for pid in component if pid in days)
+        sources = sorted(pid for pid in component if pid not in days)
+        if len(targets) == 1 and len(sources) == 1:
+            target = data.parcels[targets[0]]
+            other = data.parcels[sources[0]]
+            if not (target.auto_merged or other.auto_merged):
+                _auto_merge(data, target, other, REASON_SAME_MERCHANT_DAY, now, result)
+                continue
+        for target_id in targets:
+            target = data.parcels[target_id]
+            if target.archived is not None:
+                continue
+            candidates = [
+                data.parcels[pid]
+                for pid in sorted(edges[target_id])
+                if data.parcels[pid].archived is None
+            ]
+            if candidates:
+                result.suggestions.append(
+                    _suggestion(
+                        target, candidates, days[target_id], REASON_SAME_MERCHANT_DAY
+                    )
+                )
+
+
+def reconcile(
+    data: ParcelsData, now: datetime, *, since: datetime | None = None
+) -> Reconciled:
+    """Look at whole parcels again after a sync and merge the same ones.
+
+    Only parcels with news since ``since`` (default: the last 30 days) are
+    looked at. Merges are flagged "auto-merged" so the user can undo them;
+    pairs the user kept apart are left alone.
+    """
+    result = Reconciled()
+    prune_kept_apart(data)
+    apart = _apart_checker(data)
+    start = since or now - RECONCILE_WINDOW
+
+    names = _merchant_names(_all_origins(data))
+    for parcel in _reconcile_pool(data, start):
+        changed = False
+        for origin in parcel.origins.values():
+            changed |= _brand_carrier(origin)
+            changed |= _name_merchant(data, origin, names)
+        if changed:
+            parcel.touch(now)
+            _record_orders(data, parcel, now)
+            result.changed.add(parcel.id)
+
+    _absorb_by_domain(data, _reconcile_pool(data, start), apart, now, result)
+    _pair_by_day(data, _reconcile_pool(data, start), apart, now, result)
+    result.changed -= result.removed
+    return result
+
+
+def accept_suggestion(
+    data: ParcelsData, parcel_id: str, candidate_id: str, now: datetime
+) -> Parcel:
+    """Merge a suggested parcel into the parcel with the tracking number."""
+    if parcel_id == candidate_id:
+        raise DedupError("merge_needs_two")
+    target, candidate = data.parcels.get(parcel_id), data.parcels.get(candidate_id)
+    if target is None or candidate is None:
+        raise DedupError("unknown_parcel")
+    if _parcels_conflict(target, candidate):
+        raise DedupError("cannot_merge")
+    return merge_parcels(data, parcel_id, (candidate_id,), now, keep_archived=True)
+
+
+def dismiss_suggestion(
+    data: ParcelsData, parcel_id: str, candidate_ids: Iterable[str]
+) -> None:
+    """Keep the suggested parcels apart from the parcel with the number."""
+    if (target := data.parcels.get(parcel_id)) is None:
+        raise DedupError("unknown_parcel")
+    for candidate_id in candidate_ids:
+        if (candidate := data.parcels.get(candidate_id)) is not None:
+            keep_apart(data, target, candidate)
+
+
+# --- Inferred deliveries ---------------------------------------------------------
+
+
+def infer_deliveries(data: ParcelsData, now: datetime) -> set[str]:
+    """Close parcels without a tracking number that were probably delivered.
+
+    Shops pack several orders into one carrier parcel and only the carrier
+    reports the delivery. A parcel without a carrier tracking number whose
+    dates have passed, with no news since, counts as delivered when an
+    e-mail or 17TRACK reported another parcel of the same merchant delivered
+    within a day of its dates. It only starts the day after its last
+    expected day. The parcels aren't
+    merged, and the delivery is shown as inferred until the user keeps or
+    undoes it. Returns the IDs of the changed parcels.
+    """
+    apart = _apart_checker(data)
+    today = local_date(now)
+    delivered: dict[str, list[tuple[datetime, Parcel]]] = defaultdict(list)
+    for parcel in data.parcels.values():
+        if (when := _reported_delivery(parcel)) is not None and (
+            key := merchant_key(parcel.state.merchant)
+        ):
+            delivered[key].append((when, parcel))
+
+    changed: set[str] = set()
+    for parcel in data.parcels.values():
+        state = parcel.state
+        eta = state.eta
+        key = merchant_key(state.merchant)
+        if (
+            parcel.archived is not None
+            or state.terminal
+            or state.tracking_number
+            or parcel.delivery_rejected
+            or eta is None
+            or today <= eta.end
+            or not key
+            or any(event.inferred for event in parcel.events)
+        ):
+            continue
+        last = _last_activity(parcel)
+        first_day, last_day = eta.start - INFER_MARGIN, eta.end + INFER_MARGIN
+        matches = sorted(
+            when
+            for when, other in delivered.get(key, ())
+            if other.id != parcel.id
+            and first_day <= local_date(when) <= last_day
+            and (last is None or last <= when)
+            and not apart(parcel, other)
+        )
+        if not matches:
+            continue
+        parcel.events.append(
+            ParcelEvent(
+                time=matches[0],
+                source=Source.PARSER,
+                status=ParcelStatus.DELIVERED,
+                kind=MailKind.DELIVERED,
+                inferred=True,
+            )
+        )
+        parcel.touch(now)
+        changed.add(parcel.id)
+    return changed
+
+
+def undo_inferred_delivery(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel:
+    """Take back an inferred delivery; it won't be inferred again."""
+    parcel = data.parcels[parcel_id]
+    if not any(event.inferred for event in parcel.events):
+        raise DedupError("no_inferred_delivery")
+    parcel.events = [event for event in parcel.events if not event.inferred]
+    parcel.delivery_rejected = True
+    parcel.touch(now)
+    if parcel.archived is not None and not parcel.state.terminal:
+        parcel.archived = None
+    return parcel
+
+
+# --- Repairing parcels stored by earlier versions ---------------------------------
+
+
+def repair_store(data: ParcelsData, now: datetime) -> set[str]:
+    """Fix what earlier versions stored; returns the changed parcel IDs.
+
+    * Carrier brands in sender names become carriers, never merchants.
+    * A shop's bare domain is replaced by its name from other e-mails.
+    * Amazon e-mails without a tracking number no longer claim that Amazon
+      delivers: the carrier is unknown until a carrier's e-mail names it.
+    * Orders are recorded again under the current order keys.
+    """
+    names = _merchant_names(_all_origins(data))
+    changed: set[str] = set()
+    for parcel in data.parcels.values():
+        dirty = False
+        for origin in parcel.origins.values():
+            dirty |= _brand_carrier(origin)
+            dirty |= _name_merchant(data, origin, names)
+            if (
+                origin.carrier == "amazon"
+                and origin.source in (Source.PARSER, Source.AI)
+                and not origin.tracking_number
+                and (info := lookup(origin.label)) is not None
+                and info.parser == "amazon"
+            ):
+                origin.carrier = None
+                dirty = True
+        if dirty:
+            parcel.touch(now)
+            changed.add(parcel.id)
+        _record_orders(data, parcel, now)
+    return changed

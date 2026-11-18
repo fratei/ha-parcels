@@ -64,16 +64,25 @@ from .convert import (
     suggestion_result,
 )
 from .dedup import (
+    REPAIR_KEY,
+    REPAIR_VERSION,
     Contribution,
     DedupError,
+    MergeSuggestion,
+    accept_suggestion,
     add_owner,
     apply_contribution,
     archive_parcel,
+    dismiss_suggestion,
+    infer_deliveries,
     mark_delivered,
     merge_parcels,
+    reconcile,
     remove_message,
+    repair_store,
     split_parcel,
     undo_auto_merge,
+    undo_inferred_delivery,
     update_parcel,
 )
 from .mail.errors import (
@@ -102,7 +111,7 @@ from .parsers import NOTE_KNOWN_SENDER_UNPARSED, parse_message
 from .parsers.auth import verify_sender
 from .parsers.base import MailMessage, ParseResult, SenderVerdict, message_hash
 from .parsers.prefilter import is_candidate
-from .parsers.senders import lookup, organizational_domain
+from .parsers.senders import is_free_mail, lookup, organizational_domain
 from .parsers.tracking import (
     MAX_NUMBER_CHARS,
     detect_carrier,
@@ -129,57 +138,6 @@ UNPARSED_THRESHOLD = 2
 UNPARSED_WINDOW = timedelta(days=7)
 UNPARSED_KEEP = timedelta(days=30)
 MIN_NUMBER_CHARS = 5
-
-# Free mail providers: anyone can send from them, so they can't be trusted
-# or ignored as a whole. Matched on the registrable domain or its first label.
-FREE_MAIL_NAMES = frozenset(
-    {
-        "aol",
-        "fastmail",
-        "freenet",
-        "gmail",
-        "gmx",
-        "googlemail",
-        "hotmail",
-        "icloud",
-        "laposte",
-        "libero",
-        "live",
-        "msn",
-        "orange",
-        "outlook",
-        "proton",
-        "protonmail",
-        "sapo",
-        "tuta",
-        "tutanota",
-        "wanadoo",
-        "yahoo",
-        "yandex",
-        "ymail",
-        "zoho",
-    }
-)
-FREE_MAIL_DOMAINS = frozenset(
-    {
-        "free.fr",
-        "mac.com",
-        "mail.com",
-        "mail.ru",
-        "me.com",
-        "pm.me",
-        "t-online.de",
-        "web.de",
-    }
-)
-
-
-def is_free_mail(domain: str) -> bool:
-    """Return True for a free mail provider, or for an empty domain."""
-    org = organizational_domain(domain)
-    if not org:
-        return True
-    return org in FREE_MAIL_DOMAINS or org.split(".", 1)[0] in FREE_MAIL_NAMES
 
 
 def validation_error(key: str, **placeholders: str) -> ServiceValidationError:
@@ -287,6 +245,12 @@ class ParcelsEngine:
         self._fetch_failures: dict[str, int] = {}
         self._unsubs: list[CALLBACK_TYPE] = []
         self._started = False
+        # Mailboxes being read, and mailboxes with more e-mails to read soon.
+        # Parcels are reconciled once all of them are done.
+        self._syncing: set[str] = set()
+        self._more: set[str] = set()
+        self._reconciling = False
+        self._suggestions: dict[str, MergeSuggestion] = {}
 
     # -- Properties -------------------------------------------------------
 
@@ -350,9 +314,12 @@ class ParcelsEngine:
         await self.store.async_load()
         data = self.data
         data.engine.setdefault("synced", {})
+        now = dt_util.utcnow()
+        if int(data.engine.get(REPAIR_KEY) or 0) < REPAIR_VERSION:
+            self._repair(now)
         self._statuses = {pid: p.state.status for pid, p in data.parcels.items()}
         self._started = True
-        self._run_retention(dt_util.utcnow())
+        self._run_retention(now)
         self._unsubs.append(
             async_track_time_change(
                 self.hass, self._async_daily, hour=3, minute=15, second=0
@@ -388,14 +355,76 @@ class ParcelsEngine:
 
     @callback
     def _async_midnight(self, _now: datetime) -> None:
-        """Refresh what depends on the date."""
-        async_dispatcher_send(self.hass, SIGNAL_DATA_UPDATED)
-        if self.notifier is not None:
-            self.notifier.async_parcels_changed()
+        """Refresh what depends on the date, e.g. inferred deliveries."""
+        self.async_changed()
         self.ai.wake()
 
     @callback
+    def _repair(self, now: datetime) -> None:
+        """Fix what earlier releases stored, once per repair version.
+
+        Parcels are reconciled right after, as on every start.
+        """
+        data = self.data
+        changed = repair_store(data, now)
+        data.engine[REPAIR_KEY] = REPAIR_VERSION
+        if changed:
+            _LOGGER.info("Parcels updated %d stored parcels", len(changed))
+        self.async_schedule_save()
+
+    # -- Reconciling ------------------------------------------------------
+
+    @callback
+    def begin_sync(self, entry_id: str) -> None:
+        """Note that a mailbox is being read."""
+        self._syncing.add(entry_id)
+
+    @callback
+    def end_sync(self, entry_id: str, *, more: bool) -> None:
+        """Note that a mailbox was read; ``more`` when it continues soon.
+
+        Once no mailbox is being read, parcels are reconciled.
+        """
+        self._syncing.discard(entry_id)
+        if more:
+            self._more.add(entry_id)
+        else:
+            self._more.discard(entry_id)
+        if self._reconcile(dt_util.utcnow()):
+            self.async_changed(reconcile=False)
+
+    @callback
+    def _reconcile(self, now: datetime) -> bool:
+        """Merge parcels that turned out to be one, and infer deliveries.
+
+        Waits while mailboxes are read, so that a first sync, which can arrive
+        in any order, is looked at as a whole. Returns True when parcels
+        changed.
+        """
+        if not self._started or self._reconciling or self._syncing or self._more:
+            return False
+        self._reconciling = True
+        try:
+            data = self.data
+            result = reconcile(data, now)
+            inferred = infer_deliveries(data, now)
+        finally:
+            self._reconciling = False
+        self._suggestions = {item.id: item for item in result.suggestions}
+        if result.removed or result.changed or inferred:
+            _LOGGER.debug(
+                "Reconciling merged %d parcels and inferred %d deliveries",
+                len(result.removed),
+                len(inferred),
+            )
+            return True
+        return False
+
+    @callback
     def _run_retention(self, now: datetime) -> None:
+        # Infer deliveries first, so overdue parcels close rather than archive.
+        if self._reconcile(now):
+            self.async_changed(reconcile=False)
         options = self.options
         result = apply_retention(
             self.data,
@@ -415,10 +444,16 @@ class ParcelsEngine:
     # -- Change tracking --------------------------------------------------
 
     @callback
-    def async_changed(self) -> None:
-        """Fire events, save, and tell entities, subscribers and the notifier."""
+    def async_changed(self, *, reconcile: bool = True) -> None:
+        """Fire events, save, and tell entities, subscribers and the notifier.
+
+        Parcels are reconciled first, unless the caller just did.
+        """
         if self._started:
-            self._fire_events(dt_util.utcnow())
+            now = dt_util.utcnow()
+            if reconcile:
+                self._reconcile(now)
+            self._fire_events(now)
         self.async_schedule_save()
         async_dispatcher_send(self.hass, SIGNAL_DATA_UPDATED)
         if self.notifier is not None:
@@ -431,7 +466,12 @@ class ParcelsEngine:
             state = parcel.state
             statuses[parcel.id] = state.status
             previous = self._statuses.get(parcel.id)
-            if previous == state.status or parcel.archived is not None:
+            # An inferred delivery isn't news: nothing reported it.
+            if (
+                previous == state.status
+                or parcel.archived is not None
+                or state.inferred
+            ):
                 continue
             if (
                 state.status_time is not None
@@ -462,6 +502,8 @@ class ParcelsEngine:
         def remove() -> None:
             if self.mailboxes.get(mailbox.entry_id) is mailbox:
                 del self.mailboxes[mailbox.entry_id]
+                self._syncing.discard(mailbox.entry_id)
+                self._more.discard(mailbox.entry_id)
 
         return remove
 
@@ -523,8 +565,13 @@ class ParcelsEngine:
         download errors until an e-mail failed FETCH_ATTEMPTS times.
         """
         changed = False
+        # Oldest first: an e-mail never undoes what a newer one said, and
+        # mail APIs list changes in any order.
+        ordered = sorted(
+            metas, key=lambda meta: (_aware(meta.received), meta.provider_id)
+        )
         try:
-            for meta in metas:
+            for meta in ordered:
                 if await self._async_process_meta(mailbox, meta, first_sync=first_sync):
                     changed = True
         finally:
@@ -1259,6 +1306,63 @@ class ParcelsEngine:
         self.parcel(parcel_id)
         self._run(mark_delivered, parcel_id, dt_util.utcnow())
 
+    def undo_delivery(self, parcel_id: str) -> None:
+        """Take back an inferred delivery; it isn't inferred again."""
+        self.parcel(parcel_id)
+        self._run(undo_inferred_delivery, parcel_id, dt_util.utcnow())
+
+    # -- Merge suggestions ------------------------------------------------
+
+    @property
+    def suggestions(self) -> list[MergeSuggestion]:
+        """Return the merge suggestions whose parcels are still there."""
+        parcels = self.data.parcels
+        return [
+            item
+            for item in self._suggestions.values()
+            if item.parcel_id in parcels
+            and any(candidate in parcels for candidate in item.candidates)
+        ]
+
+    def _suggestion(
+        self, suggestion_id: str, candidate_id: str | None
+    ) -> MergeSuggestion:
+        item = self._suggestions.get(suggestion_id)
+        if (
+            item is None
+            or item.parcel_id not in self.data.parcels
+            or (candidate_id is not None and candidate_id not in item.candidates)
+        ):
+            raise validation_error("unknown_suggestion")
+        return item
+
+    def _drop_candidates(self, item: MergeSuggestion, candidates: set[str]) -> None:
+        """Update a suggestion the user acted on, until the next reconcile."""
+        left = tuple(c for c in item.candidates if c not in candidates)
+        if left:
+            self._suggestions[item.id] = replace(item, candidates=left)
+        else:
+            self._suggestions.pop(item.id, None)
+
+    def accept_suggestion(self, suggestion_id: str, candidate_id: str) -> str:
+        """Merge a suggested parcel; returns the merged parcel's ID."""
+        item = self._suggestion(suggestion_id, candidate_id)
+        merged = self._run(
+            accept_suggestion, item.parcel_id, candidate_id, dt_util.utcnow()
+        )
+        if suggestion_id in self._suggestions:
+            self._suggestions.pop(suggestion_id)
+        return merged.id
+
+    def dismiss_suggestion(
+        self, suggestion_id: str, candidate_id: str | None = None
+    ) -> None:
+        """Keep one suggested parcel, or all of them, apart."""
+        item = self._suggestion(suggestion_id, candidate_id)
+        candidates = (candidate_id,) if candidate_id else item.candidates
+        self._drop_candidates(item, set(candidates))
+        self._run(dismiss_suggestion, item.parcel_id, candidates)
+
     def archive(self, parcel_id: str) -> None:
         """Archive a parcel."""
         self.parcel(parcel_id)
@@ -1295,6 +1399,16 @@ class ParcelsEngine:
                 for entry_id, mailbox in self.mailboxes.items()
             },
             "unparsed_senders": sorted(data.engine.get("unparsed", {})),
+            "merge_suggestions": len(self.suggestions),
+            "inferred_deliveries": sum(
+                1 for parcel in data.parcels.values() if parcel.state.inferred
+            ),
+            "auto_merged": sum(
+                1 for parcel in data.parcels.values() if parcel.auto_merged
+            ),
+            "kept_apart": len(data.engine.get("kept_apart") or ()),
+            "repair": data.engine.get(REPAIR_KEY),
+            "reconcile_waiting": len(self._syncing | self._more),
             "ai": self.ai.diagnostics(),
         }
 

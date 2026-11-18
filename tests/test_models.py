@@ -25,6 +25,7 @@ from custom_components.parcels.models import (
     SenderPrefs,
     Source,
     Suggestion,
+    merchant_display,
     merchant_key,
     order_key,
 )
@@ -221,6 +222,9 @@ def test_items_are_unique_and_capped() -> None:
 def test_keys() -> None:
     """Merchant and order keys ignore case, accents and marketplaces."""
     assert merchant_key("Amazon.es") == merchant_key("amazon.co.uk") == "amazon"
+    assert merchant_key("AMAZON EU SARL SUCURSAL EN") == "amazon"
+    assert merchant_key("Amazon EU S.à r.l.") == "amazon"
+    assert merchant_key("Amazonia Store") == "amazoniastore"
     assert merchant_key("Loja Ação") == "lojaacao"
     assert merchant_key(None) == ""
     assert order_key("Amazon.es", "405-1234567-1234567") == "ord:40512345671234567"
@@ -228,6 +232,14 @@ def test_keys() -> None:
     assert order_key("Example Shop", "#1001") == "ord:exampleshop:1001"
     assert order_key(None, "#1001") is None
     assert order_key("Example Shop", "#") is None
+
+
+def test_merchant_display() -> None:
+    """Marketplaces and legal names of a known merchant show as its name."""
+    for name in ("Amazon.es", "amazon.co.uk", "AMAZON EU SARL SUCURSAL EN"):
+        assert merchant_display(name) == "Amazon"
+    assert merchant_display("Loja Ação") == "Loja Ação"
+    assert merchant_display(None) is None
 
 
 def _full_data() -> ParcelsData:

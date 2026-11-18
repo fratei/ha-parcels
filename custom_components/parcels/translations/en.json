@@ -265,6 +265,15 @@
     "shared_number": {
       "message": "A chosen source has the same tracking number as a source that stays, so they would merge again."
     },
+    "cannot_merge": {
+      "message": "These parcels can't be the same parcel: they have different tracking or order numbers."
+    },
+    "unknown_suggestion": {
+      "message": "This suggestion isn't in the list anymore."
+    },
+    "no_inferred_delivery": {
+      "message": "This parcel has no inferred delivery to undo."
+    },
     "mailbox_auth_failed": {
       "message": "Sign in to {address} again."
     },
@@ -391,6 +400,10 @@
         "confirm_merge": {
           "name": "Keep merge",
           "description": "Keep the automatic merge of this parcel, which removes the undo option."
+        },
+        "confirm_delivery": {
+          "name": "Keep delivery",
+          "description": "Keep the delivery that Parcels inferred for this parcel, which removes the undo option."
         }
       }
     },
@@ -407,6 +420,16 @@
     "archive": {
       "name": "Archive parcel",
       "description": "Archives a parcel. It leaves the lists and the notifications, and is removed after the retention period.",
+      "fields": {
+        "parcel_id": {
+          "name": "Parcel ID",
+          "description": "The ID of the parcel, from the parcel's details on the Parcels page or the parcels attribute of a Parcels sensor."
+        }
+      }
+    },
+    "undo_delivery": {
+      "name": "Undo inferred delivery",
+      "description": "Takes back a delivery that Parcels inferred from another parcel of the same shop, and doesn't infer it again.",
       "fields": {
         "parcel_id": {
           "name": "Parcel ID",

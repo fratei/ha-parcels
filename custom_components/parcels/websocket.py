@@ -92,6 +92,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_review_trust_sender,
         ws_review_ignore_sender,
         ws_review_restore,
+        ws_suggestion_accept,
+        ws_suggestion_dismiss,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -288,3 +290,73 @@ def ws_review_restore(
     """Move an e-mail that was filtered out to the review list."""
     review_id = _engine(hass).filtered_restore(msg["filtered_id"])
     connection.send_result(msg["id"], {"review_id": review_id})
+
+
+def _check_suggestion(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    engine: ParcelsEngine,
+    suggestion_id: str,
+    parcel_id: str | None,
+) -> None:
+    """Refuse a suggestion with parcels the user may not see."""
+    viewer = viewer_for(hass, connection.user)
+    for item in engine.suggestions:
+        if item.id != suggestion_id:
+            continue
+        for found in (item.parcel_id, parcel_id or item.parcel_id):
+            if not viewer.can_see(engine.parcel(found)):
+                raise validation_error("not_allowed")
+        if parcel_id is None and not all(
+            viewer.can_see(engine.parcel(candidate))
+            for candidate in item.candidates
+            if candidate in engine.data.parcels
+        ):
+            raise validation_error("not_allowed")
+        return
+    raise validation_error("unknown_suggestion")
+
+
+@websocket_api.websocket_command(
+    {
+        p.Required("type"): f"{DOMAIN}/suggestion/accept",
+        p.Required("suggestion_id"): cv.string,
+        p.Required("parcel_id"): cv.string,
+    }
+)
+@websocket_api.require_admin
+@_expected_errors
+@callback
+def ws_suggestion_accept(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Merge a suggested parcel into the parcel it was suggested for."""
+    engine = _engine(hass)
+    _check_suggestion(hass, connection, engine, msg["suggestion_id"], msg["parcel_id"])
+    parcel_id = engine.accept_suggestion(msg["suggestion_id"], msg["parcel_id"])
+    connection.send_result(msg["id"], {"parcel_id": parcel_id})
+
+
+@websocket_api.websocket_command(
+    {
+        p.Required("type"): f"{DOMAIN}/suggestion/dismiss",
+        p.Required("suggestion_id"): cv.string,
+        p.Optional("parcel_id"): cv.string,
+    }
+)
+@websocket_api.require_admin
+@_expected_errors
+@callback
+def ws_suggestion_dismiss(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Keep a suggested parcel, or all of a suggestion's parcels, apart."""
+    engine = _engine(hass)
+    parcel_id = msg.get("parcel_id")
+    _check_suggestion(hass, connection, engine, msg["suggestion_id"], parcel_id)
+    engine.dismiss_suggestion(msg["suggestion_id"], parcel_id)
+    connection.send_result(msg["id"])

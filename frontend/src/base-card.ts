@@ -216,6 +216,24 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
     );
   };
 
+  protected readonly undoInferred = (parcel: Parcel): void => {
+    void this._parcelAction(
+      parcel.id,
+      "undo_delivery",
+      { parcel_id: parcel.id },
+      STRINGS.undoInferredFailed,
+    );
+  };
+
+  protected readonly keepInferred = (parcel: Parcel): void => {
+    void this._parcelAction(
+      parcel.id,
+      "update",
+      { parcel_id: parcel.id, confirm_delivery: true },
+      STRINGS.keepInferredFailed,
+    );
+  };
+
   protected renderDetailsDialog(): TemplateResult {
     return html`<parcels-details-dialog
       .hass=${this.hass}

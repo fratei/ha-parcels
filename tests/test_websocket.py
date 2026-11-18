@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
-from datetime import date, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 import logging
 from typing import Any
 from unittest.mock import patch
@@ -15,6 +15,7 @@ from homeassistant.auth.models import User
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
 import pytest
 from pytest_homeassistant.common import (
     CLIENT_ID,
@@ -24,7 +25,8 @@ from pytest_homeassistant.common import (
 )
 from pytest_homeassistant.typing import MockHAClientWebSocket, WebSocketGenerator
 
-from custom_components.parcels.const import DOMAIN, SIGNAL_AI_UPDATED
+from custom_components.parcels.const import DOMAIN, SIGNAL_AI_UPDATED, MailKind
+from custom_components.parcels.dedup import REASON_SAME_MERCHANT_DAY, apply_contribution
 from custom_components.parcels.engine import ParcelsEngine
 from custom_components.parcels.models import MessageState, order_key
 from custom_components.parcels.parsers.base import Eta
@@ -47,6 +49,7 @@ from .common import (
     async_setup_parcels,
     patch_mail_clients,
 )
+from .factories import contribution
 
 NOW = "2026-11-17 10:00:00+00:00"
 CTT_NUMBER = "RR482915732PT"
@@ -73,6 +76,7 @@ HIDDEN = {
     "source": "parser",
     "ai": False,
     "auto_merged": None,
+    "inferred": False,
     "origins": [],
     "restricted": True,
 }
@@ -715,6 +719,103 @@ async def test_review_admin_only(
     assert review[SHOP] in engine.data.review
     assert filtered_id in engine.data.filtered
     assert not engine.data.senders
+
+
+async def test_merge_suggestions(
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    sam_ws: MockHAClientWebSocket,
+) -> None:
+    """Administrators merge or keep apart parcels that may be one.
+
+    Two Amazon orders are due today and the carrier delivered two Amazon
+    parcels this morning: which order was in which can't be known.
+    """
+    data = engine.data
+    now = dt_util.utcnow()
+    carriers = [
+        apply_contribution(
+            data,
+            contribution(
+                f"msg:carrier{n}#0",
+                kind=MailKind.DELIVERED,
+                time=datetime(2026, 11, 17, 7 + n, tzinfo=UTC),
+                carrier="ctt_expresso",
+                number=f"EX00000000000{n}",
+                merchant="Amazon",
+                label="cttexpresso.pt",
+            ),
+            now,
+        ).parcel_id
+        for n in (1, 2)
+    ]
+    orders = [
+        apply_contribution(
+            data,
+            contribution(
+                f"msg:order{n}#0",
+                time=datetime(2026, 11, 15, 20 + n, tzinfo=UTC),
+                merchant="Amazon.es",
+                orders=[f"171-000000{n}-000000{n}"],
+                eta=Eta(start=date(2026, 11, 17), end=date(2026, 11, 17)),
+                label="amazon.es",
+            ),
+            now,
+        ).parcel_id
+        for n in (1, 2)
+    ]
+    engine.async_changed()
+
+    suggestions = {
+        item["parcel"]["id"]: item
+        for item in (await result(ws, "parcels/list"))["merge_suggestions"]
+    }
+    assert set(suggestions) == set(carriers)
+    for item in suggestions.values():
+        assert (item["reason"], item["merchant"], item["day"]) == (
+            REASON_SAME_MERCHANT_DAY,
+            "Amazon",
+            "2026-11-17",
+        )
+        assert [parcel["id"] for parcel in item["candidates"]] == orders
+    assert (await result(sam_ws, "parcels/list"))["merge_suggestions"] == []
+    first, second = carriers
+    for command, extra in (("accept", {"parcel_id": orders[0]}), ("dismiss", {})):
+        err = await error(
+            sam_ws,
+            f"parcels/suggestion/{command}",
+            suggestion_id=suggestions[first]["id"],
+            **extra,
+        )
+        assert err["code"] == "unauthorized"
+
+    assert (
+        await result(
+            ws, "parcels/suggestion/dismiss", suggestion_id=suggestions[first]["id"]
+        )
+        is None
+    )
+    (item,) = (await result(ws, "parcels/list"))["merge_suggestions"]
+    assert item["parcel"]["id"] == second
+    assert [parcel["id"] for parcel in item["candidates"]] == orders
+
+    assert await result(
+        ws, "parcels/suggestion/accept", suggestion_id=item["id"], parcel_id=orders[0]
+    ) == {"parcel_id": second}
+    assert set(data.parcels).issuperset({first, second, orders[1]})
+    assert orders[0] not in data.parcels
+    assert data.parcels[second].auto_merged is None
+    assert data.parcels[second].state.order_numbers == ("171-0000001-0000001",)
+    assert data.parcels[first].state.order_numbers == ()
+    assert (await result(ws, "parcels/list"))["merge_suggestions"] == []
+    for command, extra in (("accept", {"parcel_id": orders[1]}), ("dismiss", {})):
+        await refused(
+            ws,
+            f"parcels/suggestion/{command}",
+            "unknown_suggestion",
+            suggestion_id=item["id"],
+            **extra,
+        )
 
 
 async def test_mailbox_owner(

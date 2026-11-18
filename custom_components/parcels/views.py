@@ -15,7 +15,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_DASHBOARD_PATH, CONF_SEVENTEENTRACK
-from .dedup import manual_origin_id, order_parcels, parcel_order_keys
+from .dedup import (
+    MergeSuggestion,
+    manual_origin_id,
+    order_parcels,
+    parcel_order_keys,
+)
 from .models import (
     FilteredItem,
     Parcel,
@@ -105,6 +110,7 @@ def parcel_json(parcel: Parcel, viewer: Viewer) -> dict[str, Any]:
         "window_start": time_to_str(eta.window_start) if eta else None,
         "window_end": time_to_str(eta.window_end) if eta else None,
         "delivered_at": dt_to_str(state.delivered_at),
+        "inferred": state.inferred,
         "pickup_point": state.pickup_point,
         "pickup_code": state.pickup_code,
         "order_numbers": list(state.order_numbers),
@@ -133,6 +139,7 @@ def parcel_json(parcel: Parcel, viewer: Viewer) -> dict[str, Any]:
             source="parser",
             ai=False,
             auto_merged=None,
+            inferred=False,
             origins=[],
         )
     return result
@@ -176,6 +183,35 @@ def filtered_json(item: FilteredItem) -> dict[str, Any]:
     }
 
 
+def suggestion_json(
+    engine: ParcelsEngine, item: MergeSuggestion, viewer: Viewer
+) -> dict[str, Any] | None:
+    """Return a merge suggestion with its parcels, or None to leave it out.
+
+    The parcels are included because they may be archived, and only the
+    parcels the user may see are.
+    """
+    parcels = engine.data.parcels
+    target = parcels.get(item.parcel_id)
+    if target is None or not viewer.can_see(target):
+        return None
+    candidates = [
+        parcels[parcel_id]
+        for parcel_id in item.candidates
+        if parcel_id in parcels and viewer.can_see(parcels[parcel_id])
+    ]
+    if not candidates:
+        return None
+    return {
+        "id": item.id,
+        "reason": item.reason,
+        "merchant": item.merchant,
+        "day": item.day.isoformat() if item.day else None,
+        "parcel": parcel_json(target, viewer),
+        "candidates": [parcel_json(parcel, viewer) for parcel in candidates],
+    }
+
+
 def settings_json(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
     """Return the settings the page needs."""
     options = engine.options
@@ -206,7 +242,13 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
     hass = engine.hass
     review: list[dict[str, Any]] = []
     filtered: list[dict[str, Any]] = []
+    suggestions: list[dict[str, Any]] = []
     if viewer.is_admin:
+        suggestions = [
+            found
+            for item in engine.suggestions
+            if (found := suggestion_json(engine, item, viewer)) is not None
+        ]
         review = [
             review_json(hass, item)
             for item in _newest_first(list(data.review.values()))
@@ -217,6 +259,7 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
     return {
         "parcels": [parcel_json(parcel, viewer) for parcel in data.parcels.values()],
         "review": review,
+        "merge_suggestions": suggestions,
         "filtered": filtered,
         "settings": settings_json(engine, viewer),
     }
@@ -239,7 +282,7 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
                 if entry.kind is not None
                 else "updated"
             ),
-            "source": entry.source.value,
+            "source": "inferred" if entry.inferred else entry.source.value,
             "label": entry.label or "",
         }
         for entry in state.timeline

@@ -35,6 +35,7 @@ from .const import (
     ParcelStatus,
 )
 from .parsers.base import Eta
+from .parsers.senders import KNOWN_SENDERS
 from .parsers.tracking import detect_carrier, normalize_tracking_number, tracking_url
 
 _LOGGER = logging.getLogger(__name__)
@@ -175,14 +176,96 @@ def _compact(data: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in data.items() if v not in (None, (), [], {}, False)}
 
 
-def merchant_key(name: str | None) -> str:
-    """Normalise a merchant name for comparisons: ``Amazon.es`` -> ``amazon``."""
-    if not name:
-        return ""
+# Words that start the legal part of a company name, e.g. "Amazon EU S.à r.l."
+_LEGAL_WORDS = frozenset(
+    {
+        "ag",
+        "branch",
+        "bv",
+        "gmbh",
+        "inc",
+        "kg",
+        "lda",
+        "limited",
+        "llc",
+        "ltd",
+        "niederlassung",
+        "nv",
+        "plc",
+        "sa",
+        "sarl",
+        "sas",
+        "sl",
+        "slu",
+        "spa",
+        "srl",
+        "succursale",
+        "sucursal",
+        "unipessoal",
+    }
+)
+_REGION_WORDS = frozenset({"eu", "europe"})
+
+
+def _name_tokens(name: str) -> list[str]:
+    """Split a merchant name into folded words; ``S.à r.l.`` becomes ``sarl``."""
     folded = unicodedata.normalize("NFKD", name.casefold())
     folded = "".join(c for c in folded if not unicodedata.combining(c)).strip()
     folded = re.sub(r"\.(com|net|org|shop|store|co)?(\.?[a-z]{2})?$", "", folded)
-    return re.sub(r"[^0-9a-z]", "", folded)
+    tokens: list[str] = []
+    letters = ""
+    for token in re.findall(r"[0-9a-z]+", folded):
+        if len(token) == 1 and token.isalpha():
+            letters += token
+            continue
+        if letters:
+            tokens.append(letters)
+            letters = ""
+        tokens.append(token)
+    if letters:
+        tokens.append(letters)
+    return tokens
+
+
+# Merchants with a sender entry, by their words: their legal entities and
+# marketplaces ("Amazon.es", "AMAZON EU SARL") show under one name.
+_KNOWN_MERCHANTS: dict[tuple[str, ...], str] = {
+    tuple(_name_tokens(info.name)): info.name
+    for info in KNOWN_SENDERS.values()
+    if info.kind == "merchant"
+}
+
+
+def merchant_key(name: str | None) -> str:
+    """Normalise a merchant name for comparisons: ``Amazon.es`` -> ``amazon``.
+
+    Legal suffixes don't count: ``AMAZON EU SARL SUCURSAL EN`` -> ``amazon``.
+    """
+    if not name:
+        return ""
+    tokens = _name_tokens(name)
+    for index, token in enumerate(tokens):
+        if index and token in _LEGAL_WORDS:
+            tokens = tokens[:index]
+            while len(tokens) > 1 and tokens[-1] in _REGION_WORDS:
+                tokens.pop()
+            break
+    for words in _KNOWN_MERCHANTS:
+        if tuple(tokens[: len(words)]) == words:
+            return "".join(words)
+    return "".join(tokens)
+
+
+_KNOWN_MERCHANT_NAMES: dict[str, str] = {
+    "".join(words): name for words, name in _KNOWN_MERCHANTS.items()
+}
+
+
+def merchant_display(name: str | None) -> str | None:
+    """Return the name to show for a merchant: ``Amazon.es`` -> ``Amazon``."""
+    if not name:
+        return name
+    return _KNOWN_MERCHANT_NAMES.get(merchant_key(name), name)
 
 
 def order_key(merchant: str | None, number: str) -> str | None:
@@ -296,6 +379,8 @@ class ParcelEvent:
     clears_eta: bool = False
     label: str | None = None
     force: bool = False
+    # A delivery concluded from another parcel of the same merchant.
+    inferred: bool = False
     id: str = field(default_factory=lambda: secrets.token_hex(6))
 
     def as_dict(self) -> dict[str, Any]:
@@ -312,6 +397,7 @@ class ParcelEvent:
                 "clears_eta": self.clears_eta,
                 "label": self.label,
                 "force": self.force,
+                "inferred": self.inferred,
             }
         )
 
@@ -329,20 +415,38 @@ class ParcelEvent:
             clears_eta=bool(data.get("clears_eta", False)),
             label=data.get("label"),
             force=bool(data.get("force", False)),
+            inferred=bool(data.get("inferred", False)),
         )
 
 
 @dataclass(slots=True)
 class AutoMerge:
-    """A heuristic merge that the user should check, with the origin to undo."""
+    """A heuristic merge that the user should check, with the origins to undo.
+
+    ``origin`` is the origin the heuristic linked; ``origins`` lists more
+    origins that leave with it, when a whole parcel was merged.
+    """
 
     origin: str
     at: datetime
     reason: str
+    origins: tuple[str, ...] = ()
+
+    @property
+    def all_origins(self) -> set[str]:
+        """Return every origin that leaves on undo."""
+        return {self.origin, *self.origins}
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the flag."""
-        return {"origin": self.origin, "at": dt_to_str(self.at), "reason": self.reason}
+        data: dict[str, Any] = {
+            "origin": self.origin,
+            "at": dt_to_str(self.at),
+            "reason": self.reason,
+        }
+        if self.origins:
+            data["origins"] = list(self.origins)
+        return data
 
     @classmethod
     def from_dict(cls, data: Any) -> AutoMerge | None:
@@ -353,6 +457,7 @@ class AutoMerge:
             origin=str(data["origin"]),
             at=dt_from_str(data.get("at")) or dt_util.utcnow(),
             reason=str(data.get("reason", "")),
+            origins=_tuple(data.get("origins")),
         )
 
 
@@ -368,6 +473,7 @@ class TimelineEntry:
     label: str | None
     accepted: bool
     eta: Eta | None
+    inferred: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,6 +499,8 @@ class ParcelState:
     provisional: bool
     last_event: datetime | None
     timeline: tuple[TimelineEntry, ...]
+    # Delivered according to another parcel of the same merchant only.
+    inferred: bool = False
 
     @property
     def carrier_name(self) -> str | None:
@@ -419,6 +527,8 @@ class Parcel:
     private: bool = False
     archived: datetime | None = None
     auto_merged: AutoMerge | None = None
+    # The user undid an inferred delivery: don't infer one again.
+    delivery_rejected: bool = False
     _state: ParcelState | None = field(default=None, repr=False, compare=False)
 
     @property
@@ -445,6 +555,7 @@ class Parcel:
                 "private": self.private,
                 "archived": dt_to_str(self.archived),
                 "auto_merged": self.auto_merged.as_dict() if self.auto_merged else None,
+                "delivery_rejected": self.delivery_rejected,
             }
         )
 
@@ -462,6 +573,7 @@ class Parcel:
             private=bool(data.get("private", False)),
             archived=dt_from_str(data.get("archived")),
             auto_merged=AutoMerge.from_dict(data.get("auto_merged")),
+            delivery_rejected=bool(data.get("delivery_rejected", False)),
         )
 
 
@@ -537,15 +649,18 @@ def derive_state(parcel: Parcel) -> ParcelState:
 
     merchant_set, merchant = manual_value("merchant")
     if not merchant_set:
-        merchant = next(
-            (
-                o.merchant
-                for o in sorted(
-                    origins, key=lambda o: (SOURCE_PRIORITY[o.source], o.time, o.id)
-                )
-                if o.merchant
-            ),
-            None,
+        merchant = merchant_display(
+            next(
+                (
+                    o.merchant
+                    for o in sorted(
+                        origins,
+                        key=lambda o: (SOURCE_PRIORITY[o.source], o.time, o.id),
+                    )
+                    if o.merchant
+                ),
+                None,
+            )
         )
 
     def latest(attr: str) -> str | None:
@@ -590,6 +705,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
     # Status: fold the events in time order through the allowed transitions.
     status: ParcelStatus | None = None
     status_time: datetime | None = None
+    status_inferred = False
     delivered_at: datetime | None = None
     eta: Eta | None = None
     eta_time: datetime | None = None
@@ -598,8 +714,12 @@ def derive_state(parcel: Parcel) -> ParcelState:
         accepted, new_status = _accepts(status, event)
         if accepted and new_status is not status:
             status, status_time = new_status, event.time
+            status_inferred = event.inferred
             if new_status is ParcelStatus.DELIVERED and delivered_at is None:
                 delivered_at = event.time
+        elif accepted and not event.inferred:
+            # A real e-mail confirming an inferred status makes it a fact.
+            status_inferred = False
         event_eta = event.eta
         if (
             event_eta is None
@@ -624,6 +744,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
                 label=event.label,
                 accepted=accepted,
                 eta=event.eta,
+                inferred=event.inferred,
             )
         )
     if status is None:
@@ -661,6 +782,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
         provisional=provisional,
         last_event=max((e.time for e in parcel.events), default=None),
         timeline=tuple(timeline),
+        inferred=status_inferred and status is ParcelStatus.DELIVERED,
     )
 
 

@@ -7,7 +7,8 @@ then makes the client's sync fail or page to drive the coordinator.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import timedelta
+import dataclasses
+from datetime import UTC, datetime, timedelta
 import logging
 from typing import Any
 from unittest.mock import patch
@@ -21,11 +22,15 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 import pytest
 from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
-from custom_components.parcels.const import DOMAIN
+from custom_components.parcels.const import DOMAIN, ParcelStatus
 from custom_components.parcels.coordinator import (
     FOLLOW_UP,
     MAX_ROUNDS,
     MailboxCoordinator,
+)
+from custom_components.parcels.dedup import (
+    REASON_SAME_MERCHANT_DAY,
+    REASON_SAME_MERCHANT_ETA,
 )
 from custom_components.parcels.engine import ParcelsEngine
 from custom_components.parcels.mail import SyncResult
@@ -38,6 +43,7 @@ from custom_components.parcels.mail.errors import (
     MailRateLimited,
     MailServerError,
 )
+from custom_components.parcels.parsers.base import MailMessage
 from custom_components.parcels.store import ParcelsStore
 
 from .common import (
@@ -46,12 +52,18 @@ from .common import (
     add_hub,
     add_mailbox,
     async_setup_parcels,
+    load_message,
     patch_mail_clients,
 )
 
 NOW = "2026-11-17 10:00:00+00:00"
 INTERVAL = timedelta(minutes=5)
 CTT = "carriers/ctt_in_transit_pt.eml"
+# Amazon's e-mail of 17 November: no carrier number, delivery on 19 November.
+AMAZON = "amazon/shipped_de.eml"
+AMAZON_ORDER = "303-5928471-2039485"
+CTT_EXPRESSO = "carriers/ctt_expresso_delivered_pt.eml"
+CTT_EXPRESSO_NUMBER = "EA529184065PT"
 
 
 @pytest.fixture(autouse=True)
@@ -80,6 +92,47 @@ class PagedClient(FakeMailClient):
         result = await super().async_sync(cursor, lookback=lookback, folders=folders)
         result.complete = len(self.syncs) > self.pages
         return result
+
+
+class OneByOneClient(PagedClient):
+    """A paged mailbox API that lists one e-mail per page, in delivery order."""
+
+    async def async_sync(
+        self,
+        cursor: dict[str, Any] | None,
+        *,
+        lookback: timedelta,
+        folders: Sequence[str] = (),
+    ) -> SyncResult:
+        """Return the next page, with at most one e-mail."""
+        result = await super().async_sync(cursor, lookback=lookback, folders=folders)
+        self.pending[:0] = result.messages[1:]
+        del result.messages[1:]
+        result.complete = result.complete and not self.pending
+        return result
+
+
+def _amazon_delivered_by_ctt() -> tuple[MailMessage, MailMessage]:
+    """Return Amazon's e-mail for an order and CTT Expresso's delivery of it.
+
+    CTT Expresso's e-mail names the shop but not the order, and comes two
+    days after Amazon's, on the day Amazon expects the parcel.
+    """
+    shipped = load_message(AMAZON)
+    delivered = load_message(CTT_EXPRESSO)
+    text = delivered.text.replace(
+        f"O seu envio {CTT_EXPRESSO_NUMBER} foi entregue ontem, 16-11-2026, às 16:05.",
+        "O seu envio da loja Amazon foi entregue hoje, 19-11-2026, às 11:28.",
+    ).replace("Data de entrega 16-11-2026 16:05", "Data de entrega 19-11-2026 11:28")
+    assert "loja Amazon" in text
+    assert "19-11-2026 11:28" in text
+    delivered = dataclasses.replace(
+        delivered,
+        message_id="<amazon-delivered@notifications.cttexpress.com>",
+        date=datetime(2026, 11, 19, 11, 40, tzinfo=UTC),
+        text=text,
+    )
+    return shipped, delivered
 
 
 async def _setup(
@@ -347,3 +400,65 @@ async def test_refresh_while_the_hub_stops(hass: HomeAssistant) -> None:
         assert await hass.config_entries.async_unload(engine.entry.entry_id)
         await hass.async_block_till_done()
     assert mailbox.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_page_is_read_oldest_first(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """A page's e-mails are read oldest first, whatever order the API lists.
+
+    The carrier's delivery then finds the shop's parcel open and joins it on
+    arrival, before parcels are reconciled.
+    """
+    freezer.move_to("2026-11-19 12:00:00+00:00")
+    shipped, delivered = _amazon_delivered_by_ctt()
+    # The sync doesn't finish, so parcels aren't reconciled.
+    client = PagedClient(pages=MAX_ROUNDS)
+    client.add(delivered, provider_id="delivered")
+    client.add(shipped, provider_id="shipped")
+
+    _, coordinator, engine = await _setup(hass, client)
+
+    assert not coordinator.data.synced
+    [parcel] = engine.data.parcels.values()
+    state = parcel.state
+    assert state.status is ParcelStatus.DELIVERED
+    assert state.carrier == "ctt_expresso"
+    assert state.tracking_number == CTT_EXPRESSO_NUMBER
+    assert state.order_numbers == (AMAZON_ORDER,)
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_ETA
+
+
+async def test_reconcile_waits_for_the_sync(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Parcels are reconciled once a sync has listed every page.
+
+    Here the API lists the delivery a page before the order it's for, so the
+    delivery can't join the order on arrival.
+    """
+    freezer.move_to("2026-11-19 12:00:00+00:00")
+    shipped, delivered = _amazon_delivered_by_ctt()
+    client = OneByOneClient(pages=MAX_ROUNDS + 1)
+    client.add(delivered, provider_id="delivered")
+    client.add(shipped, provider_id="shipped")
+
+    _, coordinator, engine = await _setup(hass, client)
+
+    assert client.fetches == ["delivered", "shipped"]
+    assert not coordinator.data.synced
+    assert len(engine.data.parcels) == 2
+    # Other changes meanwhile don't reconcile either.
+    engine.async_changed()
+    assert len(engine.data.parcels) == 2
+
+    await _advance(hass, freezer, FOLLOW_UP)
+
+    assert coordinator.data.synced
+    [parcel] = engine.data.parcels.values()
+    state = parcel.state
+    assert state.tracking_number == CTT_EXPRESSO_NUMBER
+    assert state.order_numbers == (AMAZON_ORDER,)
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_DAY

@@ -586,6 +586,13 @@ def test_merchant_is_kept() -> None:
     assert checked(answer(kind="shipped", merchant=" Worten ")).merchant == "Worten"
 
 
+def test_carrier_is_not_the_merchant() -> None:
+    """A carrier's name ("GLS PT Informa") isn't taken as the merchant."""
+    result = checked(answer(kind="shipped", merchant="GLS PT Informa"))
+    assert result.merchant is None
+    assert "merchant_invalid" not in result.notes
+
+
 def test_items_are_limited() -> None:
     """At most 10 plain-text items of at most 80 characters are kept."""
     items = [f"Artigo {n}" for n in range(12)]

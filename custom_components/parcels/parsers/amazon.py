@@ -23,6 +23,7 @@ from ._amazon_shopify_common import (
     FoundNumber,
     KindPattern,
     add_item,
+    carrier_mentions,
     clip,
     detect_kind,
     event_time,
@@ -763,16 +764,22 @@ def _status_shipments(
             per_slot = _group_items(ctx, marks, len(slots))
     other = next((n for n in numbers if n.carrier != "amazon"), None)
     own = next((n for n in numbers if n.carrier == "amazon"), None)
+    # Amazon hands many parcels to other carriers, so its own delivery
+    # service counts only when the e-mail names it or has its number.
+    logistics = any(m.carrier == "amazon" for m in carrier_mentions(ctx.folded))
     shipments: list[ParsedShipment] = []
     for index, shipment_id in enumerate(slots):
         if len(etas) == len(slots):
             eta: Eta | None = etas[index][1]
         else:
             eta = etas[0][1] if etas else None
-        carrier, number = "amazon", own.number if single and own else None
+        carrier: str | None = "amazon" if logistics else None
+        number: str | None = None
         if single and other is not None:
             carrier, number = other.carrier, other.number
-        url = None if carrier != "amazon" else _track_url(ctx, shipment_id)
+        elif single and own is not None:
+            carrier, number = "amazon", own.number
+        url = _track_url(ctx, shipment_id) if carrier in (None, "amazon") else None
         if url is None and number is not None:
             url = tracking.tracking_url(carrier, number)
         shipments.append(

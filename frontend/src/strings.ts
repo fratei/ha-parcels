@@ -55,6 +55,12 @@ export const STRINGS = {
   keep: "Keep",
   keepMergeLabel: "Keep the automatic merge of {title}",
   keepFailed: "Couldn't keep the merge: {message}",
+  inferred: "Delivery inferred — check",
+  inferredLabel: "delivery inferred, please check",
+  undoInferredLabel: "Undo the inferred delivery of {title}",
+  undoInferredFailed: "Couldn't undo the delivery: {message}",
+  keepInferredLabel: "Keep the inferred delivery of {title}",
+  keepInferredFailed: "Couldn't keep the delivery: {message}",
   continuesBefore: "started before this week",
   continuesAfter: "continues after this week",
   deliveredOn: "delivered {date}",
@@ -70,6 +76,14 @@ export const STRINGS = {
   tabReview: "Needs review",
   tabFiltered: "Filtered",
   tabCount: "{label} ({count})",
+  possibleDuplicate: "Possible duplicate",
+  suggestionTitle: "Same parcel as {parcel}?",
+  suggestionHint: "Merge the parcel that is the same one, or keep them apart.",
+  reasonIs: "Reason: {reason}",
+  mergeSuggested: "Merge",
+  mergeSuggestedLabel: "Merge {candidate} into {title}",
+  keepApart: "Keep apart",
+  keepApartLabel: "Keep {title} apart from these parcels",
   reviewTabs: "Review lists",
   emptyReview: "Nothing to review.",
   emptyFiltered: "No filtered e-mails.",
@@ -77,7 +91,6 @@ export const STRINGS = {
   receivedOn: "Received {date}",
   noSubject: "(no subject)",
   mailboxOf: "Mailbox: {owner}",
-  reasonIs: "Reason: {reason}",
   unverifiedSender: "Unverified sender",
   unverifiedSenderHint:
     "This e-mail didn't pass the sender checks (DKIM/DMARC). Make sure it's genuine before you accept it.",
@@ -147,6 +160,8 @@ export const STRINGS = {
   confirmLabel: "Confirm the details the local AI found",
   mergedNotice: "Merged automatically ({reason}). Check that it's one parcel.",
   mergedNoticeNoReason: "Merged automatically. Check that it's one parcel.",
+  inferredNotice:
+    "Probably delivered: another parcel from this shop was delivered around the expected day. Undo if it hasn't arrived.",
 
   markDelivered: "Mark delivered",
   editDate: "Edit date",
@@ -207,6 +222,7 @@ export const SOURCE_LABELS: Readonly<Record<string, string>> = {
   ai: "Local AI",
   manual: "Added by hand",
   seventeentrack: "17TRACK",
+  inferred: "Inferred from another delivery",
 };
 
 /** Known review reasons; anything else is shown as sent by the integration. */
@@ -227,6 +243,8 @@ export const REASON_LABELS: Readonly<Record<string, string>> = {
 export const MERGE_REASON_LABELS: Readonly<Record<string, string>> = {
   same_number: "same tracking number",
   same_merchant_eta: "same shop and delivery date",
+  same_merchant_day: "same shop, delivered on the expected day",
+  same_merchant_domain: "the shop's tracked shipment followed its order",
 };
 
 /** Fills `{name}` placeholders; unknown placeholders are left as they are. */

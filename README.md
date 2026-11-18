@@ -40,9 +40,16 @@ local AI model on your Home Assistant host.
 - **Each parcel once**: e-mails about the same order or shipment are merged,
   also across mailboxes, so a parcel appears once however many e-mails you
   get. An order e-mail creates a provisional parcel that the shipping e-mail
-  later completes. An e-mail that arrives late never moves a parcel back to an
-  earlier status. Merges that rely on a guess (same shop, overlapping dates,
-  only one candidate) are marked, and you can undo them.
+  later completes, also when the carrier's e-mail names only the shop. An
+  e-mail that arrives late never moves a parcel back to an earlier status.
+  Merges that rely on a guess (same shop, matching dates, only one candidate)
+  are marked, and you can undo them. When several parcels could match,
+  Parcels asks in **Needs review** instead. Parcels with different tracking
+  numbers are never merged.
+- **Parcels without a tracking number**: when a carrier delivers another
+  parcel from the same shop around the expected day, and no e-mail says
+  otherwise, the parcel is marked as probably delivered. You can undo that.
+  One with no news a week after its expected day is archived.
 - **A Parcels page** with a Monday-to-Sunday calendar of your deliveries, the
   parcels that don't have a date yet, and the e-mails Parcels wasn't sure
   about.
@@ -258,16 +265,18 @@ add a resource.
   status, delivered parcels show ✓ on their delivery day, and parcels found by
   the AI carry an "AI" badge until you confirm them. Select a parcel for its
   timeline, carrier link, tracking number, pickup point and code, and to mark
-  it delivered, edit it, make it private, merge, split or archive it. The card
-  also adds parcels by tracking number. Options: `title` (an empty string hides
-  it) and `show_archived` (default `true`).
+  it delivered, edit it, make it private, merge, split or archive it. Merges
+  and deliveries that Parcels guessed are marked there, to keep or undo. The
+  card also adds parcels by tracking number. Options: `title` (an empty string
+  hides it) and `show_archived` (default `true`).
 - **Parcels without a date** (`custom:parcels-list-card`): active parcels that
   don't have a delivery date yet. Option: `title`.
 - **Parcels review** (`custom:parcels-review-card`): **Needs review** lists the
   e-mails Parcels wasn't sure about, with what it found filled in, to accept,
-  edit, dismiss, or trust or ignore the sender. **Filtered** lists e-mails
-  that looked like shipping e-mails but turned out not to be about a parcel;
-  you can move them back. Option: `title`.
+  edit, dismiss, or trust or ignore the sender. It also lists parcels that may
+  be the same one, to merge or keep apart. **Filtered** lists e-mails that
+  looked like shipping e-mails but turned out not to be about a parcel; you
+  can move them back. Option: `title`.
 
 Delivery notifications open `/dashboard-parcels/week`. To make them land on
 your page, go to **Settings > Dashboards > Add dashboard > New dashboard from
@@ -493,12 +502,13 @@ carrier, status and dates. Each mailbox has a **Last sync** sensor and a
 | Action | What it does |
 | --- | --- |
 | `parcels.add` | Adds a parcel by tracking number and returns its ID. |
-| `parcels.update` | Corrects a parcel's details, or confirms what the AI found. |
+| `parcels.update` | Corrects a parcel's details, confirms what the AI found, or keeps an automatic merge or inferred delivery. |
 | `parcels.mark_delivered` | Marks a parcel delivered now. |
 | `parcels.archive` | Archives a parcel. |
 | `parcels.merge` | Merges parcels that are the same delivery. |
 | `parcels.split` | Moves e-mails or entries of a parcel to a new parcel. |
 | `parcels.undo_merge` | Splits a parcel that Parcels merged automatically. |
+| `parcels.undo_delivery` | Takes back a delivery that Parcels inferred from another parcel of the same shop. |
 | `parcels.refresh` | Checks all mailboxes, and 17TRACK when it's on, now. |
 | `parcels.reprocess` | Reads a parcel's or review item's e-mails again with the current parsers, optionally with the AI. Administrators only. |
 | `parcels.trust_sender` | Trusts a sender's domain, so its e-mails are read as shipping e-mails. Administrators only. |
@@ -527,6 +537,10 @@ actions:
 - **A shipping e-mail is missing.** Check **Needs review** and **Filtered** on
   the Parcels page. If the sender isn't known, trust it there, or run
   `parcels.reprocess`.
+- **A parcel shows twice.** Check **Needs review** for a merge suggestion, or
+  select the parcel and merge it.
+- **A parcel shows as delivered but hasn't arrived.** If its details say the
+  delivery was inferred, select **Undo**.
 - **Repair: "Shipping e-mails from … aren't understood".** A known sender
   changed its e-mails. The e-mails wait in review; check for an update of
   Parcels.

@@ -493,6 +493,8 @@ export class ParcelsWeekCard extends ParcelsChipCard {
       onOpen: this.openDetails,
       onUndoMerge: this.undoMerge,
       onKeepMerge: this.keepMerge,
+      onUndoInferred: this.undoInferred,
+      onKeepInferred: this.keepInferred,
     });
   }
 

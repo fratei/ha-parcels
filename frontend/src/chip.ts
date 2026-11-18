@@ -26,6 +26,8 @@ export interface ChipOptions {
   onOpen: (parcel: Parcel, opener: HTMLElement) => void;
   onUndoMerge: (parcel: Parcel) => void;
   onKeepMerge: (parcel: Parcel) => void;
+  onUndoInferred: (parcel: Parcel) => void;
+  onKeepInferred: (parcel: Parcel) => void;
 }
 
 /** Selector of the main button of a parcel's chip (the first one when it shows on several days). */
@@ -33,35 +35,77 @@ export function chipSelector(parcelId: string): string {
   return `.chip[data-parcel-id="${CSS.escape(parcelId)}"] button.chip-main`;
 }
 
-function renderMergeNote(parcel: Parcel, title: string, options: ChipOptions): TemplateResult {
-  const busy = options.busy ? "true" : "false";
+interface NoteText {
+  icon: string;
+  label: string;
+  undoLabel: string;
+  keepLabel: string;
+}
+
+/** A note under the chip about something done automatically, with Undo and Keep. */
+function renderNote(
+  text: NoteText,
+  busy: boolean | undefined,
+  onUndo: () => void,
+  onKeep: () => void,
+): TemplateResult {
+  const disabled = busy ? "true" : "false";
   return html`<div class="merge-note">
-    <ha-icon icon="mdi:call-merge" aria-hidden="true"></ha-icon>
-    <span class="merge-label">${STRINGS.autoMerged}</span>
+    <ha-icon icon=${text.icon} aria-hidden="true"></ha-icon>
+    <span class="merge-label">${text.label}</span>
     <button
       type="button"
       class="link-btn"
-      aria-label=${fmt(STRINGS.undoMergeLabel, { title })}
-      aria-disabled=${busy}
-      @click=${() => options.onUndoMerge(parcel)}
+      aria-label=${text.undoLabel}
+      aria-disabled=${disabled}
+      @click=${onUndo}
     >
       ${STRINGS.undo}
     </button>
     <button
       type="button"
       class="link-btn"
-      aria-label=${fmt(STRINGS.keepMergeLabel, { title })}
-      aria-disabled=${busy}
-      @click=${() => options.onKeepMerge(parcel)}
+      aria-label=${text.keepLabel}
+      aria-disabled=${disabled}
+      @click=${onKeep}
     >
       ${STRINGS.keep}
     </button>
   </div>`;
 }
 
+function renderMergeNote(parcel: Parcel, title: string, options: ChipOptions): TemplateResult {
+  return renderNote(
+    {
+      icon: "mdi:call-merge",
+      label: STRINGS.autoMerged,
+      undoLabel: fmt(STRINGS.undoMergeLabel, { title }),
+      keepLabel: fmt(STRINGS.keepMergeLabel, { title }),
+    },
+    options.busy,
+    () => options.onUndoMerge(parcel),
+    () => options.onKeepMerge(parcel),
+  );
+}
+
+function renderInferredNote(parcel: Parcel, title: string, options: ChipOptions): TemplateResult {
+  return renderNote(
+    {
+      icon: "mdi:package-variant-closed-check",
+      label: STRINGS.inferred,
+      undoLabel: fmt(STRINGS.undoInferredLabel, { title }),
+      keepLabel: fmt(STRINGS.keepInferredLabel, { title }),
+    },
+    options.busy,
+    () => options.onUndoInferred(parcel),
+    () => options.onKeepInferred(parcel),
+  );
+}
+
 /**
  * A parcel coloured by its status, with its name, carrier and window, the
- * "AI" badge, a lock when private and the auto-merge note. Tapping it opens the
+ * "AI" badge, a lock when private and the auto-merge and inferred-delivery
+ * notes. Tapping it opens the
  * details; restricted parcels (another user's private ones) aren't interactive.
  */
 export function renderChip(parcel: Parcel, options: ChipOptions): TemplateResult {
@@ -122,5 +166,6 @@ export function renderChip(parcel: Parcel, options: ChipOptions): TemplateResult
       ${row}
     </button>
     ${parcel.auto_merged ? renderMergeNote(parcel, title, options) : nothing}
+    ${parcel.inferred ? renderInferredNote(parcel, title, options) : nothing}
   </div>`;
 }

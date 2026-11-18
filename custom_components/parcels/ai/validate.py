@@ -35,6 +35,7 @@ import unicodedata
 
 from ..const import CARRIER_NAMES, MailKind
 from ..parsers.base import Eta, MailMessage, ParsedShipment, ParseResult
+from ..parsers.carriers import brand_carriers
 from ..parsers.eta import parse_eta, parse_time_window
 from ..parsers.lang import MONTHS, WEEKDAY_ABBREVIATIONS, WEEKDAYS, fold
 from ..parsers.senders import lookup, organizational_domain
@@ -685,6 +686,9 @@ class _Checker:
             return None
         if len(text) > MAX_MERCHANT_CHARS or not _is_plain(text):
             self.error("merchant_invalid")
+            return None
+        if brand_carriers(text):
+            # A carrier isn't the merchant; the shop is named by its domain.
             return None
         return text
 

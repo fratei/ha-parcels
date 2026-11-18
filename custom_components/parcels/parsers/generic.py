@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 
 from ..const import MailKind
 from .base import Eta, MailMessage, ParsedShipment, ParseResult, SenderVerdict
+from .carriers import brand_carriers
 from .eta import find_eta
 from .lang import detect_language, fold, fold_aligned
 from .senders import SenderInfo, lookup, organizational_domain
@@ -1207,13 +1208,16 @@ def clean_sender_name(name: str) -> str | None:
 def _merchant(message: MailMessage, info: SenderInfo | None, domain: str) -> str | None:
     """Return the merchant: a known merchant, the sender's name or domain.
 
-    Carriers are not merchants, so e-mails from a carrier have none.
+    Carriers are not merchants, so e-mails from a carrier have none, and a
+    shop that sends its carrier's notices ("GLS PT Informa") is named by its
+    domain.
     """
     if info is not None and info.kind == "merchant":
         return info.name
     if info is not None and info.kind == "carrier":
         return None
-    if name := clean_sender_name(message.sender_name):
+    name = clean_sender_name(message.sender_name)
+    if name and not brand_carriers(name):
         return name
     if info is not None:
         return info.name
@@ -1229,15 +1233,25 @@ def _host(url: str) -> str:
 
 
 def _carrier_for(
-    match: TrackingMatch, link_carriers: set[str], info: SenderInfo | None
+    match: TrackingMatch,
+    link_carriers: set[str],
+    info: SenderInfo | None,
+    brands: tuple[str, ...] = (),
 ) -> str | None:
-    """Return the carrier of a number: its format, a carrier link or the sender."""
+    """Return the carrier of a number: its format, a carrier link or the sender.
+
+    ``brands`` are the carriers the sender's name names; one of them counts
+    when the number has its format.
+    """
     if match.carrier:
         return match.carrier
     if len(link_carriers) == 1:
         carrier = next(iter(link_carriers))
         if validate_tracking_number(match.number, carrier):
             return carrier
+    valid = [c for c in brands if validate_tracking_number(match.number, c)]
+    if len(valid) == 1:
+        return valid[0]
     if (
         info is not None
         and info.carrier
@@ -1281,9 +1295,12 @@ def _numbers(
             add(match)
 
     order_keys = {normalize_tracking_number(order) for order in orders}
+    brands = brand_carriers(message.sender_name) if info is None else ()
     numbers = [
         TrackingMatch(
-            match.number, _carrier_for(match, link_carriers, info), match.validated
+            match.number,
+            _carrier_for(match, link_carriers, info, brands),
+            match.validated,
         )
         for match in found.values()
         if match.number not in order_keys

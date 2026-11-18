@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 
 import {
   normalizeDetails,
+  normalizeMergeSuggestion,
   normalizeParcel,
   normalizeReviewItem,
   normalizeSettings,
@@ -17,6 +18,7 @@ describe("normalizeSnapshot", () => {
     assert.deepEqual(normalizeSnapshot(null, NOW), {
       parcels: [],
       review: [],
+      merge_suggestions: [],
       filtered: [],
       settings: {
         user_is_admin: false,
@@ -105,6 +107,7 @@ describe("normalizeParcel", () => {
       eta_end: "2026-07-15",
       window_start: "13:00",
       window_end: "15:00",
+      inferred: true,
       pickup_point: "Example Locker 12",
       pickup_code: "123456",
       order_numbers: ["ORDER-1"],
@@ -143,6 +146,49 @@ describe("normalizeParcel", () => {
     assert.equal(parcel.auto_merged, null);
     assert.equal(normalizeParcel([]), null);
     assert.equal(normalizeParcel("p1"), null);
+  });
+});
+
+describe("normalizeMergeSuggestion", () => {
+  const tracked = { id: "p1", merchant: "Example Shop", tracking_number: "TEST0001", status: "delivered" };
+  const untracked = { id: "p2", merchant: "Example Shop", status: "shipped", inferred: true };
+
+  test("reads a suggestion with its parcels", () => {
+    const suggestion = normalizeMergeSuggestion({
+      id: "m1",
+      reason: "same_merchant_day",
+      merchant: "Example Shop",
+      day: "2026-07-14",
+      parcel: tracked,
+      candidates: [untracked, { status: "shipped" }],
+    });
+    assert.ok(suggestion);
+    assert.equal(suggestion.parcel.tracking_number, "TEST0001");
+    assert.deepEqual(
+      suggestion.candidates.map((parcel) => [parcel.id, parcel.inferred]),
+      [["p2", true]],
+    );
+    assert.equal(suggestion.day, "2026-07-14");
+    assert.equal(suggestion.reason, "same_merchant_day");
+  });
+
+  test("drops a suggestion without its parcel or any candidate", () => {
+    assert.equal(normalizeMergeSuggestion({ id: "m1", parcel: tracked, candidates: [] }), null);
+    assert.equal(normalizeMergeSuggestion({ id: "m1", parcel: {}, candidates: [untracked] }), null);
+    assert.equal(normalizeMergeSuggestion({ parcel: tracked, candidates: [untracked] }), null);
+    const snapshot = normalizeSnapshot(
+      {
+        merge_suggestions: [
+          { id: "m1", parcel: tracked, candidates: [untracked], day: "14/07/2026" },
+          { id: "m2", parcel: tracked, candidates: "p2" },
+        ],
+      },
+      NOW,
+    );
+    assert.deepEqual(
+      snapshot.merge_suggestions.map((item) => [item.id, item.day]),
+      [["m1", null]],
+    );
   });
 });
 
@@ -195,7 +241,12 @@ describe("normalizeDetails", () => {
   test("reads the timeline, orders and origins", () => {
     const details = normalizeDetails({
       parcel: { id: "p1", status: "delivered" },
-      timeline: [{ time: "2026-07-14T08:00:00Z", status: "delivered", source: "ai", label: "Delivered" }, 5],
+      timeline: [
+        { time: "2026-07-14T08:00:00Z", status: "delivered", source: "ai", label: "Delivered" },
+        5,
+        { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "" },
+        { time: "2026-07-16T08:00:00Z", status: "delivered", source: "pigeon", label: "" },
+      ],
       orders: [{ id: "o1", number: "ORDER-1", parcel_ids: ["p1"] }],
       origins: [{ id: "m1", label: "E-mail from Example Shop", source: "parser", time: null }, { label: "No id" }],
     });
@@ -203,6 +254,8 @@ describe("normalizeDetails", () => {
     assert.equal(details.parcel.status, "delivered");
     assert.deepEqual(details.timeline, [
       { time: "2026-07-14T08:00:00Z", status: "delivered", source: "ai", label: "Delivered" },
+      { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "" },
+      { time: "2026-07-16T08:00:00Z", status: "delivered", source: "parser", label: "" },
     ]);
     assert.deepEqual(details.orders, [
       { id: "o1", merchant: null, number: "ORDER-1", placed_at: null, parcel_ids: ["p1"] },

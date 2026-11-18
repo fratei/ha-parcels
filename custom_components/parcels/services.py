@@ -45,6 +45,7 @@ SERVICE_REPROCESS = "reprocess"
 SERVICE_SPLIT = "split"
 SERVICE_TEST_LIVE_ACTIVITY = "test_live_activity"
 SERVICE_TRUST_SENDER = "trust_sender"
+SERVICE_UNDO_DELIVERY = "undo_delivery"
 SERVICE_UNDO_MERGE = "undo_merge"
 SERVICE_UPDATE = "update"
 
@@ -87,6 +88,7 @@ UPDATE_SCHEMA = p.Schema(
         p.Optional(ATTR_PRIVATE): cv.boolean,
         p.Optional("confirm"): cv.boolean,
         p.Optional("confirm_merge"): cv.boolean,
+        p.Optional("confirm_delivery"): cv.boolean,
     }
 )
 PARCEL_SCHEMA = p.Schema({p.Required(ATTR_PARCEL_ID): cv.string})
@@ -276,6 +278,12 @@ def async_setup_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_UNDO_MERGE,
         _parcel_service(lambda engine, pid: engine.undo_merge(pid)),
+        PARCEL_SCHEMA,
+    )
+    register(
+        DOMAIN,
+        SERVICE_UNDO_DELIVERY,
+        _parcel_service(lambda engine, pid: engine.undo_delivery(pid)),
         PARCEL_SCHEMA,
     )
     register(

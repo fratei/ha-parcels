@@ -99,6 +99,9 @@ update:
     confirm_merge:
       selector:
         boolean:
+    confirm_delivery:
+      selector:
+        boolean:
 
 mark_delivered:
   fields:
@@ -115,6 +118,13 @@ archive:
         text:
 
 undo_merge:
+  fields:
+    parcel_id:
+      required: true
+      selector:
+        text:
+
+undo_delivery:
   fields:
     parcel_id:
       required: true

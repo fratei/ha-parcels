@@ -294,3 +294,55 @@ def lookup(domain: str) -> SenderInfo | None:
     if not domain:
         return None
     return KNOWN_SENDERS.get(organizational_domain(domain.rpartition("@")[2]))
+
+
+# Free mail providers: anyone can send from them, so they can't be trusted
+# or ignored as a whole. Matched on the registrable domain or its first label.
+FREE_MAIL_NAMES = frozenset(
+    {
+        "aol",
+        "fastmail",
+        "freenet",
+        "gmail",
+        "gmx",
+        "googlemail",
+        "hotmail",
+        "icloud",
+        "laposte",
+        "libero",
+        "live",
+        "msn",
+        "orange",
+        "outlook",
+        "proton",
+        "protonmail",
+        "sapo",
+        "tuta",
+        "tutanota",
+        "wanadoo",
+        "yahoo",
+        "yandex",
+        "ymail",
+        "zoho",
+    }
+)
+FREE_MAIL_DOMAINS = frozenset(
+    {
+        "free.fr",
+        "mac.com",
+        "mail.com",
+        "mail.ru",
+        "me.com",
+        "pm.me",
+        "t-online.de",
+        "web.de",
+    }
+)
+
+
+def is_free_mail(domain: str) -> bool:
+    """Return True for a free mail provider, or for an empty domain."""
+    org = organizational_domain(domain)
+    if not org:
+        return True
+    return org in FREE_MAIL_DOMAINS or org.split(".", 1)[0] in FREE_MAIL_NAMES

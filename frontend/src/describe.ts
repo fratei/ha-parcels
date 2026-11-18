@@ -110,6 +110,9 @@ export function describeParcel(parcel: Parcel, context: ChipContext): string {
     if (parcel.auto_merged) {
       parts.push(STRINGS.autoMergedLabel);
     }
+    if (parcel.inferred) {
+      parts.push(STRINGS.inferredLabel);
+    }
   }
   if (parcel.private || parcel.restricted) {
     parts.push(STRINGS.privateLabel);

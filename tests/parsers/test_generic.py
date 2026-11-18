@@ -331,6 +331,44 @@ def test_merchant_falls_back_to_domain(tz: ZoneInfo) -> None:
     assert result.merchant == "loja-exemplo.example"
 
 
+def test_carrier_brand_in_shop_sender_name(tz: ZoneInfo) -> None:
+    """A shop that sends its carrier's notices names the carrier, not itself.
+
+    The brand in the display name gives the carrier when the number has its
+    format; the shop is then named by its domain.
+    """
+    message = _message(
+        "A sua encomenda está a caminho",
+        "Olá,\nA sua encomenda 61234567890123 será entregue amanhã.\n"
+        "Número de envio: 61234567890123",
+        sender="avisos@bricolage-exemplo.example",
+        name="GLS PT Informa",
+    )
+    result = _parse(message, tz)
+    assert result is not None
+    assert result.merchant == "bricolage-exemplo.example"
+    [shipment] = result.shipments
+    assert shipment.carrier == "gls"
+    assert shipment.tracking_number == "61234567890123"
+    assert shipment.tracking_url is not None
+    assert "gls" in shipment.tracking_url
+
+
+def test_carrier_brand_needs_the_carrier_format(tz: ZoneInfo) -> None:
+    """A number the named carrier can't have keeps its carrier unknown."""
+    message = _message(
+        "A sua encomenda está a caminho",
+        "Número de envio: ABC123456789",
+        sender="avisos@bricolage-exemplo.example",
+        name="GLS PT Informa",
+    )
+    result = _parse(message, tz)
+    assert result is not None
+    [shipment] = result.shipments
+    assert shipment.tracking_number == "ABC123456789"
+    assert shipment.carrier is None
+
+
 @pytest.mark.parametrize(
     ("subject", "text", "sender"),
     [

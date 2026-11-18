@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
@@ -19,6 +19,7 @@ from .const import (
     STORAGE_KEY,
     STORAGE_MINOR_VERSION,
     STORAGE_VERSION,
+    UNTRACKED_GRACE,
 )
 from .dedup import parcel_order_keys
 from .models import Parcel, ParcelsData, local_date
@@ -123,6 +124,15 @@ def last_activity(parcel: Parcel) -> datetime:
     )
 
 
+def _overdue_untracked(parcel: Parcel, activity: datetime, today: date) -> bool:
+    """Return True for a parcel without tracking that's long past its dates."""
+    state = parcel.state
+    if state.tracking_number or state.eta is None or parcel.delivery_rejected:
+        return False
+    quiet_since = max(state.eta.end, local_date(activity))
+    return today >= quiet_since + UNTRACKED_GRACE
+
+
 def apply_retention(
     data: ParcelsData,
     now: datetime,
@@ -136,7 +146,10 @@ def apply_retention(
       ``archive_days`` after their last status change. Archived parcels leave
       the lists but stay in past weeks of the calendar.
     * Open parcels without news for 30 days are archived too, unless they're
-      still expected.
+      still expected. Open parcels without a carrier tracking number are
+      archived 7 days after their last expected day when there's been no news
+      since: nothing will report their delivery. Parcels whose inferred
+      delivery the user undid wait for the 30 days.
     * Archived parcels are deleted ``purge_days`` after their last news.
     * Orders without parcels, e-mail hashes after 120 days, "Needs review"
       items after 30 days and "Filtered" items after 14 days are deleted.
@@ -154,7 +167,9 @@ def apply_retention(
                 archive = now - (state.status_time or activity) >= archive_after
             else:
                 expected = state.eta is not None and state.eta.end >= today
-                archive = now - activity >= STALE_ARCHIVE and not expected
+                archive = (
+                    now - activity >= STALE_ARCHIVE and not expected
+                ) or _overdue_untracked(parcel, activity, today)
             if archive:
                 parcel.archived = now
                 result.archived.append(parcel.id)

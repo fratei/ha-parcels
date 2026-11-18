@@ -162,6 +162,8 @@ class MailboxCoordinator(DataUpdateCoordinator[MailboxStatus]):
         first_sync = not engine.is_synced(entry_id)
         count = 0
         complete = False
+        more = False
+        engine.begin_sync(entry_id)
         try:
             for _ in range(MAX_ROUNDS):
                 if not engine.started:
@@ -181,12 +183,16 @@ class MailboxCoordinator(DataUpdateCoordinator[MailboxStatus]):
                 if result.complete:
                     complete = True
                     break
+            more = not complete
         except MailAuthError as err:
             raise ConfigEntryAuthFailed(
                 translation_domain=DOMAIN,
                 translation_key="mailbox_auth_failed",
                 translation_placeholders={"address": mailbox.address},
             ) from err
+        finally:
+            # A failed sync doesn't hold up reconciling; it retries later.
+            engine.end_sync(entry_id, more=more)
         if complete and first_sync:
             engine.mark_synced(entry_id)
         self.update_interval = self._interval if complete else FOLLOW_UP

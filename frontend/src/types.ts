@@ -20,6 +20,9 @@ export type ParcelStatus = (typeof PARCEL_STATUSES)[number];
 
 export type ParcelSource = "parser" | "ai" | "manual" | "seventeentrack";
 
+/** A timeline entry's source; "inferred" marks a delivery worked out from another parcel's. */
+export type TimelineSource = ParcelSource | "inferred";
+
 export type AiMode = "off" | "suggest" | "auto";
 
 export interface AutoMerged {
@@ -42,6 +45,8 @@ export interface Parcel {
   window_start: string | null;
   window_end: string | null;
   delivered_at: string | null;
+  /** Delivered only by inference: another parcel from the shop was delivered then. */
+  inferred: boolean;
   pickup_point: string | null;
   pickup_code: string | null;
   order_numbers: string[];
@@ -107,10 +112,22 @@ export interface Settings {
   today: string;
 }
 
+/** Parcels that are probably one: `candidates` may belong to `parcel` (administrators only). */
+export interface MergeSuggestion {
+  id: string;
+  reason: string;
+  merchant: string | null;
+  /** The delivery day, "YYYY-MM-DD". */
+  day: string | null;
+  parcel: Parcel;
+  candidates: Parcel[];
+}
+
 /** Payload of `parcels/list` and of every `parcels/subscribe` event. */
 export interface Snapshot {
   parcels: Parcel[];
   review: ReviewItem[];
+  merge_suggestions: MergeSuggestion[];
   filtered: FilteredItem[];
   settings: Settings;
 }
@@ -118,7 +135,7 @@ export interface Snapshot {
 export interface TimelineEntry {
   time: string;
   status: ParcelStatus;
-  source: ParcelSource;
+  source: TimelineSource;
   label: string;
 }
 

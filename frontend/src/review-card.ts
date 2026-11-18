@@ -15,6 +15,7 @@ import { ParcelsCardBase, focusIsLost } from "./base-card.ts";
 import { CARRIER_NAMES, carrierOptions } from "./carriers.ts";
 import { cardTitle, reviewCardConfig, type ReviewCardConfig } from "./config.ts";
 import { parseInstant } from "./dates.ts";
+import { candidateLabel } from "./describe.ts";
 import { errorMessage } from "./errors.ts";
 import { formatDateRange, formatDateTime, formatWindow } from "./format.ts";
 import {
@@ -24,12 +25,18 @@ import {
   type FormProblem,
   type SuggestionForm,
 } from "./forms.ts";
-import { carrierLabel, kindLabel, reasonLabel } from "./labels.ts";
+import { carrierLabel, kindLabel, mergeReasonLabel, parcelTitle, reasonLabel } from "./labels.ts";
 import { etaRange } from "./parcels.ts";
 import { defineElement, registerCard } from "./register.ts";
 import { KIND_LABELS, STRINGS, fmt } from "./strings.ts";
 import { baseStyles } from "./styles.ts";
-import type { FilteredItem, ReviewItem, Snapshot, Suggestion } from "./types.ts";
+import type {
+  FilteredItem,
+  MergeSuggestion,
+  ReviewItem,
+  Snapshot,
+  Suggestion,
+} from "./types.ts";
 
 type Tab = "review" | "filtered";
 
@@ -54,6 +61,20 @@ function newestFirst<T extends { id: string; received: string | null; created: s
   return [...items].sort(
     (a, b) => receivedTime(b) - receivedTime(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   );
+}
+
+/** Suggestions for the latest delivery days first. */
+function latestDayFirst(items: readonly MergeSuggestion[]): MergeSuggestion[] {
+  return [...items].sort(
+    (a, b) =>
+      (b.day ?? "").localeCompare(a.day ?? "") || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+}
+
+interface Lists {
+  review: ReviewItem[];
+  suggestions: MergeSuggestion[];
+  filtered: FilteredItem[];
 }
 
 function withoutKey<K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> {
@@ -187,6 +208,27 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       .filtered-hint {
         margin-bottom: 12px;
       }
+      .candidates {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 8px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .candidate {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px;
+        border-radius: 8px;
+        background: var(--secondary-background-color, rgba(0, 0, 0, 0.04));
+        overflow-wrap: anywhere;
+      }
+      .candidate .grow {
+        flex: 1;
+        min-width: 0;
+      }
     `,
   ];
 
@@ -206,8 +248,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
 
   /** The focused item before the current render, to move focus on when it's gone. */
   private _focusedItem: { id: string; index: number } | null = null;
-  private _listCache: { snapshot: Snapshot; review: ReviewItem[]; filtered: FilteredItem[] } | null =
-    null;
+  private _listCache: (Lists & { snapshot: Snapshot }) | null = null;
 
   constructor() {
     super();
@@ -236,7 +277,10 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     if (!lists) {
       return 3;
     }
-    const items = this._tab === "review" ? lists.review.length : lists.filtered.length;
+    const items =
+      this._tab === "review"
+        ? lists.review.length + lists.suggestions.length
+        : lists.filtered.length;
     return 2 + 2 * Math.max(1, items);
   }
 
@@ -269,7 +313,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     );
   }
 
-  private _lists(): { review: ReviewItem[]; filtered: FilteredItem[] } | null {
+  private _lists(): Lists | null {
     const snapshot = this.snapshot;
     if (!snapshot) {
       return null;
@@ -278,10 +322,21 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       this._listCache = {
         snapshot,
         review: newestFirst(snapshot.review),
+        suggestions: latestDayFirst(snapshot.merge_suggestions),
         filtered: newestFirst(snapshot.filtered),
       };
     }
     return this._listCache;
+  }
+
+  /** True while the item (a review item, suggestion or filtered e-mail) is listed. */
+  private _listed(itemId: string): boolean {
+    const lists = this._lists();
+    return lists
+      ? [...lists.review, ...lists.suggestions, ...lists.filtered].some(
+          (entry) => entry.id === itemId,
+        )
+      : false;
   }
 
   protected override willUpdate(changed: PropertyValues): void {
@@ -299,7 +354,9 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     const lists = this._lists();
     if (lists) {
       // Forget the edits and errors of items that are gone.
-      const ids = new Set([...lists.review, ...lists.filtered].map((entry) => entry.id));
+      const ids = new Set(
+        [...lists.review, ...lists.suggestions, ...lists.filtered].map((entry) => entry.id),
+      );
       if (this._editing !== null && !ids.has(this._editing)) {
         this._editing = null;
         this._editProblem = null;
@@ -340,7 +397,10 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       ${title ? html`<div class="header"><h2 class="title">${title}</h2></div>` : nothing}
       ${this.renderBanners()}
       ${lists
-        ? html`${this._renderTabs(lists.review.length, lists.filtered.length)}
+        ? html`${this._renderTabs(
+              lists.review.length + lists.suggestions.length,
+              lists.filtered.length,
+            )}
             <div
               class="panel"
               role="tabpanel"
@@ -349,7 +409,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
               tabindex="0"
               ?hidden=${this._tab !== "review"}
             >
-              ${this._renderReviewList(lists.review)}
+              ${this._renderReviewList(lists.review, lists.suggestions)}
             </div>
             <div
               class="panel"
@@ -396,17 +456,91 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     </div>`;
   }
 
-  private _renderReviewList(items: readonly ReviewItem[]): TemplateResult {
-    if (!items.length) {
+  private _renderReviewList(
+    items: readonly ReviewItem[],
+    suggestions: readonly MergeSuggestion[],
+  ): TemplateResult {
+    if (!items.length && !suggestions.length) {
       return html`<p class="empty">${STRINGS.emptyReview}</p>`;
     }
     return html`<div class="items">
+      ${repeat(
+        suggestions,
+        (item) => item.id,
+        (item, index) => this._renderMergeSuggestion(item, index),
+      )}
       ${repeat(
         items,
         (item) => item.id,
         (item, index) => this._renderReviewItem(item, index),
       )}
     </div>`;
+  }
+
+  /** Parcels that are probably one: Merge the right candidate, or keep them all apart. */
+  private _renderMergeSuggestion(suggestion: MergeSuggestion, index: number): TemplateResult {
+    const locale = this.locale;
+    const busy = this._busyItems.has(suggestion.id);
+    const disabled = busy ? "true" : "false";
+    const subjectId = `suggestion-subject-${index}`;
+    const title = parcelTitle(suggestion.parcel);
+    const reason = mergeReasonLabel(suggestion.reason);
+    return html`<article
+      class="item"
+      tabindex="-1"
+      data-item-id=${suggestion.id}
+      aria-labelledby=${subjectId}
+      aria-busy=${disabled}
+    >
+      <div class="item-head">
+        <span class="badge warning">${STRINGS.possibleDuplicate}</span>
+      </div>
+      <h3 class="subject" id=${subjectId}>
+        ${fmt(STRINGS.suggestionTitle, { parcel: candidateLabel(suggestion.parcel, locale) })}
+      </h3>
+      ${reason ? html`<p class="meta">${fmt(STRINGS.reasonIs, { reason })}</p>` : nothing}
+      <p class="hint">${STRINGS.suggestionHint}</p>
+      <ul class="candidates">
+        ${suggestion.candidates.map((candidate) => {
+          const label = candidateLabel(candidate, locale);
+          const extra = [candidate.order_numbers.join(", "), candidate.items.join(", ")]
+            .filter(Boolean)
+            .join(" · ");
+          return html`<li class="candidate">
+            <span class="grow">
+              <span class="block">${label}</span>
+              ${extra ? html`<span class="meta block">${extra}</span>` : nothing}
+            </span>
+            <button
+              type="button"
+              class="btn"
+              aria-label=${fmt(STRINGS.mergeSuggestedLabel, { candidate: label, title })}
+              aria-disabled=${disabled}
+              @click=${() =>
+                this._command(suggestion.id, "suggestion/accept", {
+                  suggestion_id: suggestion.id,
+                  parcel_id: candidate.id,
+                })}
+            >
+              ${STRINGS.mergeSuggested}
+            </button>
+          </li>`;
+        })}
+      </ul>
+      ${this._renderError(suggestion.id)}
+      <div class="row-actions">
+        <button
+          type="button"
+          class="btn"
+          aria-label=${fmt(STRINGS.keepApartLabel, { title })}
+          aria-disabled=${disabled}
+          @click=${() =>
+            this._command(suggestion.id, "suggestion/dismiss", { suggestion_id: suggestion.id })}
+        >
+          ${STRINGS.keepApart}
+        </button>
+      </div>
+    </article>`;
   }
 
   private _renderFilteredList(items: readonly FilteredItem[]): TemplateResult {
@@ -822,11 +956,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       onSuccess?.();
     } catch (error) {
       const message = fmt(STRINGS.actionFailed, { message: errorMessage(error) });
-      const lists = this._lists();
-      const stillThere = [...(lists?.review ?? []), ...(lists?.filtered ?? [])].some(
-        (entry) => entry.id === itemId,
-      );
-      if (stillThere) {
+      if (this._listed(itemId)) {
         this._itemErrors = new Map([...this._itemErrors, [itemId, message]]);
       } else {
         this.showActionError(message);
