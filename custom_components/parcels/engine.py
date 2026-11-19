@@ -126,6 +126,7 @@ from .parsers.senders import (
 )
 from .parsers.tracking import (
     MAX_NUMBER_CHARS,
+    PAACK_ID_RE,
     detect_carrier,
     normalize_tracking_number,
 )
@@ -171,9 +172,24 @@ def validation_error(key: str, **placeholders: str) -> ServiceValidationError:
     )
 
 
-def manual_number(value: str) -> str:
-    """Return a tracking number the user typed, normalised, or raise."""
+def manual_carrier(value: str, carrier: str | None) -> str | None:
+    """Return the carrier of a number the user typed: theirs, or Paack's.
+
+    Only Paack's order IDs have their shape, so a typed one is Paack's.
+    """
+    if carrier:
+        return carrier
+    return "paack" if PAACK_ID_RE.fullmatch(normalize_tracking_number(value)) else None
+
+
+def manual_number(value: str, carrier: str | None = None) -> str:
+    """Return a tracking number the user typed, normalised, or raise.
+
+    A Paack order ID keeps its case and its "_1" suffix, for Paack only.
+    """
     number = normalize_tracking_number(value)
+    if carrier == "paack" and PAACK_ID_RE.fullmatch(number):
+        return number
     if (
         not MIN_NUMBER_CHARS <= len(number) <= MAX_NUMBER_CHARS
         or not number.replace("/", "").isalnum()
@@ -1594,7 +1610,8 @@ class ParcelsEngine:
         owners: Sequence[str] = (),
     ) -> str:
         """Add a parcel by tracking number; returns its ID."""
-        number = manual_number(tracking_number)
+        carrier = manual_carrier(tracking_number, carrier)
+        number = manual_number(tracking_number, carrier)
         carrier = carrier or detect_carrier(number)
         if carrier is not None and carrier not in CARRIER_NAMES:
             raise validation_error("unknown_carrier")
@@ -1625,15 +1642,17 @@ class ParcelsEngine:
 
     def update(self, parcel_id: str, changes: Mapping[str, Any]) -> None:
         """Edit a parcel."""
-        self.parcel(parcel_id)
+        parcel = self.parcel(parcel_id)
         carrier = changes.get("carrier")
         if carrier and carrier not in CARRIER_NAMES:
             raise validation_error("unknown_carrier")
         if changes.get("tracking_number"):
-            changes = {
-                **changes,
-                "tracking_number": manual_number(str(changes["tracking_number"])),
-            }
+            value = str(changes["tracking_number"])
+            given = carrier if "carrier" in changes else parcel.state.carrier
+            carrier = manual_carrier(value, given)
+            changes = {**changes, "tracking_number": manual_number(value, carrier)}
+            if carrier and not given:
+                changes["carrier"] = carrier
         self._run(update_parcel, parcel_id, dict(changes), dt_util.utcnow())
 
     def merge(self, parcel_ids: Sequence[str]) -> str:
