@@ -102,6 +102,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_review_restore,
         ws_filtered_clear,
         ws_filtered_clear_all,
+        ws_return_remove,
         ws_suggestion_accept,
         ws_suggestion_dismiss,
         ws_parcel_check_again,
@@ -335,6 +336,25 @@ def ws_filtered_clear_all(
     """Drop every e-mail that was filtered out; none of them is read again."""
     cleared = _engine(hass).filtered_clear_all()
     connection.send_result(msg["id"], {"cleared": cleared})
+
+
+@websocket_api.websocket_command(
+    {
+        p.Required("type"): f"{DOMAIN}/return/remove",
+        p.Required("return_id"): cv.string,
+    }
+)
+@websocket_api.require_admin
+@_expected_errors
+@callback
+def ws_return_remove(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remove a customer return; its e-mails aren't read again."""
+    _engine(hass).remove_return(msg["return_id"])
+    connection.send_result(msg["id"])
 
 
 def _check_suggestion(

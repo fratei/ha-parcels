@@ -804,7 +804,10 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       [STRINGS.fieldCarrier, carrierLabel({ carrier: suggestion.carrier, carrier_name: null })],
       [STRINGS.fieldTrackingNumbers, suggestion.tracking_numbers.join(", ") || null],
       [STRINGS.fieldOrderNumbers, suggestion.order_numbers.join(", ") || null],
-      [STRINGS.expected, eta ? formatDateRange(eta.start, eta.end, locale, EXPECTED_FORMAT) : null],
+      [
+        suggestion.kind === "customer_return" ? STRINGS.pickup : STRINGS.expected,
+        eta ? formatDateRange(eta.start, eta.end, locale, EXPECTED_FORMAT) : null,
+      ],
       [STRINGS.timeWindow, formatWindow(suggestion.window_start, suggestion.window_end, locale)],
       [STRINGS.pickupPoint, suggestion.pickup_point],
       [STRINGS.pickupCode, suggestion.pickup_code],

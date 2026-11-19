@@ -203,6 +203,30 @@ def test_advertising_and_other_subjects_fail(subject: str) -> None:
     assert not is_candidate(UNKNOWN, subject)
 
 
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Recolha agendada para amanhã",
+        "Data de recolha confirmada",
+        "Your pickup date is confirmed",
+        "Ihr Abholtermin",
+        "Date d'enlèvement confirmée",
+        "Ophaaldatum bevestigd",
+    ],
+)
+def test_return_pickup_subjects_pass(subject: str) -> None:
+    """A return's pickup date in the subject marks a parcel e-mail."""
+    assert is_candidate(UNKNOWN, subject)
+
+
+@pytest.mark.parametrize(
+    "subject", ["Recolha de dados pessoais", "Bin collection day reminder"]
+)
+def test_other_collections_fail(subject: str) -> None:
+    """Collections that aren't pickups (data, waste) don't count."""
+    assert not is_candidate(UNKNOWN, subject)
+
+
 def test_case_and_accents_are_ignored() -> None:
     """Keywords match regardless of case and accents."""
     assert is_candidate(UNKNOWN, "SUA ENCOMENDA FOI ENTREGUE")

@@ -238,6 +238,9 @@
     "unknown_filtered": {
       "message": "This filtered e-mail isn't in the list anymore."
     },
+    "unknown_return": {
+      "message": "This return isn't in Parcels anymore."
+    },
     "ai_not_configured": {
       "message": "Choose an AI task entity in the Parcels options first."
     },

@@ -87,7 +87,9 @@ def test_eval_set_is_complete(eval_set: EvalSet) -> None:
     assert len(expected) >= 40
     assert {want["language"] for want in expected.values()} == LANGUAGES
     assert {want["kind"] for want in expected.values()} == {
-        kind.value for kind in MailKind if kind not in (MailKind.UNKNOWN, MailKind.CODE)
+        kind.value
+        for kind in MailKind
+        if kind not in (MailKind.UNKNOWN, MailKind.CODE, MailKind.CUSTOMER_RETURN)
     }
     for email_id, want in expected.items():
         assert messages[email_id].language == want["language"]

@@ -6,6 +6,7 @@ import { isYmd, localDateOf } from "./dates.ts";
 import type {
   AiMode,
   AutoMerged,
+  CustomerReturn,
   FilteredItem,
   MergeSuggestion,
   OrderInfo,
@@ -14,12 +15,15 @@ import type {
   ParcelDetails,
   ParcelSource,
   ParcelStatus,
+  PickupRule,
+  ReturnEmail,
   ReviewItem,
   SenderChecks,
   Settings,
   Snapshot,
   Suggestion,
   TimelineEntry,
+  TimelineSource,
 } from "./types.ts";
 
 type Obj = Record<string, unknown>;
@@ -101,6 +105,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     window_end: str(raw.window_end),
     delivered_at: str(raw.delivered_at),
     inferred: raw.inferred === true,
+    inferred_reason: str(raw.inferred_reason),
     pickup_point: str(raw.pickup_point),
     pickup_code: str(raw.pickup_code),
     has_code: raw.has_code === true,
@@ -257,11 +262,59 @@ export function normalizeSnapshot(raw: unknown, now: number = Date.now()): Snaps
   const snapshot = isObj(raw) ? raw : {};
   return {
     parcels: list(snapshot.parcels, normalizeParcel),
+    returns: list(snapshot.returns, normalizeReturn),
     review: list(snapshot.review, normalizeReviewItem),
     merge_suggestions: list(snapshot.merge_suggestions, normalizeMergeSuggestion),
     filtered: list(snapshot.filtered, normalizeFilteredItem),
     settings: normalizeSettings(snapshot.settings, now),
   };
+}
+
+function pickupRule(value: unknown): PickupRule | null {
+  return value === "email" || value === "next_working_day" || value === "assumed" ? value : null;
+}
+
+function returnEmail(raw: unknown): ReturnEmail | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  return { time: str(raw.time), label: text(raw.label), source: source(raw.source) };
+}
+
+/** A customer return; null without an id or a day to show it on. */
+export function normalizeReturn(raw: unknown): CustomerReturn | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  const returnId = id(raw.id);
+  if (!returnId || !isYmd(raw.day)) {
+    return null;
+  }
+  return {
+    id: returnId,
+    merchant: str(raw.merchant),
+    carrier: str(raw.carrier),
+    carrier_name: str(raw.carrier_name),
+    tracking_number: str(raw.tracking_number),
+    tracking_url: str(raw.tracking_url),
+    day: raw.day,
+    pickup: isYmd(raw.pickup) ? raw.pickup : null,
+    pickup_rule: pickupRule(raw.pickup_rule),
+    started: str(raw.started),
+    received: raw.received === true,
+    order_numbers: strs(raw.order_numbers),
+    items: strs(raw.items),
+    parcel_ids: strs(raw.parcel_ids),
+    emails: list(raw.emails, returnEmail),
+    private: raw.private === true,
+    owners: strs(raw.owners),
+    archived: raw.archived === true,
+    restricted: raw.restricted === true,
+  };
+}
+
+function timelineSource(value: unknown): TimelineSource {
+  return value === "inferred" || value === "inferred_return" ? value : source(value);
 }
 
 function timelineEntry(raw: unknown): TimelineEntry | null {
@@ -271,7 +324,7 @@ function timelineEntry(raw: unknown): TimelineEntry | null {
   return {
     time: text(raw.time),
     status: text(raw.status) as ParcelStatus,
-    source: raw.source === "inferred" ? "inferred" : source(raw.source),
+    source: timelineSource(raw.source),
     label: text(raw.label),
   };
 }

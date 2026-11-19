@@ -14,9 +14,10 @@ import { callParcelsCommand, callParcelsService } from "./api.ts";
 import { canCheckAgain, checkAgainText, normalizeCheckAgain } from "./check-again.ts";
 import { parseInstant } from "./dates.ts";
 import { candidateLabel, candidateLines } from "./describe.ts";
-import { ParcelsDialogBase, type ReturnFocus } from "./dialog-base.ts";
+import { ParcelsDialogBase, OPEN_RETURN_EVENT, type ReturnFocus } from "./dialog-base.ts";
 import { errorMessage } from "./errors.ts";
 import {
+  formatDate,
   formatDateRange,
   formatDateTime,
   formatWindow,
@@ -49,11 +50,12 @@ import {
   type PossibleMatch,
 } from "./parcels.ts";
 import { defineElement } from "./register.ts";
+import { RETURN_ICON, returnState, returnsOfParcel } from "./returns.ts";
 import { isActiveStatus, statusColor } from "./status.ts";
 import { STRINGS, fmt } from "./strings.ts";
 import { baseStyles, dialogStyles } from "./styles.ts";
 import { safeHttpsUrl } from "./url.ts";
-import type { Parcel, ParcelDetails, Snapshot, TimelineEntry } from "./types.ts";
+import type { CustomerReturn, Parcel, ParcelDetails, Snapshot, TimelineEntry } from "./types.ts";
 
 type Mode = "view" | "date" | "merge" | "split" | "archive";
 type CopyState = "idle" | "copied" | "failed";
@@ -509,8 +511,18 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
           </span>`
         : nothing}
       ${parcel.provisional ? html`<span class="badge info">${STRINGS.provisional}</span>` : nothing}
+      ${this._returnsOf(parcel).length
+        ? html`<span class="badge return">
+            <ha-icon icon=${RETURN_ICON} aria-hidden="true"></ha-icon>${STRINGS.returnBadge}
+          </span>`
+        : nothing}
       ${parcel.archived ? html`<span class="badge">${STRINGS.archived}</span>` : nothing}
     </div>`;
+  }
+
+  /** The customer returns of this parcel's items; none for someone else's private parcel. */
+  private _returnsOf(parcel: Parcel): CustomerReturn[] {
+    return parcel.restricted ? [] : returnsOfParcel(this.snapshot?.returns ?? [], parcel.id);
   }
 
   private _renderBody(parcel: Parcel | null): TemplateResult {
@@ -678,7 +690,9 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const title = parcelTitle(parcel);
     return html`<div class="alert warning">
       <ha-icon icon="mdi:package-variant-closed-check" aria-hidden="true"></ha-icon>
-      <span class="grow">${STRINGS.inferredNotice}</span>
+      <span class="grow">
+        ${parcel.inferred_reason === "return" ? STRINGS.inferredReturnNotice : STRINGS.inferredNotice}
+      </span>
       <button
         type="button"
         class="btn"
@@ -712,6 +726,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     // The snapshot never holds the PIN; only the details of this parcel do.
     const loaded = this._details?.parcel.id === parcel.id ? this._details.parcel : null;
     const code = parcel.has_code ? (loaded?.pickup_code ?? null) : null;
+    const returns = this._returnsOf(parcel);
     const row = (label: string, value: unknown): TemplateResult =>
       html`<div><dt>${label}</dt><dd>${value}</dd></div>`;
     const since = parcel.status_time
@@ -726,6 +741,14 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
         ? row(STRINGS.expected, formatDateRange(eta.start, eta.end, locale, EXPECTED_FORMAT))
         : nothing}
       ${window ? row(STRINGS.timeWindow, window) : nothing}
+      ${returns.length
+        ? row(
+            STRINGS.returnBadge,
+            html`<ul>
+              ${returns.map((ret) => this._renderReturnLink(ret))}
+            </ul>`,
+          )
+        : nothing}
       ${carrier || url || !parcel.restricted
         ? row(
             STRINGS.carrier,
@@ -798,6 +821,35 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
       ${code ? row(STRINGS.pickupCode, code) : nothing}
       ${parcel.restricted ? nothing : row(STRINGS.parcelId, parcel.id)}
     </dl>`;
+  }
+
+  /** A return of this parcel's items: how far it is and its day; a tap shows the return. */
+  private _renderReturnLink(ret: CustomerReturn): TemplateResult {
+    const today = this.snapshot?.settings.today ?? "";
+    const text = `${returnState(ret, today)} · ${formatDate(ret.day, this.locale)}`;
+    if (ret.restricted) {
+      return html`<li>${text}</li>`;
+    }
+    return html`<li>
+      <button
+        type="button"
+        class="link-btn"
+        aria-haspopup="dialog"
+        aria-disabled=${this._busy ? "true" : "false"}
+        @click=${() => this._openReturn(ret.id)}
+      >
+        ${text}
+      </button>
+    </li>`;
+  }
+
+  /** Closes this dialog, then asks the card to show the return. */
+  private _openReturn(returnId: string): void {
+    if (this._busy) {
+      return;
+    }
+    this.closeDialog();
+    this.dispatchEvent(new CustomEvent<string>(OPEN_RETURN_EVENT, { detail: returnId }));
   }
 
   /** A package of the shipment: its number, status and date; the others open on a tap. */

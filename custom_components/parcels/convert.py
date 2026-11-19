@@ -46,11 +46,15 @@ def has_identifier(result: ParseResult) -> bool:
 
 
 def is_confident(result: ParseResult) -> bool:
-    """Return True when a result is good enough to apply without review."""
+    """Return True when a result is good enough to apply without review.
+
+    A customer return needs no order or tracking number: it becomes a
+    return entry, never a parcel.
+    """
     return (
         result.is_parcel
         and result.confidence >= CONFIDENCE_APPLY
-        and has_identifier(result)
+        and (result.kind is MailKind.CUSTOMER_RETURN or has_identifier(result))
     )
 
 

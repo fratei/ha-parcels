@@ -873,6 +873,36 @@ def undo_auto_merge(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel 
 def remove_message(data: ParcelsData, message_hash: str, now: datetime) -> set[str]:
     """Remove what an e-mail contributed, e.g. before reprocessing it.
 
+    Returns the IDs of the parcels that changed; parcels and returns left
+    without e-mails are deleted.
+    """
+    remove_return_origins(data, message_hash, now)
+    return remove_parcel_origins(data, message_hash, now)
+
+
+def remove_return_origins(data: ParcelsData, message_hash: str, now: datetime) -> bool:
+    """Remove what an e-mail said about customer returns.
+
+    Returns True when a return changed; returns left without e-mails are
+    deleted.
+    """
+    changed = False
+    for entry_id, entry in list(data.returns.items()):
+        if entry.origins.pop(message_hash, None) is None:
+            continue
+        changed = True
+        if entry.origins:
+            entry.updated = now
+        else:
+            del data.returns[entry_id]
+    return changed
+
+
+def remove_parcel_origins(
+    data: ParcelsData, message_hash: str, now: datetime
+) -> set[str]:
+    """Remove what an e-mail contributed to parcels.
+
     Returns the IDs of the parcels that changed; parcels left without origins
     are deleted.
     """
@@ -909,7 +939,10 @@ def remove_message(data: ParcelsData, message_hash: str, now: datetime) -> set[s
 def add_owner(
     data: ParcelsData, message_hash: str, owner: str, now: datetime
 ) -> set[str]:
-    """Record that an e-mail was also found in another person's mailbox."""
+    """Record that an e-mail was also found in another person's mailbox.
+
+    Returns the IDs of the parcels that changed.
+    """
     affected: set[str] = set()
     for parcel in data.parcels.values():
         changed = False
@@ -920,6 +953,11 @@ def add_owner(
         if changed:
             parcel.touch(now)
             affected.add(parcel.id)
+    for entry in data.returns.values():
+        found = entry.origins.get(message_hash)
+        if found is not None and owner not in found.owners:
+            found.owners = tuple(sorted({*found.owners, owner}))
+            entry.updated = now
     return affected
 
 

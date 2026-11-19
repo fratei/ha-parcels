@@ -384,7 +384,8 @@ class ParcelEvent:
     clears_eta: bool = False
     label: str | None = None
     force: bool = False
-    # A delivery concluded from another parcel of the same merchant.
+    # A delivery concluded from another parcel of the same merchant, or from
+    # a return of the parcel's order (``label`` is then "return").
     inferred: bool = False
     id: str = field(default_factory=lambda: secrets.token_hex(6))
 
@@ -504,8 +505,11 @@ class ParcelState:
     provisional: bool
     last_event: datetime | None
     timeline: tuple[TimelineEntry, ...]
-    # Delivered according to another parcel of the same merchant only.
+    # Delivered by inference only: from another parcel of the same merchant,
+    # or from a return of the parcel's order.
     inferred: bool = False
+    # Why the delivery was inferred, when not from another parcel: "return".
+    inferred_reason: str | None = None
     # Some details were filled in by the local AI and aren't confirmed yet.
     ai_filled: bool = False
 
@@ -791,6 +795,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
     status: ParcelStatus | None = None
     status_time: datetime | None = None
     status_inferred = False
+    inferred_label: str | None = None
     delivered_at: datetime | None = None
     eta: Eta | None = None
     eta_time: datetime | None = None
@@ -800,6 +805,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
         if accepted and new_status is not status:
             status, status_time = new_status, event.time
             status_inferred = event.inferred
+            inferred_label = event.label if event.inferred else None
             if new_status is ParcelStatus.DELIVERED and delivered_at is None:
                 delivered_at = event.time
         elif accepted and not event.inferred:
@@ -855,6 +861,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
         for o in origins
     )
     provisional = not number and not shipment_ids and status is ParcelStatus.ORDERED
+    inferred = status_inferred and status is ParcelStatus.DELIVERED
     return ParcelState(
         status=status,
         status_time=status_time,
@@ -875,7 +882,8 @@ def derive_state(parcel: Parcel) -> ParcelState:
         provisional=provisional,
         last_event=max((e.time for e in parcel.events), default=None),
         timeline=tuple(timeline),
-        inferred=status_inferred and status is ParcelStatus.DELIVERED,
+        inferred=inferred,
+        inferred_reason=inferred_label if inferred else None,
         ai_filled=ai_filled,
     )
 
@@ -1181,10 +1189,242 @@ class SenderPrefs:
         )
 
 
+# --- Customer returns ----------------------------------------------------------
+
+
+class PickupRule(StrEnum):
+    """Where a return's pickup day comes from."""
+
+    # The e-mail gives the date.
+    EMAIL = "email"
+    # The e-mail says "next working day".
+    NEXT_WORKING_DAY = "next_working_day"
+    # Not in the e-mail: the shop's carrier usually comes the next working day.
+    ASSUMED = "assumed"
+
+
+# Higher wins when e-mails disagree about the pickup day.
+PICKUP_RANK: dict[PickupRule, int] = {
+    PickupRule.ASSUMED: 0,
+    PickupRule.NEXT_WORKING_DAY: 1,
+    PickupRule.EMAIL: 2,
+}
+
+
+def _source(value: Any) -> Source:
+    try:
+        return Source(value or Source.PARSER)
+    except ValueError:
+        return Source.PARSER
+
+
+@dataclass(slots=True)
+class ReturnOrigin:
+    """What one e-mail said about a customer return.
+
+    ``message`` is the e-mail's hash; ``label`` its sender's organisation.
+    ``received`` is set when the shop said the return arrived.
+    """
+
+    message: str
+    time: datetime
+    source: Source = Source.PARSER
+    label: str = ""
+    merchant: str | None = None
+    order_numbers: tuple[str, ...] = ()
+    items: tuple[str, ...] = ()
+    carrier: str | None = None
+    tracking_number: str | None = None
+    pickup: date | None = None
+    pickup_rule: PickupRule | None = None
+    received: bool = False
+    owners: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialise the origin."""
+        return _compact(
+            {
+                "message": self.message,
+                "time": dt_to_str(self.time),
+                "source": self.source.value,
+                "label": self.label,
+                "merchant": self.merchant,
+                "order_numbers": list(self.order_numbers),
+                "items": list(self.items),
+                "carrier": self.carrier,
+                "tracking_number": self.tracking_number,
+                "pickup": self.pickup.isoformat() if self.pickup else None,
+                "pickup_rule": self.pickup_rule.value if self.pickup_rule else None,
+                "received": self.received,
+                "owners": list(self.owners),
+            }
+        )
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ReturnOrigin:
+        """Parse a serialised origin; a rule from a newer release is dropped."""
+        pickup = date_from_str(data.get("pickup"))
+        try:
+            rule = PickupRule(data["pickup_rule"]) if data.get("pickup_rule") else None
+        except ValueError:
+            rule = None
+        return cls(
+            message=str(data["message"]),
+            time=dt_from_str(data.get("time")) or dt_util.utcnow(),
+            source=_source(data.get("source")),
+            label=str(data.get("label", "")),
+            merchant=data.get("merchant") or None,
+            order_numbers=_tuple(data.get("order_numbers")),
+            items=_tuple(data.get("items")),
+            carrier=data.get("carrier") or None,
+            tracking_number=data.get("tracking_number") or None,
+            pickup=pickup if rule else None,
+            pickup_rule=rule if pickup else None,
+            received=bool(data.get("received", False)),
+            owners=_tuple(data.get("owners")),
+        )
+
+
+@dataclass(slots=True)
+class ReturnEntry:
+    """A parcel the user sends back to a shop, from the shop's e-mails.
+
+    Kept apart from parcels: it never changes the state of the order's own
+    parcels, and it isn't tracked, notified or sent to 17TRACK. ``origins``
+    are keyed by the e-mail's hash.
+    """
+
+    id: str
+    created: datetime
+    updated: datetime
+    origins: dict[str, ReturnOrigin] = field(default_factory=dict)
+    private: bool = False
+    archived: datetime | None = None
+
+    def _oldest_first(self) -> list[ReturnOrigin]:
+        return sorted(self.origins.values(), key=lambda o: (o.time, o.message))
+
+    def _newest(self, attr: str) -> Any:
+        return next(
+            (
+                value
+                for origin in reversed(self._oldest_first())
+                if (value := getattr(origin, attr))
+            ),
+            None,
+        )
+
+    @property
+    def merchant(self) -> str | None:
+        """Return the shop's name, from the newest e-mail that gives it.
+
+        Without one, the sender's domain names it: ``amazon.es`` -> ``Amazon``.
+        """
+        return merchant_display(self._newest("merchant") or self._newest("label"))
+
+    @property
+    def carrier(self) -> str | None:
+        """Return the carrier that picks the parcel up, when an e-mail says."""
+        return self._newest("carrier")
+
+    @property
+    def tracking_number(self) -> str | None:
+        """Return the return's tracking number, when an e-mail gives one."""
+        return self._newest("tracking_number")
+
+    @property
+    def order_numbers(self) -> tuple[str, ...]:
+        """Return the order numbers, oldest e-mail first."""
+        numbers: list[str] = []
+        for origin in self._oldest_first():
+            numbers.extend(n for n in origin.order_numbers if n not in numbers)
+        return tuple(numbers)
+
+    @property
+    def items(self) -> tuple[str, ...]:
+        """Return the items sent back."""
+        found = unique_items(i for o in self._oldest_first() for i in o.items)
+        return tuple(found[:MAX_ITEMS])
+
+    @property
+    def owners(self) -> tuple[str, ...]:
+        """Return the people whose mailboxes the e-mails came from."""
+        return tuple(sorted({p for o in self.origins.values() for p in o.owners}))
+
+    @property
+    def started(self) -> datetime:
+        """Return the time of the first e-mail."""
+        return min((o.time for o in self.origins.values()), default=self.created)
+
+    @property
+    def last_news(self) -> datetime:
+        """Return the time of the newest e-mail."""
+        return max((o.time for o in self.origins.values()), default=self.created)
+
+    @property
+    def pickup(self) -> tuple[date, PickupRule] | None:
+        """Return the pickup day and where it comes from.
+
+        A date in an e-mail beats "next working day", which beats the day
+        assumed for the shop; among equals the newest e-mail wins.
+        """
+        best = max(
+            (o for o in self.origins.values() if o.pickup and o.pickup_rule),
+            key=lambda o: (PICKUP_RANK[o.pickup_rule or PickupRule.ASSUMED], o.time),
+            default=None,
+        )
+        if best is None or best.pickup is None or best.pickup_rule is None:
+            return None
+        return best.pickup, best.pickup_rule
+
+    @property
+    def received(self) -> bool:
+        """Return True when the shop said the return arrived."""
+        return any(origin.received for origin in self.origins.values())
+
+    @property
+    def day(self) -> date:
+        """Return the day shown in the calendar: the pickup, or the first e-mail."""
+        pickup = self.pickup
+        return pickup[0] if pickup else local_date(self.started)
+
+    def done(self, today: date) -> bool:
+        """Return True once the parcel was picked up, or the shop has it."""
+        return self.received or self.day < today
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialise the return."""
+        return _compact(
+            {
+                "id": self.id,
+                "created": dt_to_str(self.created),
+                "updated": dt_to_str(self.updated),
+                "origins": [origin.as_dict() for origin in self._oldest_first()],
+                "private": self.private,
+                "archived": dt_to_str(self.archived),
+            }
+        )
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ReturnEntry:
+        """Parse a serialised return."""
+        created = dt_from_str(data.get("created")) or dt_util.utcnow()
+        origins = [ReturnOrigin.from_dict(item) for item in data.get("origins", ())]
+        return cls(
+            id=str(data["id"]),
+            created=created,
+            updated=dt_from_str(data.get("updated")) or created,
+            origins={origin.message: origin for origin in origins},
+            private=bool(data.get("private", False)),
+            archived=dt_from_str(data.get("archived")),
+        )
+
+
 # --- The whole store -----------------------------------------------------------
 
 SECTIONS: tuple[str, ...] = (
     "parcels",
+    "returns",
     "orders",
     "messages",
     "review",
@@ -1216,6 +1456,7 @@ class ParcelsData:
     """Everything Parcels stores in ``.storage/parcels``."""
 
     parcels: dict[str, Parcel] = field(default_factory=dict)
+    returns: dict[str, ReturnEntry] = field(default_factory=dict)
     orders: dict[str, Order] = field(default_factory=dict)
     messages: dict[str, MessageRecord] = field(default_factory=dict)
     review: dict[str, ReviewItem] = field(default_factory=dict)
@@ -1231,6 +1472,7 @@ class ParcelsData:
         """Serialise everything."""
         return {
             "parcels": [parcel.as_dict() for parcel in self.parcels.values()],
+            "returns": [entry.as_dict() for entry in self.returns.values()],
             "orders": [order.as_dict() for order in self.orders.values()],
             "messages": [record.as_dict() for record in self.messages.values()],
             "review": [item.as_dict() for item in self.review.values()],
@@ -1252,6 +1494,7 @@ class ParcelsData:
             return dict(value) if isinstance(value, Mapping) else {}
 
         parcels = _load_list(data.get("parcels"), Parcel.from_dict, "parcel")
+        returns = _load_list(data.get("returns"), ReturnEntry.from_dict, "return")
         orders = _load_list(data.get("orders"), Order.from_dict, "order")
         messages = _load_list(data.get("messages"), MessageRecord.from_dict, "e-mail")
         review = _load_list(data.get("review"), ReviewItem.from_dict, "review item")
@@ -1261,6 +1504,7 @@ class ParcelsData:
         senders = _load_list(data.get("senders"), SenderPrefs.from_dict, "sender")
         return cls(
             parcels={parcel.id: parcel for parcel in parcels},
+            returns={entry.id: entry for entry in returns},
             orders={order.key: order for order in orders},
             messages={record.hash: record for record in messages},
             review={item.id: item for item in review},

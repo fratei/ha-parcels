@@ -100,6 +100,8 @@ class RetentionResult:
     review: int = 0
     filtered: int = 0
     codes: int = 0
+    returns_archived: list[str] = field(default_factory=list)
+    returns_purged: list[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
@@ -112,6 +114,8 @@ class RetentionResult:
             or self.review
             or self.filtered
             or self.codes
+            or self.returns_archived
+            or self.returns_purged
         )
 
 
@@ -155,6 +159,8 @@ def apply_retention(
     * Archived parcels are deleted ``purge_days`` after their last news.
     * Delivery codes of archived parcels, and of parcels that were delivered,
       returned or cancelled (not just inferred delivered), are deleted.
+    * Customer returns are archived ``archive_days`` after their day (the
+      pickup) and deleted ``purge_days`` after their last e-mail.
     * Orders without parcels, e-mail hashes after 120 days, "Needs review"
       items after 30 days and "Filtered" items after 14 days are deleted.
     """
@@ -183,6 +189,14 @@ def apply_retention(
             continue
         if parcel.archived is not None or (state.terminal and not state.inferred):
             result.codes += parcel.drop_codes()
+
+    for entry in list(data.returns.values()):
+        if entry.archived is None and today - entry.day >= archive_after:
+            entry.archived = now
+            result.returns_archived.append(entry.id)
+        if entry.archived is not None and now - entry.last_news >= purge_after:
+            del data.returns[entry.id]
+            result.returns_purged.append(entry.id)
 
     used: set[str] = set()
     for parcel in data.parcels.values():

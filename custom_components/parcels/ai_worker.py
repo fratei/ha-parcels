@@ -61,7 +61,6 @@ from .convert import (
     is_confident,
     merge_fills,
     results_agree,
-    suggestion_from_result,
 )
 from .models import (
     MessageRecord,
@@ -72,6 +71,7 @@ from .models import (
     dt_to_str,
     new_id,
 )
+from .parsers import is_refund, sort_returns
 from .parsers.senders import organizational_domain
 
 if TYPE_CHECKING:
@@ -410,6 +410,12 @@ class AIWorker:
         self.engine.async_schedule_save()
         async_dispatcher_send(self.hass, SIGNAL_AI_UPDATED)
 
+    def _drop_refund(self, entry: dict[str, Any], record: MessageRecord) -> None:
+        """Drop a refund e-mail silently: not in review, nor filtered."""
+        self._remove(entry)
+        self.engine.drop_refund(record)
+        self.engine.async_changed()
+
     def _set_busy(self, key: str | None) -> None:
         if self._busy != key:
             self._busy = key
@@ -636,6 +642,25 @@ class AIWorker:
             if not gaps:
                 self._drop(entry)
                 return
+        elif is_refund(parsed):
+            # Refunds aren't parcel events, even when asked to read again.
+            self._drop_refund(entry, record)
+            return
+        elif parsed.kind is MailKind.CUSTOMER_RETURN:
+            # Nor does the AI read returns: the parser's reading decides.
+            self._remove(entry)
+            item = ReviewItem.from_dict(entry["review"])
+            engine.decide_return(
+                message,
+                verdict,
+                parsed,
+                record,
+                mailbox=item.mailbox,
+                owner=item.owner,
+                now=now,
+            )
+            engine.async_changed()
+            return
         elif not entry.get("forced") and verdict.verified and is_confident(parsed):
             # A trusted sender or a newer parser can read it now.
             self._remove(entry)
@@ -708,6 +733,7 @@ class AIWorker:
             now,
             trusted=verdict.verified,
             errors=validation.errors,
+            parser=parsed.parser,
         )
 
     async def _async_extract(
@@ -747,15 +773,23 @@ class AIWorker:
         *,
         trusted: bool,
         errors: tuple[str, ...] = (),
+        parser: str | None = None,
     ) -> None:
         """Apply, suggest, filter or review the AI's reading of an e-mail.
 
         ``errors`` are the checks the answer failed; its other values are
-        still offered for review.
+        still offered for review. ``parser`` names the parser that recognised
+        the sender: the answer is sorted the same way as the parser's, so a
+        refund is dropped and a customer return told apart.
         """
         engine = self.engine
+        if result is not None:
+            result = sort_returns(result, message, engine.tz, parser=parser)
         if result is None or result.kind is MailKind.UNKNOWN:
             self._to_review(entry, now, reason=REASON_UNKNOWN_FORMAT)
+            return
+        if is_refund(result):
+            self._drop_refund(entry, record)
             return
         if result.kind is MailKind.NOT_PARCEL:
             if result.confidence >= CONFIDENCE_APPLY:
@@ -790,9 +824,7 @@ class AIWorker:
             now,
             reason=REASON_AI_REJECTED if errors else REASON_AI_SUGGESTION,
             source=Source.AI,
-            suggestion=engine.prefill(
-                suggestion_from_result(result), message.sender_domain
-            ),
+            suggestion=engine.suggestion_for(result, message, now),
         )
 
     def _fill(
@@ -884,6 +916,8 @@ class AIWorker:
         self._last_error = None
         self._clear_issues()
         result = validation.result
+        if result is not None:
+            result = sort_returns(result, message, engine.tz, parser=parsed.parser)
         agree = result is not None and results_agree(parsed, result)
         self._count("agree" if agree else "disagree")
 

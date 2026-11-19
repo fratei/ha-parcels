@@ -68,6 +68,13 @@ from .convert import (
     suggestion_from_result,
     suggestion_result,
 )
+from .customer_returns import (
+    apply_return,
+    infer_return_deliveries,
+    pickup_suggestion,
+    remove_return,
+    return_origin,
+)
 from .dedup import (
     REPAIR_KEY,
     REPAIR_VERSION,
@@ -84,6 +91,8 @@ from .dedup import (
     merge_parcels,
     reconcile,
     remove_message,
+    remove_parcel_origins,
+    remove_return_origins,
     repair_store,
     split_parcel,
     undo_auto_merge,
@@ -114,7 +123,7 @@ from .models import (
     is_carrier_mail,
     new_id,
 )
-from .parsers import NOTE_KNOWN_SENDER_UNPARSED, parse_message
+from .parsers import NOTE_KNOWN_SENDER_UNPARSED, is_refund, parse_message
 from .parsers.auth import verify_sender
 from .parsers.base import MailMessage, ParseResult, SenderVerdict, message_hash
 from .parsers.prefilter import is_candidate
@@ -130,6 +139,7 @@ from .parsers.tracking import (
     normalize_tracking_number,
 )
 from .store import ParcelsStore, apply_retention
+from .workdays import WorkingDays
 
 if TYPE_CHECKING:
     from .coordinator import MailboxCoordinator
@@ -158,6 +168,30 @@ CHECK_AGAIN_MAX_EMAILS = 5
 # release stored: open parcels without a date or items, and e-mails refused
 # for their mail server (0.1.3 didn't know Outlook.com's).
 FILL_CHECK_KEY = "fill_check"
+# How many refund e-mails were dropped: they're not parcel events.
+REFUNDS_KEY = "refunds_dropped"
+# Set when the store of an earlier release is loaded. Once the mailboxes were
+# read, what that release read is checked again: it couldn't tell refunds and
+# customer returns apart, and its filter skipped some return e-mails. Then it
+# holds what the check found.
+RETURNS_CHECK_KEY = "returns_check"
+# The returns check downloads at most this many e-mails, newest first...
+RETURNS_CHECK_MAX = 100
+# ... and looks at e-mails set aside only if they arrived this recently.
+RETURNS_CHECK_WINDOW = timedelta(days=30)
+# What an earlier release set aside, and could have misread.
+SET_ASIDE = frozenset(
+    {
+        MessageState.NOT_PARCEL,
+        MessageState.IGNORED,
+        MessageState.DISMISSED,
+        MessageState.FAILED,
+        MessageState.FILTERED,
+        MessageState.REVIEW,
+    }
+)
+# The diagnostics count the e-mails of this many recent days.
+RECENT_DAYS = 14
 REASON_UNTRUSTED_SERVER = "untrusted_authserv"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
@@ -261,6 +295,7 @@ class ParcelsEngine:
         self.notifier: Notifier | None = None
         self.tracker: SeventeenTrackSync | None = None
         self.ai = AIWorker(self)
+        self.workdays = WorkingDays(hass)
         self.mailboxes: dict[str, MailboxRuntime] = {}
         self._statuses: dict[str, ParcelStatus] = {}
         self._inflight: dict[str, asyncio.Event] = {}
@@ -334,6 +369,7 @@ class ParcelsEngine:
     async def async_start(self) -> None:
         """Load the store and start the scheduled jobs and the AI worker."""
         await self.store.async_load()
+        await self.workdays.async_load(dt_util.now(self.tz).date())
         data = self.data
         data.engine.setdefault("synced", {})
         now = dt_util.utcnow()
@@ -342,6 +378,10 @@ class ParcelsEngine:
         if not (data.parcels or data.review):
             # Nothing stored by an earlier release to check after the update.
             data.engine.setdefault(FILL_CHECK_KEY, True)
+        data.engine.setdefault(
+            RETURNS_CHECK_KEY,
+            {"before": dt_to_str(now)} if data.messages else {"done": dt_to_str(now)},
+        )
         self._statuses = {pid: p.state.status for pid, p in data.parcels.items()}
         self._started = True
         self._run_retention(now)
@@ -381,6 +421,9 @@ class ParcelsEngine:
     @callback
     def _async_midnight(self, _now: datetime) -> None:
         """Refresh what depends on the date, e.g. inferred deliveries."""
+        self.async_create_task(
+            self.workdays.async_load(dt_util.now(self.tz).date()), "parcels_workdays"
+        )
         self.async_changed()
         self.ai.wake()
 
@@ -418,16 +461,44 @@ class ParcelsEngine:
             self._more.discard(entry_id)
         if self._reconcile(dt_util.utcnow()):
             self.async_changed(reconcile=False)
+        if ok and self._started and not (self._syncing or self._more):
+            self._start_checks()
+
+    @callback
+    def _start_checks(self) -> None:
+        """Start the one-time checks of what an earlier release stored.
+
+        Every mailbox lists its lookback period again on its next sync, as on
+        its first: what the filter of an earlier release skipped is read then.
+        """
+        engine = self.data.engine
+        check = engine.get(RETURNS_CHECK_KEY)
+        before = None
+        if isinstance(check, dict) and not {"started", "done"} & check.keys():
+            before = dt_from_str(check.get("before"))
+        fill = not engine.get(FILL_CHECK_KEY)
+        if before is None and not fill:
+            return
+        if before is not None:
+            check["started"] = dt_to_str(dt_util.utcnow())
+            check["relisted"] = self._relist()
+        engine[FILL_CHECK_KEY] = True
+        self.async_schedule_save()
+        self.async_create_task(self._async_checks(before, fill=fill), "parcels checks")
+
+    @callback
+    def _relist(self) -> int:
+        """Have every mailbox read its lookback period again; return how many.
+
+        E-mails read before are skipped as always.
+        """
         data = self.data
-        if (
-            ok
-            and self._started
-            and not (self._syncing or self._more)
-            and not data.engine.get(FILL_CHECK_KEY)
-        ):
-            data.engine[FILL_CHECK_KEY] = True
-            self.async_schedule_save()
-            self.async_create_task(self._async_fill_check(), "parcels fill check")
+        synced = data.engine.setdefault("synced", {})
+        entry_ids = {*data.cursors, *synced}
+        for entry_id in entry_ids:
+            data.cursors.pop(entry_id, None)
+            synced.pop(entry_id, None)
+        return len(entry_ids)
 
     @callback
     def _reconcile(self, now: datetime) -> bool:
@@ -443,7 +514,9 @@ class ParcelsEngine:
         try:
             data = self.data
             result = reconcile(data, now)
-            inferred = infer_deliveries(data, now)
+            # A return is stronger evidence than another parcel of the shop.
+            inferred = infer_return_deliveries(data, now)
+            inferred |= infer_deliveries(data, now)
         finally:
             self._reconciling = False
         self._suggestions = {item.id: item for item in result.suggestions}
@@ -471,9 +544,12 @@ class ParcelsEngine:
         pruned = self._prune_unparsed(now)
         if result.changed or pruned:
             _LOGGER.debug(
-                "Retention archived %d and purged %d parcels",
+                "Retention archived %d and purged %d parcels, archived %d and "
+                "purged %d returns",
                 len(result.archived),
                 len(result.purged),
+                len(result.returns_archived),
+                len(result.returns_purged),
             )
             self.async_changed()
 
@@ -758,7 +834,15 @@ class ParcelsEngine:
         """Apply, queue, review, filter or ignore a parsed e-mail."""
         org = organizational_domain(message.sender_domain)
         if result.kind is MailKind.NOT_PARCEL and result.confidence >= CONFIDENCE_APPLY:
-            record.state = MessageState.NOT_PARCEL
+            if is_refund(result):
+                self.drop_refund(record)
+            else:
+                record.state = MessageState.NOT_PARCEL
+            return
+        if result.kind is MailKind.CUSTOMER_RETURN:
+            self.decide_return(
+                message, verdict, result, record, mailbox=mailbox, owner=owner, now=now
+            )
             return
         raw = suggestion_from_result(result)
         if is_confident(result):
@@ -840,6 +924,74 @@ class ParcelsEngine:
                 return
         self.add_review(item, record)
 
+    def decide_return(
+        self,
+        message: MailMessage,
+        verdict: SenderVerdict,
+        result: ParseResult,
+        record: MessageRecord,
+        *,
+        mailbox: str | None,
+        owner: str | None,
+        now: datetime,
+    ) -> None:
+        """Add a customer return, or send it to "Needs review".
+
+        The local AI doesn't read returns, and a return has nothing for it
+        to fill in. Under review, the pickup day stays in the suggestion.
+        """
+        org = organizational_domain(message.sender_domain)
+        if verdict.verified and is_confident(result):
+            self.apply_result(
+                result,
+                record,
+                source=Source.PARSER,
+                time=self.message_time(message, now),
+                label=org,
+                now=now,
+            )
+            self._clear_unparsed(org)
+            return
+        self.add_review(
+            self.review_item(
+                message,
+                record,
+                verdict,
+                reason=review_reason(verdict, result),
+                source=Source.PARSER,
+                suggestion=self.suggestion_for(result, message, now),
+                mailbox=mailbox,
+                owner=owner,
+                now=now,
+            ),
+            record,
+        )
+
+    def suggestion_for(
+        self, result: ParseResult, message: MailMessage, now: datetime
+    ) -> Suggestion | None:
+        """Return the "Needs review" suggestion for a reading of an e-mail.
+
+        A return's "next working day" pickup becomes a date: a suggestion
+        only holds dates, and accepting it would otherwise lose the day.
+        """
+        return pickup_suggestion(
+            self.prefill(suggestion_from_result(result), message.sender_domain),
+            result,
+            time=self.message_time(message, now),
+            next_working_day=self.workdays.next_working_day,
+        )
+
+    def drop_refund(self, record: MessageRecord) -> None:
+        """Drop a refund e-mail, counting it once: it isn't a parcel event.
+
+        It never reaches a parcel, review or the filtered list.
+        """
+        if record.state is not MessageState.NOT_PARCEL:
+            engine = self.data.engine
+            engine[REFUNDS_KEY] = int(engine.get(REFUNDS_KEY) or 0) + 1
+        record.state = MessageState.NOT_PARCEL
+
     def apply_result(
         self,
         result: ParseResult,
@@ -851,8 +1003,30 @@ class ParcelsEngine:
         now: datetime,
         confirmed: bool = False,
     ) -> set[str]:
-        """Add a parse result to the parcels; returns the touched parcel IDs."""
+        """Add a parse result to the parcels; returns the touched parcel IDs.
+
+        A customer return goes to the returns instead. Whatever the e-mail
+        said before (as a parcel or as a return) gives way to the result.
+        """
         owners = record.owners
+        if result.kind is MailKind.CUSTOMER_RETURN:
+            moved = remove_parcel_origins(self.data, record.hash, now)
+            apply_return(
+                self.data,
+                return_origin(
+                    result,
+                    message_hash=record.hash,
+                    time=time,
+                    source=source,
+                    label=label,
+                    owners=owners,
+                    next_working_day=self.workdays.next_working_day,
+                ),
+                now,
+            )
+            record.state = MessageState.APPLIED
+            return moved
+        remove_return_origins(self.data, record.hash, now)
         touched: set[str] = set()
         for contribution in result_contributions(
             result,
@@ -1134,7 +1308,8 @@ class ParcelsEngine:
         if item.fill:
             return self._accept_fill(review_id, item, suggestion)
         if suggestion is None or not (
-            suggestion.tracking_numbers
+            suggestion.kind is MailKind.CUSTOMER_RETURN
+            or suggestion.tracking_numbers
             or suggestion.order_numbers
             or suggestion.amazon_shipment_id
         ):
@@ -1405,7 +1580,13 @@ class ParcelsEngine:
         verdict = self.verify(message)
         result = await self.async_parse(message, verdict)
         owner = record.owners[0] if record.owners else mailbox.owner
-        if use_ai:
+        # A refund is dropped as it is, and a return decided as it is: the AI
+        # isn't asked about either.
+        if (
+            use_ai
+            and not is_refund(result)
+            and result.kind is not MailKind.CUSTOMER_RETURN
+        ):
             item = self.review_item(
                 message,
                 record,
@@ -1555,6 +1736,167 @@ class ParcelsEngine:
             len(refused),
             checked,
         )
+
+    async def _async_checks(self, before: datetime | None, *, fill: bool) -> None:
+        """Run the one-time checks: returns first, as they can remove parcels."""
+        if before is not None:
+            await self._async_returns_check(before)
+        if fill:
+            await self._async_fill_check()
+
+    def _returns_check_keys(self, before: datetime, now: datetime) -> list[str]:
+        """Return the e-mails for the returns check, in the order to read them.
+
+        First those an earlier release added to parcels as sent back; then,
+        from known or trusted senders and of the last 30 days, those it set
+        aside. E-mails that failed to download count from any sender; senders
+        the user ignores never count. Newest first; only e-mails read before
+        ``before``.
+        """
+        data = self.data
+        messages = data.messages
+        returned: set[str] = set()
+        for parcel in data.parcels.values():
+            returned.update(
+                origin.message
+                for event in parcel.events
+                if (
+                    event.kind is MailKind.RETURN
+                    or event.status is ParcelStatus.RETURNED
+                )
+                and event.origin is not None
+                and (origin := parcel.origins.get(event.origin)) is not None
+                and origin.message
+            )
+        trusted = {organizational_domain(d) for d in data.trusted_domains()}
+        since = now - RETURNS_CHECK_WINDOW
+
+        def received(key: str) -> datetime:
+            record = messages[key]
+            return record.received or record.seen
+
+        first = [
+            key
+            for key in returned
+            if (record := messages.get(key)) is not None
+            and record.seen < before
+            and not self.is_ignored(record.sender_domain)
+        ]
+        second = [
+            key
+            for key, record in messages.items()
+            if key not in returned
+            and record.state in SET_ASIDE
+            and record.seen < before
+            and (record.received or record.seen) >= since
+            and not self.is_ignored(record.sender_domain)
+            and (
+                record.state is MessageState.FAILED
+                or lookup(record.sender_domain) is not None
+                or organizational_domain(record.sender_domain) in trusted
+            )
+        ]
+        return [
+            *sorted(first, key=received, reverse=True),
+            *sorted(second, key=received, reverse=True),
+        ]
+
+    async def _async_returns_check(self, before: datetime) -> None:
+        """Check once, after the update, what an earlier release read.
+
+        An earlier release couldn't tell refunds and customer returns apart
+        from parcels sent back, and set some return e-mails aside. Each
+        e-mail is downloaded and read again by the parsers, never the AI: a
+        refund is dropped wherever it went, and a customer return from a
+        verified sender becomes a return. Anything else stays as it was, even
+        if the user cleared it: those are only read again here, once. E-mails
+        that failed to download are decided as new ones.
+        """
+        data = self.data
+        keys = self._returns_check_keys(before, dt_util.utcnow())
+        counts = dict.fromkeys(
+            ("read", "refunds", "returns", "decided", "gone", "failed"), 0
+        )
+        counts["skipped"] = max(0, len(keys) - RETURNS_CHECK_MAX)
+        for key in keys[:RETURNS_CHECK_MAX]:
+            if (record := data.messages.get(key)) is None:
+                continue
+            state = record.state
+            fetched = await self.async_refetch(record)
+            if fetched.message is None or fetched.mailbox is None:
+                counts["gone" if fetched.gone else "failed"] += 1
+                continue
+            counts["read"] += 1
+            outcome = await self._async_recheck(
+                record, state, fetched.message, fetched.mailbox
+            )
+            if outcome is not None:
+                counts[outcome] += 1
+        check = data.engine.setdefault(RETURNS_CHECK_KEY, {})
+        check["done"] = dt_to_str(dt_util.utcnow())
+        check["counts"] = counts
+        self.async_changed()
+        _LOGGER.info(
+            "Parcels read %d e-mails again: %d refunds dropped, %d returns found",
+            counts["read"],
+            counts["refunds"],
+            counts["returns"],
+        )
+
+    async def _async_recheck(
+        self,
+        record: MessageRecord,
+        state: MessageState,
+        message: MailMessage,
+        mailbox: MailboxRuntime,
+    ) -> str | None:
+        """Decide anew on an e-mail for the returns check; return what changed.
+
+        Nothing changes when the e-mail changed state while it was read.
+        """
+        verdict = self.verify(message)
+        result = await self.async_parse(message, verdict)
+        key = record.hash
+        if self.data.messages.get(key) is not record or record.state is not state:
+            return None
+        now = dt_util.utcnow()
+        if state is MessageState.FAILED:
+            # Never read: decided as a new e-mail, for everyone who has it,
+            # with the AI only for recent ones, as on a first sync.
+            record.state = MessageState.IGNORED
+            self._decide(
+                message,
+                verdict,
+                result,
+                record,
+                mailbox=mailbox.entry_id,
+                owner=mailbox.owner,
+                first_sync=True,
+                now=now,
+            )
+            return "decided"
+        if is_refund(result) and result.confidence >= CONFIDENCE_APPLY:
+            if state is MessageState.NOT_PARCEL:
+                return None
+            self._clear_outputs(key, now)
+            self.drop_refund(record)
+            return "refunds"
+        if (
+            result.kind is MailKind.CUSTOMER_RETURN
+            and verdict.verified
+            and is_confident(result)
+        ):
+            self._clear_outputs(key, now)
+            self.apply_result(
+                result,
+                record,
+                source=Source.PARSER,
+                time=self.message_time(message, now),
+                label=organizational_domain(message.sender_domain),
+                now=now,
+            )
+            return "returns"
+        return None
 
     def _clear_outputs(self, key: str, now: datetime) -> None:
         """Undo everything an e-mail added: parcels, review and queue."""
@@ -1725,6 +2067,18 @@ class ParcelsEngine:
         self.parcel(parcel_id)
         self._run(archive_parcel, parcel_id, dt_util.utcnow())
 
+    def remove_return(self, return_id: str) -> None:
+        """Remove a customer return; its e-mails aren't read again.
+
+        A delivery that only the return inferred goes with it.
+        """
+        if return_id not in self.data.returns:
+            raise validation_error("unknown_return")
+        entry = remove_return(self.data, return_id, dt_util.utcnow())
+        for key in entry.origins:
+            self._dismiss_message(key)
+        self.async_changed()
+
     # -- Diagnostics ------------------------------------------------------
 
     def diagnostics(self) -> dict[str, Any]:
@@ -1764,6 +2118,10 @@ class ParcelsEngine:
                 1 for parcel in data.parcels.values() if parcel.auto_merged
             ),
             "kept_apart": len(data.engine.get("kept_apart") or ()),
+            "refunds_dropped": int(data.engine.get(REFUNDS_KEY) or 0),
+            "returns_check": data.engine.get(RETURNS_CHECK_KEY),
+            "recent_emails": self._recent_emails(dt_util.utcnow()),
+            "working_days": self.workdays.source,
             "repair": data.engine.get(REPAIR_KEY),
             "reconcile_waiting": len(self._syncing | self._more),
             # How the sender checks went for the newest e-mails under review:
@@ -1780,6 +2138,32 @@ class ParcelsEngine:
                 if item.checks is not None
             ][:MAX_SENDER_CHECKS],
             "ai": self.ai.diagnostics(),
+        }
+
+    def _recent_emails(self, now: datetime) -> dict[str, dict[str, dict[str, int]]]:
+        """Count the e-mails of the last days by day, sender and state.
+
+        Known senders and the domains the user trusts are named by their
+        organisation; every other sender counts as "other". Newest day first.
+        """
+        data = self.data
+        trusted = {organizational_domain(d) for d in data.trusted_domains()}
+        since = now - timedelta(days=RECENT_DAYS)
+        days: dict[str, dict[str, dict[str, int]]] = {}
+        for record in data.messages.values():
+            received = record.received or record.seen
+            if received < since:
+                continue
+            org = organizational_domain(record.sender_domain)
+            sender = (
+                org if org and (lookup(org) is not None or org in trusted) else "other"
+            )
+            day = received.astimezone(self.tz).date().isoformat()
+            states = days.setdefault(day, {}).setdefault(sender, {})
+            states[record.state.value] = states.get(record.state.value, 0) + 1
+        return {
+            day: {sender: days[day][sender] for sender in sorted(days[day])}
+            for day in sorted(days, reverse=True)
         }
 
 

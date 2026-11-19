@@ -1,7 +1,11 @@
-"""The Parcels calendar: one event per parcel, on the days the week card shows it."""
+"""The Parcels calendar: one event per parcel, on the days the week card shows it.
+
+A customer return is an all-day event on its pickup day.
+"""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, datetime
 
 from homeassistant.components.calendar import CalendarEntity, CalendarEvent
@@ -11,14 +15,24 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import summary
-from .const import ParcelStatus
+from .const import CARRIER_NAMES, ParcelStatus
+from .customer_returns import linked_parcels, order_index
 from .engine import ParcelsEngine
 from .entity import ParcelsEntity
-from .models import Parcel
+from .models import Parcel, PickupRule, ReturnEntry
 
 PARALLEL_UPDATES = 0
 
 DELIVERED_MARK = "✓"
+PRIVATE_RETURN_TITLE = "Private return"
+RETURN_PICKUP_LINES: dict[PickupRule, str] = {
+    PickupRule.EMAIL: "Pickup day from the shop's e-mail",
+    PickupRule.NEXT_WORKING_DAY: "Picked up the working day after the shop's e-mail",
+    PickupRule.ASSUMED: (
+        "Pickup day assumed: the shop's carrier usually comes"
+        " the working day after its e-mail"
+    ),
+}
 
 
 async def async_setup_entry(
@@ -68,10 +82,53 @@ def parcel_event(parcel: Parcel, today: date) -> CalendarEvent | None:
     )
 
 
-class ParcelsCalendar(ParcelsEntity, CalendarEntity):
-    """Deliveries by day: expected, waiting for pickup, delivered and returned.
+def _return_carrier(entry: ReturnEntry) -> str | None:
+    carrier = entry.carrier
+    if not carrier or carrier == "other":
+        return None
+    return CARRIER_NAMES.get(carrier, carrier)
 
-    Archived parcels stay, so past weeks keep their deliveries.
+
+def return_event(
+    entry: ReturnEntry, linked: Iterable[Parcel], today: date
+) -> CalendarEvent:
+    """Return the all-day event of a customer return, on its pickup day.
+
+    ``linked`` are the parcels of its orders: a private one makes the return
+    private too. It's marked done once its day is over or the shop has it.
+    """
+    private = entry.private or any(parcel.private for parcel in linked)
+    pickup = entry.pickup
+    carrier = _return_carrier(entry)
+    if private:
+        title = PRIVATE_RETURN_TITLE
+    else:
+        name = entry.merchant or carrier or summary.UNNAMED_TITLE
+        title = f"Return pickup: {name}" if pickup else f"Return: {name}"
+    if entry.done(today):
+        title = f"{title} {DELIVERED_MARK}"
+    lines = ["Received by the shop" if entry.received else "Return to the shop"]
+    if pickup is not None:
+        lines.append(RETURN_PICKUP_LINES[pickup[1]])
+    if not private:
+        if carrier:
+            lines.append(f"Carrier: {carrier}")
+        if entry.tracking_number:
+            lines.append(f"Tracking number: {entry.tracking_number}")
+    return CalendarEvent(
+        start=entry.day,
+        end=summary.day_after(entry.day),
+        summary=title,
+        description="\n".join(lines),
+        uid=entry.id,
+    )
+
+
+class ParcelsCalendar(ParcelsEntity, CalendarEntity):
+    """Deliveries by day: expected, waiting for pickup, delivered and returned,
+    and the pickups of customer returns.
+
+    Archived parcels and returns stay, so past weeks keep their deliveries.
     """
 
     _attr_name = None
@@ -84,11 +141,18 @@ class ParcelsCalendar(ParcelsEntity, CalendarEntity):
     @callback
     def _async_compute(self) -> None:
         today = summary.today()
+        data = self.engine.data
         events = [
             event
-            for parcel in self.engine.data.parcels.values()
+            for parcel in data.parcels.values()
             if (event := parcel_event(parcel, today)) is not None
         ]
+        if data.returns:
+            index = order_index(data)
+            events.extend(
+                return_event(entry, linked_parcels(entry, index), today)
+                for entry in data.returns.values()
+            )
         events.sort(key=lambda e: (e.start_datetime_local, e.summary, e.uid or ""))
         self._events = events
 

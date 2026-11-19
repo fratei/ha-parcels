@@ -536,7 +536,7 @@ _STATUS_TEXT: dict[ParcelStatus, str] = {
     S.ATTEMPTED: "Delivery attempted",
     S.EXCEPTION: "Delivery problem",
     S.READY_FOR_PICKUP: "Ready for pickup",
-    S.RETURNED: "Returned",
+    S.RETURNED: "Returned to sender",
     S.CANCELLED: "Cancelled",
 }
 

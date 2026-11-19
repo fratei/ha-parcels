@@ -144,7 +144,7 @@ function firstWords(item: string): string {
  * e.g. "4 items · Zeta, Brava, AA batteries, Brava". Null when no item is
  * known or the parcel is someone else's private one.
  */
-export function itemsSummary(parcel: Parcel): string | null {
+export function itemsSummary(parcel: Pick<Parcel, "restricted" | "items">): string | null {
   if (parcel.restricted) {
     return null;
   }

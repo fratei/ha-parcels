@@ -205,6 +205,7 @@ export const STRINGS = {
   pickupCode: "PIN or pickup code",
   packagesInShipment: "Packages",
   showPackage: "Show package {name}",
+  showParcel: "Show parcel {name}",
   parcelId: "Parcel ID",
   delivered: "Delivered",
   timeline: "Timeline",
@@ -272,6 +273,36 @@ export const STRINGS = {
   addTitle: "Add parcel",
   addSubmit: "Add",
   trackingRequired: "Enter a tracking number.",
+
+  returnBadge: "Return",
+  privateReturn: "Private return",
+  returnTo: "Return to {merchant}",
+  returnPlain: "Return",
+  returnPickup: "Return pickup",
+  returnPickedUp: "Return picked up",
+  returnReceived: "Received by the shop",
+  returnStarted: "Return started",
+  pickupOn: "pickup {date}",
+  pickedUpOn: "picked up {date}",
+  returnStartedOn: "started {date}",
+  receivedByShopLabel: "received by the shop",
+  pickupRuleEmail: "date from the e-mail",
+  pickupRuleNextWorkingDay: "the e-mail says the next working day",
+  pickupRuleAssumed: "usually the working day after the e-mail",
+  returnDetails: "Return details",
+  pickup: "Pickup",
+  returnStartedDay: "Started",
+  returnCarrier: "Carrier",
+  returnSentBackFrom: "Original delivery",
+  returnEmails: "E-mails",
+  returnNotFound: "This return no longer exists.",
+  returnHint:
+    "Items you send back to a shop. Their parcel keeps its delivery; the return shows on its pickup day.",
+  removeReturn: "Remove",
+  removeReturnQuestion:
+    "Remove this return? Its e-mails won't be read again, and a delivery worked out only from it is undone.",
+  inferredReturnNotice:
+    "Probably delivered: you're sending its items back. Undo if it hasn't arrived.",
 } as const;
 
 export const STATUS_LABELS: Readonly<Record<string, string>> = {
@@ -283,7 +314,7 @@ export const STATUS_LABELS: Readonly<Record<string, string>> = {
   attempted: "Delivery attempted",
   exception: "Problem with delivery",
   ready_for_pickup: "Ready for pickup",
-  returned: "Returned",
+  returned: "Returned to sender",
   cancelled: "Cancelled",
 };
 
@@ -298,7 +329,8 @@ export const KIND_LABELS: Readonly<Record<string, string>> = {
   ready_for_pickup: "Ready for pickup",
   delayed: "Delayed",
   customs: "Held at customs",
-  return: "Return",
+  return: "Returned to sender",
+  customer_return: "Return pickup",
   cancelled: "Cancelled",
   code: "Delivery code",
   not_parcel: "Not about a parcel",
@@ -311,6 +343,7 @@ export const SOURCE_LABELS: Readonly<Record<string, string>> = {
   manual: "Added by hand",
   seventeentrack: "17TRACK",
   inferred: "Inferred from another delivery",
+  inferred_return: "Inferred from a return",
 };
 
 /** Known review reasons; anything else is shown as sent by the integration. */

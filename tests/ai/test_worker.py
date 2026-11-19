@@ -50,13 +50,23 @@ from custom_components.parcels.const import (
     REASON_AI_TIMEOUT,
     REASON_AI_UNAVAILABLE,
     REASON_UNKNOWN_FORMAT,
+    REASON_UNKNOWN_SENDER,
     MailKind,
 )
 from custom_components.parcels.convert import fill_origin_id, message_origin_id
 from custom_components.parcels.engine import FILL_CHECK_KEY, ParcelsEngine
 from custom_components.parcels.mail.errors import MailError
-from custom_components.parcels.models import MessageState, ParcelStatus, Source
-from custom_components.parcels.parsers.base import MailMessage, SenderVerdict
+from custom_components.parcels.models import (
+    MessageState,
+    ParcelStatus,
+    ReviewItem,
+    Source,
+)
+from custom_components.parcels.parsers.base import (
+    MailMessage,
+    ParseResult,
+    SenderVerdict,
+)
 from custom_components.parcels.views import SYSTEM_VIEWER, Viewer, settings_json
 
 from ..common import (
@@ -77,6 +87,13 @@ CTT = "carriers/ctt_in_transit_pt.eml"
 # The CTT fixture's subject holds this number, so the AI's checks find it.
 TRACKING = "RR482915732PT"
 UNREADABLE = "Olá, temos novidades. Consulte em breve."
+# An unknown shop's return: picked up the working day after, Wednesday 18 Nov.
+SHOP_RETURN = (
+    "Devolução da encomenda #1001",
+    "Recebemos o seu pedido de devolução da encomenda #1001.\n"
+    "Data de recolha: Dia útil seguinte",
+)
+PICKUP_DAY = date(2026, 11, 18)
 CLOUD_MODEL = "gpt-oss:120b-cloud"
 SECRET = "Rua Secreta 99"
 REAL_RUN = AIWorker._async_run
@@ -155,6 +172,18 @@ def ctt_message(
         date=received,
         received=received,
         **changes,
+    )
+
+
+def shop_message(subject: str, text: str) -> MailMessage:
+    """Return the example shop's e-mail with its subject and body replaced."""
+    return dataclasses.replace(
+        load_message("common/order_confirmation.eml"),
+        subject=subject,
+        text=text,
+        links=(),
+        date=RECEIVED,
+        received=RECEIVED,
     )
 
 
@@ -293,6 +322,152 @@ async def test_not_parcel_answer_with_a_tracking_number_is_rejected(
     assert item.source is Source.PARSER
     assert not engine.data.filtered
     assert engine.ai.today()["rejected"] == 1
+
+
+async def test_refund_answer_is_dropped_silently(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """An e-mail the AI reads as a return, but that is about a refund, is dropped.
+
+    It goes neither to review nor to the filtered list; it's only counted.
+    """
+    message = shop_message(
+        "An update on order #1001",
+        "Your refund will follow once the item arrives at our warehouse.",
+    )
+    engine = await async_setup(hass, client, message)
+    assert engine.ai.queue_size == 1
+    generate.return_value = result(kind="return", order_numbers=["1001"])
+
+    await engine.ai._async_step()
+
+    generate.assert_awaited_once()
+    assert engine.data.messages[message.hash].state is MessageState.NOT_PARCEL
+    assert not engine.data.parcels
+    assert not engine.data.review
+    assert not engine.data.filtered
+    assert engine.ai.queue_size == 0
+    assert engine.diagnostics()["refunds_dropped"] == 1
+
+
+async def test_queued_refund_is_dropped_without_the_ai(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """A refund an earlier release queued is dropped when its turn comes."""
+    message = shop_message(
+        "Your refund for order #1001",
+        "We have issued a refund of 19.99 EUR for order #1001.",
+    )
+    unread = ParseResult(parser="none", kind=MailKind.UNKNOWN, confidence=0.0)
+    with patch("custom_components.parcels.engine.parse_message", return_value=unread):
+        engine = await async_setup(hass, client, message)
+    assert engine.ai.queue_size == 1
+
+    await engine.ai._async_step()
+
+    generate.assert_not_awaited()
+    assert engine.data.messages[message.hash].state is MessageState.NOT_PARCEL
+    assert not engine.data.review
+    assert not engine.data.filtered
+    assert engine.ai.queue_size == 0
+    assert engine.diagnostics()["refunds_dropped"] == 1
+
+
+async def test_reading_a_refund_with_the_ai_drops_it_once(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """Asking the AI to read a refund again drops it, without counting it twice."""
+    message = shop_message(
+        "Your refund for order #1001",
+        "We have issued a refund of 19.99 EUR for order #1001.",
+    )
+    engine = await async_setup(hass, client, message)
+    record = engine.data.messages[message.hash]
+    assert record.state is MessageState.NOT_PARCEL
+    assert engine.diagnostics()["refunds_dropped"] == 1
+
+    await engine.async_reprocess(message.hash, use_ai=True)
+
+    assert engine.ai.queue_size == 0
+    assert record.state is MessageState.NOT_PARCEL
+    assert engine.diagnostics()["refunds_dropped"] == 1
+    generate.assert_not_awaited()
+
+
+async def test_shop_return_waits_under_review_without_the_ai(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """The AI doesn't read returns, not even when asked to read one again.
+
+    An unknown shop's return waits under review with its pickup day.
+    """
+    message = shop_message(*SHOP_RETURN)
+    engine = await async_setup(hass, client, message)
+    assert engine.ai.queue_size == 0
+    (first,) = engine.data.review.values()
+
+    await engine.async_reprocess(message.hash, use_ai=True)
+
+    generate.assert_not_awaited()
+    assert engine.ai.queue_size == 0
+    assert engine.data.messages[message.hash].state is MessageState.REVIEW
+    (item,) = engine.data.review.values()
+    assert item.id != first.id
+    assert item.reason == REASON_UNKNOWN_SENDER
+    assert item.suggestion is not None
+    assert item.suggestion.kind is MailKind.CUSTOMER_RETURN
+    assert (item.suggestion.eta_start, item.suggestion.eta_end) == (PICKUP_DAY,) * 2
+    assert not engine.data.parcels
+    assert not engine.data.returns
+
+
+async def test_queued_return_is_decided_without_the_ai(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """A return an earlier release queued is decided by its parser's reading."""
+    message = shop_message(*SHOP_RETURN)
+    unread = ParseResult(parser="none", kind=MailKind.UNKNOWN, confidence=0.0)
+    with patch("custom_components.parcels.engine.parse_message", return_value=unread):
+        engine = await async_setup(hass, client, message)
+    (entry,) = engine.ai.queue
+    queued = ReviewItem.from_dict(entry["review"])
+
+    await engine.ai._async_step()
+
+    generate.assert_not_awaited()
+    assert engine.ai.queue_size == 0
+    assert engine.data.messages[message.hash].state is MessageState.REVIEW
+    (item,) = engine.data.review.values()
+    assert item.reason == REASON_UNKNOWN_SENDER
+    assert item.source is Source.PARSER
+    assert (item.mailbox, item.owner) == (queued.mailbox, queued.owner)
+    assert item.suggestion is not None
+    assert item.suggestion.kind is MailKind.CUSTOMER_RETURN
+    assert (item.suggestion.eta_start, item.suggestion.eta_end) == (PICKUP_DAY,) * 2
+    assert not engine.data.returns
+
+
+async def test_return_answer_keeps_the_pickup_day(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """A return the AI reads waits under review with the e-mail's pickup day."""
+    message = shop_message(
+        "Atualização da encomenda #1001",
+        "Devolução.\nData de recolha: Dia útil seguinte",
+    )
+    engine = await async_setup(hass, client, message)
+    assert engine.ai.queue_size == 1
+    generate.return_value = result(kind="return", order_numbers=["1001"])
+
+    await engine.ai._async_step()
+
+    generate.assert_awaited_once()
+    (item,) = engine.data.review.values()
+    assert item.reason == REASON_AI_SUGGESTION
+    assert item.suggestion is not None
+    assert item.suggestion.kind is MailKind.CUSTOMER_RETURN
+    assert (item.suggestion.eta_start, item.suggestion.eta_end) == (PICKUP_DAY,) * 2
+    assert not engine.data.returns
 
 
 async def test_unknown_answer_goes_to_review(

@@ -54,7 +54,7 @@ describe("dialogs on phones", () => {
     const dialogs = readdirSync(SRC)
       .filter((name) => name.endsWith(".ts"))
       .filter((name) => /extends ParcelsDialogBase\b/.test(source(name)));
-    assert.deepEqual(dialogs.sort(), ["add-dialog.ts", "details-dialog.ts"]);
+    assert.deepEqual(dialogs.sort(), ["add-dialog.ts", "details-dialog.ts", "return-dialog.ts"]);
     for (const name of dialogs) {
       const text = source(name);
       const header = text.indexOf('<div class="dialog-header">');

@@ -76,8 +76,12 @@ FIELDS: tuple[str, ...] = (
 LIST_FIELDS = frozenset({"tracking_numbers", "order_numbers", "items"})
 
 # The AI reads a delivery code into pickup_code; it doesn't answer "code".
+# Customer returns are told apart from returns to the sender by the return
+# classifier, after the AI answers "return".
 KINDS: tuple[str, ...] = tuple(
-    kind.value for kind in MailKind if kind not in (MailKind.UNKNOWN, MailKind.CODE)
+    kind.value
+    for kind in MailKind
+    if kind not in (MailKind.UNKNOWN, MailKind.CODE, MailKind.CUSTOMER_RETURN)
 )
 
 INSTRUCTIONS = f"""\

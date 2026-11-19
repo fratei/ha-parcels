@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { layoutWeek, placeParcel } from "../src/placement.ts";
+import { itemKey, layoutWeek, placeParcel } from "../src/placement.ts";
 import type { PlacementContext } from "../src/placement.ts";
 import { PARCEL_STATUSES, type Parcel } from "../src/types.ts";
-import { makeParcel } from "./helpers.ts";
+import { makeParcel, makeReturn } from "./helpers.ts";
 
 // Wednesday 2026-07-15; its week runs from Monday 2026-07-13 to Sunday 2026-07-19.
 const ctx: PlacementContext = { today: "2026-07-15", timeZone: "Europe/Lisbon" };
@@ -156,7 +156,7 @@ describe("layoutWeek", () => {
       makeParcel({ id: "later", eta_start: "2026-07-20" }),
     ];
     const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL);
-    const byId = new Map(layout.items.map((item) => [item.parcel.id, item]));
+    const byId = new Map(layout.items.map((item) => [itemKey(item), item]));
     assert.deepEqual([...byId.keys()].sort(), ["after", "before", "both", "inside"]);
     const pick = (id: string) => {
       const item = byId.get(id);
@@ -188,11 +188,11 @@ describe("layoutWeek", () => {
       makeParcel({ id: "old", status: "delivered", delivered_at: "2026-07-13T12:00:00Z", archived: true }),
     ];
     assert.deepEqual(
-      layoutWeek(parcels, MONDAY, ctx, { showArchived: true }).items.map((item) => item.parcel.id),
+      layoutWeek(parcels, MONDAY, ctx, { showArchived: true }).items.map(itemKey),
       ["old", "active"],
     );
     assert.deepEqual(
-      layoutWeek(parcels, MONDAY, ctx, { showArchived: false }).items.map((item) => item.parcel.id),
+      layoutWeek(parcels, MONDAY, ctx, { showArchived: false }).items.map(itemKey),
       ["active"],
     );
   });
@@ -213,11 +213,11 @@ describe("layoutWeek", () => {
       makeParcel({ id: "d", merchant: "Delta", eta_start: "2026-07-14", window_start: "09:00" }),
     ];
     const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL);
-    const lanes = Object.fromEntries(layout.items.map((item) => [item.parcel.id, item.lane]));
+    const lanes = Object.fromEntries(layout.items.map((item) => [itemKey(item), item.lane]));
     assert.deepEqual(lanes, { a: 0, d: 1, b: 2, c: 0 });
     assert.equal(layout.lanes, 3);
     assert.deepEqual(
-      layout.perDay.map((items) => items.map((item) => item.parcel.id)),
+      layout.perDay.map((items) => items.map(itemKey)),
       [["a"], ["a", "d", "b"], ["a"], ["c"], ["c"], [], []],
     );
     assert.deepEqual(layout.busy, [true, true, true, true, true, false, false]);
@@ -229,7 +229,7 @@ describe("layoutWeek", () => {
       makeParcel({ id: "long", merchant: "B", eta_start: "2026-07-14", eta_end: "2026-07-16" }),
     ];
     assert.deepEqual(
-      layoutWeek(parcels, MONDAY, ctx, SHOW_ALL).items.map((item) => item.parcel.id),
+      layoutWeek(parcels, MONDAY, ctx, SHOW_ALL).items.map(itemKey),
       ["long", "short"],
     );
   });
@@ -265,7 +265,7 @@ describe("layoutWeek", () => {
     ];
     const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL);
     const boxes = Object.fromEntries(
-      layout.items.map((item) => [item.parcel.id, item.members.map((member) => member.id)]),
+      layout.items.map((item) => [itemKey(item), item.type === "parcel" ? item.members.map((member) => member.id) : []]),
     );
     assert.deepEqual(boxes, {
       p1: ["p1", "p2", "p3"],
@@ -292,5 +292,70 @@ describe("layoutWeek", () => {
     const utc = layoutWeek([parcel], MONDAY, { ...ctx, timeZone: "UTC" }, SHOW_ALL).items[0];
     assert.ok(utc);
     assert.equal(utc.startCol, 6);
+  });
+});
+
+describe("layoutWeek with returns", () => {
+  test("puts a return on its day, after that day's parcels", () => {
+    const parcels = [
+      makeParcel({ id: "zulu", merchant: "Zulu", eta_start: "2026-07-14" }),
+      makeParcel({ id: "long", merchant: "Bravo", eta_start: "2026-07-13", eta_end: "2026-07-14" }),
+    ];
+    const returns = [
+      makeReturn({ id: "r2", merchant: "Alpha", day: "2026-07-16", pickup: "2026-07-16" }),
+      makeReturn({ id: "r1", merchant: "Alpha", day: "2026-07-14", pickup: "2026-07-14" }),
+    ];
+    const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL, returns);
+    assert.deepEqual(layout.items.map(itemKey), ["long", "zulu", "return:r1", "return:r2"]);
+    assert.deepEqual(
+      layout.perDay.map((items) => items.map(itemKey)),
+      [["long"], ["long", "zulu", "return:r1"], [], ["return:r2"], [], [], []],
+    );
+    assert.equal(layout.lanes, 3);
+    assert.deepEqual(layout.busy, [true, true, false, true, false, false, false]);
+    const item = layout.items[2];
+    assert.ok(item?.type === "return");
+    assert.equal(item.ret.id, "r1");
+    assert.deepEqual(
+      [item.day, item.startCol, item.endCol, item.continuesBefore, item.continuesAfter, item.lane],
+      ["2026-07-14", 1, 1, false, false, 2],
+    );
+  });
+
+  test("orders returns of one day by shop, then by id", () => {
+    const returns = [
+      makeReturn({ id: "r3", merchant: "bravo", day: "2026-07-15" }),
+      makeReturn({ id: "r2", merchant: "Alpha", day: "2026-07-15" }),
+      makeReturn({ id: "r1", merchant: "Alpha", day: "2026-07-15" }),
+    ];
+    assert.deepEqual(
+      layoutWeek([], MONDAY, ctx, SHOW_ALL, returns).items.map(itemKey),
+      ["return:r1", "return:r2", "return:r3"],
+    );
+  });
+
+  test("leaves out returns of other weeks, and archived ones unless asked", () => {
+    const returns = [
+      makeReturn({ id: "sunday", day: "2026-07-12" }),
+      makeReturn({ id: "monday", day: "2026-07-13" }),
+      makeReturn({ id: "last", day: "2026-07-19" }),
+      makeReturn({ id: "next", day: "2026-07-20" }),
+      makeReturn({ id: "old", day: "2026-07-14", archived: true }),
+    ];
+    assert.deepEqual(
+      layoutWeek([], MONDAY, ctx, SHOW_ALL, returns).items.map(itemKey),
+      ["return:monday", "return:old", "return:last"],
+    );
+    assert.deepEqual(
+      layoutWeek([], MONDAY, ctx, { showArchived: false }, returns).items.map(itemKey),
+      ["return:monday", "return:last"],
+    );
+  });
+
+  test("places other users' private returns like any other", () => {
+    const ret = makeReturn({ id: "secret", merchant: null, restricted: true, day: "2026-07-17" });
+    const item = layoutWeek([], MONDAY, ctx, SHOW_ALL, [ret]).items[0];
+    assert.ok(item);
+    assert.equal(item.startCol, 4);
   });
 });

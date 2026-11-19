@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, date, datetime
 import logging
 from types import ModuleType
 from zoneinfo import ZoneInfo
@@ -19,10 +20,15 @@ from custom_components.parcels.parsers import (
 )
 from custom_components.parcels.parsers.base import (
     AuthResult,
+    Eta,
     Link,
     MailMessage,
     ParseResult,
     SenderVerdict,
+)
+from custom_components.parcels.parsers.returns import (
+    NOTE_PICKUP_NEXT_WORKING_DAY,
+    NOTE_REFUND,
 )
 
 SECRET = "Body-Secret-4K7Q"
@@ -414,3 +420,208 @@ def test_fixture_not_parsed(
     assert result.confidence == confidence
     assert result.notes == notes
     assert not result.shipments
+
+
+@pytest.mark.parametrize("path", ["amazon/refund_de", "amazon/refund_es"])
+def test_refund_fixtures_are_marked(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    path: str,
+) -> None:
+    """A refund is no parcel event: it's marked for the engine to drop."""
+    message = load_eml(f"{path}.eml")
+    result = parse_message(message, verdict_for(message), tz)
+    assert result.parser == "amazon"
+    assert result.kind is MailKind.NOT_PARCEL
+    assert result.confidence == 1.0
+    assert result.notes == (NOTE_REFUND,)
+    assert not result.shipments
+    assert not result.order_numbers
+
+
+@pytest.mark.parametrize(
+    ("path", "confidence", "orders", "eta", "notes"),
+    [
+        (
+            "amazon/return_pickup_pt",
+            0.9,
+            ("404-5528193-7720416",),
+            None,
+            (NOTE_PICKUP_NEXT_WORKING_DAY,),
+        ),
+        (
+            "amazon/return_pickup_no_order_pt",
+            0.8,
+            (),
+            None,
+            (NOTE_PICKUP_NEXT_WORKING_DAY,),
+        ),
+        (
+            "amazon/return_pickup_es",
+            0.9,
+            ("402-6619027-3348175",),
+            Eta(date(2026, 11, 13), date(2026, 11, 13)),
+            (),
+        ),
+    ],
+)
+def test_customer_return_fixtures(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    path: str,
+    confidence: float,
+    orders: tuple[str, ...],
+    eta: Eta | None,
+    notes: tuple[str, ...],
+) -> None:
+    """An Amazon return is a customer return with its pickup day.
+
+    "Next working day" stays a note: the working days are the engine's.
+    An e-mail without an order number or a return subject still counts.
+    """
+    message = load_eml(f"{path}.eml")
+    result = parse_message(message, verdict_for(message), tz)
+    assert result.parser == "amazon"
+    assert result.kind is MailKind.CUSTOMER_RETURN
+    assert result.confidence == confidence
+    assert result.notes == notes
+    assert result.order_numbers == orders
+    assert len(result.items) == 1
+    [shipment] = result.shipments
+    assert shipment.eta == eta
+    assert shipment.order_numbers == orders
+    assert shipment.items == result.items
+
+
+RETURN_SUBJECT = "Informação sobre o seu artigo"
+
+
+@pytest.mark.parametrize(
+    ("sender", "body", "kind", "notes"),
+    [
+        (
+            "devolucoes@amazon.es",
+            "Olá Alex Doe, a sua devolução foi registada.",
+            MailKind.UNKNOWN,
+            UNPARSED_NOTES,
+        ),
+        (
+            "noreply@shop.app",
+            "Hi Alex Doe, we've received your return.",
+            MailKind.UNKNOWN,
+            UNPARSED_NOTES,
+        ),
+        (
+            "devolucoes@amazon.es",
+            "A sua devolução foi registada.\nData de recolha: Dia útil seguinte",
+            MailKind.CUSTOMER_RETURN,
+            (NOTE_PICKUP_NEXT_WORKING_DAY,),
+        ),
+        (
+            "devolucoes@amazon.es",
+            "Olá Alex Doe, emitimos o seu reembolso de 12,99 €.",
+            MailKind.NOT_PARCEL,
+            (NOTE_REFUND,),
+        ),
+        # A body that only opens with an amount refunded is skipped as before.
+        (
+            "devolucoes@amazon.es",
+            "Reembolso: 12,99 €.",
+            MailKind.NOT_PARCEL,
+            (),
+        ),
+        (
+            "info@ctt.pt",
+            "Olá Alex Doe, a sua devolução foi registada.",
+            MailKind.NOT_PARCEL,
+            (),
+        ),
+    ],
+)
+def test_unread_shop_return_is_not_skipped(
+    calls: Calls,
+    tz: ZoneInfo,
+    sender: str,
+    body: str,
+    kind: MailKind,
+    notes: tuple[str, ...],
+) -> None:
+    """A shop's return e-mail its parser can't read isn't silently skipped.
+
+    The subject has no shipping words, but the body's return wording or
+    pickup label says it's about a parcel; a refund is still dropped.
+    Carriers' unread e-mails are judged by their subject, as before.
+    """
+    message = replace(_message(sender, RETURN_SUBJECT), text=body)
+    result = parse_message(message, _verdict(message), tz)
+    assert result.kind is kind
+    assert result.notes == notes
+
+
+@pytest.mark.parametrize(
+    ("subject", "body", "kind", "notes"),
+    [
+        # Only a refund line says it's about a return.
+        (
+            "Devoluções",
+            "Olá Alex Doe.\nReembolso de 12,99 € para o artigo Desk lamp, white.",
+            MailKind.NOT_PARCEL,
+            (),
+        ),
+        # A parcel going back to its sender is no customer return.
+        (
+            "A sua encomenda foi devolvida",
+            "Olá Alex Doe.\nNão foi possível entregar a sua encomenda e foi "
+            "devolvida ao remetente.",
+            MailKind.UNKNOWN,
+            UNPARSED_NOTES,
+        ),
+    ],
+)
+def test_orderless_amazon_mail_is_no_customer_return(
+    tz: ZoneInfo, subject: str, body: str, kind: MailKind, notes: tuple[str, ...]
+) -> None:
+    """An Amazon e-mail without its order number needs customer-return words."""
+    message = replace(_message("devolucoes@amazon.es", subject), text=body)
+    result = parse_message(message, _verdict(message), tz)
+    assert result.parser == "amazon"
+    assert result.kind is kind
+    assert result.notes == notes
+
+
+@pytest.mark.parametrize(
+    "extra", ["A sua devolução foi registada.", "Emitimos o seu reembolso."]
+)
+def test_shipping_mail_naming_a_return_keeps_its_shipment(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    extra: str,
+) -> None:
+    """A shipping e-mail that also confirms a return or a refund still ships.
+
+    An exchange does both; the body's own status comes first.
+    """
+    message = load_eml("amazon/shipped_ctt_pt.eml")
+    message = replace(
+        message,
+        subject="Informação sobre a sua encomenda",
+        text=f"{message.text}\n{extra}",
+    )
+    result = parse_message(message, verdict_for(message), tz)
+    assert result.kind is MailKind.SHIPPED
+    assert result.order_numbers == ("406-1928374-5647382",)
+
+
+def test_carrier_return_is_left_alone(
+    monkeypatch: pytest.MonkeyPatch, calls: Calls, tz: ZoneInfo
+) -> None:
+    """A carrier's return is a parcel going back: shops' wording doesn't apply."""
+    expected = ParseResult(parser="ctt", kind=MailKind.RETURN, confidence=0.9)
+    monkeypatch.setattr(parsers.carriers, "parse_carrier", lambda *args: expected)
+    message = replace(
+        _message("info@ctt.pt", RETURN_SUBJECT), text="A sua devolução foi registada."
+    )
+    assert parse_message(message, _verdict(message), tz) is expected

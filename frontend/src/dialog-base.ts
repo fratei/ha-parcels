@@ -19,6 +19,12 @@ import type { HomeAssistant } from "./types.ts";
 /** Fired at a dialog when an action fails after the dialog was closed; detail is the message. */
 export const DIALOG_ERROR_EVENT = "parcels-error";
 
+/** Asks the card to show a parcel's details; the detail is the parcel's id. */
+export const OPEN_PARCEL_EVENT = "parcels-open-parcel";
+
+/** Asks the card to show a customer return; the detail is the return's id. */
+export const OPEN_RETURN_EVENT = "parcels-open-return";
+
 /** Moves focus back to where it was before the dialog opened. */
 export type ReturnFocus = () => void;
 

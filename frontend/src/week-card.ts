@@ -13,12 +13,12 @@ import { styleMap } from "lit/directives/style-map.js";
 import "./add-dialog.ts";
 import type { ParcelsAddDialog } from "./add-dialog.ts";
 import { ParcelsChipCard } from "./base-card.ts";
-import { renderChip } from "./chip.ts";
+import { renderChip, renderReturnChip } from "./chip.ts";
 import { cardTitle, weekCardConfig, type WeekCardConfig } from "./config.ts";
 import { addDays, startOfWeek } from "./dates.ts";
 import { FILTER_LABELS, PARCEL_FILTERS, type ParcelFilter } from "./filter.ts";
 import { RANGE_FORMAT, formatDate, formatDateRange } from "./format.ts";
-import { layoutWeek, type WeekItem, type WeekLayout } from "./placement.ts";
+import { itemKey, layoutWeek, type LayoutItem, type WeekLayout } from "./placement.ts";
 import { defineElement, registerCard } from "./register.ts";
 import { STRINGS, fmt } from "./strings.ts";
 import { baseStyles, chipStyles } from "./styles.ts";
@@ -350,6 +350,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
       monday,
       { today: snapshot.settings.today, timeZone: snapshot.settings.time_zone },
       { showArchived },
+      this.filterReturns(snapshot, snapshot.returns),
     );
     this._layoutCache = { snapshot, monday, showArchived, filter, layout };
     return layout;
@@ -416,7 +417,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
             : this._renderGrid(snapshot, layout, range)
           : html`<div class="content">${this.renderLoading()}</div>`}
       </ha-card>
-      ${this.renderDetailsDialog()}
+      ${this.renderDetailsDialog()} ${this.renderReturnDialog()}
       <parcels-add-dialog
         .hass=${this.hass}
         @parcels-error=${this._onAddError}
@@ -463,7 +464,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
       ${empty ? html`<p class="week-empty">${this._emptyText()}</p>` : nothing}
       ${repeat(
         layout.items,
-        (item) => item.parcel.id,
+        itemKey,
         (item) => this._chip(item, false, {
           "grid-column": `${item.startCol + 1} / ${item.endCol + 2}`,
           "grid-row": String(item.lane + 2),
@@ -494,7 +495,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
             ? html`<ul class="day-chips">
                 ${repeat(
                   items,
-                  (item) => item.parcel.id,
+                  itemKey,
                   (item) => html`<li>${this._chip(item, true, undefined, column)}</li>`,
                 )}
               </ul>`
@@ -507,14 +508,22 @@ export class ParcelsWeekCard extends ParcelsChipCard {
   /**
    * A chip in the grid (one per parcel or shipment box, spanning its days) or
    * in a stacked day (one per day; the continuation marks only on its first and
-   * last day).
+   * last day). A customer return is a chip on its pickup day.
    */
   private _chip(
-    item: WeekItem,
+    item: LayoutItem,
     stacked: boolean,
     position?: Record<string, string>,
     column?: number,
   ): TemplateResult {
+    if (item.type === "return") {
+      return renderReturnChip(item.ret, {
+        locale: this.locale,
+        today: this.snapshot?.settings.today ?? "",
+        position,
+        onOpen: this.openReturn,
+      });
+    }
     const continuesBefore = item.continuesBefore && (!stacked || column === item.startCol);
     const continuesAfter = item.continuesAfter && (!stacked || column === item.endCol);
     return renderChip(item.parcel, {

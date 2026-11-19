@@ -220,6 +220,10 @@ export const baseStyles = css`
   .badge.info {
     --badge-color: var(--info-color, #039be5);
   }
+  /* The returns colour (RETURN_COLOR in returns.ts). */
+  .badge.return {
+    --badge-color: var(--pink-color, #e91e63);
+  }
 
   .alert {
     --alert-color: var(--info-color, #039be5);
@@ -321,6 +325,19 @@ export const chipStyles = css`
   .chip.returned .chip-title {
     color: var(--secondary-text-color, #727272);
     font-weight: 400;
+  }
+  /* A customer return: its icon says so without the colour; faded once done. */
+  .chip.return .ret-icon {
+    flex: none;
+    color: var(--chip-color);
+    --mdc-icon-size: 20px;
+  }
+  .chip.return.done {
+    background: color-mix(
+      in srgb,
+      var(--chip-color) 6%,
+      var(--card-background-color, var(--ha-card-background, #fff))
+    );
   }
   .chip-main {
     display: flex;

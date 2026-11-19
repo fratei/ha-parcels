@@ -1,0 +1,72 @@
+Return-Path: <20261112091500c7d8e9@bounces.amazon.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.es header.s=sel1amz header.b=Vn4kZs8c;
+       spf=pass (google.com: domain of 20261112091500c7d8e9@bounces.amazon.es designates 192.0.2.64 as permitted sender) smtp.mailfrom=20261112091500c7d8e9@bounces.amazon.es;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.es
+From: "Amazon.es" <devoluciones@amazon.es>
+To: Alex Doe <alex@example.com>
+Subject: =?UTF-8?Q?Informaci=C3=B3n_sobre_tu_devoluci=C3=B3n?=
+Date: Thu, 12 Nov 2026 09:15:00 +0000
+Message-ID: <0102019202611120915.return-es-000003@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_r3"
+
+--=_parcels_r3
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amazon.es
+Tus pedidos | Tu cuenta
+
+Hola Alex:
+
+Hemos registrado tu solicitud de devolución.
+
+Pedido n.º 402-6619027-3348175
+
+Fecha de recogida: viernes, 13 de noviembre
+Dirección de recogida: Calle Ejemplo 2, 28001 Madrid
+
+El transportista traerá la etiqueta de devolución.
+
+Lámpara de pie de bambú
+Cantidad: 1
+
+Te reembolsaremos cuando recibamos el artículo.
+
+Devoluciones y reembolsos | Aviso de privacidad
+
+© 2026 Amazon.com, Inc. o sus afiliados.
+
+--=_parcels_r3
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><title>Amazon.es</title></head>
+<body>
+<table role="presentation" width="600" cellpadding="0" cellspacing="0">
+<tr><td><a href="https://www.amazon.es/ref=pe_returns_header"><img src="https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo._CB485934981_.png" alt="Amazon.es" width="98" height="30"></a></td>
+<td align="right"><a href="https://www.amazon.es/gp/css/order-history?ref_=pe_returns">Tus pedidos</a> | <a href="https://www.amazon.es/gp/css/homepage.html?ref_=pe_returns">Tu cuenta</a></td></tr>
+<tr><td colspan="2">
+<p>Hola Alex:</p>
+<h1>Hemos registrado tu solicitud de devolución.</h1>
+<table role="presentation"><tr><td>Pedido n.º</td><td><b>402-6619027-3348175</b></td></tr></table>
+<table role="presentation">
+<tr><td>Fecha de recogida:</td><td><b>viernes, 13 de noviembre</b></td></tr>
+<tr><td>Dirección de recogida:</td><td>Calle Ejemplo 2, 28001 Madrid</td></tr>
+</table>
+<p>El transportista traerá la etiqueta de devolución.</p>
+<table role="presentation"><tr><td><a href="https://www.amazon.es/dp/B0C9T3L6PX?ref_=pe_returns_dp">Lámpara de pie de bambú</a><br><span>Cantidad: 1</span></td></tr></table>
+<p>Te reembolsaremos cuando recibamos el artículo.</p>
+</td></tr>
+<tr><td colspan="2">
+<p><a href="https://www.amazon.es/gp/help/customer/display.html?ref_=pe_returns_policy">Devoluciones y reembolsos</a> | <a href="https://www.amazon.es/gp/help/customer/display.html?ref_=pe_privacy">Aviso de privacidad</a></p>
+<p>© 2026 Amazon.com, Inc. o sus afiliados.</p>
+</td></tr>
+</table>
+</body>
+</html>
+
+--=_parcels_r3--

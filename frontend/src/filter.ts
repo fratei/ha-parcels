@@ -5,9 +5,10 @@
  */
 import { addDays, compareYmd, localDateOf, startOfWeek } from "./dates.ts";
 import { etaRange } from "./parcels.ts";
+import { isReturnDone } from "./returns.ts";
 import { isActiveStatus } from "./status.ts";
 import { STRINGS } from "./strings.ts";
-import type { Parcel } from "./types.ts";
+import type { CustomerReturn, Parcel } from "./types.ts";
 
 export const PARCEL_FILTERS = ["all", "active", "recent", "completed"] as const;
 export type ParcelFilter = (typeof PARCEL_FILTERS)[number];
@@ -96,6 +97,29 @@ export function matchesFilter(parcel: Parcel, filter: ParcelFilter, context: Fil
       return !isActiveStatus(parcel.status);
     case "recent":
       return isRecent(parcel, context);
+    default:
+      return true;
+  }
+}
+
+/**
+ * Whether a customer return shows under a filter: Active until it's picked up,
+ * then Completed; Recent when its day is in the current week.
+ */
+export function matchesReturnFilter(
+  ret: CustomerReturn,
+  filter: ParcelFilter,
+  { today }: Pick<FilterContext, "today">,
+): boolean {
+  switch (filter) {
+    case "active":
+      return !isReturnDone(ret, today);
+    case "completed":
+      return isReturnDone(ret, today);
+    case "recent": {
+      const monday = startOfWeek(today);
+      return compareYmd(ret.day, monday) >= 0 && compareYmd(ret.day, addDays(monday, 6)) <= 0;
+    }
     default:
       return true;
   }

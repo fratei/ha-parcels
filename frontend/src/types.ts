@@ -21,7 +21,7 @@ export type ParcelStatus = (typeof PARCEL_STATUSES)[number];
 export type ParcelSource = "parser" | "ai" | "manual" | "seventeentrack";
 
 /** A timeline entry's source; "inferred" marks a delivery worked out from another parcel's. */
-export type TimelineSource = ParcelSource | "inferred";
+export type TimelineSource = ParcelSource | "inferred" | "inferred_return";
 
 export type AiMode = "off" | "suggest" | "auto";
 
@@ -47,6 +47,8 @@ export interface Parcel {
   delivered_at: string | null;
   /** Delivered only by inference: another parcel from the shop was delivered then. */
   inferred: boolean;
+  /** "return" when the delivery is inferred from a return of its items; null otherwise. */
+  inferred_reason: string | null;
   pickup_point: string | null;
   /**
    * The PIN or pickup code. The list has it while the parcel is on its way;
@@ -167,10 +169,55 @@ export interface MergeSuggestion {
 /** Payload of `parcels/list` and of every `parcels/subscribe` event. */
 export interface Snapshot {
   parcels: Parcel[];
+  /** Customer returns, archived ones included. */
+  returns: CustomerReturn[];
   review: ReviewItem[];
   merge_suggestions: MergeSuggestion[];
   filtered: FilteredItem[];
   settings: Settings;
+}
+
+/**
+ * Where a return's pickup day comes from: a date in an e-mail, an e-mail that
+ * says "next working day", or the shop's usual practice.
+ */
+export type PickupRule = "email" | "next_working_day" | "assumed";
+
+export interface ReturnEmail {
+  time: string | null;
+  label: string;
+  source: ParcelSource;
+}
+
+/**
+ * Something sent back to a shop: collected on its pickup day. The parcel it
+ * came in keeps its own delivery.
+ */
+export interface CustomerReturn {
+  id: string;
+  merchant: string | null;
+  carrier: string | null;
+  carrier_name: string | null;
+  tracking_number: string | null;
+  tracking_url: string | null;
+  /** The day in the calendar: the pickup, else the day of the first e-mail. */
+  day: string;
+  pickup: string | null;
+  pickup_rule: PickupRule | null;
+  /** The time of the first e-mail. */
+  started: string | null;
+  /** The shop said it has the return. */
+  received: boolean;
+  order_numbers: string[];
+  items: string[];
+  /** The parcels the items came in. */
+  parcel_ids: string[];
+  /** Oldest first. */
+  emails: ReturnEmail[];
+  private: boolean;
+  owners: string[];
+  archived: boolean;
+  restricted: boolean;
 }
 
 export interface TimelineEntry {

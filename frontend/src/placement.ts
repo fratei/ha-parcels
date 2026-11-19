@@ -9,7 +9,8 @@ import {
 import { byId, groupItems, shipmentKey } from "./groups.ts";
 import { parcelTitle } from "./labels.ts";
 import { etaRange } from "./parcels.ts";
-import type { Parcel } from "./types.ts";
+import { returnTitle } from "./returns.ts";
+import type { CustomerReturn, Parcel } from "./types.ts";
 
 /** Why a parcel is on the days it's on. */
 export type PlacementKind = "delivered" | "returned" | "pickup" | "status" | "eta";
@@ -67,6 +68,7 @@ export function placeParcel(parcel: Parcel, context: PlacementContext): Placemen
 }
 
 export interface WeekItem {
+  type: "parcel";
   /** The parcel, or the first package of a shipment shown as one box. */
   parcel: Parcel;
   /** The packages in the box, by ID; just the parcel when it's alone. */
@@ -82,17 +84,36 @@ export interface WeekItem {
   lane: number;
 }
 
+/** A customer return, on its pickup day (or the day it started, without one). */
+export interface ReturnItem {
+  type: "return";
+  ret: CustomerReturn;
+  day: string;
+  startCol: number;
+  endCol: number;
+  continuesBefore: false;
+  continuesAfter: false;
+  lane: number;
+}
+
+export type LayoutItem = WeekItem | ReturnItem;
+
+/** A key unique among a week's items. */
+export function itemKey(item: LayoutItem): string {
+  return item.type === "parcel" ? item.parcel.id : `return:${item.ret.id}`;
+}
+
 export interface WeekLayout {
   /** Monday and Sunday of the week. */
   start: string;
   end: string;
   days: string[];
-  /** Placed items, sorted by start day. */
-  items: WeekItem[];
+  /** Placed items, sorted by start day; a day's returns after its parcels. */
+  items: LayoutItem[];
   /** Number of lanes needed. */
   lanes: number;
   /** The items covering each day, in lane order. */
-  perDay: WeekItem[][];
+  perDay: LayoutItem[][];
   /** Whether each day has anything on it. */
   busy: boolean[];
 }
@@ -109,26 +130,46 @@ function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function compareItems(a: WeekItem, b: WeekItem): number {
+function compareParcels(a: WeekItem, b: WeekItem): number {
   return (
-    a.startCol - b.startCol ||
-    b.endCol - b.startCol - (a.endCol - a.startCol) ||
     compareText(windowKey(a.parcel), windowKey(b.parcel)) ||
     compareText(parcelTitle(a.parcel).toLowerCase(), parcelTitle(b.parcel).toLowerCase()) ||
     compareText(a.parcel.id, b.parcel.id)
   );
 }
 
+function compareReturns(a: ReturnItem, b: ReturnItem): number {
+  return (
+    compareText(returnTitle(a.ret).toLowerCase(), returnTitle(b.ret).toLowerCase()) ||
+    compareText(a.ret.id, b.ret.id)
+  );
+}
+
+function compareItems(a: LayoutItem, b: LayoutItem): number {
+  const order =
+    a.startCol - b.startCol ||
+    b.endCol - b.startCol - (a.endCol - a.startCol) ||
+    (a.type === b.type ? 0 : a.type === "parcel" ? -1 : 1);
+  if (order) {
+    return order;
+  }
+  if (a.type === "parcel" && b.type === "parcel") {
+    return compareParcels(a, b);
+  }
+  return a.type === "return" && b.type === "return" ? compareReturns(a, b) : 0;
+}
+
 /**
  * Places parcels on the week that starts on the Monday `weekStart` and packs
  * them into lanes. Packages of one shipment with the same status on the same
- * days share one box.
+ * days share one box. Customer returns go on their day, after its parcels.
  */
 export function layoutWeek(
   parcels: readonly Parcel[],
   weekStart: string,
   context: PlacementContext,
   options: LayoutOptions,
+  returns: readonly CustomerReturn[] = [],
 ): WeekLayout {
   const days = weekDates(weekStart);
   const weekEnd = addDays(weekStart, 6);
@@ -146,6 +187,7 @@ export function layoutWeek(
       continue;
     }
     placed.push({
+      type: "parcel",
       parcel,
       members: [parcel],
       placement,
@@ -156,12 +198,32 @@ export function layoutWeek(
       lane: 0,
     });
   }
-  const items = groupItems(placed, (item) =>
+  const items: LayoutItem[] = groupItems(placed, (item) =>
     shipmentKey(item.parcel, item.placement.kind, item.placement.from, item.placement.to),
   ).map((box): WeekItem => {
     const first = box.reduce((min, item) => (byId(item.parcel, min.parcel) < 0 ? item : min));
     return { ...first, members: box.map((item) => item.parcel).sort(byId) };
   });
+  for (const ret of returns) {
+    if (
+      (ret.archived && !options.showArchived) ||
+      compareYmd(ret.day, weekStart) < 0 ||
+      compareYmd(ret.day, weekEnd) > 0
+    ) {
+      continue;
+    }
+    const column = diffDays(weekStart, ret.day);
+    items.push({
+      type: "return",
+      ret,
+      day: ret.day,
+      startCol: column,
+      endCol: column,
+      continuesBefore: false,
+      continuesAfter: false,
+      lane: 0,
+    });
+  }
   items.sort(compareItems);
   const laneEnds: number[] = [];
   for (const item of items) {

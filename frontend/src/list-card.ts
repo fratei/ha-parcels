@@ -118,7 +118,7 @@ export class ParcelsListCard extends ParcelsChipCard {
           ${list ? this._renderList(list.boxes, list.hidden) : this.renderLoading()}
         </div>
       </ha-card>
-      ${this.renderDetailsDialog()}`;
+      ${this.renderDetailsDialog()} ${this.renderReturnDialog()}`;
   }
 
   /** "Filter: Active · Show all", while the filter hides some of these parcels. */

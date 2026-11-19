@@ -965,6 +965,9 @@ class _Checker:
             kind = MailKind(re.sub(r"[\s\-]+", "_", value.strip().lower()))
         except ValueError:
             return None
+        if kind is MailKind.CUSTOMER_RETURN:
+            # Not one of the AI's kinds: the return classifier decides it.
+            kind = MailKind.RETURN
         return self.checked_kind(kind)
 
     def checked_kind(self, kind: MailKind) -> MailKind:

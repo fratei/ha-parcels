@@ -8,7 +8,7 @@ import {
   type TemplateResult,
 } from "lit";
 import { callParcelsService } from "./api.ts";
-import { chipSelector } from "./chip.ts";
+import { chipSelector, returnChipSelector } from "./chip.ts";
 import { possiblyLine } from "./describe.ts";
 import "./details-dialog.ts";
 import type { ParcelsDetailsDialog } from "./details-dialog.ts";
@@ -18,15 +18,18 @@ import {
   FILTER_KEY,
   isParcelFilter,
   matchesFilter,
+  matchesReturnFilter,
   readFilter,
   saveFilter,
   type ParcelFilter,
 } from "./filter.ts";
 import { localeOptions, type LocaleOptions } from "./format.ts";
 import { suggestedCandidates } from "./parcels.ts";
+import "./return-dialog.ts";
+import type { ParcelsReturnDialog } from "./return-dialog.ts";
 import { SnapshotController } from "./snapshot-controller.ts";
 import { STRINGS, fmt } from "./strings.ts";
-import type { HomeAssistant, Parcel, Snapshot } from "./types.ts";
+import type { CustomerReturn, HomeAssistant, Parcel, Snapshot } from "./types.ts";
 
 export abstract class ParcelsCardBase extends LitElement {
   static override properties: PropertyDeclarations = {
@@ -178,6 +181,8 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
 
   /** The parcel whose chip had focus before the current render. */
   private _focusedParcel: string | null = null;
+  /** The customer return whose chip had focus before the current render. */
+  private _focusedReturn: string | null = null;
 
   constructor() {
     super();
@@ -212,6 +217,19 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
     }
     const context = { today: snapshot.settings.today, timeZone: snapshot.settings.time_zone };
     return parcels.filter((parcel) => matchesFilter(parcel, filter, context));
+  }
+
+  /** The customer returns the chosen filter shows. */
+  protected filterReturns(
+    snapshot: Snapshot,
+    returns: readonly CustomerReturn[],
+  ): readonly CustomerReturn[] {
+    const filter = this._filter;
+    if (filter === "all") {
+      return returns;
+    }
+    const context = { today: snapshot.settings.today };
+    return returns.filter((ret) => matchesReturnFilter(ret, filter, context));
   }
 
   private _candidates: { snapshot: Snapshot; map: Map<string, Parcel[]> } | null = null;
@@ -258,19 +276,25 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
   protected override willUpdate(changed: PropertyValues): void {
     super.willUpdate(changed);
     const active = this.shadowRoot?.activeElement;
-    this._focusedParcel =
-      active instanceof HTMLElement
-        ? (active.closest<HTMLElement>(".chip[data-parcel-id]")?.dataset.parcelId ?? null)
-        : null;
+    const chip = active instanceof HTMLElement ? active.closest<HTMLElement>(".chip") : null;
+    this._focusedParcel = chip?.dataset.parcelId ?? null;
+    this._focusedReturn = chip?.dataset.returnId ?? null;
   }
 
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
-    // Moving or replacing a chip drops its focus; give it back to the same parcel.
+    // Moving or replacing a chip drops its focus; give it back to the same parcel or return.
     const parcelId = this._focusedParcel;
+    const returnId = this._focusedReturn;
     this._focusedParcel = null;
-    if (parcelId !== null && !this.shadowRoot?.activeElement && focusIsLost()) {
-      this.renderRoot.querySelector<HTMLElement>(chipSelector(parcelId))?.focus();
+    this._focusedReturn = null;
+    if (this.shadowRoot?.activeElement || !focusIsLost()) {
+      return;
+    }
+    const selector =
+      parcelId !== null ? chipSelector(parcelId) : returnId !== null ? returnChipSelector(returnId) : null;
+    if (selector) {
+      this.renderRoot.querySelector<HTMLElement>(selector)?.focus();
     }
   }
 
@@ -285,6 +309,17 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
       const target = opener.isConnected
         ? opener
         : (this.renderRoot.querySelector<HTMLElement>(chipSelector(parcel.id)) ??
+          this.focusFallback());
+      target?.focus();
+    });
+  };
+
+  protected readonly openReturn = (ret: CustomerReturn, opener: HTMLElement): void => {
+    const dialog = this.renderRoot.querySelector<ParcelsReturnDialog>("parcels-return-dialog");
+    void dialog?.open(ret.id, () => {
+      const target = opener.isConnected
+        ? opener
+        : (this.renderRoot.querySelector<HTMLElement>(returnChipSelector(ret.id)) ??
           this.focusFallback());
       target?.focus();
     });
@@ -327,7 +362,43 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
       .snapshot=${this.snapshot}
       .locale=${this.locale}
       @parcels-error=${this._onDialogError}
+      @parcels-open-return=${this._onOpenReturn}
     ></parcels-details-dialog>`;
+  }
+
+  protected renderReturnDialog(): TemplateResult {
+    return html`<parcels-return-dialog
+      .hass=${this.hass}
+      .snapshot=${this.snapshot}
+      .locale=${this.locale}
+      @parcels-error=${this._onDialogError}
+      @parcels-open-parcel=${this._onOpenParcel}
+    ></parcels-return-dialog>`;
+  }
+
+  /**
+   * One dialog asked for another: the first has closed and given focus back
+   * to its chip, which the second gives focus back to in turn.
+   */
+  private _opener(): HTMLElement | null {
+    const active = this.shadowRoot?.activeElement;
+    return active instanceof HTMLElement ? active : this.focusFallback();
+  }
+
+  private _onOpenParcel(event: CustomEvent<string>): void {
+    const parcel = this.snapshot?.parcels.find((item) => item.id === event.detail);
+    const opener = this._opener();
+    if (parcel && opener) {
+      this.openDetails(parcel, opener);
+    }
+  }
+
+  private _onOpenReturn(event: CustomEvent<string>): void {
+    const ret = this.snapshot?.returns.find((item) => item.id === event.detail);
+    const opener = this._opener();
+    if (ret && opener) {
+      this.openReturn(ret, opener);
+    }
   }
 
   private async _parcelAction(

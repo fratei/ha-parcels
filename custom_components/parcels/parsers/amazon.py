@@ -20,10 +20,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import tzinfo
 import re
+from typing import TypeGuard
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from ..const import MailKind
-from . import tracking
+from . import returns, tracking
 from ._amazon_shopify_common import (
     MAX_POINT_CHARS,
     CarrierMention,
@@ -895,6 +896,36 @@ def _code(message: MailMessage, exclude: list[str], locker: bool) -> str | None:
     )
 
 
+def _return_wins(
+    found: returns.Classification | None, pattern: KindPattern | None
+) -> TypeGuard[returns.Classification]:
+    """Return True when return wording outranks the body's status words.
+
+    A pickup label always does. Customer-return wording and a refund only
+    do when the body names no other status.
+    """
+    if found is None or found.kind is returns.ReturnClass.TO_SENDER:
+        return False
+    if found.kind is returns.ReturnClass.PICKUP:
+        return True
+    return pattern is None or pattern.kind is MailKind.RETURN
+
+
+def _orderless_return(
+    kind: MailKind, from_subject: bool, found: returns.Classification | None
+) -> bool:
+    """Return True for a return e-mail that counts without its order number.
+
+    Unclassified, it counts only when its subject says it's a return; a
+    parcel going back to its sender never does.
+    """
+    if kind is not MailKind.RETURN:
+        return False
+    if found is None:
+        return from_subject
+    return found.kind is not returns.ReturnClass.TO_SENDER
+
+
 def parse_amazon(
     message: MailMessage, verdict: SenderVerdict, tz: tzinfo
 ) -> ParseResult | None:
@@ -919,7 +950,19 @@ def parse_amazon(
     )
     # Without a status, the e-mail can only be about a delivery code.
     kind = pattern.kind if pattern is not None else MailKind.CODE
-    if kind in _ORDER_KINDS and not orders:
+    lang = pattern.lang if pattern is not None else None
+    found: returns.Classification | None = None
+    if not from_subject or (kind is MailKind.RETURN and not orders):
+        found = returns.classify(message.subject, text)
+        if not from_subject and _return_wins(found, pattern):
+            kind, lang = MailKind.RETURN, found.language or lang
+    # Order e-mails need their order number, except return e-mails: a
+    # customer return still has its pickup day, and a refund is dropped.
+    if (
+        kind in _ORDER_KINDS
+        and not orders
+        and not _orderless_return(kind, from_subject, found)
+    ):
         return None
     locker = kind in _LOCKER_KINDS
     items, asins = _items(message, text, folded)
@@ -958,7 +1001,7 @@ def parse_amazon(
         tz=tz,
         text=text,
         folded=folded,
-        lang=message.language or (pattern.lang if pattern is not None else None),
+        lang=message.language or lang,
         orders=orders,
         items=items,
         urls=urls,
@@ -972,7 +1015,7 @@ def parse_amazon(
         )
         if code is not None and len(shipments) == 1:
             shipments = [replace(shipments[0], pickup_code=code)]
-        key = True
+        key = bool(orders)
     else:
         shipments = _status_shipments(ctx, kind, shipment_ids, numbers, etas, code)
         key = bool(shipment_ids or numbers or code)

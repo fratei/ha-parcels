@@ -17,6 +17,7 @@ describe("normalizeSnapshot", () => {
   test("survives an empty or broken payload", () => {
     assert.deepEqual(normalizeSnapshot(null, NOW), {
       parcels: [],
+      returns: [],
       review: [],
       merge_suggestions: [],
       filtered: [],
@@ -121,6 +122,7 @@ describe("normalizeParcel", () => {
       window_start: "13:00",
       window_end: "15:00",
       inferred: true,
+      inferred_reason: "return",
       pickup_point: "Example Locker 12",
       pickup_code: "123456",
       has_code: true,
@@ -153,6 +155,7 @@ describe("normalizeParcel", () => {
       auto_merged: { at: "2026-07-14T08:00:00Z" },
       has_code: "yes",
       shipment_group: 7,
+      inferred_reason: 5,
     });
     assert.ok(parcel);
     assert.equal(parcel.status, "teleported");
@@ -164,6 +167,7 @@ describe("normalizeParcel", () => {
     assert.equal(parcel.auto_merged, null);
     assert.equal(parcel.has_code, false);
     assert.equal(parcel.shipment_group, null);
+    assert.equal(parcel.inferred_reason, null);
     assert.equal(normalizeParcel([]), null);
     assert.equal(normalizeParcel("p1"), null);
   });
@@ -303,6 +307,7 @@ describe("normalizeDetails", () => {
         { time: "2026-07-14T08:00:00Z", status: "delivered", source: "ai", label: "Delivered" },
         5,
         { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "" },
+        { time: "2026-07-15T09:00:00Z", status: "delivered", source: "inferred_return", label: "" },
         { time: "2026-07-16T08:00:00Z", status: "delivered", source: "pigeon", label: "" },
       ],
       orders: [{ id: "o1", number: "ORDER-1", parcel_ids: ["p1"] }],
@@ -313,6 +318,7 @@ describe("normalizeDetails", () => {
     assert.deepEqual(details.timeline, [
       { time: "2026-07-14T08:00:00Z", status: "delivered", source: "ai", label: "Delivered" },
       { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "" },
+      { time: "2026-07-15T09:00:00Z", status: "delivered", source: "inferred_return", label: "" },
       { time: "2026-07-16T08:00:00Z", status: "delivered", source: "parser", label: "" },
     ]);
     assert.deepEqual(details.orders, [

@@ -1,0 +1,72 @@
+Return-Path: <20261110152000a7b8c9@bounces.amazon.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.es header.s=sel1amz header.b=Qx7pLm2a;
+       spf=pass (google.com: domain of 20261110152000a7b8c9@bounces.amazon.es designates 192.0.2.62 as permitted sender) smtp.mailfrom=20261110152000a7b8c9@bounces.amazon.es;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.es
+From: "Amazon.es" <devolucoes@amazon.es>
+To: Alex Doe <alex@example.com>
+Subject: =?UTF-8?Q?Confirma=C3=A7=C3=A3o_da_sua_devolu=C3=A7=C3=A3o?=
+Date: Tue, 10 Nov 2026 15:20:00 +0000
+Message-ID: <0102019202611101520.return-pt-000001@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_r1"
+
+--=_parcels_r1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amazon.es
+As suas encomendas | A sua conta
+
+Olá Alex,
+
+Recebemos o seu pedido de devolução.
+
+Encomenda n.º 404-5528193-7720416
+
+Data de recolha: Dia útil seguinte
+Morada de recolha: Rua Exemplo 1, 1000-001 Lisboa
+
+Prepare a embalagem. O estafeta leva a etiqueta de devolução.
+
+Candeeiro de secretária LED, branco
+Quantidade: 1
+
+O reembolso será emitido quando recebermos o artigo.
+
+Política de devoluções | Aviso de privacidade
+
+© 2026 Amazon.com, Inc. ou as suas afiliadas.
+
+--=_parcels_r1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="UTF-8"><title>Amazon.es</title></head>
+<body>
+<table role="presentation" width="600" cellpadding="0" cellspacing="0">
+<tr><td><a href="https://www.amazon.es/ref=pe_returns_header"><img src="https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo._CB485934981_.png" alt="Amazon.es" width="98" height="30"></a></td>
+<td align="right"><a href="https://www.amazon.es/gp/css/order-history?ref_=pe_returns">As suas encomendas</a> | <a href="https://www.amazon.es/gp/css/homepage.html?ref_=pe_returns">A sua conta</a></td></tr>
+<tr><td colspan="2">
+<p>Olá Alex,</p>
+<h1>Recebemos o seu pedido de devolução.</h1>
+<table role="presentation"><tr><td>Encomenda n.º</td><td><b>404-5528193-7720416</b></td></tr></table>
+<table role="presentation">
+<tr><td>Data de recolha:</td><td><b>Dia útil seguinte</b></td></tr>
+<tr><td>Morada de recolha:</td><td>Rua Exemplo 1, 1000-001 Lisboa</td></tr>
+</table>
+<p>Prepare a embalagem. O estafeta leva a etiqueta de devolução.</p>
+<table role="presentation"><tr><td><a href="https://www.amazon.es/dp/B0C7K2M9TQ?ref_=pe_returns_dp">Candeeiro de secretária LED, branco</a><br><span>Quantidade: 1</span></td></tr></table>
+<p>O reembolso será emitido quando recebermos o artigo.</p>
+</td></tr>
+<tr><td colspan="2">
+<p><a href="https://www.amazon.es/gp/help/customer/display.html?ref_=pe_returns_policy">Política de devoluções</a> | <a href="https://www.amazon.es/gp/help/customer/display.html?ref_=pe_privacy">Aviso de privacidade</a></p>
+<p>© 2026 Amazon.com, Inc. ou as suas afiliadas.</p>
+</td></tr>
+</table>
+</body>
+</html>
+
+--=_parcels_r1--

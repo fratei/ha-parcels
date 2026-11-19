@@ -201,6 +201,10 @@ class MailKind(StrEnum):
     # Only a delivery PIN or pickup code for a parcel known by its number or
     # order: it's added to that parcel and never creates one.
     CODE = "code"
+    # The buyer sends an item back (a carrier picks it up): it becomes a
+    # return entry, never a parcel status. RETURN is a parcel going back to
+    # its sender undelivered. Only the return classifier gives this kind.
+    CUSTOMER_RETURN = "customer_return"
     NOT_PARCEL = "not_parcel"
     UNKNOWN = "unknown"
 

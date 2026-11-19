@@ -71,7 +71,9 @@ class FakeMailClient:
     """A mailbox API held in memory.
 
     ``add`` delivers an e-mail: the next sync reports it and a fetch returns
-    it. Set ``sync_error`` or ``fetch_errors`` to make calls fail.
+    it. Set ``sync_error`` or ``fetch_errors`` to make calls fail. Set
+    ``relist`` to have a sync without a cursor list every e-mail again, as a
+    mail API lists the whole lookback period.
     """
 
     def __init__(self, provider: str = "google", address: str = ADDRESS) -> None:
@@ -84,6 +86,7 @@ class FakeMailClient:
         self.fetch_errors: dict[str, Exception] = {}
         self.syncs: list[Mapping[str, Any] | None] = []
         self.fetches: list[str] = []
+        self.relist = False
 
     def add(
         self, message: MailMessage | str, *, provider_id: str | None = None
@@ -122,6 +125,8 @@ class FakeMailClient:
         if self.sync_error is not None:
             raise self.sync_error
         messages, self.pending = self.pending, []
+        if cursor is None and self.relist:
+            messages = [meta_for(message) for message in self.messages.values()]
         return SyncResult(
             messages=messages, cursor={"round": len(self.syncs)}, complete=True
         )

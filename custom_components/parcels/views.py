@@ -2,7 +2,8 @@
 
 A private parcel is shown in full to its owners (the people whose mailboxes
 it came from), or to administrators when it has no owner. Everyone else sees
-when it arrives, but not what it is or where it comes from.
+when it arrives, but not what it is or where it comes from. A return is
+private when it's marked so or its order's parcel is.
 
 A delivery PIN or pickup code is sent with a parcel's details, and in the
 list only to those who may see the parcel, while it's on its way. Entities,
@@ -22,7 +23,8 @@ from homeassistant.auth.models import User
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import CONF_DASHBOARD_PATH, CONF_SEVENTEENTRACK
+from .const import CARRIER_NAMES, CONF_DASHBOARD_PATH, CONF_SEVENTEENTRACK
+from .customer_returns import INFERRED_RETURN, linked_parcels, order_index
 from .dedup import (
     MergeSuggestion,
     first_news,
@@ -34,12 +36,15 @@ from .dedup import (
 from .models import (
     FilteredItem,
     Parcel,
+    ReturnEntry,
     ReviewItem,
+    TimelineEntry,
     dt_to_str,
     merchant_key,
     time_to_str,
 )
 from .parsers.senders import organizational_domain
+from .parsers.tracking import tracking_url
 
 if TYPE_CHECKING:
     from .engine import ParcelsEngine
@@ -59,6 +64,23 @@ class Viewer:
         if not parcel.private:
             return True
         owners = parcel.state.owners
+        if owners:
+            return not self.persons.isdisjoint(owners)
+        return self.is_admin
+
+    def can_see_return(self, entry: ReturnEntry, linked: Iterable[Parcel]) -> bool:
+        """Return True when the user may see a return's details.
+
+        ``linked`` are the parcels of its orders. A private one makes the
+        return private too, shown to the owners of both.
+        """
+        private = [parcel for parcel in linked if parcel.private]
+        if not entry.private and not private:
+            return True
+        owners = {
+            *entry.owners,
+            *(o for parcel in private for o in parcel.state.owners),
+        }
         if owners:
             return not self.persons.isdisjoint(owners)
         return self.is_admin
@@ -225,6 +247,7 @@ def parcel_json(
         "window_end": time_to_str(eta.window_end) if eta else None,
         "delivered_at": dt_to_str(state.delivered_at),
         "inferred": state.inferred,
+        "inferred_reason": state.inferred_reason,
         "pickup_point": state.pickup_point,
         "pickup_code": state.pickup_code if code else None,
         "has_code": bool(state.pickup_code),
@@ -259,8 +282,66 @@ def parcel_json(
             ai_filled=False,
             auto_merged=None,
             inferred=False,
+            inferred_reason=None,
             origins=[],
             shipment_group=None,
+        )
+    return result
+
+
+def return_json(
+    entry: ReturnEntry, viewer: Viewer, linked: Iterable[Parcel]
+) -> dict[str, Any]:
+    """Return a customer return as the page shows it.
+
+    ``linked`` are the parcels of its orders. Someone who may not see the
+    return only gets its day. Whether it's done depends on the day, so the
+    page works it out: picked up once its day is over, or received.
+    """
+    parcels = list(linked)
+    pickup = entry.pickup
+    carrier, number = entry.carrier, entry.tracking_number
+    restricted = not viewer.can_see_return(entry, parcels)
+    origins = sorted(entry.origins.values(), key=lambda o: (o.time, o.message))
+    result: dict[str, Any] = {
+        "id": entry.id,
+        "merchant": entry.merchant,
+        "carrier": carrier,
+        "carrier_name": CARRIER_NAMES.get(carrier, carrier) if carrier else None,
+        "tracking_number": number,
+        "tracking_url": tracking_url(carrier, number) if number else None,
+        "day": entry.day.isoformat(),
+        "pickup": pickup[0].isoformat() if pickup else None,
+        "pickup_rule": pickup[1].value if pickup else None,
+        "started": dt_to_str(entry.started),
+        "received": entry.received,
+        "order_numbers": list(entry.order_numbers),
+        "items": list(entry.items),
+        "parcel_ids": [parcel.id for parcel in parcels if viewer.can_see(parcel)],
+        "emails": [
+            {
+                "time": dt_to_str(origin.time),
+                "label": origin.label,
+                "source": origin.source.value,
+            }
+            for origin in origins
+        ],
+        "private": entry.private or any(parcel.private for parcel in parcels),
+        "owners": list(entry.owners),
+        "archived": entry.archived is not None,
+        "restricted": restricted,
+    }
+    if restricted:
+        result.update(
+            merchant=None,
+            carrier=None,
+            carrier_name=None,
+            tracking_number=None,
+            tracking_url=None,
+            order_numbers=[],
+            items=[],
+            parcel_ids=[],
+            emails=[],
         )
     return result
 
@@ -396,6 +477,7 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
     groups = shipment_groups(
         parcel for parcel in data.parcels.values() if viewer.can_see(parcel)
     )
+    index = order_index(data)
     return {
         "parcels": [
             parcel_json(
@@ -406,11 +488,26 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
             )
             for parcel in data.parcels.values()
         ],
+        "returns": [
+            return_json(entry, viewer, linked_parcels(entry, index))
+            for entry in data.returns.values()
+        ],
         "review": review,
         "merge_suggestions": suggestions,
         "filtered": filtered,
         "settings": settings_json(engine, viewer),
     }
+
+
+def _timeline_source(entry: TimelineEntry) -> str:
+    """Return where a timeline entry comes from, as the page names it.
+
+    An inferred delivery comes from another delivery, or from a return of
+    the parcel's order ("inferred_return").
+    """
+    if not entry.inferred:
+        return entry.source.value
+    return "inferred_return" if entry.label == INFERRED_RETURN else "inferred"
 
 
 def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, Any]:
@@ -430,8 +527,8 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
                 if entry.kind is not None
                 else "updated"
             ),
-            "source": "inferred" if entry.inferred else entry.source.value,
-            "label": entry.label or "",
+            "source": _timeline_source(entry),
+            "label": "" if entry.inferred else entry.label or "",
         }
         for entry in state.timeline
         if entry.accepted

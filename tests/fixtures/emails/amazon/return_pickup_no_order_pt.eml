@@ -1,0 +1,61 @@
+Return-Path: <20261111100500b4c5d6@bounces.amazon.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.es header.s=sel1amz header.b=Rt8mWq3b;
+       spf=pass (google.com: domain of 20261111100500b4c5d6@bounces.amazon.es designates 192.0.2.63 as permitted sender) smtp.mailfrom=20261111100500b4c5d6@bounces.amazon.es;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.es
+From: "Amazon.es" <devolucoes@amazon.es>
+To: Alex Doe <alex@example.com>
+Subject: =?UTF-8?Q?Informa=C3=A7=C3=A3o_sobre_a_recolha_do_seu_artigo?=
+Date: Wed, 11 Nov 2026 10:05:00 +0000
+Message-ID: <0102019202611111005.return-pt-000002@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_r2"
+
+--=_parcels_r2
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amazon.es
+
+Olá Alex,
+
+A sua devolução foi registada.
+
+Data de recolha:
+Dia útil seguinte
+
+Entregue a embalagem fechada ao estafeta. Não precisa de imprimir nada.
+
+Suporte de portátil em alumínio
+
+Política de devoluções
+
+© 2026 Amazon.com, Inc. ou as suas afiliadas.
+
+--=_parcels_r2
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head><meta charset="UTF-8"><title>Amazon.es</title></head>
+<body>
+<table role="presentation" width="600" cellpadding="0" cellspacing="0">
+<tr><td><a href="https://www.amazon.es/ref=pe_returns_header"><img src="https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo._CB485934981_.png" alt="Amazon.es" width="98" height="30"></a></td></tr>
+<tr><td>
+<p>Olá Alex,</p>
+<h1>A sua devolução foi registada.</h1>
+<p><b>Data de recolha:</b></p>
+<p>Dia útil seguinte</p>
+<p>Entregue a embalagem fechada ao estafeta. Não precisa de imprimir nada.</p>
+<table role="presentation"><tr><td><a href="https://www.amazon.es/dp/B0D4R7N2KW?ref_=pe_returns_dp">Suporte de portátil em alumínio</a></td></tr></table>
+</td></tr>
+<tr><td>
+<p><a href="https://www.amazon.es/gp/help/customer/display.html?ref_=pe_returns_policy">Política de devoluções</a></p>
+<p>© 2026 Amazon.com, Inc. ou as suas afiliadas.</p>
+</td></tr>
+</table>
+</body>
+</html>
+
+--=_parcels_r2--
