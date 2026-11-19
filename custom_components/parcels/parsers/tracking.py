@@ -101,6 +101,20 @@ def normalize_tracking_number(value: str) -> str:
     return number.upper()
 
 
+def paack_stem(number: str | None) -> str | None:
+    """Return the shop's reference in a Paack order ID, as written.
+
+    For an Amazon parcel that's Amazon's shipment ID; the rest of the ID is
+    the package number. None when ``number`` isn't a Paack order ID.
+    """
+    if not number:
+        return None
+    number = normalize_tracking_number(number)
+    if not PAACK_ID_RE.fullmatch(number):
+        return None
+    return number.partition("_")[0]
+
+
 def s10_check_digit(serial: str) -> int:
     """Return the UPU S10 check digit for an 8-digit serial number.
 

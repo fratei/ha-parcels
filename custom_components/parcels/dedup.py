@@ -8,7 +8,8 @@ this an incremental union-find where each parcel is one set. The keys are:
   over to each other under the same number count as one family;
 * the tracking number alone for international postal (S10) numbers, because
   the carrier changes at the border;
-* the Amazon shipment ID;
+* the Amazon shipment ID. Paack's order ID for an Amazon parcel is that
+  shipment ID, written the same way, then "_" and the package number;
 * the origin ID. It holds the hash of the e-mail's Message-ID, so the same
   e-mail found in two mailboxes is applied once.
 
@@ -85,6 +86,7 @@ from .parsers.tracking import (
     detect_carrier,
     is_s10,
     normalize_tracking_number,
+    paack_stem,
     tracking_url,
     validate_tracking_number,
 )
@@ -270,12 +272,35 @@ def find_parcels_by_number(data: ParcelsData, number: str) -> list[Parcel]:
     ]
 
 
-def _origins_linked(first: Origin, second: Origin) -> bool:
-    """Return True when two origins certainly describe the same parcel."""
+def _paack_stem(origin: Origin) -> str | None:
+    """Return the shipment a Paack order ID names, as written."""
+    if carrier_family(origin.carrier) != "paack":
+        return None
+    return paack_stem(origin.tracking_number)
+
+
+def _names_shipment(paack: Origin, amazon: Origin) -> bool:
+    stem = _paack_stem(paack)
+    return stem is not None and stem == amazon.amazon_shipment_id
+
+
+def _same_shipment(first: Origin, second: Origin) -> bool:
+    """Return True when two origins are about the same Amazon shipment.
+
+    Both give its shipment ID, or one is Paack's order ID that starts with
+    the other's shipment ID. Case counts: the IDs are case-sensitive.
+    """
     if (
         first.amazon_shipment_id
         and first.amazon_shipment_id == second.amazon_shipment_id
     ):
+        return True
+    return _names_shipment(first, second) or _names_shipment(second, first)
+
+
+def _origins_linked(first: Origin, second: Origin) -> bool:
+    """Return True when two origins certainly describe the same parcel."""
+    if _same_shipment(first, second):
         return True
     key_a, key_b = origin_number(first), origin_number(second)
     if not key_a or not key_b or key_a.number != key_b.number:
@@ -658,14 +683,11 @@ def apply_contribution(
         }
         if not strong:
             return Applied(parcel_id=None)
-    if origin.amazon_shipment_id:
+    if origin.amazon_shipment_id or _paack_stem(origin):
         strong |= {
             pid
             for pid, parcel in data.parcels.items()
-            if any(
-                o.amazon_shipment_id == origin.amazon_shipment_id
-                for o in parcel.origins.values()
-            )
+            if any(_same_shipment(origin, o) for o in parcel.origins.values())
         }
     weak: set[str] = set()
     loose: set[str] = set()

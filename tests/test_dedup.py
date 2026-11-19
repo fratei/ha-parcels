@@ -301,6 +301,103 @@ def test_amazon_shipment_id_links() -> None:
     assert data.parcels[first.parcel_id].state.amazon_shipment_ids == ("DkXyz1234",)
 
 
+# Made up: an Amazon shipment ID, and the Paack order ID of its first package.
+SHIPMENT = "Rb5Lq2Vm7"
+PAACK_ID = f"{SHIPMENT}_1"
+PAACK_BARCODE = "534000088812345678"
+
+
+@pytest.mark.parametrize("paack_eta", [None, _eta(5)])
+@pytest.mark.parametrize("paack_first", [False, True])
+def test_paack_order_id_joins_its_amazon_shipment(
+    paack_first: bool, paack_eta: Eta | None
+) -> None:
+    """Paack's order ID is Amazon's shipment ID and a package number."""
+    data = ParcelsData()
+    amazon = contribution(
+        "msg:a#0",
+        merchant="Amazon.es",
+        orders=[AMAZON_ORDER],
+        shipment_id=SHIPMENT,
+        eta=_eta(5),
+    )
+    paack = contribution(
+        "msg:p#0",
+        kind=MailKind.IN_TRANSIT,
+        carrier="paack",
+        number=PAACK_ID,
+        merchant="Amazon",
+        eta=paack_eta,
+    )
+    first, second = (paack, amazon) if paack_first else (amazon, paack)
+    apply_contribution(data, first, T0)
+    joined = apply_contribution(data, second, at(hours=1))
+
+    [parcel] = data.parcels.values()
+    assert joined.auto_merged is None
+    assert parcel.auto_merged is None
+    assert parcel.state.tracking_number == PAACK_ID
+    assert parcel.state.amazon_shipment_ids == (SHIPMENT,)
+    with pytest.raises(DedupError, match="shared_number"):
+        split_parcel(data, parcel.id, {"msg:p#0"}, at(days=1))
+
+
+@pytest.mark.parametrize(
+    ("carrier", "number"),
+    [
+        ("paack", PAACK_ID.upper()),
+        ("paack", PAACK_ID.lower()),
+        ("paack", "Rb5Lq2Vm8_1"),
+        ("gls", PAACK_ID),
+        (None, PAACK_ID),
+    ],
+)
+def test_paack_order_id_needs_the_exact_shipment_id(
+    carrier: str | None, number: str
+) -> None:
+    """Only Paack's ID with the shipment ID as written joins the shipment."""
+    data = ParcelsData()
+    apply_contribution(
+        data, contribution("msg:a#0", merchant="Amazon.es", shipment_id=SHIPMENT), T0
+    )
+    apply_contribution(
+        data,
+        contribution(
+            "msg:p#0", kind=MailKind.IN_TRANSIT, carrier=carrier, number=number
+        ),
+        at(hours=1),
+    )
+    assert len(data.parcels) == 2
+
+
+def test_paack_barcode_joins_amazon() -> None:
+    """Amazon's number for a Paack parcel is the label barcode Paack scans."""
+    data = ParcelsData()
+    amazon = apply_contribution(
+        data,
+        contribution(
+            "msg:a#0",
+            merchant="Amazon.es",
+            shipment_id=SHIPMENT,
+            carrier="paack",
+            number=PAACK_BARCODE,
+        ),
+        T0,
+    )
+    paack = apply_contribution(
+        data,
+        contribution(
+            "msg:p#0",
+            kind=MailKind.OUT_FOR_DELIVERY,
+            carrier="paack",
+            number=PAACK_BARCODE,
+        ),
+        at(hours=1),
+    )
+    assert paack.parcel_id == amazon.parcel_id
+    assert paack.auto_merged is None
+
+
 def test_same_merchant_and_dates_is_flagged() -> None:
     """A shop e-mail without a number joins the one parcel that fits."""
     data = ParcelsData()
