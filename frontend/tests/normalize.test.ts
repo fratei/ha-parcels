@@ -155,7 +155,7 @@ describe("normalizeParcel", () => {
       auto_merged: { at: "2026-07-14T08:00:00Z" },
       has_code: "yes",
       shipment_group: 7,
-      inferred_reason: 5,
+      inferred_reason: "pigeon",
     });
     assert.ok(parcel);
     assert.equal(parcel.status, "teleported");
@@ -309,6 +309,7 @@ describe("normalizeDetails", () => {
         { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "" },
         { time: "2026-07-15T09:00:00Z", status: "delivered", source: "inferred_return", label: "" },
         { time: "2026-07-16T08:00:00Z", status: "delivered", source: "pigeon", label: "" },
+        { time: "2026-07-17T08:00:00Z", status: "delivered", source: "quiet", label: "" },
       ],
       orders: [{ id: "o1", number: "ORDER-1", parcel_ids: ["p1"] }],
       origins: [{ id: "m1", label: "E-mail from Example Shop", source: "parser", time: null }, { label: "No id" }],
@@ -320,6 +321,7 @@ describe("normalizeDetails", () => {
       { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "" },
       { time: "2026-07-15T09:00:00Z", status: "delivered", source: "inferred_return", label: "" },
       { time: "2026-07-16T08:00:00Z", status: "delivered", source: "parser", label: "" },
+      { time: "2026-07-17T08:00:00Z", status: "delivered", source: "quiet", label: "" },
     ]);
     assert.deepEqual(details.orders, [
       { id: "o1", merchant: null, number: "ORDER-1", placed_at: null, parcel_ids: ["p1"] },

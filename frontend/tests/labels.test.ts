@@ -5,6 +5,7 @@ import { errorMessage } from "../src/errors.ts";
 import {
   carrierLabel,
   humanize,
+  inferredNotice,
   kindLabel,
   parcelSubtitle,
   parcelTitle,
@@ -114,6 +115,7 @@ describe("labels", () => {
     assert.equal(statusLabel("held_somewhere"), "Held somewhere");
     assert.equal(kindLabel("not_parcel"), "Not about a parcel");
     assert.equal(sourceLabel("seventeentrack"), "17TRACK");
+    assert.equal(sourceLabel("quiet"), "No news for three weeks");
     assert.equal(reasonLabel("unknown_sender"), "Unknown sender");
     assert.equal(reasonLabel("ai_timeout"), "The local AI took too long on this e-mail");
     // Items stored before the timeout reason existed keep their label.
@@ -124,6 +126,18 @@ describe("labels", () => {
     assert.equal(reasonLabel(null), "");
     assert.equal(reasonLabel("__proto__"), "__proto__");
     assert.equal(humanize("low-confidence"), "Low confidence");
+  });
+
+  test("an inferred delivery says why", () => {
+    const quiet = inferredNotice(makeParcel({ inferred: true, inferred_reason: "quiet" }));
+    assert.match(quiet, /no news for three weeks/);
+    assert.match(quiet, /Undo/);
+    const shop = inferredNotice(makeParcel({ inferred: true, inferred_reason: "shop" }));
+    assert.match(shop, /another parcel from this shop/);
+    const sentBack = inferredNotice(makeParcel({ inferred: true, inferred_reason: "return" }));
+    assert.match(sentBack, /sending its items back/);
+    // Parcels sent before the reason existed.
+    assert.equal(inferredNotice(makeParcel({ inferred: true })), shop);
   });
 
   test("fmt fills placeholders and leaves unknown ones", () => {

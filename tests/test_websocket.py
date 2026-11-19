@@ -101,6 +101,7 @@ HIDDEN = {
     "ai_filled": False,
     "auto_merged": None,
     "inferred": False,
+    "inferred_reason": None,
     "origins": [],
     "shipment_group": None,
     "restricted": True,

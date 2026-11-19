@@ -8,6 +8,7 @@ import type {
   AutoMerged,
   CustomerReturn,
   FilteredItem,
+  InferredReason,
   MergeSuggestion,
   OrderInfo,
   OriginInfo,
@@ -70,6 +71,10 @@ function list<T>(value: unknown, convert: (item: unknown) => T | null): T[] {
   return result;
 }
 
+function inferredReason(value: unknown): InferredReason | null {
+  return value === "shop" || value === "return" || value === "quiet" ? value : null;
+}
+
 function source(value: unknown): ParcelSource {
   return value === "ai" || value === "manual" || value === "seventeentrack" ? value : "parser";
 }
@@ -105,7 +110,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     window_end: str(raw.window_end),
     delivered_at: str(raw.delivered_at),
     inferred: raw.inferred === true,
-    inferred_reason: str(raw.inferred_reason),
+    inferred_reason: inferredReason(raw.inferred_reason),
     pickup_point: str(raw.pickup_point),
     pickup_code: str(raw.pickup_code),
     has_code: raw.has_code === true,
@@ -314,7 +319,7 @@ export function normalizeReturn(raw: unknown): CustomerReturn | null {
 }
 
 function timelineSource(value: unknown): TimelineSource {
-  return value === "inferred" || value === "inferred_return" ? value : source(value);
+  return value === "inferred" || value === "inferred_return" || value === "quiet" ? value : source(value);
 }
 
 function timelineEntry(raw: unknown): TimelineEntry | null {

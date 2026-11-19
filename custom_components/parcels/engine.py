@@ -49,6 +49,7 @@ from .const import (
     EVENT_STATUS_CHANGED,
     ISSUE_PARSER_OUTDATED,
     REASON_AI_FILL,
+    REASON_AI_REJECTED,
     REASON_LOW_CONFIDENCE,
     REASON_RESTORED,
     REASON_UNKNOWN_FORMAT,
@@ -89,6 +90,7 @@ from .dedup import (
     infer_deliveries,
     mark_delivered,
     merge_parcels,
+    paack_amazon_counts,
     reconcile,
     remove_message,
     remove_parcel_origins,
@@ -135,9 +137,11 @@ from .parsers.senders import (
 )
 from .parsers.tracking import (
     MAX_NUMBER_CHARS,
+    PAACK_ID_RE,
     detect_carrier,
     normalize_tracking_number,
 )
+from .quiet import infer_quiet_deliveries
 from .store import ParcelsStore, apply_retention
 from .workdays import WorkingDays
 
@@ -193,6 +197,10 @@ SET_ASIDE = frozenset(
 # The diagnostics count the e-mails of this many recent days.
 RECENT_DAYS = 14
 REASON_UNTRUSTED_SERVER = "untrusted_authserv"
+# Set once the first mailbox sync after the update read again the Paack
+# e-mails under review whose AI reading was rejected: earlier releases
+# couldn't read Paack's order IDs.
+PAACK_CHECK_KEY = "paack_check"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -205,9 +213,24 @@ def validation_error(key: str, **placeholders: str) -> ServiceValidationError:
     )
 
 
-def manual_number(value: str) -> str:
-    """Return a tracking number the user typed, normalised, or raise."""
+def manual_carrier(value: str, carrier: str | None) -> str | None:
+    """Return the carrier of a number the user typed: theirs, or Paack's.
+
+    Only Paack's order IDs have their shape, so a typed one is Paack's.
+    """
+    if carrier:
+        return carrier
+    return "paack" if PAACK_ID_RE.fullmatch(normalize_tracking_number(value)) else None
+
+
+def manual_number(value: str, carrier: str | None = None) -> str:
+    """Return a tracking number the user typed, normalised, or raise.
+
+    A Paack order ID keeps its case and its "_1" suffix, for Paack only.
+    """
     number = normalize_tracking_number(value)
+    if carrier == "paack" and PAACK_ID_RE.fullmatch(number):
+        return number
     if (
         not MIN_NUMBER_CHARS <= len(number) <= MAX_NUMBER_CHARS
         or not number.replace("/", "").isalnum()
@@ -225,6 +248,16 @@ def review_reason(verdict: SenderVerdict, result: ParseResult) -> str:
     if result.is_parcel:
         return REASON_LOW_CONFIDENCE
     return REASON_UNKNOWN_FORMAT
+
+
+def _paack_rejected(item: ReviewItem) -> bool:
+    """Return True for an e-mail from or about Paack whose AI reading was rejected."""
+    if item.reason != REASON_AI_REJECTED:
+        return False
+    info = lookup(item.sender_domain)
+    return (info is not None and info.carrier == "paack") or (
+        item.suggestion is not None and item.suggestion.carrier == "paack"
+    )
 
 
 def _aware(value: datetime) -> datetime:
@@ -477,14 +510,18 @@ class ParcelsEngine:
         if isinstance(check, dict) and not {"started", "done"} & check.keys():
             before = dt_from_str(check.get("before"))
         fill = not engine.get(FILL_CHECK_KEY)
-        if before is None and not fill:
+        paack = not engine.get(PAACK_CHECK_KEY)
+        if before is None and not (fill or paack):
             return
         if before is not None:
             check["started"] = dt_to_str(dt_util.utcnow())
             check["relisted"] = self._relist()
         engine[FILL_CHECK_KEY] = True
+        engine[PAACK_CHECK_KEY] = True
         self.async_schedule_save()
-        self.async_create_task(self._async_checks(before, fill=fill), "parcels checks")
+        self.async_create_task(
+            self._async_checks(before, fill=fill, paack=paack), "parcels checks"
+        )
 
     @callback
     def _relist(self) -> int:
@@ -514,9 +551,11 @@ class ParcelsEngine:
         try:
             data = self.data
             result = reconcile(data, now)
-            # A return is stronger evidence than another parcel of the shop.
+            # A return is stronger evidence than another parcel of the shop,
+            # and both are stronger than three weeks without news.
             inferred = infer_return_deliveries(data, now)
             inferred |= infer_deliveries(data, now)
+            inferred |= infer_quiet_deliveries(data, now)
         finally:
             self._reconciling = False
         self._suggestions = {item.id: item for item in result.suggestions}
@@ -1737,12 +1776,20 @@ class ParcelsEngine:
             checked,
         )
 
-    async def _async_checks(self, before: datetime | None, *, fill: bool) -> None:
-        """Run the one-time checks: returns first, as they can remove parcels."""
+    async def _async_checks(
+        self, before: datetime | None, *, fill: bool, paack: bool
+    ) -> None:
+        """Run the one-time checks in turn.
+
+        Returns first, as they can remove parcels. Paack's e-mails last, so
+        that what the parsers read then isn't filled in by the local AI.
+        """
         if before is not None:
             await self._async_returns_check(before)
         if fill:
             await self._async_fill_check()
+        if paack:
+            await self._async_paack_check()
 
     def _returns_check_keys(self, before: datetime, now: datetime) -> list[str]:
         """Return the e-mails for the returns check, in the order to read them.
@@ -1898,6 +1945,52 @@ class ParcelsEngine:
             return "returns"
         return None
 
+    async def _async_paack_check(self) -> None:
+        """Read Paack's e-mails rejected under review again, once after the update.
+
+        An e-mail the parsers now read is decided anew, without the local AI;
+        the others stay under review as they were.
+        """
+        data = self.data
+        items = [item for item in data.review.values() if _paack_rejected(item)]
+        counts = {"read": 0, "kept": 0, "gone": 0, "failed": 0}
+        for item in items:
+            if (record := data.messages.get(item.message)) is None:
+                continue
+            fetched = await self.async_refetch(record)
+            if fetched.message is None or fetched.mailbox is None:
+                counts["gone" if fetched.gone else "failed"] += 1
+                continue
+            message, mailbox = fetched.message, fetched.mailbox
+            verdict = self.verify(message)
+            result = await self.async_parse(message, verdict)
+            if not is_confident(result):
+                counts["kept"] += 1
+                continue
+            if data.review.get(item.id) is not item:
+                # The user settled it meanwhile.
+                continue
+            now = dt_util.utcnow()
+            self._clear_outputs(record.hash, now)
+            self._decide(
+                message,
+                verdict,
+                result,
+                record,
+                mailbox=mailbox.entry_id,
+                owner=record.owners[0] if record.owners else mailbox.owner,
+                first_sync=False,
+                now=now,
+            )
+            # What the parsers read isn't filled in or shadow-checked by the AI.
+            self.ai.drop(record.hash)
+            counts["read"] += 1
+        if counts["read"]:
+            self.async_changed()
+        else:
+            self.async_schedule_save()
+        _LOGGER.debug("Paack's rejected e-mails read again: %s", counts)
+
     def _clear_outputs(self, key: str, now: datetime) -> None:
         """Undo everything an e-mail added: parcels, review and queue."""
         data = self.data
@@ -1936,7 +2029,8 @@ class ParcelsEngine:
         owners: Sequence[str] = (),
     ) -> str:
         """Add a parcel by tracking number; returns its ID."""
-        number = manual_number(tracking_number)
+        carrier = manual_carrier(tracking_number, carrier)
+        number = manual_number(tracking_number, carrier)
         carrier = carrier or detect_carrier(number)
         if carrier is not None and carrier not in CARRIER_NAMES:
             raise validation_error("unknown_carrier")
@@ -1967,15 +2061,17 @@ class ParcelsEngine:
 
     def update(self, parcel_id: str, changes: Mapping[str, Any]) -> None:
         """Edit a parcel."""
-        self.parcel(parcel_id)
+        parcel = self.parcel(parcel_id)
         carrier = changes.get("carrier")
         if carrier and carrier not in CARRIER_NAMES:
             raise validation_error("unknown_carrier")
         if changes.get("tracking_number"):
-            changes = {
-                **changes,
-                "tracking_number": manual_number(str(changes["tracking_number"])),
-            }
+            value = str(changes["tracking_number"])
+            given = carrier if "carrier" in changes else parcel.state.carrier
+            carrier = manual_carrier(value, given)
+            changes = {**changes, "tracking_number": manual_number(value, carrier)}
+            if carrier and not given:
+                changes["carrier"] = carrier
         self._run(update_parcel, parcel_id, dict(changes), dt_util.utcnow())
 
     def merge(self, parcel_ids: Sequence[str]) -> str:
@@ -2122,6 +2218,7 @@ class ParcelsEngine:
             "returns_check": data.engine.get(RETURNS_CHECK_KEY),
             "recent_emails": self._recent_emails(dt_util.utcnow()),
             "working_days": self.workdays.source,
+            "paack_amazon": paack_amazon_counts(data),
             "repair": data.engine.get(REPAIR_KEY),
             "reconcile_waiting": len(self._syncing | self._more),
             # How the sender checks went for the newest e-mails under review:

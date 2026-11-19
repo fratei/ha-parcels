@@ -359,6 +359,28 @@ def _amazon_url(tld: str, result: ParseResult, index: int) -> str:
     )
 
 
+@pytest.mark.parametrize("named", ["Paack", "a transportadora"])
+def test_paack_barcode_is_paacks_number(
+    parse_edited: Callable[[str, Edit], ParseResult], named: str
+) -> None:
+    """Amazon gives Paack's label barcode (made up here) as the number."""
+    barcode = "534000088812345678"
+    result = parse_edited(
+        "shipped_ctt_pt",
+        _replaced(
+            {
+                "pela CTT.": f"pela {named}.",
+                "Transportadora: CTT": f"Transportadora: {named}",
+                "RR473124829PT": barcode,
+            }
+        ),
+    )
+
+    [shipment] = result.shipments
+    assert (shipment.carrier, shipment.tracking_number) == ("paack", barcode)
+    assert shipment.amazon_shipment_id == "Fk7tQ2LmZ"
+
+
 @pytest.mark.parametrize(
     ("name", "language", "tld", "carrier", "eta"),
     [

@@ -1846,3 +1846,91 @@ def test_prompt_injection_number_is_dropped() -> None:
     assert shipment.carrier is None
     assert result.confidence == CONFIDENCE_LOW
     assert result.confidence < CONFIDENCE_APPLY
+
+
+# Paack's order IDs
+
+PAACK_ID = "Wx4Hn8Tz3_1"
+PAACK_TEXT = f"A sua encomenda está a caminho.\nNúmero de pedido: {PAACK_ID}"
+PAACK_SENDER = {"sender": "noreply@paack.co", "sender_name": "Paack"}
+
+
+@pytest.mark.parametrize("answered", [PAACK_ID, PAACK_ID.upper(), PAACK_ID.lower()])
+def test_paack_order_id_is_the_tracking_number(answered: str) -> None:
+    """Paack's order ID is its tracking number, in the e-mail's own case."""
+    validation = validate(
+        answer(kind="in_transit", carrier="Paack", tracking_numbers=[answered]),
+        PAACK_TEXT,
+        **PAACK_SENDER,
+    )
+
+    assert validation.errors == ()
+    assert validation.result is not None
+    (shipment,) = validation.result.shipments
+    assert (shipment.tracking_number, shipment.carrier) == (PAACK_ID, "paack")
+    assert shipment.tracking_url == "https://paack.co/shipments/tracking"
+
+
+@pytest.mark.parametrize("answered", [PAACK_ID, PAACK_ID.upper()])
+def test_paack_order_id_given_as_order_is_tracked(answered: str) -> None:
+    """Paack calls its tracking number an order number; it isn't the shop's."""
+    validation = validate(
+        answer(kind="in_transit", carrier="Paack", order_numbers=[answered]),
+        PAACK_TEXT,
+        **PAACK_SENDER,
+    )
+
+    assert validation.errors == ()
+    assert validation.result is not None
+    assert validation.result.order_numbers == ()
+    (shipment,) = validation.result.shipments
+    assert shipment.tracking_number == PAACK_ID
+
+
+def test_detector_finds_paack_order_id() -> None:
+    """The ID next to Paack's order-number label is found without the model."""
+    result = checked(
+        answer(kind="in_transit", carrier="Paack"), PAACK_TEXT, **PAACK_SENDER
+    )
+
+    (shipment,) = result.shipments
+    assert shipment.tracking_number == PAACK_ID
+    assert NOTE_ADDED_BY_DETECTOR in result.notes
+
+
+def test_paack_order_id_shape_is_only_paack() -> None:
+    """In another carrier's e-mail, a value of that shape isn't a number."""
+    result = checked(
+        answer(kind="in_transit", carrier="CTT", tracking_numbers=[PAACK_ID]),
+        f"A sua encomenda {PAACK_ID} está a caminho.",
+        sender="noreply@ctt.pt",
+        sender_name="CTT",
+    )
+
+    assert "tracking_invalid" in result.notes
+    assert result.shipments[0].tracking_number is None
+
+
+@pytest.mark.parametrize(
+    ("tracking", "orders"),
+    [
+        ([PAACK_ID[:9].upper()], []),
+        ([], [PAACK_ID[:9]]),
+        ([], [PAACK_ID[:8]]),
+    ],
+)
+def test_paack_order_id_is_never_cut(tracking: list[str], orders: list[str]) -> None:
+    """The ID's first nine characters are no number of their own."""
+    result = checked(
+        answer(
+            kind="in_transit",
+            carrier="Paack",
+            tracking_numbers=tracking,
+            order_numbers=orders,
+        ),
+        f"A sua encomenda está a caminho.\nCódigo de seguimento: {PAACK_ID}",
+        **PAACK_SENDER,
+    )
+
+    assert result.order_numbers == ()
+    assert [shipment.tracking_number for shipment in result.shipments] == [PAACK_ID]

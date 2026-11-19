@@ -35,6 +35,7 @@ from ..lang import (
 )
 from ..tracking import (
     CARRIER_WORDS,
+    PAACK_ID_RE,
     detect_carrier,
     find_tracking_numbers,
     normalize_tracking_number,
@@ -218,11 +219,14 @@ class CarrierSpec:
     ``strong`` regexes find numbers that need no label; ``validator`` adds a
     carrier-specific check to ``tracking.validate_tracking_number``.
     ``link_hosts`` and ``link_params`` let tracking links supply the number
-    when the text has none. ``labels``, ``phrases`` and ``collected`` extend
-    the shared tables; ``reject`` phrases mark e-mails that aren't about a
-    parcel the user receives. ``strip_slash`` drops "/" from numbers.
-    ``resolve`` picks the carrier id from the folded subject and first
-    lines; ``default_merchant`` is used when the e-mail names no shop.
+    when the text has none; links with an unsubscribe word are skipped,
+    except the words in ``link_words_ok``. ``labels``, ``phrases`` and
+    ``collected`` extend the shared tables; ``reject`` phrases mark e-mails
+    that aren't about a parcel the user receives. ``strip_slash`` drops "/"
+    from numbers. ``resolve`` picks the carrier id from the folded subject
+    and first lines. ``merchant_labels`` name the shop like the shared
+    labels, but also start sentences, so they need a colon or a line of
+    their own; ``default_merchant`` is used when the e-mail names no shop.
     """
 
     carrier: str
@@ -231,12 +235,14 @@ class CarrierSpec:
     validator: Callable[[str], bool] | None = None
     link_hosts: tuple[str, ...] = ()
     link_params: tuple[str, ...] = ()
+    link_words_ok: tuple[str, ...] = ()
     labels: tuple[str, ...] = ()
     phrases: tuple[tuple[MailKind, str], ...] = ()
     collected: tuple[str, ...] = ()
     reject: tuple[str, ...] = ()
     strip_slash: bool = False
     resolve: Callable[[str], str] | None = None
+    merchant_labels: tuple[str, ...] = ()
     default_merchant: str | None = None
 
 
@@ -545,6 +551,8 @@ class _Number:
 _NUMBER_TOKEN_RE = re.compile(r"[0-9A-Za-z]+(?:[/\-.][0-9A-Za-z]+)*")
 _GROUP_RE = re.compile(r"[ \u00a0]([0-9A-Z]{1,6})(?![0-9A-Za-z])")
 _FIRST_GROUP_RE = re.compile(r"[0-9A-Z]{1,8}")
+# The "_1" that ends Paack's order IDs, where a token stops.
+_ID_SUFFIX_RE = re.compile(r"_\d{1,2}(?![0-9A-Za-z_])")
 _DATE_LIKE_RE = re.compile(r"\d{1,4}[./-]\d{1,2}(?:[./-]\d{1,4})?")
 _UNSUBSCRIBE_WORDS = (
     "unsubscribe",
@@ -603,7 +611,10 @@ def _number_in_window(
         if _DATE_LIKE_RE.fullmatch(value):
             continue
         variants = [value]
-        if _FIRST_GROUP_RE.fullmatch(value):
+        suffix = _ID_SUFFIX_RE.match(text, token.end())
+        if suffix and PAACK_ID_RE.fullmatch(value + suffix.group(0)):
+            variants.append(value + suffix.group(0))
+        elif _FIRST_GROUP_RE.fullmatch(value):
             pos = token.end()
             for _ in range(6):
                 group = _GROUP_RE.match(text, pos)
@@ -683,6 +694,7 @@ def _link_numbers(
 ) -> list[_Number]:
     found: list[_Number] = []
     params = frozenset(spec.link_params)
+    skip_words = [w for w in _UNSUBSCRIBE_WORDS if w not in spec.link_words_ok]
     for link in message.links[:MAX_LINKS]:
         url = link.url
         if len(url) > 4096:
@@ -694,7 +706,7 @@ def _link_numbers(
             continue
         lowered = url.lower()
         if not _host_ok(host, spec.link_hosts) or any(
-            word in lowered for word in _UNSUBSCRIBE_WORDS
+            word in lowered for word in skip_words
         ):
             continue
         candidates = [match.number for match in numbers_from_url(url)]
@@ -1268,13 +1280,17 @@ def _merchant_phrase(
     return None
 
 
-def _merchant(doc: _Doc, spec: CarrierSpec) -> str | None:
-    """Return the shop that sent the parcel, when the e-mail names it."""
-    if value := _merchant_phrase(doc, spec, doc.subject, doc.fsubject):
-        return value
-    labels = _line_label_regex(MERCHANT_LABELS)
+def _labelled_merchant(
+    doc: _Doc, spec: CarrierSpec, labels: tuple[str, ...], strict: bool
+) -> str | None:
+    """Return the shop named after a label at the start of a line.
+
+    A ``strict`` label needs a colon or a line of its own: "Pedido de" is
+    also how a sentence starts.
+    """
+    regex = _line_label_regex(labels)
     for index, start, end in doc.lines():
-        label = labels.match(doc.folded, start, end)
+        label = regex.match(doc.folded, start, end)
         if not label:
             continue
         value_start, value_end = label.end(), end
@@ -1283,15 +1299,32 @@ def _merchant(doc: _Doc, spec: CarrierSpec) -> str | None:
             if following is None:
                 continue
             value_start, value_end = doc.line(following)
+        elif strict and ":" not in label.group(0):
+            continue
         if value := _valid_merchant(doc.text[value_start:value_end][:60], spec):
             return value
+    return None
+
+
+def _merchant(doc: _Doc, spec: CarrierSpec) -> str | None:
+    """Return the shop that sent the parcel, when the e-mail names it."""
+    if value := _merchant_phrase(doc, spec, doc.subject, doc.fsubject):
+        return value
+    if value := _labelled_merchant(doc, spec, MERCHANT_LABELS, strict=False):
+        return value
+    if spec.merchant_labels and (
+        value := _labelled_merchant(doc, spec, spec.merchant_labels, strict=True)
+    ):
+        return value
     return _merchant_phrase(doc, spec, doc.text, doc.folded) or spec.default_merchant
 
 
 _ORDER_VALUE_RE = re.compile(
     r"[ ]*(?:[:#][ ]*)?"
     r"(?:(?:number|numero|nummer|num|nr|n\.o|no|n|id)(?![a-z])\.?[ ]*[:#.]?[ ]*)?"
-    r"#?(?P<v>[0-9A-Za-z][0-9A-Za-z\-/]{2,29})(?![0-9A-Za-z])"
+    # Paack's order ID whole, so that its first part isn't taken for one.
+    r"#?(?P<v>[0-9A-Za-z]{9}_\d{1,2}(?![0-9A-Za-z])"
+    r"|[0-9A-Za-z][0-9A-Za-z\-/]{2,29})(?![0-9A-Za-z])"
 )
 
 

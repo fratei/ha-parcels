@@ -21,7 +21,7 @@ from enum import StrEnum
 import logging
 import re
 import secrets
-from typing import Any
+from typing import Any, Literal
 import unicodedata
 
 from homeassistant.util import dt as dt_util
@@ -371,6 +371,21 @@ class Origin:
         )
 
 
+# Why a delivery was only inferred: another parcel of the shop was delivered
+# around its dates, a return of its order was started, or it had no news for
+# three weeks.
+type InferredReason = Literal["shop", "return", "quiet"]
+# The label of a delivery inferred from a return of the parcel's order.
+INFERRED_RETURN = "return"
+
+
+def inference_reason(kind: MailKind | None, label: str | None) -> InferredReason:
+    """Return why an inferred event concluded a delivery."""
+    if label == INFERRED_RETURN:
+        return "return"
+    return "quiet" if kind is None else "shop"
+
+
 @dataclass(slots=True)
 class ParcelEvent:
     """A status change or a new delivery estimate."""
@@ -384,8 +399,9 @@ class ParcelEvent:
     clears_eta: bool = False
     label: str | None = None
     force: bool = False
-    # A delivery concluded from another parcel of the same merchant, or from
-    # a return of the parcel's order (``label`` is then "return").
+    # A delivery concluded from another parcel of the same merchant (kind
+    # "delivered"), from a return of the parcel's order (``label`` is then
+    # "return"), or from three weeks without news (no kind).
     inferred: bool = False
     id: str = field(default_factory=lambda: secrets.token_hex(6))
 
@@ -506,10 +522,10 @@ class ParcelState:
     last_event: datetime | None
     timeline: tuple[TimelineEntry, ...]
     # Delivered by inference only: from another parcel of the same merchant,
-    # or from a return of the parcel's order.
+    # from a return of the parcel's order, or after three weeks without news.
     inferred: bool = False
-    # Why the delivery was inferred, when not from another parcel: "return".
-    inferred_reason: str | None = None
+    # Why the delivery was inferred, see :func:`inference_reason`.
+    inferred_reason: InferredReason | None = None
     # Some details were filled in by the local AI and aren't confirmed yet.
     ai_filled: bool = False
 
@@ -795,7 +811,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
     status: ParcelStatus | None = None
     status_time: datetime | None = None
     status_inferred = False
-    inferred_label: str | None = None
+    inferred_by: InferredReason | None = None
     delivered_at: datetime | None = None
     eta: Eta | None = None
     eta_time: datetime | None = None
@@ -805,7 +821,9 @@ def derive_state(parcel: Parcel) -> ParcelState:
         if accepted and new_status is not status:
             status, status_time = new_status, event.time
             status_inferred = event.inferred
-            inferred_label = event.label if event.inferred else None
+            inferred_by = (
+                inference_reason(event.kind, event.label) if event.inferred else None
+            )
             if new_status is ParcelStatus.DELIVERED and delivered_at is None:
                 delivered_at = event.time
         elif accepted and not event.inferred:
@@ -883,7 +901,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
         last_event=max((e.time for e in parcel.events), default=None),
         timeline=tuple(timeline),
         inferred=inferred,
-        inferred_reason=inferred_label if inferred else None,
+        inferred_reason=inferred_by if inferred else None,
         ai_filled=ai_filled,
     )
 

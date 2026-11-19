@@ -25,6 +25,7 @@ from homeassistant.util import dt as dt_util
 from .const import MailKind, ParcelStatus
 from .dedup import parcel_order_keys
 from .models import (
+    INFERRED_RETURN,
     MAX_ITEMS,
     Parcel,
     ParcelEvent,
@@ -49,8 +50,6 @@ JOIN_DAYS = timedelta(days=7)
 RECEIVED_DAYS = timedelta(days=45)
 # Shops whose carrier collects a return on the working day after its e-mail.
 NEXT_DAY_PICKUP_SHOPS = frozenset({"amazon"})
-# The label of a delivery inferred from a return of the parcel's order.
-INFERRED_RETURN = "return"
 # An inferred delivery goes at noon of the parcel's last expected day.
 _NOON = 12
 

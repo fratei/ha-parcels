@@ -24,7 +24,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import CARRIER_NAMES, CONF_DASHBOARD_PATH, CONF_SEVENTEENTRACK
-from .customer_returns import INFERRED_RETURN, linked_parcels, order_index
+from .customer_returns import linked_parcels, order_index
 from .dedup import (
     MergeSuggestion,
     first_news,
@@ -35,11 +35,13 @@ from .dedup import (
 )
 from .models import (
     FilteredItem,
+    InferredReason,
     Parcel,
     ReturnEntry,
     ReviewItem,
     TimelineEntry,
     dt_to_str,
+    inference_reason,
     merchant_key,
     time_to_str,
 )
@@ -50,6 +52,12 @@ if TYPE_CHECKING:
     from .engine import ParcelsEngine
 
 PERSON_DOMAIN = "person"
+# How the parcel details name the source of an inferred delivery.
+_INFERRED_SOURCES: dict[InferredReason, str] = {
+    "shop": "inferred",
+    "return": "inferred_return",
+    "quiet": "quiet",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -502,12 +510,13 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
 def _timeline_source(entry: TimelineEntry) -> str:
     """Return where a timeline entry comes from, as the page names it.
 
-    An inferred delivery comes from another delivery, or from a return of
-    the parcel's order ("inferred_return").
+    An inferred delivery comes from another delivery ("inferred"), from a
+    return of the parcel's order ("inferred_return"), or from three weeks
+    without news ("quiet").
     """
     if not entry.inferred:
         return entry.source.value
-    return "inferred_return" if entry.label == INFERRED_RETURN else "inferred"
+    return _INFERRED_SOURCES[inference_reason(entry.kind, entry.label)]
 
 
 def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, Any]:

@@ -86,6 +86,18 @@ export function sourceLabel(source: unknown): string {
   return lookup(SOURCE_LABELS, source);
 }
 
+/** The notice on a parcel whose delivery is only inferred, saying why. */
+export function inferredNotice(parcel: Pick<Parcel, "inferred_reason">): string {
+  switch (parcel.inferred_reason) {
+    case "quiet":
+      return STRINGS.inferredQuietNotice;
+    case "return":
+      return STRINGS.inferredReturnNotice;
+    default:
+      return STRINGS.inferredNotice;
+  }
+}
+
 /** A readable review reason: a known label, else the code made readable, else the text as sent. */
 export function reasonLabel(reason: unknown): string {
   return lookup(REASON_LABELS, reason);

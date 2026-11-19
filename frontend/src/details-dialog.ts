@@ -35,6 +35,7 @@ import {
 import { shipmentPackages } from "./groups.ts";
 import {
   carrierLabel,
+  inferredNotice,
   mergeReasonLabel,
   parcelTitle,
   sourceLabel,
@@ -690,9 +691,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const title = parcelTitle(parcel);
     return html`<div class="alert warning">
       <ha-icon icon="mdi:package-variant-closed-check" aria-hidden="true"></ha-icon>
-      <span class="grow">
-        ${parcel.inferred_reason === "return" ? STRINGS.inferredReturnNotice : STRINGS.inferredNotice}
-      </span>
+      <span class="grow">${inferredNotice(parcel)}</span>
       <button
         type="button"
         class="btn"

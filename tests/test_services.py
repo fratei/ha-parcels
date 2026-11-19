@@ -49,6 +49,9 @@ CTT_NUMBER = "RR482915732PT"
 DHL_NUMBER = "JJD0001234567"
 # Long enough to match across carriers, which flags the merge for review.
 LOOSE_NUMBER = "PARCEL1234567"
+# A Paack order ID and a Paack label barcode, both made up.
+PAACK_ID = "Qm7Rt2Kp9_2"
+PAACK_BARCODE = "534000077712340056"
 SHOP = "loja-exemplo.example"
 FILTERED_SENDER = "servicos-exemplo.example"
 CTT_MAIL = "carriers/ctt_in_transit_pt.eml"
@@ -284,6 +287,54 @@ async def test_add_invalid_number(
     """A number that is too short, too long or has symbols is refused."""
     await refused(hass, "add", {"tracking_number": number}, "invalid_tracking_number")
     assert not engine.data.parcels
+
+
+async def test_add_paack_order_id(hass: HomeAssistant, engine: ParcelsEngine) -> None:
+    """A Paack order ID keeps its case; typed alone, its shape means Paack."""
+    parcel_id = await add(hass, f" {PAACK_ID} ", carrier="paack")
+    automatic = await add(hass, PAACK_ID)
+    other_case = await add(hass, PAACK_ID.lower(), carrier="paack")
+
+    state = engine.data.parcels[parcel_id].state
+    assert (state.tracking_number, state.carrier) == (PAACK_ID, "paack")
+    assert automatic == parcel_id
+    # Paack's IDs are case-sensitive: in another case, it's another order.
+    assert other_case != parcel_id
+    assert engine.data.parcels[other_case].state.tracking_number == PAACK_ID.lower()
+
+
+async def test_add_paack_order_id_for_another_carrier(
+    hass: HomeAssistant, engine: ParcelsEngine
+) -> None:
+    """Only Paack's order IDs may have an underscore."""
+    data = {"tracking_number": PAACK_ID, "carrier": "ctt"}
+    await refused(hass, "add", data, "invalid_tracking_number")
+    assert not engine.data.parcels
+
+
+async def test_update_to_paack_order_id(
+    hass: HomeAssistant, engine: ParcelsEngine, freezer: FrozenDateTimeFactory
+) -> None:
+    """A Paack order ID can replace the number of a parcel that Paack delivers."""
+    paack = await add(hass, PAACK_BARCODE)
+    ctt = await add(hass, CTT_NUMBER)
+    unknown = await add(hass, LOOSE_NUMBER)
+    other_id = "Wx4Hn8Tz3_1"
+
+    freezer.tick()
+    await call(hass, "update", {"parcel_id": paack, "tracking_number": PAACK_ID})
+    data = {"parcel_id": ctt, "tracking_number": other_id}
+    await refused(hass, "update", data, "invalid_tracking_number")
+    await call(hass, "update", {**data, "carrier": "paack"})
+    # Without a carrier, the ID's shape says Paack.
+    await call(hass, "update", {"parcel_id": unknown, "tracking_number": "Hj6Np3Ws8_1"})
+
+    state = engine.data.parcels[paack].state
+    assert (state.tracking_number, state.carrier) == (PAACK_ID, "paack")
+    state = engine.data.parcels[ctt].state
+    assert (state.tracking_number, state.carrier) == (other_id, "paack")
+    state = engine.data.parcels[unknown].state
+    assert (state.tracking_number, state.carrier) == ("Hj6Np3Ws8_1", "paack")
 
 
 async def test_hub_not_loaded(hass: HomeAssistant, engine: ParcelsEngine) -> None:

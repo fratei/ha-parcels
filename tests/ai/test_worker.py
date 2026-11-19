@@ -22,6 +22,7 @@ from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.util import dt as dt_util
 import pytest
 
 from custom_components.parcels.ai.client import DATA_LOG_FILTER, LOGGER_NAMES
@@ -54,13 +55,18 @@ from custom_components.parcels.const import (
     MailKind,
 )
 from custom_components.parcels.convert import fill_origin_id, message_origin_id
-from custom_components.parcels.engine import FILL_CHECK_KEY, ParcelsEngine
+from custom_components.parcels.engine import (
+    FILL_CHECK_KEY,
+    PAACK_CHECK_KEY,
+    ParcelsEngine,
+)
 from custom_components.parcels.mail.errors import MailError
 from custom_components.parcels.models import (
     MessageState,
     ParcelStatus,
     ReviewItem,
     Source,
+    Suggestion,
 )
 from custom_components.parcels.parsers.base import (
     MailMessage,
@@ -1486,6 +1492,215 @@ async def test_new_install_has_nothing_to_check(
 
     check.assert_not_called()
     assert engine.data.engine[FILL_CHECK_KEY]
+
+
+PAACK = "carriers/paack_on_the_way_pt.eml"
+# The order ID in the Paack fixture.
+PAACK_ID = "Wx4Hn8Tz3_1"
+
+
+def paack_message(n: int = 1) -> MailMessage:
+    """Return a Paack e-mail with its own Message-ID, received before NOW."""
+    return dataclasses.replace(
+        load_message(PAACK),
+        message_id=f"<paack-{n}@mail.example.com>",
+        provider_id=f"paack-{n}",
+        date=RECEIVED,
+        received=RECEIVED,
+    )
+
+
+async def async_rejected(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    message: MailMessage,
+    *,
+    reason: str = REASON_AI_REJECTED,
+    carrier: str | None = "paack",
+    checked: bool = False,
+) -> ReviewItem:
+    """Put an e-mail under review as an earlier release left it.
+
+    Earlier releases couldn't read Paack's order IDs, so they failed the
+    checks of the AI's reading, and the e-mail waited under review. Unless
+    ``checked``, the check after the update hasn't run yet.
+    """
+    await hass.async_block_till_done(wait_background_tasks=True)
+    now = dt_util.utcnow()
+    engine._clear_outputs(message.hash, now)
+    record = engine.data.messages[message.hash]
+    (mailbox,) = engine.mailboxes.values()
+    item = engine.review_item(
+        message,
+        record,
+        engine.verify(message),
+        reason=reason,
+        source=Source.AI,
+        suggestion=Suggestion(kind=MailKind.IN_TRANSIT, carrier=carrier),
+        mailbox=mailbox.entry_id,
+        owner=None,
+        now=now,
+    )
+    engine.add_review(item, record)
+    if not checked:
+        engine.data.engine.pop(PAACK_CHECK_KEY, None)
+    return item
+
+
+@pytest.mark.parametrize("carrier", ["paack", None])
+async def test_update_reads_rejected_paack_emails_again(
+    hass: HomeAssistant, client: FakeMailClient, carrier: str | None
+) -> None:
+    """After the update, Paack's e-mails whose AI reading was rejected are read
+    once more, and what the parsers read now stays away from the AI."""
+    message = paack_message()
+    engine = await async_setup(hass, client, message)
+    await async_rejected(hass, engine, message, carrier=carrier)
+
+    await async_sync_again(hass, engine)
+
+    assert not engine.data.review
+    (parcel,) = engine.data.parcels.values()
+    assert parcel.state.tracking_number == PAACK_ID
+    assert parcel.state.carrier == "paack"
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+    assert not engine.ai.queue
+    assert not engine.data.ai.get("shadow")
+    assert engine.data.engine[PAACK_CHECK_KEY]
+
+    # Once only: an e-mail rejected again later stays under review.
+    item = await async_rejected(hass, engine, message, carrier=carrier, checked=True)
+
+    await async_sync_again(hass, engine)
+
+    assert list(engine.data.review.values()) == [item]
+    assert not engine.data.parcels
+
+
+async def test_paack_check_waits_for_a_sync_that_works(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """While the mailbox can't be read, the check waits for the next sync."""
+    message = paack_message()
+    engine = await async_setup(hass, client, message)
+    item = await async_rejected(hass, engine, message)
+    client.sync_error = MailError("offline")
+
+    await async_sync_again(hass, engine)
+
+    assert PAACK_CHECK_KEY not in engine.data.engine
+    assert list(engine.data.review.values()) == [item]
+    client.sync_error = None
+
+    await async_sync_again(hass, engine)
+
+    assert engine.data.engine[PAACK_CHECK_KEY]
+    assert not engine.data.review
+    (parcel,) = engine.data.parcels.values()
+    assert parcel.state.tracking_number == PAACK_ID
+
+
+@pytest.mark.parametrize(("carrier", "read"), [("paack", True), ("ctt", False)])
+async def test_paack_check_reads_only_paack_emails(
+    hass: HomeAssistant, client: FakeMailClient, carrier: str, read: bool
+) -> None:
+    """Other carriers' e-mails aren't read again, and one offered as Paack's
+    that the parsers still can't read stays under review as it was."""
+    message = ctt_message()
+    engine = await async_setup(hass, client, message)
+    item = await async_rejected(hass, engine, message, carrier=carrier)
+    client.fetches.clear()
+
+    await async_sync_again(hass, engine)
+
+    assert (message.provider_id in client.fetches) is read
+    assert list(engine.data.review.values()) == [item]
+    assert engine.data.messages[message.hash].state is MessageState.REVIEW
+    assert not engine.ai.queue
+    assert engine.data.engine[PAACK_CHECK_KEY]
+
+
+async def test_paack_check_leaves_other_reviews(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """A Paack e-mail under review for another reason stays as it is."""
+    message = paack_message()
+    engine = await async_setup(hass, client, message)
+    item = await async_rejected(hass, engine, message, reason=REASON_AI_SUGGESTION)
+    client.fetches.clear()
+
+    await async_sync_again(hass, engine)
+
+    assert message.provider_id not in client.fetches
+    assert list(engine.data.review.values()) == [item]
+    assert engine.data.engine[PAACK_CHECK_KEY]
+
+
+@pytest.mark.parametrize("deleted", [True, False])
+async def test_paack_check_keeps_emails_it_cant_download(
+    hass: HomeAssistant, client: FakeMailClient, deleted: bool
+) -> None:
+    """A Paack e-mail that's gone or can't be downloaded stays under review,
+    and the check goes on with the next one."""
+    missing, other = paack_message(1), paack_message(2)
+    engine = await async_setup(hass, client, missing, other)
+    item = await async_rejected(hass, engine, missing)
+    await async_rejected(hass, engine, other)
+    if deleted:
+        client.delete(missing.provider_id)
+    else:
+        client.fetch_errors[missing.provider_id] = MailError("offline")
+
+    await async_sync_again(hass, engine)
+
+    assert list(engine.data.review.values()) == [item]
+    (parcel,) = engine.data.parcels.values()
+    assert parcel.state.tracking_number == PAACK_ID
+    assert engine.data.engine[PAACK_CHECK_KEY]
+
+
+async def test_paack_check_leaves_what_the_user_settled(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """An e-mail the user dismisses while the check reads it stays dismissed."""
+    message = paack_message()
+    engine = await async_setup(hass, client, message)
+    item = await async_rejected(hass, engine, message)
+    parse = engine.async_parse
+
+    async def dismiss_meanwhile(*args: Any) -> Any:
+        engine.review_dismiss(item.id)
+        return await parse(*args)
+
+    with patch.object(engine, "async_parse", dismiss_meanwhile):
+        await async_sync_again(hass, engine)
+
+    assert not engine.data.review
+    assert not engine.data.parcels
+    assert engine.data.messages[message.hash].state is MessageState.DISMISSED
+
+
+async def test_paack_check_runs_after_the_fill_check(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """Updating from before both checks: the parcel the Paack check reads
+    isn't sent to the local AI by the fill check."""
+    message = paack_message()
+    window = "Será entregue em 25 de novembro entre as 09:00 e as 13:00."
+    assert window in message.text
+    message = dataclasses.replace(message, text=message.text.replace(window, ""))
+    engine = await async_setup(hass, client, message)
+    await async_rejected(hass, engine, message)
+    del engine.data.engine[FILL_CHECK_KEY]
+
+    await async_sync_again(hass, engine)
+
+    (parcel,) = engine.data.parcels.values()
+    assert parcel.state.tracking_number == PAACK_ID
+    assert parcel.state.eta is None
+    assert not engine.ai.queue
+    assert engine.data.engine[FILL_CHECK_KEY]
+    assert engine.data.engine[PAACK_CHECK_KEY]
 
 
 # -- Diagnostics and counters -------------------------------------------------

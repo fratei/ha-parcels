@@ -93,6 +93,7 @@ from ..parsers.lang import (
 )
 from ..parsers.senders import KNOWN_SENDERS, lookup, organizational_domain
 from ..parsers.tracking import (
+    PAACK_ID_RE,
     detect_carrier,
     find_tracking_numbers,
     named_carriers,
@@ -314,8 +315,10 @@ _NUMBER_RE = re.compile(r"^[0-9A-Z]{4,40}$")
 _ORDER_RE = re.compile(r"^(?=[^0-9]*[0-9])[0-9A-Za-z]{3,40}$")
 _PICKUP_CODE_RE = re.compile(r"^[0-9A-Za-z]{3,20}$")
 _LIST_SPLIT_RE = re.compile(r"[,;\n]+")
-# Numbers written in the e-mail, to repair a miscopied order number.
-_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Za-z]+(?:[\-./][0-9A-Za-z]+)*")
+# Numbers written in the e-mail, to repair a miscopied order number. A value
+# followed by an underscore is the start of a longer one (a Paack order ID);
+# the atomic group keeps it from backing off to a shorter value.
+_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])(?>[0-9A-Za-z]+(?:[\-./][0-9A-Za-z]+)*)(?!_)")
 _DATE_TOKEN_RE = re.compile(r"^\d{1,4}[\-./]\d{1,2}(?:[\-./]\d{1,4})?$")
 # Numbers joined by hyphens or slashes ("PO-211-4567890", "2026/4501").
 _JOINED_RE = re.compile(r"(?<![0-9A-Za-z])[0-9A-Za-z]+(?:[\-/][0-9A-Za-z]+)+")
@@ -756,9 +759,11 @@ def _is_number(joined: str) -> bool:
 
 
 def _written_pattern(value: str, separators: str) -> re.Pattern[str]:
+    # A value followed by an underscore is the start of a longer one: the
+    # first nine characters of a Paack order ID aren't a number of their own.
     gap = f"[{separators}]{{0,3}}"
     body = gap.join(re.escape(char) for char in value)
-    return re.compile(rf"(?<![0-9A-Za-z]){body}(?![0-9A-Za-z])", re.IGNORECASE)
+    return re.compile(rf"(?<![0-9A-Za-z]){body}(?![0-9A-Za-z_])", re.IGNORECASE)
 
 
 def _tracking_pattern(number: str) -> re.Pattern[str]:
@@ -1260,10 +1265,13 @@ class _Checker:
                 if fold(piece) in _NULL_WORDS:
                     continue
                 compact = _compact(piece)
-                if not _ORDER_RE.match(compact) or len(piece) > 60:
+                if PAACK_ID_RE.fullmatch(piece):
+                    printed = self.printed_paack_id(piece)
+                elif not _ORDER_RE.match(compact) or len(piece) > 60:
                     self.error("order_invalid")
                     continue
-                printed = self.printed_order(compact)
+                else:
+                    printed = self.printed_order(compact)
                 if printed is None:
                     continue
                 compact = _compact(printed)
@@ -1310,6 +1318,19 @@ class _Checker:
             return printed
         self.error("order_not_in_email")
         return None
+
+    def printed_paack_id(self, value: str) -> str | None:
+        """Return a Paack order ID as the e-mail writes it, or None.
+
+        The ID stays whole, in the e-mail's case: Paack's e-mail is the one
+        that gives it as an order number, and there it is moved to the
+        tracking numbers (see ``carrier_orders``).
+        """
+        written = _tracking_pattern(value).search(self.number_text)
+        if written is None:
+            self.error("order_not_in_email")
+            return None
+        return normalize_tracking_number(written.group(0))
 
     @cached_property
     def joined_numbers(self) -> tuple[list[int], list[re.Match[str]]]:
@@ -1437,7 +1458,9 @@ class _Checker:
         number. A model order that the detector reads as this carrier's
         tracking number, or that a tracking link carries, is the parcel's
         number unless the e-mail labels it as an order: it is moved to the
-        tracking numbers. Returns the orders left and the numbers moved.
+        tracking numbers. Paack's own order ID is always moved: its e-mails
+        label it as an order number. Returns the orders left and the numbers
+        moved.
         """
         if carrier is None or not (self.sender_hint or self.name_carrier):
             return orders, []
@@ -1454,8 +1477,11 @@ class _Checker:
                 number in found
                 and _number_carrier(number, carrier)[0]
                 and not self.code_only(number)
-                and not _labelled(
-                    self.detector_text, _tracking_pattern(number), _ORDER_LABEL_RE
+                and (
+                    PAACK_ID_RE.fullmatch(number) is not None
+                    or not _labelled(
+                        self.detector_text, _tracking_pattern(number), _ORDER_LABEL_RE
+                    )
                 )
             ):
                 moved.append(number)
@@ -1540,16 +1566,20 @@ class _Checker:
                 if fold(piece) in _NULL_WORDS:
                     continue
                 number = normalize_tracking_number(piece)
-                if not _NUMBER_RE.match(number):
+                if not (_NUMBER_RE.match(number) or PAACK_ID_RE.fullmatch(number)):
                     self.error("tracking_invalid")
                     continue
-                if not _tracking_pattern(number).search(self.number_text):
+                written = _tracking_pattern(number).search(self.number_text)
+                if written is None:
                     repaired = self.repaired_tracking(number, carrier, orders)
                     if repaired is None:
                         self.error("tracking_not_in_email")
                         continue
                     self.note(NOTE_TRACKING_FROM_TEXT)
                     number = repaired
+                elif PAACK_ID_RE.fullmatch(number):
+                    # Paack's order IDs are case-sensitive: the e-mail's spelling.
+                    number = normalize_tracking_number(written.group(0))
                 numbers.append(number)
         return numbers
 
@@ -1587,12 +1617,14 @@ class _Checker:
     def exclusion(self, number: str, orders: set[str]) -> str | None:
         """Return why a tracking number must not be used, or None.
 
-        UPU S10, UPS and Amazon numbers identify themselves and are kept.
-        Others are left out when the e-mail writes them only as a delivery
-        or pickup code, when they equal an order number, or when the e-mail
-        labels them as an order, phone or tax number.
+        UPU S10, UPS and Amazon numbers identify themselves and are kept, as
+        are Paack's order IDs (valid only as Paack's numbers), which its
+        e-mails label as order numbers. Others are left out when the e-mail
+        writes them only as a delivery or pickup code, when they equal an
+        order number, or when the e-mail labels them as an order, phone or
+        tax number.
         """
-        if is_strong_number(number):
+        if is_strong_number(number) or PAACK_ID_RE.fullmatch(number):
             return None
         if self.code_only(number):
             return "tracking_is_pickup_code"

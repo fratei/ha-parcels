@@ -1,0 +1,78 @@
+Return-Path: <bounce-3c71d05e2a@bounces.paack.co>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paack.co header.s=sel1 header.b=4e1a7c90;
+       spf=pass (google.com: domain of bounce-3c71d05e2a@bounces.paack.co
+ designates 192.0.2.61 as permitted sender) smtp.mailfrom=bounce-3c71d05e2a@bounces.paack.co;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paack.co
+From: Paack <no-reply@paack.co>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?=F0=9F=93=A6_Boas_not=C3=ADcias=3A_Sua_encomenda_est?=
+ =?utf-8?q?=C3=A1_a_caminho?=
+Date: Mon, 23 Nov 2026 18:40:00 +0000
+Message-ID: <20261123184000.7d3e@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_5d0c2e7a9f41"
+
+--b1_5d0c2e7a9f41
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Paack
+
+Boas notícias: a sua encomenda está a caminho
+
+Olá Alex,
+
+A sua encomenda de Casa Exemplo está a caminho.
+
+Será entregue em 25 de novembro entre as 09:00 e as 13:00.
+
+Seguir a encomenda [https://paack.co/shipments/tracking/order?tracking_number=Wx4Hn8Tz3_1&postal_code=4099-321]
+
+Não vai estar em casa? Escolha outro horário [https://paack.co/shipments/timeslot/direct/k7Qm2ZpX9vRt4LwN8sYb3HcF]
+
+Preferências de entrega [https://paack.co/shipments/preferences?email=alex%40example.com&phone=%2B351910000000&order_id=0f6b2c1e-8a4d-4e7f-9b3a-5c2d1e0f9a8b&postal_code=4099-321&tracking_number=Wx4Hn8Tz3_1]
+
+Número de pedido: Wx4Hn8Tz3_1
+
+Paack Logistics · Rua Exemplo 1, 1000-001 Lisboa
+
+Política de privacidade [https://www.paack.co/privacy-policy]
+
+--b1_5d0c2e7a9f41
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boas notícias: a sua encomenda está a caminho</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#2b2bff}.content{padding:24px}.slot{font-size:18px;font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#2b2bff;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://assets.paack.co/email/logo-paack.png" alt="Paack" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Boas notícias: a sua encomenda está a caminho</h1>
+<p>Olá Alex,</p>
+<p>A sua encomenda de <strong>Casa Exemplo</strong> está a caminho.</p>
+<p class="slot">Será entregue em 25 de novembro entre as 09:00 e as 13:00.</p>
+<p style="text-align:center"><a class="button" href="https://paack.co/shipments/tracking/order?tracking_number=Wx4Hn8Tz3_1&amp;postal_code=4099-321">Seguir a encomenda</a></p>
+<p>Não vai estar em casa? <a href="https://paack.co/shipments/timeslot/direct/k7Qm2ZpX9vRt4LwN8sYb3HcF">Escolha outro horário</a></p>
+<p><a href="https://paack.co/shipments/preferences?email=alex%40example.com&amp;phone=%2B351910000000&amp;order_id=0f6b2c1e-8a4d-4e7f-9b3a-5c2d1e0f9a8b&amp;postal_code=4099-321&amp;tracking_number=Wx4Hn8Tz3_1">Preferências de entrega</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Número de pedido: Wx4Hn8Tz3_1</p>
+<p>Paack Logistics · Rua Exemplo 1, 1000-001 Lisboa</p>
+<p><a href="https://www.paack.co/privacy-policy">Política de privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_5d0c2e7a9f41--

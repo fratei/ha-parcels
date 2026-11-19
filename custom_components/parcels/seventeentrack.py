@@ -9,13 +9,17 @@ Home Assistant user can list 17TRACK packages.
 Each refresh:
 
 - adds the numbers of active parcels that 17TRACK doesn't have yet, the ones
-  due soonest first and at most 10 at a time, except Amazon Logistics numbers,
-  which 17TRACK can't follow. A refused number is tried again later, and once
+  due soonest first and at most 10 at a time. It leaves out the numbers
+  17TRACK can't follow: Amazon Logistics', and those it can only follow with
+  the recipient's postcode, which its services can't send (Paack's, and
+  GLS's in Portugal). It also leaves out parcels without news for three
+  weeks (see ``quiet``). A refused number is tried again later, and once
   a day after three refusals, because 17TRACK refuses new numbers while the
   account's quota is used up;
 - reads the packages and turns new statuses into events of their parcel;
 - archives the packages it added once their parcel is finished, archived,
-  private or gone, or when 17TRACK still can't find them after two weeks.
+  private, gone or without news for three weeks, when 17TRACK can't follow
+  the number, or when 17TRACK still can't find it after two weeks.
 """
 
 from __future__ import annotations
@@ -32,12 +36,19 @@ from homeassistant.core import CALLBACK_TYPE, callback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util, slugify
 
-from .const import CONF_SEVENTEENTRACK, DEFAULT_SEVENTEENTRACK, MailKind, ParcelStatus
+from .const import (
+    CARRIER_NAMES,
+    CONF_SEVENTEENTRACK,
+    DEFAULT_SEVENTEENTRACK,
+    MailKind,
+    ParcelStatus,
+)
 from .dedup import Contribution, apply_contribution
 from .models import Origin, Parcel, ParcelEvent, Source, dt_from_str, dt_to_str
 from .parsers.carriers._common import fold_text, phrase_regex
 from .parsers.carriers._phrases import KIND_PHRASES
-from .parsers.tracking import detect_carrier, normalize_tracking_number
+from .parsers.tracking import PAACK_ID_RE, detect_carrier, normalize_tracking_number
+from .quiet import is_quiet
 
 if TYPE_CHECKING:
     from .engine import ParcelsEngine
@@ -68,6 +79,12 @@ ADD_RETRY_DELAY: Final = timedelta(hours=6)
 ADD_RETRY_LATER: Final = timedelta(days=1)
 # pyseventeentrack's text for a refusal, which holds only 17TRACK's code.
 _REFUSAL: Final = re.compile(r"Non-zero status code in response: (-?\d{1,6})")
+# Carriers that 17TRACK follows only with the recipient's postcode, which the
+# add_package service can't send, so their numbers would stay "Not Found":
+# Paack (17TRACK key 100364), and in Portugal GLS (100316 and 100646). See
+# https://res.17track.net/asset/carrier/info/additional_parameters.json
+_NEEDS_POSTCODE: Final = frozenset({"paack"})
+_NEEDS_POSTCODE_IN: Final[Mapping[str, frozenset[str]]] = {"PT": frozenset({"gls"})}
 
 # Package statuses of the core integration, as slugs (see its package_state
 # selector). Not found and expired carry no news.
@@ -210,7 +227,27 @@ class SeventeenTrackSync:
             "failed": len(self._failed),
             "last_refresh": dt_to_str(self.last_refresh),
             "last_error": self.last_error,
+            "not_found_by_carrier": self._not_found_by_carrier(),
         }
+
+    def _not_found_by_carrier(self) -> dict[str, int]:
+        """Count tracked numbers 17TRACK can't find, by their parcel's carrier.
+
+        "unknown" when the parcel or its carrier is gone, "other" for a
+        carrier typed by hand.
+        """
+        counts: dict[str, int] = {}
+        for record in self._packages.values():
+            if record.get("archived") or record.get("status") != "not_found":
+                continue
+            parcel = self.engine.data.parcels.get(record.get("parcel") or "")
+            carrier = parcel.state.carrier if parcel is not None else None
+            if not carrier:
+                key = "unknown"
+            else:
+                key = carrier if carrier in CARRIER_NAMES else "other"
+            counts[key] = counts.get(key, 0) + 1
+        return dict(sorted(counts.items()))
 
     # -- Scheduling ---------------------------------------------------------
 
@@ -360,6 +397,26 @@ class SeventeenTrackSync:
             wanted.setdefault(number, parcel)
         return wanted
 
+    def _cannot_follow(self, number: str, carrier: str | None) -> bool:
+        """Return True for numbers 17TRACK can only follow with a postcode."""
+        country = self.hass.config.country or ""
+        carriers = _NEEDS_POSTCODE | _NEEDS_POSTCODE_IN.get(country, frozenset())
+        return (
+            PAACK_ID_RE.fullmatch(number) is not None
+            or carrier in carriers
+            or detect_carrier(number) in carriers
+        )
+
+    def _left_out(self, number: str, parcel: Parcel, now: datetime) -> bool:
+        """Return True for wanted numbers that still shouldn't be added.
+
+        Ones the user added in 17TRACK, maybe with the postcode, are still
+        followed.
+        """
+        return self._cannot_follow(number, parcel.state.carrier) or is_quiet(
+            parcel, now
+        )
+
     async def _async_add_new(
         self,
         entry_id: str,
@@ -381,6 +438,8 @@ class SeventeenTrackSync:
                     "parcel": parcel.id,
                     "own": name.startswith(NAME_PREFIX),
                 }
+                continue
+            if self._left_out(number, parcel, now):
                 continue
             failure = failed.get(number)
             if failure is not None and (
@@ -414,9 +473,13 @@ class SeventeenTrackSync:
                 "added": dt_to_str(now),
             }
             stats.added += 1
-        # Forget failures of numbers that are no longer wanted.
+        # Forget failures of numbers that are no longer wanted or left out.
         wanted = self._wanted()
-        for number in [n for n in failed if n not in wanted]:
+        for number in [
+            n
+            for n in failed
+            if (parcel := wanted.get(n)) is None or self._left_out(n, parcel, now)
+        ]:
             del failed[number]
         return False
 
@@ -541,7 +604,7 @@ class SeventeenTrackSync:
                 if parcel is None or stale:
                     del records[number]
                 continue
-            if not (stale or self._finished(parcel, record, now)):
+            if not (stale or self._finished(number, parcel, record, now)):
                 continue
             try:
                 await self._async_call(
@@ -558,13 +621,18 @@ class SeventeenTrackSync:
                 record["archived"] = dt_to_str(now)
         return changed
 
-    @staticmethod
     def _finished(
-        parcel: Parcel | None, record: Mapping[str, Any], now: datetime
+        self,
+        number: str,
+        parcel: Parcel | None,
+        record: Mapping[str, Any],
+        now: datetime,
     ) -> bool:
         if parcel is None:
             return True
         if parcel.archived is not None or parcel.private or parcel.state.terminal:
+            return True
+        if self._left_out(number, parcel, now):
             return True
         added = dt_from_str(record.get("added"))
         return (
