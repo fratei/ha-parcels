@@ -81,6 +81,9 @@ OTHER = s10(10000002)
 LEGACY = "RR123456785PT"
 UPS = "1Z9W8R371125836041"
 AMAZON = "TBA123456789012"
+PAACK_ID = "Qm7Rt2Kp9_2"
+PAACK_BARCODE = "534000077712340056"
+GLS = "61234567890"
 
 
 class FakeSeventeenTrack:
@@ -295,6 +298,25 @@ def add_parcel(
     return engine.data.parcels[applied.parcel_id]
 
 
+def tracked_before(
+    engine: ParcelsEngine,
+    track: FakeSeventeenTrack,
+    number: str,
+    parcel: Parcel,
+    *,
+    own: bool = True,
+    added: str | None = None,
+) -> None:
+    """Record a number that an earlier release, or the user, put in 17TRACK."""
+    track.put(
+        number, "Not Found", name=friendly_name(parcel.id) if own else "Sapatilhas"
+    )
+    record: dict[str, Any] = {"parcel": parcel.id, "own": own}
+    if added is not None:
+        record["added"] = added
+    engine.data.seventeentrack.setdefault("packages", {})[number] = record
+
+
 def records(engine: ParcelsEngine) -> dict[str, dict[str, Any]]:
     """Return the stored 17TRACK records by tracking number."""
     return engine.data.seventeentrack.get("packages", {})
@@ -423,6 +445,7 @@ async def test_adds_the_numbers_of_active_parcels(
         "failed": 0,
         "last_refresh": NOW_ISO,
         "last_error": None,
+        "not_found_by_carrier": {},
     }
     assert CTT not in str(diagnostics)
     assert UPS not in str(diagnostics)
@@ -964,6 +987,272 @@ async def test_numbers_17track_cannot_find_are_archived(
     assert track.numbers("add_package") == [CTT]
 
 
+async def test_numbers_17track_cannot_follow_are_not_added(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+) -> None:
+    """Paack's numbers, and GLS's in Portugal, need a postcode in 17TRACK.
+
+    Its services take only a number and a name, so these numbers would stay
+    "Not Found" and use up places in the account.
+    """
+    hass.config.country = "PT"
+    add_parcel(engine, "paack", PAACK_ID, carrier="paack")
+    add_parcel(engine, "paack id", "Wx4Hn8Tz3_1")
+    add_parcel(engine, "barcode", PAACK_BARCODE, carrier="other")
+    add_parcel(engine, "gls", GLS, carrier="gls")
+    ctt = add_parcel(engine, "ctt", CTT, carrier="ctt")
+
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track), add_call(track, CTT, ctt)]
+    assert set(records(engine)) == {CTT}
+    assert failures(engine) == {}
+
+
+@pytest.mark.parametrize("country", [None, "ES"])
+async def test_gls_is_added_outside_portugal(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    country: str | None,
+) -> None:
+    """Only GLS Portugal needs a postcode in 17TRACK."""
+    hass.config.country = country
+    gls = add_parcel(engine, "gls", GLS, carrier="gls")
+
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track), add_call(track, GLS, gls)]
+
+
+async def test_numbers_17track_cannot_follow_leave_it(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+) -> None:
+    """Such numbers that an earlier release added are archived; the user's stay."""
+    hass.config.country = "PT"
+    barcode = add_parcel(engine, "barcode", PAACK_BARCODE, carrier="paack")
+    gls = add_parcel(engine, "gls", GLS, carrier="gls")
+    paack = add_parcel(engine, "paack", PAACK_ID, carrier="paack")
+    tracked_before(engine, track, PAACK_BARCODE, barcode, added=NOW_ISO)
+    tracked_before(engine, track, GLS, gls)
+    # The user added the order ID in the 17TRACK app, with the postcode.
+    track.put(PAACK_ID, info="Em distribuição", name="Sapatilhas")
+
+    await tracker.async_refresh()
+
+    assert track.calls == [
+        get_call(track),
+        archive_call(track, PAACK_BARCODE),
+        archive_call(track, GLS),
+    ]
+    assert records(engine)[PAACK_BARCODE]["archived"] == NOW_ISO
+    assert records(engine)[GLS]["archived"] == NOW_ISO
+    assert records(engine)[PAACK_ID]["own"] is False
+    assert "archived" not in records(engine)[PAACK_ID]
+    assert status(engine, paack.id) is ParcelStatus.OUT_FOR_DELIVERY
+
+    track.calls.clear()
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track)]
+
+
+async def test_numbers_without_news_for_three_weeks_are_not_added(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """17TRACK stops following a number after 30 days without news.
+
+    So a parcel without news for three weeks, and no date still to come, isn't
+    added: not even one first read today from an old e-mail. Hand-added
+    parcels count from when they were added.
+    """
+    three_weeks = timedelta(days=21)
+    attempted = MailKind.ATTEMPTED
+    add_parcel(engine, "quiet", CTT, carrier="ctt", kind=attempted, age=three_weeks)
+    add_parcel(
+        engine,
+        "recent",
+        OTHER,
+        carrier="ctt",
+        kind=attempted,
+        age=three_weeks - timedelta(days=1),
+    )
+    add_parcel(
+        engine,
+        "expected",
+        s10(10000003),
+        carrier="ctt",
+        kind=attempted,
+        age=timedelta(days=30),
+        eta=Eta(start=TODAY - timedelta(days=22), end=TODAY - timedelta(days=20)),
+    )
+    engine.add_parcel(s10(10000004), carrier="ctt")
+    old = engine.add_parcel(s10(10000005), carrier="ctt")
+    engine.data.parcels[old].created -= three_weeks
+
+    await tracker.async_refresh()
+
+    assert sorted(track.numbers("add_package")) == [
+        s10(10000002),
+        s10(10000003),
+        s10(10000004),
+    ]
+
+
+async def test_numbers_without_news_for_three_weeks_leave_17track(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """Parcels' own numbers without news for three weeks are archived."""
+    age = timedelta(days=21)
+    ours = add_parcel(
+        engine, "ours", CTT, carrier="ctt", kind=MailKind.ATTEMPTED, age=age
+    )
+    theirs = add_parcel(
+        engine, "theirs", OTHER, carrier="ctt", kind=MailKind.ATTEMPTED, age=age
+    )
+    tracked_before(
+        engine, track, CTT, ours, added=dt_to_str(NOW_DT - timedelta(days=3))
+    )
+    tracked_before(engine, track, OTHER, theirs, own=False)
+
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track), archive_call(track, CTT)]
+    assert records(engine)[CTT]["archived"] == NOW_ISO
+    assert "archived" not in records(engine)[OTHER]
+
+
+async def test_refused_number_that_went_quiet_is_forgotten(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A refused number isn't tried again once its parcel had no news for long."""
+    add_parcel(
+        engine,
+        "ctt",
+        CTT,
+        carrier="ctt",
+        kind=MailKind.ATTEMPTED,
+        age=timedelta(days=20),
+    )
+    track.errors["add_package"] = HomeAssistantError("refused")
+
+    await tracker.async_refresh()
+
+    assert set(failures(engine)) == {CTT}
+
+    freezer.tick(timedelta(days=1))
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == [CTT]
+    assert failures(engine) == {}
+    assert tracker.diagnostics()["failed"] == 0
+
+
+async def test_skipped_numbers_leave_room_for_others(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+) -> None:
+    """Numbers that aren't added don't count toward the ten per refresh."""
+    hass.config.country = "PT"
+    today = Eta(start=TODAY, end=TODAY)
+    add_parcel(engine, "paack", PAACK_ID, carrier="paack", eta=today)
+    add_parcel(engine, "gls", GLS, carrier="gls", eta=today)
+    add_parcel(
+        engine,
+        "quiet",
+        s10(30000000),
+        carrier="ctt",
+        kind=MailKind.ATTEMPTED,
+        age=timedelta(days=30),
+        eta=Eta(start=TODAY - timedelta(days=25), end=TODAY - timedelta(days=23)),
+    )
+    numbers = [s10(30000001 + index) for index in range(MAX_ADDS)]
+    for index, number in enumerate(numbers):
+        add_parcel(engine, f"parcel{index}", number, carrier="ctt")
+
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == numbers
+
+
+async def test_diagnostics_count_numbers_not_found_by_carrier(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync
+) -> None:
+    """Tracked numbers 17TRACK can't find, counted by carrier, without numbers."""
+    numbers = {
+        "gls": GLS,
+        "gls user": "61234567891",
+        "dpd": "09981234567890",
+        "no carrier": "ZX81234567",
+        "odd carrier": "EX123456789",
+        "gone": OTHER,
+        "in transit": CTT,
+        "archived": s10(10000003),
+        "unread": s10(10000004),
+        "expired": s10(10000005),
+    }
+    carriers = {
+        "gls": "gls",
+        "gls user": "gls",
+        "dpd": "dpd",
+        "odd carrier": "Transportes Exemplo",
+        "archived": "dpd",
+        "unread": "dpd",
+        "expired": "dpd",
+    }
+    parcels = {
+        name: add_parcel(engine, name, number, carrier=carriers.get(name, "ctt"))
+        for name, number in numbers.items()
+        if name != "no carrier"
+    }
+    parcels["no carrier"] = add_parcel(engine, "no carrier", numbers["no carrier"])
+    del engine.data.parcels[parcels["gone"].id]
+    statuses = {"in transit": "in_transit", "unread": None, "expired": "expired"}
+    packages = engine.data.seventeentrack.setdefault("packages", {})
+    for name, number in numbers.items():
+        record: dict[str, Any] = {
+            "parcel": parcels[name].id,
+            "own": name != "gls user",
+        }
+        if (stored := statuses.get(name, "not_found")) is not None:
+            record["status"] = stored
+        if name == "archived":
+            record["archived"] = NOW_ISO
+        packages[number] = record
+
+    diagnostics = tracker.diagnostics()
+
+    assert diagnostics["not_found_by_carrier"] == {
+        "dpd": 1,
+        "gls": 2,
+        "other": 1,
+        "unknown": 2,
+    }
+    assert list(diagnostics["not_found_by_carrier"]) == [
+        "dpd",
+        "gls",
+        "other",
+        "unknown",
+    ]
+    text = str(diagnostics)
+    for name, number in numbers.items():
+        assert number not in text
+        assert parcels[name].id not in text
+    assert "Transportes" not in text
+
+
 async def test_corrected_number_replaces_the_old_one(
     engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
 ) -> None:
@@ -1139,6 +1428,7 @@ async def test_nothing_without_the_integration(hass: HomeAssistant) -> None:
         "failed": 0,
         "last_refresh": None,
         "last_error": None,
+        "not_found_by_carrier": {},
     }
 
 
