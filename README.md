@@ -55,6 +55,12 @@ local AI model on your Home Assistant host.
   otherwise, the parcel is marked as probably delivered, unless that delivery
   belongs to another order or another carrier. You can undo that.
   One with no news a week after its expected day is archived.
+- **Parcels that went quiet**: carriers' e-mails and 17TRACK miss some
+  deliveries. A parcel with a tracking number that's on its way, with no news
+  from e-mails or 17TRACK for three weeks, counted from its last expected day
+  when that's later, is marked as probably delivered, on its last expected
+  day if it has one. You can undo that or keep it, and news about the parcel
+  takes it back.
 - **Shipments of several packages**: packages sent together that arrive on the
   same day share one box, which says how many packages it holds. The details
   list every package with its tracking number. Packages that arrive on
@@ -65,6 +71,16 @@ local AI model on your Home Assistant host.
   who delivers it ("Delivered by"). Until an e-mail names the carrier, or the
   tracking number's format gives it away, the parcel says "Carrier not known
   yet".
+- **Paack**: Paack's order IDs, nine letters and digits, `_` and the package
+  number (such as `Ab3Cd4Ef5_1`), are kept as written, capitals included. A
+  Paack e-mail joins Amazon's parcel when the part of its ID before `_` is,
+  letter for letter, the shipment ID in Amazon's **Track package** link, or
+  when both give the same label barcode (`5340` and 14 digits), which Amazon
+  shows as its tracking ID. Otherwise the usual guesses apply. Paack's
+  tracking page asks for the order ID and your postcode, so the carrier link
+  opens its search page. Parcels never keeps the postcode, e-mail address or
+  phone number in Paack's links, and doesn't add Paack's numbers to
+  [17TRACK](#17track), which can't follow them without the postcode.
 - **Delivery PINs**: delivery PINs, one-time codes and pickup codes found in
   e-mails are shown on the parcel's box until it's delivered, and in its
   details (see [Privacy and safety](#privacy-and-safety)).
@@ -117,7 +133,8 @@ local AI model on your Home Assistant host.
   diagnostics, notifications or Live Activities. Parcels hides a PIN once
   its parcel is delivered, returned or cancelled, and deletes it at the
   nightly cleanup or when the parcel is archived. A delivery that Parcels only
-  inferred keeps its PIN in the details, in case the parcel hasn't arrived.
+  inferred keeps its PIN in the details until the parcel is archived, in case
+  it hasn't arrived.
 - **17TRACK** gets tracking numbers only, under a generic name, never item
   names, shops or the numbers of private parcels.
 - **Revoking access.** Delete the mailbox entry in Home Assistant, then remove
@@ -484,8 +501,16 @@ own tracking in between.
   carrier's own wording in the parcel's history.
 - **What it doesn't add**: delivery dates. Home Assistant's 17TRACK integration
   gives no expected date, so a parcel without one stays under **No date yet**.
-  Amazon Logistics numbers aren't added either, because 17TRACK can't follow
-  them.
+- **What it leaves out**, so they don't take up places in your account:
+  - Amazon Logistics numbers, which 17TRACK can't follow;
+  - Paack's numbers, and GLS's when Home Assistant's country is Portugal.
+    17TRACK follows them only with the recipient's postcode
+    ([17TRACK's list](https://res.17track.net/asset/carrier/info/additional_parameters.json)),
+    and Home Assistant's 17TRACK integration sends only the number, so they
+    would stay "Not Found";
+  - the numbers of parcels without news for three weeks. 17TRACK's
+    [API documentation](https://api.17track.net/en/doc?version=v2.4) says
+    tracking stops after 30 days without carrier events.
 - **What it sends**: tracking numbers only, each under a generic name such as
   `parcels-1a2b3c`. Never item names, shops, or the numbers of private
   parcels, because every Home Assistant user can see the 17TRACK packages.
@@ -501,9 +526,10 @@ To set it up:
 Parcels adds the numbers of active parcels to your 17TRACK account, the
 parcels due soonest first and up to 10 at a time, reads their status every 30
 minutes (every 10 while one is out for delivery or due that day) and archives
-them there once the parcel is done, or when 17TRACK still can't find a number
-after two weeks. Numbers you added to 17TRACK yourself are read but never
-archived.
+them there once the parcel is done or without news for three weeks, when it's
+a number 17TRACK can't follow (added by an earlier version), or when 17TRACK
+still can't find a number after two weeks. Numbers you added to 17TRACK
+yourself are read but never archived.
 
 **Limits of a free account.** 17TRACK gives free members a tracking quota of
 40 numbers, and paid plans 100 or 200
@@ -519,7 +545,8 @@ When the account is full, 17TRACK refuses new numbers, and Parcels can't tell
 that refusal from others. It tries a refused number again after 6 and 12
 hours, then once a day while its parcel is active, so the number gets in once
 a place frees up. The hub's diagnostics show how many numbers are waiting
-(`failed`) and the last error, with 17TRACK's code when it gives one.
+(`failed`), the last error, with 17TRACK's code when it gives one, and how
+many numbers 17TRACK can't find, by carrier (`not_found_by_carrier`).
 
 17TRACK also sells a tracking API for developers, with its own free
 allowance. That's a different product, and Parcels doesn't use it.
@@ -648,7 +675,7 @@ carrier, status and dates. Each mailbox has a **Last sync** sensor and a
 | `parcels.merge` | Merges parcels that are the same delivery. |
 | `parcels.split` | Moves e-mails or entries of a parcel to a new parcel. |
 | `parcels.undo_merge` | Splits a parcel that Parcels merged automatically. |
-| `parcels.undo_delivery` | Takes back a delivery that Parcels inferred from another parcel of the same shop. |
+| `parcels.undo_delivery` | Takes back a delivery that Parcels inferred, from another parcel of the same shop or from three weeks without news, and doesn't infer it again. |
 | `parcels.refresh` | Checks all mailboxes, and 17TRACK when it's on, now. |
 | `parcels.reprocess` | Reads a parcel's or review item's e-mails again with the current parsers, optionally with the AI. Administrators only. |
 | `parcels.trust_sender` | Trusts a sender's domain, so its e-mails are read as shipping e-mails. Administrators only. |
@@ -685,7 +712,16 @@ actions:
   **Parcel ID** from the details, and run `parcels.reprocess` with that
   `parcel_id`.
 - **A parcel shows as delivered but hasn't arrived.** If its details say the
-  delivery was inferred, select **Undo**.
+  delivery was inferred, select **Undo**. A parcel without news for three
+  weeks shows as delivered on its last expected day, in a past week.
+- **Paack's e-mails wait in review.** Earlier versions couldn't read Paack's
+  order IDs. After the update, Parcels reads once more the Paack e-mails whose
+  local AI reading was rejected, and adds the ones it now understands. Accept
+  the others in **Needs review**, where Paack's order IDs can be typed as
+  written.
+- **A Paack parcel shows apart from its Amazon parcel.** Select one and merge
+  them. The hub's diagnostics count Paack's e-mails whose order ID matched an
+  Amazon shipment, and those that didn't (`paack_amazon`), without any ID.
 - **Repair: "Shipping e-mails from … aren't understood".** A known sender
   changed its e-mails. The e-mails wait in review; check for an update of
   Parcels.
