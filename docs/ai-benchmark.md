@@ -269,7 +269,10 @@ of 22 made-up e-mails in 7 languages, kept outside the repo; it shows how
 the checks hold on e-mails they weren't written from. *Second private set*
 (13) and *third private set* (15): made-up e-mails in 7 languages, written
 after `2ed6a52`, independently of the checks, and kept outside the repo. All
-runs so far used `qwen3:4b-instruct` on the same Home Assistant host.
+runs so far used `qwen3:4b-instruct` on the same Home Assistant host. The runs
+of `f117f4c` and 0.1.3 went through `ai_task` on Home Assistant 2026.11.2, CPU
+only (the Ollama version wasn't recorded), each only while Parcels' own AI
+worker was idle.
 
 | Date | Model | E-mails | Parcels version | Host | Tracking, e-mails right (model / after checks) | Dates right | Kinds right | Bar | Median s | p90 s | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -277,12 +280,16 @@ runs so far used `qwen3:4b-instruct` on the same Home Assistant host.
 | 2026-11-18 | qwen3:4b-instruct | this set (41) | `2ed6a52` | CPU only, Home Assistant 2026.11.2, Ollama 0.40.16 | 31 / 41 of 41 | 74 of 74 (100%) | 41 of 41 (100%) | Pass | 36.6 | 39.4 | Nothing else running on Ollama. Mean 35.2 s, max 40.9 s. |
 | 2026-11-18 | qwen3:4b-instruct | held-out (22) | `2ed6a52` | as above | 17 / 21 of 22 | 38 of 40 (95.0%) | 20 of 22 (90.9%) | Fail (tracking) | 33.2 | 75.0 | Some calls waited behind Parcels' own AI calls on the host: mean 40.8 s, max 89.3 s. |
 | 2026-11-18 | qwen3:4b-instruct | held-out (22) | 0.1.2 | as above | – / 19 of 22 | 26 of 40 (65.0%) | 17 of 22 (77.3%) | Fail | – | – | For comparison; only the scores after checks were recorded. |
-| 2026-11-18 | qwen3:4b-instruct | this set (41) | `f117f4c` | as above | 34 / 41 of 41 | 74 of 74 (100%) | 41 of 41 (100%) | Pass | 32.2 | 38.4 | Mean 32.3 s, max 39.9 s. One order number came back with two neighbouring digits swapped and was dropped; 0.1.3 repairs it. |
-| 2026-11-18 | qwen3:4b-instruct | held-out (22) | `f117f4c` | as above | 17 / 22 of 22 | 40 of 40 (100%) | 21 of 22 (95.5%) | Pass | 35.8 | 40.7 | Mean 35.6 s, max 41.4 s. The kind miss is an "on its way" e-mail, which is left to the model. |
+| 2026-11-18 | qwen3:4b-instruct | this set (41) | `f117f4c` | CPU only, Home Assistant 2026.11.2 | 34 / 41 of 41 | 74 of 74 (100%) | 41 of 41 (100%) | Pass | 32.2 | 38.3 | Mean 32.3 s, max 39.9 s. One order number came back with two neighbouring digits swapped and was dropped; 0.1.3 repairs it. |
+| 2026-11-18 | qwen3:4b-instruct | held-out (22) | `f117f4c` | as above | 17 / 22 of 22 | 40 of 40 (100%) | 21 of 22 (95.5%) | Pass | 35.8 | 40.1 | Mean 35.6 s, max 41.4 s. The kind miss is an "on its way" e-mail, which is left to the model. |
 | 2026-11-18 | qwen3:4b-instruct | second private set (13) | `2ed6a52` | as above | 10 / 13 of 13 | 26 of 26 (100%) | 13 of 13 (100%) | Pass | 31.6 | 47.6 | Mean 33.0 s, max 54.1 s. |
-| 2026-11-18 | qwen3:4b-instruct | second private set (13) | `f117f4c` | as above | 10 / 13 of 13 | 26 of 26 (100%) | 13 of 13 (100%) | Pass | 38.2 | 55.5 | Mean 38.8 s, max 62.8 s. Calls slowed as the hour-long run went on, with the same instructions: host load, not the code. |
+| 2026-11-18 | qwen3:4b-instruct | second private set (13) | `f117f4c` | as above | 10 / 13 of 13 | 26 of 26 (100%) | 13 of 13 (100%) | Pass | 38.2 | 44.5 | Mean 38.7 s, max 62.8 s. Calls slowed as the hour-long run went on, with the same instructions: host load, not the code. |
 | 2026-11-18 | qwen3:4b-instruct | third private set (15) | `2ed6a52` | as above | 12 / 13 of 15 | 30 of 30 (100%) | 12 of 15 (80.0%) | Fail | 33.6 | 37.9 | Mean 32.6 s, max 38.2 s. The model followed text hidden in one e-mail's HTML. |
-| 2026-11-18 | qwen3:4b-instruct | third private set (15) | `f117f4c` | as above | 13 / 14 of 15 | 30 of 30 (100%) | 12 of 15 (80.0%) | Fail | 37.9 | 42.6 | Mean 37.7 s, max 43.3 s. The hidden text no longer reached the model. |
+| 2026-11-18 | qwen3:4b-instruct | third private set (15) | `f117f4c` | as above | 13 / 14 of 15 | 30 of 30 (100%) | 12 of 15 (80.0%) | Fail (tracking, kinds) | 37.9 | 42.1 | Mean 37.7 s, max 43.3 s. The hidden text no longer reached the model. |
+| 2026-11-19 | qwen3:4b-instruct | this set (41) | 0.1.3 (`5037b40`) | as above | 34 / 40 of 41 | 74 of 74 (100%) | 40 of 41 (97.6%) | Fail (tracking) | 30.9 | 36.1 | Mean 30.7 s, max 36.7 s. The only miss: the model answered "not a parcel" for the PostNL customs e-mail (`nl04`). The checks keep that kind and record `not_parcel_has_tracking`, so the e-mail goes to review. The three earlier runs got it right. |
+| 2026-11-19 | qwen3:4b-instruct | held-out (22) | 0.1.3 (`5037b40`) | as above | 18 / 22 of 22 | 40 of 40 (100%) | 21 of 22 (95.5%) | Pass | 34.0 | 36.8 | Mean 33.6 s, max 38.7 s. |
+| 2026-11-19 | qwen3:4b-instruct | second private set (13) | 0.1.3 (`5037b40`) | as above | 9 / 13 of 13 | 26 of 26 (100%) | 12 of 13 (92.3%) | Pass | 36.0 | 41.7 | Mean 36.8 s, max 60.0 s. |
+| 2026-11-19 | qwen3:4b-instruct | third private set (15) | 0.1.3 (`5037b40`) | as above | 13 / 15 of 15 | 29 of 30 (96.7%) | 14 of 15 (93.3%) | Pass | 36.3 | 40.1 | Mean 36.3 s, max 41.7 s. The first pass on this set. |
 
 Per field, after checks (model in parentheses):
 

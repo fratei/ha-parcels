@@ -48,9 +48,12 @@ export interface Parcel {
   /** Delivered only by inference: another parcel from the shop was delivered then. */
   inferred: boolean;
   pickup_point: string | null;
-  /** The PIN or pickup code; only sent with the details (`parcels/get`). */
+  /**
+   * The PIN or pickup code. The list has it while the parcel is on its way;
+   * the details (`parcels/get`) always do.
+   */
   pickup_code: string | null;
-  /** The parcel has a PIN or pickup code (shown in the details). */
+  /** The parcel has a PIN or pickup code. */
   has_code: boolean;
   order_numbers: string[];
   items: string[];
@@ -58,6 +61,8 @@ export interface Parcel {
   owners: string[];
   source: ParcelSource;
   ai: boolean;
+  /** The local AI filled in details a parser missed; false once confirmed. */
+  ai_filled: boolean;
   auto_merged: AutoMerged | null;
   provisional: boolean;
   archived: boolean;
@@ -83,6 +88,20 @@ export interface Suggestion {
   items: string[];
 }
 
+export interface SenderChecks {
+  /** How many Authentication-Results headers the e-mail had. */
+  headers: number;
+  /** The server named in each header, in order. */
+  servers: string[];
+  /** The header that was used, by position, or null when none was. */
+  used: number | null;
+  dkim: string;
+  dmarc: string;
+  spf: string;
+  /** Headers the provider renamed, because they came with the e-mail. */
+  originals: number;
+}
+
 export interface ReviewItem {
   id: string;
   created: string;
@@ -93,8 +112,21 @@ export interface ReviewItem {
   mailbox_owner: string | null;
   reason: string;
   authenticated: boolean;
+  /** The sender is trusted, but this e-mail failed the sender checks. */
+  trusted_sender: boolean;
+  checks: SenderChecks | null;
+  /** The local AI fills in details the parser missed, for a parcel the e-mail already updated. */
+  fill: boolean;
   source: "parser" | "ai";
   suggestion: Suggestion | null;
+}
+
+/** What trusting a sender from "Needs review" did. */
+export interface TrustResult {
+  domain: string;
+  added: number;
+  rechecking: number;
+  kept: number;
 }
 
 export interface FilteredItem {

@@ -50,7 +50,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import hashlib
 from itertools import combinations
 from typing import Any
@@ -101,12 +101,18 @@ RECONCILE_WINDOW = timedelta(days=30)
 DOMAIN_ABSORB_WINDOW = timedelta(days=7)
 # A delivery this many days around a parcel's dates counts for inference.
 INFER_MARGIN = timedelta(days=1)
+# A shop's parcel up to this many days late, or due this many days later,
+# could still be the package a carrier delivers: shops deliver early too.
+LATE_DAYS = timedelta(days=14)
+EARLY_DAYS = timedelta(days=7)
 
 # Engine-state keys: pairs of origins the user keeps apart, and the version
 # of the one-time repair of stored parcels.
 KEPT_APART = "kept_apart"
 REPAIR_KEY = "repair"
-REPAIR_VERSION = 2
+REPAIR_VERSION = 3
+# Before any stored news: the one-time repair looks at every parcel.
+_EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
 
 # Shorter numbers from carriers of different families are not linked.
 LOOSE_MIN_LENGTH = 10
@@ -152,6 +158,9 @@ class Contribution:
     order_placed: datetime | None = None
     # Only joins a parcel that exists, e.g. an e-mail with just a delivery code.
     attach_only: bool = False
+    # Joins the parcel holding this origin ID, or nothing when no parcel does:
+    # what the AI filled in for an e-mail goes with the e-mail's parser origin.
+    anchor: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,6 +297,20 @@ def _most_recent(data: ParcelsData, parcel_ids: Iterable[str]) -> str:
 
 def _overlap(first: Eta, second: Eta) -> bool:
     return first.start <= second.end and second.start <= first.end
+
+
+def _could_arrive(eta: Eta, start: date, end: date) -> bool:
+    """Return True when a parcel due on ``eta`` could arrive in [start, end].
+
+    It may be late, or early.
+    """
+    return start - LATE_DAYS <= eta.end and eta.start <= end + EARLY_DAYS
+
+
+def _same_carrier(first: str | None, second: str | None) -> bool:
+    """Return False only when both carriers are known and of other families."""
+    one, two = carrier_family(first), carrier_family(second)
+    return one is None or two is None or one == two
 
 
 def _contribution_eta(events: Iterable[ParcelEvent]) -> Eta | None:
@@ -532,9 +555,11 @@ def _conflicts(parcel: Parcel, origin: Origin) -> bool:
 
 
 def _heuristic_target(data: ParcelsData, origin: Origin, eta: Eta | None) -> str | None:
-    """Return the single open parcel of the same merchant with overlapping dates.
+    """Return the only open parcel of the same merchant the e-mail can be about.
 
-    A parcel with other items than the e-mail's isn't a candidate.
+    Its dates must overlap the e-mail's, and no other parcel of the merchant
+    may be late, or due soon enough, to be the one instead. A parcel with
+    other items, or another carrier, than the e-mail's isn't a candidate.
     """
     wanted = merchant_key(origin.merchant)
     if not wanted or eta is None:
@@ -546,7 +571,8 @@ def _heuristic_target(data: ParcelsData, origin: Origin, eta: Eta | None) -> str
         and not parcel.state.terminal
         and parcel.state.eta is not None
         and merchant_key(parcel.state.merchant) == wanted
-        and _overlap(parcel.state.eta, eta)
+        and _could_arrive(parcel.state.eta, eta.start, eta.end)
+        and _same_carrier(parcel.state.carrier, origin.carrier)
         and not _conflicts(parcel, origin)
     ]
     if candidates and (items := _item_keys(origin.items)):
@@ -556,7 +582,10 @@ def _heuristic_target(data: ParcelsData, origin: Origin, eta: Eta | None) -> str
             for parcel in candidates
             if not _different_items(items, _item_keys(parcel.state.items), noise)
         ]
-    return candidates[0].id if len(candidates) == 1 else None
+    if len(candidates) != 1:
+        return None
+    only = candidates[0]
+    return only.id if only.state.eta and _overlap(only.state.eta, eta) else None
 
 
 def _normalise(origin: Origin) -> None:
@@ -621,6 +650,14 @@ def apply_contribution(
     strong = {
         pid for pid, parcel in data.parcels.items() if origin.id in parcel.origins
     }
+    if contribution.anchor is not None and not strong:
+        strong = {
+            pid
+            for pid, parcel in data.parcels.items()
+            if contribution.anchor in parcel.origins
+        }
+        if not strong:
+            return Applied(parcel_id=None)
     if origin.amazon_shipment_id:
         strong |= {
             pid
@@ -1655,7 +1692,9 @@ def _pair_by_day(
     e-mail doesn't name the order, so the same package shows twice: once
     from the shop and once from the carrier, with the shop's name. When the
     carrier delivers (or is delivering) on the shop's date and they're the
-    only two that fit, they merge. Otherwise the user gets suggestions.
+    only two that could be the same package, they merge. An open parcel of
+    the shop that is late, or due in the next days, could be it too, and two
+    carriers known to differ never pair. Otherwise the user gets suggestions.
     """
     untracked: list[tuple[Parcel, str, date, date, datetime]] = []
     tracked: list[tuple[Parcel, str, date]] = []
@@ -1673,12 +1712,21 @@ def _pair_by_day(
 
     edges: dict[str, set[str]] = defaultdict(set)
     days: dict[str, date] = {}
+    fits: set[frozenset[str]] = set()
     for parcel, key, start, end, first in untracked:
+        # A parcel may arrive late or early, unless news closed it (a
+        # "probably delivered" guess doesn't); only a fit is sure.
+        waiting = not _finished(parcel)
         for other, other_key, day in tracked:
             delivered = _real_delivery(other)
+            fit = start <= day <= end
             if (
                 key == other_key
-                and start <= day <= end
+                and (
+                    fit
+                    or (waiting and _could_arrive(Eta(start=start, end=end), day, day))
+                )
+                and _same_carrier(parcel.state.carrier, other.state.carrier)
                 and (delivered is None or first < delivered)
                 and not _parcels_conflict(parcel, other)
                 and not apart(parcel, other)
@@ -1686,11 +1734,17 @@ def _pair_by_day(
                 edges[parcel.id].add(other.id)
                 edges[other.id].add(parcel.id)
                 days[other.id] = day
+                if fit:
+                    fits.add(frozenset((parcel.id, other.id)))
 
     for component in _components(edges):
         targets = sorted(pid for pid in component if pid in days)
         sources = sorted(pid for pid in component if pid not in days)
-        if len(targets) == 1 and len(sources) == 1:
+        if (
+            len(targets) == 1
+            and len(sources) == 1
+            and frozenset((targets[0], sources[0])) in fits
+        ):
             target = data.parcels[targets[0]]
             other = data.parcels[sources[0]]
             if _may_auto_merge(target, other):
@@ -1773,6 +1827,43 @@ def dismiss_suggestion(
 # --- Inferred deliveries ---------------------------------------------------------
 
 
+def _may_hold(
+    parcel: Parcel,
+    delivery: Parcel,
+    when: datetime,
+    waiting: Iterable[Parcel],
+    apart: Callable[[Parcel, Parcel], bool],
+) -> bool:
+    """Return True when a delivery may have held a parcel it doesn't name.
+
+    Not when the delivery belongs to other orders or came with another
+    carrier, or when another open parcel of the shop that was late, or due
+    days later, could have been the package instead.
+    """
+    orders = parcel_order_keys(parcel)
+    if (theirs := parcel_order_keys(delivery)) and orders and theirs.isdisjoint(orders):
+        return False
+    if not _same_carrier(parcel.state.carrier, delivery.state.carrier):
+        return False
+    day = local_date(when)
+    for other in waiting:
+        eta = other.state.eta
+        first = first_news(other)
+        if (
+            other.id not in (parcel.id, delivery.id)
+            and eta is not None
+            and first is not None
+            and first < when
+            and not eta.start - INFER_MARGIN <= day <= eta.end + INFER_MARGIN
+            and _could_arrive(eta, day, day)
+            and _same_carrier(other.state.carrier, delivery.state.carrier)
+            and not _parcels_conflict(other, delivery)
+            and not apart(other, delivery)
+        ):
+            return False
+    return True
+
+
 def infer_deliveries(data: ParcelsData, now: datetime) -> set[str]:
     """Close parcels without a tracking number that were probably delivered.
 
@@ -1780,7 +1871,8 @@ def infer_deliveries(data: ParcelsData, now: datetime) -> set[str]:
     reports the delivery. A parcel without a carrier tracking number whose
     dates have passed, with no news since, counts as delivered when an
     e-mail or 17TRACK reported another parcel of the same merchant delivered
-    within a day of its dates. It only starts the day after its last
+    within a day of its dates, unless that delivery may have been another
+    package (see :func:`_may_hold`). It only starts the day after its last
     expected day. The parcels aren't
     merged, and the delivery is shown as inferred until the user keeps or
     undoes it. Returns the IDs of the changed parcels.
@@ -1788,11 +1880,20 @@ def infer_deliveries(data: ParcelsData, now: datetime) -> set[str]:
     apart = _apart_checker(data)
     today = local_date(now)
     delivered: dict[str, list[tuple[datetime, Parcel]]] = defaultdict(list)
+    waiting: dict[str, list[Parcel]] = defaultdict(list)
     for parcel in data.parcels.values():
-        if (when := _reported_delivery(parcel)) is not None and (
-            key := merchant_key(parcel.state.merchant)
-        ):
+        state = parcel.state
+        if not (key := merchant_key(state.merchant)):
+            continue
+        if (when := _reported_delivery(parcel)) is not None:
             delivered[key].append((when, parcel))
+        if (
+            parcel.archived is None
+            and not state.terminal
+            and not state.tracking_number
+            and state.eta is not None
+        ):
+            waiting[key].append(parcel)
 
     changed: set[str] = set()
     for parcel in data.parcels.values():
@@ -1819,6 +1920,7 @@ def infer_deliveries(data: ParcelsData, now: datetime) -> set[str]:
             and first_day <= local_date(when) <= last_day
             and (last is None or last <= when)
             and not apart(parcel, other)
+            and _may_hold(parcel, other, when, waiting[key], apart)
         )
         if not matches:
             continue
@@ -1905,6 +2007,8 @@ def repair_store(data: ParcelsData, now: datetime) -> set[str]:
     * Parcels of one order that are the same package are merged, undoably.
     * Orders are recorded again under the current order keys.
     * A carrier learned for a shop that ships with many carriers is forgotten.
+    * A carrier's delivery and the shop's only parcel that could be it are
+      merged, undoably, however old they are.
 
     Every step can run again harmlessly.
     """
@@ -1932,7 +2036,9 @@ def repair_store(data: ParcelsData, now: datetime) -> set[str]:
             changed.add(parcel.id)
     changed |= _drop_recommendations(data, now)
     merged = Reconciled()
-    _merge_by_order(data, None, _apart_checker(data), now, merged)
+    apart = _apart_checker(data)
+    _merge_by_order(data, None, apart, now, merged)
+    _pair_by_day(data, _reconcile_pool(data, _EPOCH), apart, now, merged)
     changed |= merged.changed
     changed -= merged.removed
     for parcel in data.parcels.values():

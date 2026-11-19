@@ -8,7 +8,7 @@ from typing import Final
 
 DOMAIN: Final = "parcels"
 NAME: Final = "Parcels"
-VERSION: Final = "0.1.3"
+VERSION: Final = "0.1.4"
 
 STORAGE_KEY: Final = "parcels"
 STORAGE_VERSION: Final = 1
@@ -86,6 +86,8 @@ AI_RETRY_DELAY: Final = timedelta(minutes=30)
 AI_DAILY_LIMIT: Final = 50
 AI_FIRST_SYNC_DAYS: Final = 14
 AI_SHADOW_DAILY_LIMIT: Final = 5
+# Calls a day that fill in what a parser missed; "Check again" isn't counted.
+AI_FILL_DAILY_LIMIT: Final = 20
 AI_MAX_INPUT_CHARS: Final = 6000
 
 # Confidence at or above which parser results are applied directly.
@@ -283,7 +285,7 @@ ISSUE_AI_REFUSED: Final = "ai_task_refused"
 ISSUE_PARSER_OUTDATED: Final = "parser_outdated_{}"
 
 # Why an e-mail is under "Needs review". Sender checks add their own reasons
-# (not_aligned, no_auth_header, untrusted_authserv).
+# (not_aligned, no_auth_header, untrusted_authserv, multiple_auth_results).
 REASON_UNKNOWN_SENDER: Final = "unknown_sender"
 REASON_LOW_CONFIDENCE: Final = "low_confidence"
 REASON_UNKNOWN_FORMAT: Final = "unknown_format"
@@ -292,3 +294,5 @@ REASON_AI_SUGGESTION: Final = "ai_suggestion"
 REASON_AI_UNAVAILABLE: Final = "ai_unavailable"
 REASON_AI_TIMEOUT: Final = "ai_timeout"
 REASON_AI_REJECTED: Final = "ai_rejected"
+# The local AI found details a parser missed in an e-mail it read.
+REASON_AI_FILL: Final = "ai_fill"

@@ -1,0 +1,81 @@
+Return-Path: <bounce-2b7d1a2861@bounce.fedex.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@fedex.com header.s=fdx1 header.b=6f19aa7a;
+       spf=pass (google.com: domain of bounce-2b7d1a2861@bounce.fedex.com
+ designates 192.0.2.163 as permitted sender) smtp.mailfrom=bounce-2b7d1a2861@bounce.fedex.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=fedex.com
+From: FedEx <TrackingUpdates@fedex.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?FedEx_Sendung_589513701214=3A_Zustellung_geplant_f?=
+ =?utf-8?q?=C3=BCr_Donnerstag=2C_19=2E11=2E2026?=
+Date: Tue, 17 Nov 2026 07:30:00 +0000
+Message-ID: <20261117071500.5204@mail.example.com>
+MIME-Version: 1.0
+Content-Language: de-DE
+Content-Type: multipart/alternative; boundary="fdx_41c7e2ab179b"
+
+--fdx_41c7e2ab179b
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hallo Alex, die Zustellung Ihrer Sendung ist geplant.
+
+Geplante Zustellung:
+
+Donnerstag, 19.11.2026, vor 12:00 Uhr
+
+Sendungsnummer: 589513701214
+Absender: Tchibo, Hamburg, DE
+Empfänger: Alex Doe, Berlin, DE
+Service: FedEx International Priority®
+
+Sie sind nicht zu Hause? Verwalten Sie Ihre Zustellung mit FedEx Delivery Manager®.
+
+Sendung verfolgen [https://www.fedex.com/fedextrack/?trknbr=589513701214&locale=de_DE]
+
+Bitte antworten Sie nicht auf diese Nachricht. Diese E-Mail wurde von einem nicht überwachten Postfach gesendet.
+
+Datenschutzrichtlinie [https://www.fedex.com/de-de/trust-center/privacy.html]
+
+© 2026 FedEx. Alle Rechte vorbehalten.
+
+--fdx_41c7e2ab179b
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FedEx</title>
+<style>body{margin:0;background:#f2f2f2;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:20px 24px;background:#4d148c}.content{padding:24px}p.big{font-size:22px;font-weight:bold;color:#4d148c;margin:4px 0}td.label{color:#666;padding:4px 12px 4px 0;text-transform:uppercase;font-size:12px}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ff6200;color:#fff;text-decoration:none;border-radius:2px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.fedex.com/content/dam/fedex-com/logos/logo.png" alt="FedEx" width="110" height="32"></td></tr>
+<tr><td class="content">
+<h1>Hallo Alex, die Zustellung Ihrer Sendung ist geplant.</h1>
+<p>Geplante Zustellung:</p>
+<p class="big">Donnerstag, 19.11.2026, vor 12:00 Uhr</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Sendungsnummer</td><td class="value">589513701214</td></tr>
+<tr><td class="label">Absender</td><td class="value">Tchibo<br>Hamburg, DE</td></tr>
+<tr><td class="label">Empfänger</td><td class="value">Alex Doe<br>Berlin, DE</td></tr>
+<tr><td class="label">Service</td><td class="value">FedEx International Priority®</td></tr>
+</table>
+<p>Sie sind nicht zu Hause? Verwalten Sie Ihre Zustellung mit FedEx Delivery Manager®.</p>
+<p style="text-align:center"><a class="button" href="https://www.fedex.com/fedextrack/?trknbr=589513701214&amp;locale=de_DE">Sendung verfolgen</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Bitte antworten Sie nicht auf diese Nachricht. Diese E-Mail wurde von einem nicht überwachten Postfach gesendet.</p>
+<p><a href="https://www.fedex.com/de-de/trust-center/privacy.html">Datenschutzrichtlinie</a></p>
+<p>© 2026 FedEx. Alle Rechte vorbehalten.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--fdx_41c7e2ab179b--

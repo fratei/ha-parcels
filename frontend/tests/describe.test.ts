@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { candidateLabel, chipMeta, describeParcel } from "../src/describe.ts";
+import {
+  candidateLabel,
+  candidateLines,
+  numberTail,
+  chipMeta,
+  chipPin,
+  describeParcel,
+  itemsSummary,
+  possiblyLine,
+  sellerLine,
+} from "../src/describe.ts";
 import { formatDate, formatDateRange, type LocaleOptions } from "../src/format.ts";
 import type { Placement } from "../src/placement.ts";
 import type { Parcel } from "../src/types.ts";
@@ -49,6 +59,14 @@ describe("describeParcel", () => {
     );
   });
 
+  test("says when the local AI filled in details", () => {
+    const parcel = makeParcel({ ...shop, ai_filled: true });
+    assert.equal(
+      describeParcel(parcel, { locale: GB }),
+      "Example Shop, carrier DHL, In transit, details filled in by the local AI",
+    );
+  });
+
   test("says when a delivery was only inferred", () => {
     const parcel = makeParcel({ ...shop, status: "delivered", inferred: true });
     assert.equal(
@@ -63,6 +81,7 @@ describe("describeParcel", () => {
       restricted: true,
       private: true,
       ai: true,
+      ai_filled: true,
       auto_merged: MERGED,
       inferred: true,
     });
@@ -102,20 +121,115 @@ describe("shipment boxes", () => {
       describeParcel(shop, { locale: GB, count: 4 }),
       "Example Shop, 4 packages, carrier DHL, In transit",
     );
-    assert.equal(chipMeta(shop, { locale: GB, count: 4, showStatus: true }), "In transit · 4 packages · DHL");
+    assert.equal(chipMeta(shop, { locale: GB, count: 4, showStatus: true }), "DHL · In transit · 4 packages");
     assert.equal(chipMeta(shop, { locale: GB, count: 1 }), "DHL");
   });
 });
 
 describe("PIN codes", () => {
-  test("are hinted at, never shown", () => {
+  test("show on the carrier line while the list has them", () => {
     const parcel = makeParcel({ ...shop, has_code: true, pickup_code: "4711" });
-    const text = describeParcel(parcel, { locale: GB });
-    assert.equal(text, "Example Shop, carrier DHL, In transit, PIN in the details");
-    assert.equal(chipMeta(parcel, { locale: GB, showStatus: true }), "In transit · DHL");
+    assert.equal(describeParcel(parcel, { locale: GB }), "Example Shop, carrier DHL, In transit, PIN 4711");
+    assert.equal(chipPin(parcel), "PIN 4711");
+    assert.equal(chipMeta(parcel, { locale: GB, showStatus: true }), "DHL · In transit");
+  });
+
+  test("are hinted at when only the details have them", () => {
+    const parcel = makeParcel({ ...shop, status: "delivered", inferred: true, has_code: true });
+    assert.equal(chipPin(parcel), null);
+    assert.match(describeParcel(parcel, { locale: GB }), /, PIN in the details$/);
+  });
+
+  test("never show for a restricted parcel", () => {
+    const parcel = makeParcel({ ...shop, has_code: true, pickup_code: "4711", restricted: true });
+    assert.equal(chipPin(parcel), null);
     assert.equal(
-      describeParcel({ ...parcel, restricted: true }, { locale: GB }),
+      describeParcel(parcel, { locale: GB }),
       "Private parcel, carrier DHL, In transit, private",
+    );
+  });
+});
+
+describe("sellerLine", () => {
+  test("is the shop, else says the seller isn't known", () => {
+    assert.equal(sellerLine(shop), "Example Shop");
+    assert.equal(sellerLine(makeParcel({ carrier: "dhl", tracking_number: "TEST0001" })), "Unknown seller");
+    assert.equal(sellerLine(makeParcel({ ...shop, restricted: true })), "Private parcel");
+    assert.equal(
+      describeParcel(makeParcel({ carrier: "dhl" }), { locale: GB }),
+      "Unknown seller, carrier DHL, In transit",
+    );
+  });
+});
+
+describe("itemsSummary", () => {
+  test("names one item in full", () => {
+    assert.equal(itemsSummary(makeParcel({ items: ["  Lumen desk lamp  with dimmer "] })), "Lumen desk lamp with dimmer");
+  });
+
+  test("counts several items and keeps their names short", () => {
+    assert.equal(
+      itemsSummary(makeParcel({ items: ["Lumen desk lamp with dimmer", "Brava bin 30 L"] })),
+      "2 items · Lumen desk lamp, Brava bin 30",
+    );
+    assert.equal(
+      itemsSummary(
+        makeParcel({
+          items: ["Zeta Z2 plug, white", "Brava bin 30 L", "2 x AA batteries", "Brava liners (pack of 20)"],
+        }),
+      ),
+      "4 items · Zeta, Brava, AA batteries, Brava",
+    );
+  });
+
+  test("stops after eight names", () => {
+    const items = Array.from({ length: 10 }, (_, index) => `Item${index + 1} thing`);
+    assert.equal(
+      itemsSummary(makeParcel({ items })),
+      "10 items · Item1, Item2, Item3, Item4, Item5, Item6, Item7, Item8, …",
+    );
+  });
+
+  test("is null without items or for a restricted parcel", () => {
+    assert.equal(itemsSummary(makeParcel({ items: [" ", ""] })), null);
+    assert.equal(itemsSummary(makeParcel({ items: ["Brava bin"], restricted: true })), null);
+  });
+
+  test("is in the description", () => {
+    assert.equal(
+      describeParcel(makeParcel({ ...shop, items: ["Brava bin 30 L", "Zeta Z2 plug"] }), { locale: GB }),
+      "Example Shop, carrier DHL, In transit, 2 items · Brava bin 30, Zeta Z2 plug",
+    );
+  });
+});
+
+describe("possiblyLine", () => {
+  const lamp = makeParcel({ id: "a", items: ["Lumen desk lamp with dimmer", "Brava bin 30 L"] });
+  const plug = makeParcel({ id: "b", items: ["2 x Zeta Z2 plug, white"] });
+
+  test("names the items of the one parcel the box may be", () => {
+    assert.equal(possiblyLine([lamp]), "Possibly: 2 items · Lumen desk lamp, Brava bin 30");
+  });
+
+  test("offers each candidate's first item when there are several", () => {
+    assert.equal(possiblyLine([lamp, plug]), "Possibly: Lumen desk lamp +1 or Zeta Z2 plug");
+  });
+
+  test("is null when no candidate's items are known or may be shown", () => {
+    assert.equal(possiblyLine([]), null);
+    assert.equal(possiblyLine([makeParcel({ id: "c", items: [] })]), null);
+    assert.equal(possiblyLine([{ ...plug, restricted: true }]), null);
+  });
+
+  test("is announced only when the box's own items aren't known", () => {
+    const tracked = makeParcel({ ...shop, items: [] });
+    assert.equal(
+      describeParcel(tracked, { locale: GB, possibly: "Possibly: Brava bin" }),
+      "Example Shop, carrier DHL, In transit, Possibly: Brava bin",
+    );
+    assert.equal(
+      describeParcel({ ...tracked, items: ["Zeta Z2 plug"] }, { locale: GB, possibly: "Possibly: Brava bin" }),
+      "Example Shop, carrier DHL, In transit, Zeta Z2 plug",
     );
   });
 });
@@ -124,30 +238,68 @@ describe("chipMeta", () => {
   test("shows the carrier and window, plus the status or dates when asked", () => {
     assert.equal(chipMeta(windowed, { locale: GB, placement: span }), "DHL · 13:00–15:00");
     assert.equal(chipMeta(windowed, { locale: GB, placement: on("delivered") }), "DHL");
-    assert.equal(chipMeta(shop, { locale: GB, showStatus: true }), "In transit · DHL");
+    assert.equal(chipMeta(shop, { locale: GB, showStatus: true }), "DHL · In transit");
     assert.equal(
       chipMeta(windowed, { locale: GB, placement: span, showRange: true }),
       `DHL · ${formatDateRange(span.from, span.to, GB)} · 13:00–15:00`,
     );
     assert.equal(chipMeta(shop, { locale: GB, placement: on("eta"), showRange: true }), "DHL");
-    assert.equal(chipMeta(makeParcel({ carrier: "dhl" }), { locale: GB }), "");
+    assert.equal(chipMeta(makeParcel({ carrier: "dhl" }), { locale: GB }), "DHL");
   });
 });
 
-describe("candidateLabel", () => {
-  test("tells parcels apart by name, carrier, number and date", () => {
-    const eta = makeParcel({ ...shop, eta_start: span.from, eta_end: span.to });
+describe("merge candidates", () => {
+  const kettle = makeParcel({
+    merchant: "Example Shop",
+    carrier: "dhl",
+    tracking_number: "JD0000000012345",
+    order_numbers: ["111-0000001-0004321"],
+    items: ["Blue kettle", "Tea towel"],
+    eta_start: span.from,
+    eta_end: span.to,
+  });
+  const range = formatDateRange(span.from, span.to, GB);
+
+  test("numbers are cut to their last five letters or digits", () => {
+    assert.equal(numberTail("JD0000000012345"), "…12345");
+    assert.equal(numberTail("111-0000001-0004321"), "…04321");
+    assert.equal(numberTail("AB-123"), "AB-123");
+    assert.equal(numberTail("  "), null);
+  });
+
+  test("tell parcels of one shop apart by items, carrier, number, order and date", () => {
+    assert.deepEqual(candidateLines(kettle, GB), {
+      title: "Example Shop",
+      when: `In transit · ${range}`,
+      carrier: "DHL · No. …12345 · Order …04321",
+      items: "2 items · Blue kettle, Tea towel",
+    });
     assert.equal(
-      candidateLabel(eta, GB),
-      `Example Shop · DHL · TEST0001 · ${formatDateRange(span.from, span.to, GB)}`,
+      candidateLabel(kettle, GB),
+      `Example Shop · 2 items · Blue kettle, Tea towel · DHL · No. …12345 · Order …04321 · In transit · ${range}`,
     );
+  });
+
+  test("a delivered parcel shows the day it arrived", () => {
+    const delivered = makeParcel({
+      ...kettle,
+      status: "delivered",
+      delivered_at: "2026-07-13T09:30:00Z",
+    });
+    assert.equal(candidateLines(delivered, GB).when, `Delivered · ${formatDateRange("2026-07-13", "2026-07-13", GB)}`);
+  });
+
+  test("say what isn't known yet", () => {
+    const bare = makeParcel({ tracking_number: "TEST0002", status: "ordered" });
+    assert.deepEqual(candidateLines(bare, GB), {
+      title: "Unknown seller",
+      when: "Ordered",
+      carrier: "Carrier not known yet · No. …T0002",
+      items: null,
+    });
     assert.equal(
-      candidateLabel(makeParcel({ tracking_number: "TEST0002", status: "ordered" }), GB),
-      "TEST0002 · Ordered",
-    );
-    assert.equal(
-      candidateLabel(makeParcel({ carrier: "dhl", tracking_number: "TEST0003", status: "shipped" }), GB),
-      "DHL · TEST0003 · Shipped",
+      candidateLabel(bare, GB),
+      "Unknown seller · Carrier not known yet · No. …T0002 · Ordered",
     );
   });
 });

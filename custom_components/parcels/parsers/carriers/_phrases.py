@@ -457,6 +457,76 @@ KIND_PHRASES: Final[dict[MailKind, tuple[str, ...]]] = {
     ),
 }
 
+# "Scheduled delivery" notices of delivery-planning services (UPS My Choice,
+# FedEx Delivery Manager): the parcel is in transit and has a delivery day.
+# Only the carriers that send such notices use them.
+SCHEDULED_PHRASES: Final[tuple[str, ...]] = (
+    "entrega agendada",
+    "entrega esta agendada",
+    "agendada para entrega",
+    "agendado para entrega",
+    "entrega programada",
+    "entrega esta programada",
+    "programada para entrega",
+    "programado para entrega",
+    "programada para su entrega",
+    "programado para su entrega",
+    "scheduled for delivery",
+    "delivery scheduled",
+    "delivery is scheduled",
+    "zustellung geplant",
+    "geplante zustellung",
+    "zur zustellung geplant",
+    "lieferung geplant",
+    "geplante lieferung",
+    "geplanter zustelltermin",
+    "geplantes zustelldatum",
+    "livraison prevue",
+    "livraison programmee",
+    "livraison est prevue",
+    "livraison est programmee",
+    "consegna programmata",
+    "consegna prevista",
+    "consegna e programmata",
+    "consegna e prevista",
+    "programmata per la consegna",
+    "bezorging gepland",
+    "bezorging is gepland",
+    "geplande bezorging",
+    "gepland voor bezorging",
+    "geplande bezorgdatum",
+)
+# Notices that the planned delivery day changed: read as a delay, like
+# "new delivery date".
+NEW_DATE_PHRASES: Final[tuple[str, ...]] = (
+    "nova data de entrega",
+    "data de entrega foi alterada",
+    "data de entrega alterada",
+    "nueva fecha de entrega",
+    "fecha de entrega ha cambiado",
+    "cambio en la fecha de entrega",
+    "new delivery date",
+    "new scheduled delivery date",
+    "delivery date has changed",
+    "delivery date changed",
+    "delivery date has been updated",
+    "scheduled delivery date has changed",
+    "scheduled delivery date has been updated",
+    "neues zustelldatum",
+    "neuer zustelltermin",
+    "zustelldatum hat sich geandert",
+    "zustelldatum wurde geandert",
+    "nouvelle date de livraison",
+    "date de livraison a change",
+    "date de livraison a ete modifiee",
+    "nuova data di consegna",
+    "data di consegna e cambiata",
+    "data di consegna e stata modificata",
+    "nieuwe bezorgdatum",
+    "bezorgdatum is gewijzigd",
+    "bezorgdatum is veranderd",
+)
+
 # Phrases saying that the recipient collected a parcel: delivered, and
 # never turned into "ready for pickup" by a nearby pickup point.
 COLLECTED_PHRASES: Final[tuple[str, ...]] = (

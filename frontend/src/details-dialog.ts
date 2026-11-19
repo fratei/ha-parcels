@@ -11,8 +11,9 @@ import {
 import { live } from "lit/directives/live.js";
 import { styleMap } from "lit/directives/style-map.js";
 import { callParcelsCommand, callParcelsService } from "./api.ts";
+import { canCheckAgain, checkAgainText, normalizeCheckAgain } from "./check-again.ts";
 import { parseInstant } from "./dates.ts";
-import { candidateLabel } from "./describe.ts";
+import { candidateLabel, candidateLines } from "./describe.ts";
 import { ParcelsDialogBase, type ReturnFocus } from "./dialog-base.ts";
 import { errorMessage } from "./errors.ts";
 import {
@@ -39,7 +40,14 @@ import {
   statusLabel,
 } from "./labels.ts";
 import { normalizeDetails } from "./normalize.ts";
-import { etaRange, mergeCandidates } from "./parcels.ts";
+import {
+  etaRange,
+  possibleMatches,
+  rankMergeCandidates,
+  searchCandidates,
+  type MergeCandidates,
+  type PossibleMatch,
+} from "./parcels.ts";
 import { defineElement } from "./register.ts";
 import { isActiveStatus, statusColor } from "./status.ts";
 import { STRINGS, fmt } from "./strings.ts";
@@ -58,6 +66,8 @@ const EXPECTED_FORMAT: Intl.DateTimeFormatOptions = {
 };
 
 const EMPTY_DATE_FORM: DateForm = { eta_start: "", eta_end: "", window_start: "", window_end: "" };
+/** The merge picker gets a search field above this many candidates. */
+const SEARCH_FROM = 6;
 
 function newestFirst(entries: readonly TimelineEntry[]): TimelineEntry[] {
   return entries
@@ -79,14 +89,91 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     _dateForm: { state: true },
     _formError: { state: true },
     _mergeTarget: { state: true },
+    _mergeQuery: { state: true },
+    _mergeOlder: { state: true },
+    _mergeHint: { state: true },
     _splitSelection: { state: true },
     _pendingPrivate: { state: true },
+    _checking: { state: true },
+    _checkStatus: { state: true },
   };
 
   static override styles: CSSResultGroup = [
     baseStyles,
     dialogStyles,
     css`
+      .merge-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 0;
+        margin: 8px 0 0;
+        padding: 0;
+        border: 0;
+      }
+      .merge-option {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 8px 10px;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .merge-option:has(input:checked) {
+        border-color: var(--primary-color, #03a9f4);
+        box-shadow: inset 0 0 0 1px var(--primary-color, #03a9f4);
+      }
+      .merge-option input {
+        flex: none;
+        width: 18px;
+        height: 18px;
+        margin: 1px 0 0;
+        accent-color: var(--primary-color, #03a9f4);
+      }
+      .merge-lines {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        font-size: 0.875rem;
+      }
+      .merge-line {
+        overflow-wrap: anywhere;
+      }
+      .merge-line.items {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .merge-hint {
+        color: var(--error-color, #db4437);
+      }
+      .possible-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin: 8px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .possible-item {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 8px;
+      }
+      .possible-item .merge-lines {
+        flex: 1 1 12rem;
+      }
+      .possible-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
       .facts {
         display: flex;
         flex-direction: column;
@@ -200,12 +287,23 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
   /** The validation problem of the date form. */
   declare private _formError: FormProblem | null;
   declare private _mergeTarget: string;
+  declare private _mergeQuery: string;
+  /** Whether the merge picker shows archived and long-closed parcels. */
+  declare private _mergeOlder: boolean;
+  /** Merge was pressed before a parcel was chosen. */
+  declare private _mergeHint: boolean;
   declare private _splitSelection: readonly string[];
   /** The private value just chosen, until the next snapshot. */
   declare private _pendingPrivate: boolean | null;
+  /** "Check again" is running. */
+  declare private _checking: boolean;
+  /** What "Check again" did, until another parcel is shown. */
+  declare private _checkStatus: string | null;
 
   /** Counts loads, so that only the latest result is shown. */
   private _request = 0;
+  /** Counts "Check again" runs, so that a late one doesn't end a newer one. */
+  private _checkRun = 0;
   /** The snapshot parcel the details were loaded for. */
   private _loadedKey = "";
 
@@ -222,8 +320,13 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._dateForm = EMPTY_DATE_FORM;
     this._formError = null;
     this._mergeTarget = "";
+    this._mergeQuery = "";
+    this._mergeOlder = false;
+    this._mergeHint = false;
     this._splitSelection = [];
     this._pendingPrivate = null;
+    this._checking = false;
+    this._checkStatus = null;
   }
 
   /** Opens the dialog for a parcel; `returnFocus` runs when it closes. */
@@ -235,6 +338,9 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._copyState = "idle";
     this._formError = null;
     this._pendingPrivate = null;
+    this._checkRun += 1;
+    this._checking = false;
+    this._checkStatus = null;
     void this._load();
     await this.showDialog(returnFocus);
   }
@@ -252,6 +358,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._copyState = "idle";
     this._formError = null;
     this._pendingPrivate = null;
+    this._checkStatus = null;
     void this._load();
     void this.focusAfterRender("[data-current-package]");
   }
@@ -264,6 +371,9 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._loadError = null;
     this._mode = "view";
     this._pendingPrivate = null;
+    this._checkRun += 1;
+    this._checking = false;
+    this._checkStatus = null;
   }
 
   protected override canLightDismiss(): boolean {
@@ -356,18 +466,41 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
             </div>
           </div>`
         : nothing}
+      ${parcel && this._mode === "view" ? this._renderCheckStatus() : nothing}
       ${parcel && !parcel.restricted ? this._renderActions(parcel) : nothing}
     `;
   }
 
+  /** Always there in the view, so that screen readers announce what "Check again" did. */
+  private _renderCheckStatus(): TemplateResult {
+    return html`<div class="dialog-status" role="status">
+      ${this._checkStatus
+        ? html`<div class="alert">
+            <ha-icon icon="mdi:email-sync-outline" aria-hidden="true"></ha-icon>
+            <span class="grow">${this._checkStatus}</span>
+            <button
+              type="button"
+              class="icon-btn"
+              aria-label=${STRINGS.dismissMessage}
+              title=${STRINGS.dismissMessage}
+              @click=${this._dismissCheckStatus}
+            >
+              <ha-icon icon="mdi:close" aria-hidden="true"></ha-icon>
+            </button>
+          </div>`
+        : nothing}
+    </div>`;
+  }
+
   private _renderBadges(parcel: Parcel): TemplateResult {
+    const aiLabel = parcel.ai ? STRINGS.aiBadgeLabel : STRINGS.aiFilledLabel;
     return html`<div class="dialog-badges">
       <span class="badge" style=${styleMap({ "--badge-color": statusColor(parcel.status) })}>
         ${statusLabel(parcel.status)}
       </span>
-      ${parcel.ai && !parcel.restricted
-        ? html`<span class="badge ai" title=${STRINGS.aiBadgeLabel}>
-            ${STRINGS.aiBadge}<span class="sr-only">, ${STRINGS.aiBadgeLabel}</span>
+      ${(parcel.ai || parcel.ai_filled) && !parcel.restricted
+        ? html`<span class="badge ai" title=${aiLabel}>
+            ${STRINGS.aiBadge}<span class="sr-only">, ${aiLabel}</span>
           </span>`
         : nothing}
       ${parcel.private || parcel.restricted
@@ -415,14 +548,14 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
   private _renderView(parcel: Parcel): TemplateResult {
     const restricted = parcel.restricted;
     return html`
-      ${!restricted && parcel.ai
+      ${!restricted && (parcel.ai || parcel.ai_filled)
         ? html`<div class="alert">
             <ha-icon icon="mdi:robot-outline" aria-hidden="true"></ha-icon>
-            <span class="grow">${STRINGS.aiNotice}</span>
+            <span class="grow">${parcel.ai ? STRINGS.aiNotice : STRINGS.aiFilledNotice}</span>
             <button
               type="button"
               class="btn"
-              aria-label=${STRINGS.confirmLabel}
+              aria-label=${parcel.ai ? STRINGS.confirmLabel : STRINGS.confirmFilledLabel}
               aria-disabled=${this._busy ? "true" : "false"}
               @click=${this._confirm}
             >
@@ -435,6 +568,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
       ${!restricted && parcel.provisional
         ? html`<p class="hint">${STRINGS.provisionalHint}</p>`
         : nothing}
+      ${restricted ? nothing : this._renderPossible(parcel)}
       ${this._renderFacts(parcel)}
       ${restricted
         ? nothing
@@ -452,6 +586,61 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
       <h3 class="section-title">${STRINGS.timeline}</h3>
       ${this._details ? this._renderTimeline(this._details.timeline) : this._renderLoadState()}
     `;
+  }
+
+  /**
+   * The parcels a merge suggestion says this one may be (administrators only):
+   * shown as uncertain, with Merge or "Not this one" for each.
+   */
+  private _renderPossible(parcel: Parcel): TemplateResult | typeof nothing {
+    const matches = possibleMatches(this.snapshot?.merge_suggestions, parcel.id);
+    if (!matches.length) {
+      return nothing;
+    }
+    const locale = this.locale;
+    const busy = this._busy ? "true" : "false";
+    const title = parcelTitle(parcel);
+    return html`<section class="possible" aria-labelledby="possible-title">
+      <h3 class="section-title" id="possible-title">${STRINGS.possibleMatches}</h3>
+      <p class="hint">${STRINGS.possibleMatchesHint}</p>
+      <ul class="possible-list">
+        ${matches.map((match) => {
+          const lines = candidateLines(match.parcel, locale);
+          const candidate = candidateLabel(match.parcel, locale);
+          return html`<li class="possible-item" data-possible=${match.parcel.id}>
+            <span class="merge-lines">
+              <span class="merge-line"><strong>${lines.title}</strong> · ${lines.when}</span>
+              <span class="merge-line muted">${lines.carrier}</span>
+              <span class="merge-line items ${lines.items ? "" : "muted"}">
+                ${lines.items ?? STRINGS.itemsNotKnown}
+              </span>
+            </span>
+            <span class="possible-actions">
+              <button
+                type="button"
+                class="btn"
+                data-accept
+                aria-label=${fmt(STRINGS.mergeSuggestedLabel, { candidate, title })}
+                aria-disabled=${busy}
+                @click=${() => this._acceptPossible(match)}
+              >
+                ${STRINGS.mergeSuggested}
+              </button>
+              <button
+                type="button"
+                class="btn"
+                data-dismiss
+                aria-label=${fmt(STRINGS.notThisOneLabel, { candidate, title })}
+                aria-disabled=${busy}
+                @click=${() => this._dismissPossible(match)}
+              >
+                ${STRINGS.notThisOne}
+              </button>
+            </span>
+          </li>`;
+        })}
+      </ul>
+    </section>`;
   }
 
   private _renderMergeNotice(parcel: Parcel): TemplateResult {
@@ -696,23 +885,78 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
   }
 
   private _renderMerge(parcel: Parcel): TemplateResult {
-    const candidates = mergeCandidates(this.snapshot?.parcels ?? [], parcel.id);
-    if (!candidates.length) {
+    const { pool, shown, target } = this._mergeChoice(parcel);
+    const total = pool.likely.length + pool.older.length;
+    if (!total) {
       return html`<p class="empty">${STRINGS.noMergeCandidates}</p>`;
     }
-    const target = this._resolvedMergeTarget(candidates);
-    return html`<p>${STRINGS.mergeIntro}</p>
-      <label class="field">
-        <span class="field-label">${STRINGS.mergeChoose}</span>
-        <select data-first @change=${this._onMergeTarget}>
-          ${candidates.map(
-            (candidate) =>
-              html`<option value=${candidate.id} ?selected=${candidate.id === target}>
-                ${candidateLabel(candidate, this.locale)}
-              </option>`,
-          )}
-        </select>
-      </label>`;
+    const searching = this._mergeQuery.trim() !== "";
+    const withSearch = total > SEARCH_FROM;
+    const olderFirst = this._mergeOlder && !searching ? pool.likely.length : -1;
+    const moreOlder = !searching && !this._mergeOlder && pool.older.length > 0;
+    return html`<p id="merge-intro">${STRINGS.mergeIntro}</p>
+      ${withSearch
+        ? html`<label class="field">
+            <span class="field-label">${STRINGS.mergeSearch}</span>
+            <input
+              type="search"
+              data-first
+              autocomplete="off"
+              placeholder=${STRINGS.mergeSearchPlaceholder}
+              .value=${live(this._mergeQuery)}
+              @input=${this._onMergeQuery}
+            />
+          </label>`
+        : nothing}
+      <fieldset class="merge-list" aria-describedby="merge-intro">
+        <legend class="sr-only">${STRINGS.mergeChoose}</legend>
+        ${shown.map((candidate, index) =>
+          this._renderCandidate(candidate, {
+            checked: candidate.id === target,
+            first: !withSearch && index === 0,
+            olderFirst: index === olderFirst,
+          }),
+        )}
+        ${searching && !shown.length ? html`<p class="empty">${STRINGS.mergeNoMatch}</p>` : nothing}
+      </fieldset>
+      ${moreOlder
+        ? html`<button
+            type="button"
+            class="link-btn"
+            ?data-first=${!withSearch && !shown.length}
+            @click=${this._showOlderMerge}
+          >
+            ${fmt(STRINGS.mergeShowOlder, { count: String(pool.older.length) })}
+          </button>`
+        : nothing}
+      ${this._mergeHint && !target
+        ? html`<p class="hint merge-hint" role="alert">${STRINGS.mergeChooseFirst}</p>`
+        : nothing}`;
+  }
+
+  private _renderCandidate(
+    candidate: Parcel,
+    marks: { checked: boolean; first: boolean; olderFirst: boolean },
+  ): TemplateResult {
+    const lines = candidateLines(candidate, this.locale);
+    return html`<label class="merge-option">
+      <input
+        type="radio"
+        name="merge-target"
+        value=${candidate.id}
+        .checked=${live(marks.checked)}
+        ?data-first=${marks.first}
+        ?data-older-first=${marks.olderFirst}
+        @change=${this._onMergeTarget}
+      />
+      <span class="merge-lines">
+        <span class="merge-line"><strong>${lines.title}</strong> · ${lines.when}</span>
+        <span class="merge-line muted">${lines.carrier}</span>
+        <span class="merge-line items ${lines.items ? "" : "muted"}">
+          ${lines.items ?? STRINGS.itemsNotKnown}
+        </span>
+      </span>
+    </label>`;
   }
 
   private _renderSplit(): TemplateResult {
@@ -755,14 +999,14 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
           </button>
         </div>`;
       case "merge": {
-        const candidates = mergeCandidates(this.snapshot?.parcels ?? [], parcel.id);
+        const { pool, target } = this._mergeChoice(parcel);
         return html`<div class="dialog-actions">
           ${cancel}
-          ${candidates.length
+          ${pool.likely.length + pool.older.length
             ? html`<button
                 type="button"
                 class="btn primary"
-                aria-disabled=${busy}
+                aria-disabled=${this._busy || !target ? "true" : "false"}
                 @click=${this._merge}
               >
                 ${STRINGS.mergeConfirm}
@@ -802,6 +1046,18 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
           <button type="button" class="btn" data-mode="date" @click=${this._editDate}>
             ${STRINGS.editDate}
           </button>
+          ${canCheckAgain(parcel, this.snapshot?.settings.user_is_admin === true)
+            ? html`<button
+                type="button"
+                class="btn"
+                data-check-again
+                title=${STRINGS.checkAgainHint}
+                aria-disabled=${busy}
+                @click=${this._checkAgain}
+              >
+                ${this._checking ? STRINGS.checkingAgain : STRINGS.checkAgain}
+              </button>`
+            : nothing}
           <button type="button" class="btn" data-mode="merge" @click=${this._startMerge}>
             ${STRINGS.mergeWith}
           </button>
@@ -859,6 +1115,9 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
 
   private _startMerge(): void {
     this._mergeTarget = "";
+    this._mergeQuery = "";
+    this._mergeOlder = false;
+    this._mergeHint = false;
     this._setMode("merge");
   }
 
@@ -910,6 +1169,41 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
 
   private _markDelivered(): void {
     this._parcelService("mark_delivered", {});
+  }
+
+  /** Reads the parcel's e-mails again; the parcel stays, and the answer says what happened. */
+  private async _checkAgain(): Promise<void> {
+    const hass = this.hass;
+    const parcel = this._parcel;
+    if (!hass || !parcel || this._busy) {
+      return;
+    }
+    const run = ++this._checkRun;
+    let result = normalizeCheckAgain(null);
+    this._checkStatus = null;
+    this._checking = true;
+    await this.runAction(
+      async () => {
+        const raw = await callParcelsCommand<unknown>(hass, "parcel/check_again", {
+          parcel_id: parcel.id,
+        });
+        result = normalizeCheckAgain(raw);
+      },
+      () => {
+        const settings = this.snapshot?.settings;
+        this._checkStatus = checkAgainText(result, {
+          enabled: settings?.ai_enabled === true,
+          mode: settings?.ai_mode ?? "off",
+        });
+      },
+    );
+    if (run === this._checkRun) {
+      this._checking = false;
+    }
+  }
+
+  private _dismissCheckStatus(): void {
+    this._checkStatus = null;
   }
 
   private _archive(): void {
@@ -965,14 +1259,88 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._parcelService("update", data, () => this._backToView());
   }
 
-  private _resolvedMergeTarget(candidates: readonly Parcel[]): string {
-    return candidates.some((candidate) => candidate.id === this._mergeTarget)
-      ? this._mergeTarget
-      : (candidates[0]?.id ?? "");
+  /** Every other parcel the viewer may see, likely matches first. */
+  private _mergePool(parcel: Parcel): MergeCandidates {
+    const snapshot = this.snapshot;
+    if (!snapshot) {
+      return { likely: [], older: [] };
+    }
+    return rankMergeCandidates(snapshot.parcels, parcel, {
+      today: snapshot.settings.today,
+      timeZone: snapshot.settings.time_zone,
+    });
+  }
+
+  /** The candidates on show, and the chosen one while it is on show. */
+  private _mergeChoice(parcel: Parcel): { pool: MergeCandidates; shown: Parcel[]; target: string } {
+    const pool = this._mergePool(parcel);
+    const query = this._mergeQuery.trim();
+    let shown = pool.likely;
+    if (query) {
+      shown = searchCandidates([...pool.likely, ...pool.older], query);
+    } else if (this._mergeOlder) {
+      shown = [...pool.likely, ...pool.older];
+    }
+    const target = shown.some((candidate) => candidate.id === this._mergeTarget) ? this._mergeTarget : "";
+    return { pool, shown, target };
   }
 
   private _onMergeTarget(event: Event): void {
-    this._mergeTarget = (event.currentTarget as HTMLSelectElement).value;
+    this._mergeTarget = (event.currentTarget as HTMLInputElement).value;
+    this._mergeHint = false;
+  }
+
+  private _onMergeQuery(event: Event): void {
+    this._mergeQuery = (event.currentTarget as HTMLInputElement).value;
+  }
+
+  private _showOlderMerge(): void {
+    this._mergeOlder = true;
+    void this.focusAfterRender("[data-older-first]");
+  }
+
+  /** Merges a possible match; the dialog follows the parcel that remains. */
+  private _acceptPossible(match: PossibleMatch): void {
+    const hass = this.hass;
+    if (!hass) {
+      return;
+    }
+    let merged: string | null = null;
+    void this.runAction(
+      async () => {
+        const result = await callParcelsCommand<{ parcel_id?: unknown }>(
+          hass,
+          "suggestion/accept",
+          { suggestion_id: match.suggestionId, parcel_id: match.candidateId },
+        );
+        merged = typeof result?.parcel_id === "string" ? result.parcel_id : null;
+      },
+      () => {
+        if (merged !== null && merged !== this._parcelId) {
+          this._parcelId = merged;
+          this._details = null;
+          this._loadError = null;
+          void this._load();
+        }
+        void this.focusAfterRender("[data-autofocus]");
+      },
+    );
+  }
+
+  /** Rules a possible match out: the two parcels are kept apart. */
+  private _dismissPossible(match: PossibleMatch): void {
+    const hass = this.hass;
+    if (!hass) {
+      return;
+    }
+    void this.runAction(
+      () =>
+        callParcelsCommand(hass, "suggestion/dismiss", {
+          suggestion_id: match.suggestionId,
+          parcel_id: match.candidateId,
+        }),
+      () => void this.focusAfterRender("[data-autofocus]"),
+    );
   }
 
   private _merge(): void {
@@ -981,10 +1349,10 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     if (!hass || !parcel) {
       return;
     }
-    const target = this._resolvedMergeTarget(
-      mergeCandidates(this.snapshot?.parcels ?? [], parcel.id),
-    );
+    const { target } = this._mergeChoice(parcel);
     if (!target) {
+      this._mergeHint = true;
+      void this.focusAfterRender('input[name="merge-target"]');
       return;
     }
     // The open parcel is the target: the chosen one is merged into it.

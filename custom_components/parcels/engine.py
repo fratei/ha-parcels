@@ -48,6 +48,7 @@ from .const import (
     EVENT_PARCEL_ADDED,
     EVENT_STATUS_CHANGED,
     ISSUE_PARSER_OUTDATED,
+    REASON_AI_FILL,
     REASON_LOW_CONFIDENCE,
     REASON_RESTORED,
     REASON_UNKNOWN_FORMAT,
@@ -58,7 +59,11 @@ from .const import (
     ParcelStatus,
 )
 from .convert import (
+    fill_contribution,
+    fill_fields,
+    fill_gaps,
     is_confident,
+    message_origin_id,
     result_contributions,
     suggestion_from_result,
     suggestion_result,
@@ -93,6 +98,7 @@ from .mail.errors import (
     MailRateLimited,
 )
 from .models import (
+    FILL_ORIGIN_SUFFIX,
     FilteredItem,
     MessageRecord,
     MessageState,
@@ -105,6 +111,7 @@ from .models import (
     Suggestion,
     dt_from_str,
     dt_to_str,
+    is_carrier_mail,
     new_id,
 )
 from .parsers import NOTE_KNOWN_SENDER_UNPARSED, parse_message
@@ -143,6 +150,16 @@ UNPARSED_THRESHOLD = 2
 UNPARSED_WINDOW = timedelta(days=7)
 UNPARSED_KEEP = timedelta(days=30)
 MIN_NUMBER_CHARS = 5
+# The diagnostics show the sender checks of this many e-mails under review.
+MAX_SENDER_CHECKS = 20
+# "Check again" reads at most this many of a parcel's e-mails, newest first.
+CHECK_AGAIN_MAX_EMAILS = 5
+# Set once the first mailbox sync after the update checked what an earlier
+# release stored: open parcels without a date or items, and e-mails refused
+# for their mail server (0.1.3 didn't know Outlook.com's).
+FILL_CHECK_KEY = "fill_check"
+REASON_UNTRUSTED_SERVER = "untrusted_authserv"
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def validation_error(key: str, **placeholders: str) -> ServiceValidationError:
@@ -322,6 +339,9 @@ class ParcelsEngine:
         now = dt_util.utcnow()
         if int(data.engine.get(REPAIR_KEY) or 0) < REPAIR_VERSION:
             self._repair(now)
+        if not (data.parcels or data.review):
+            # Nothing stored by an earlier release to check after the update.
+            data.engine.setdefault(FILL_CHECK_KEY, True)
         self._statuses = {pid: p.state.status for pid, p in data.parcels.items()}
         self._started = True
         self._run_retention(now)
@@ -385,10 +405,11 @@ class ParcelsEngine:
         self._syncing.add(entry_id)
 
     @callback
-    def end_sync(self, entry_id: str, *, more: bool) -> None:
+    def end_sync(self, entry_id: str, *, more: bool, ok: bool = True) -> None:
         """Note that a mailbox was read; ``more`` when it continues soon.
 
-        Once no mailbox is being read, parcels are reconciled.
+        Once no mailbox is being read, parcels are reconciled. After the first
+        sync that worked, what an earlier release stored is checked once.
         """
         self._syncing.discard(entry_id)
         if more:
@@ -397,6 +418,16 @@ class ParcelsEngine:
             self._more.discard(entry_id)
         if self._reconcile(dt_util.utcnow()):
             self.async_changed(reconcile=False)
+        data = self.data
+        if (
+            ok
+            and self._started
+            and not (self._syncing or self._more)
+            and not data.engine.get(FILL_CHECK_KEY)
+        ):
+            data.engine[FILL_CHECK_KEY] = True
+            self.async_schedule_save()
+            self.async_create_task(self._async_fill_check(), "parcels fill check")
 
     @callback
     def _reconcile(self, now: datetime) -> bool:
@@ -740,7 +771,23 @@ class ParcelsEngine:
                     label=org,
                     now=now,
                 )
-                self.ai.add_shadow_candidate(record.hash)
+                received = record.received or now
+                if not (
+                    (
+                        not first_sync
+                        or now - received <= timedelta(days=AI_FIRST_SYNC_DAYS)
+                    )
+                    and self.queue_fill(
+                        message,
+                        verdict,
+                        result,
+                        record,
+                        mailbox=mailbox,
+                        owner=owner,
+                        now=now,
+                    )
+                ):
+                    self.ai.add_shadow_candidate(record.hash)
                 self._clear_unparsed(org)
                 return
             self.add_review(
@@ -824,6 +871,97 @@ class ParcelsEngine:
         record.state = MessageState.APPLIED
         return touched
 
+    def fill_item(self, message_hash: str) -> ReviewItem | None:
+        """Return the pending fill of the local AI for an e-mail."""
+        return next(
+            (
+                item
+                for item in self.data.review.values()
+                if item.fill and item.message == message_hash
+            ),
+            None,
+        )
+
+    def fill_gaps_for(self, message_hash: str, result: ParseResult) -> set[str]:
+        """Return what the local AI may still fill in for a parsed e-mail.
+
+        Fields that a pending fill already offers aren't asked again.
+        """
+        anchor = message_origin_id(message_hash, 0)
+        parcel = next(
+            (p for p in self.data.parcels.values() if anchor in p.origins), None
+        )
+        if parcel is None:
+            return set()
+        gaps = fill_gaps(
+            result, parcel.state, carrier_mail=is_carrier_mail(parcel.origins[anchor])
+        )
+        if (item := self.fill_item(message_hash)) is not None and item.suggestion:
+            gaps -= fill_fields(item.suggestion)
+        return gaps
+
+    def queue_fill(
+        self,
+        message: MailMessage,
+        verdict: SenderVerdict,
+        result: ParseResult,
+        record: MessageRecord,
+        *,
+        mailbox: str | None,
+        owner: str | None,
+        now: datetime,
+        forced: bool = False,
+    ) -> bool:
+        """Queue a parsed e-mail for the local AI to fill in what's missing."""
+        if not self.ai_active or not self.fill_gaps_for(record.hash, result):
+            return False
+        self.ai.enqueue(
+            record.hash,
+            received=record.received or now,
+            review=self.review_item(
+                message,
+                record,
+                verdict,
+                reason=REASON_AI_FILL,
+                source=Source.AI,
+                suggestion=None,
+                mailbox=mailbox,
+                owner=owner,
+                now=now,
+            ),
+            known=verdict.known,
+            forced=forced,
+            fill=True,
+        )
+        return True
+
+    def apply_fill(
+        self,
+        suggestion: Suggestion,
+        record: MessageRecord,
+        *,
+        time: datetime,
+        label: str,
+        now: datetime,
+        confirmed: bool = False,
+    ) -> str | None:
+        """Add what the local AI filled in to the parcel of the parsed e-mail.
+
+        Returns the parcel's ID, or None when that parcel is gone.
+        """
+        owners = record.owners
+        contribution = fill_contribution(
+            suggestion,
+            message_hash=record.hash,
+            time=time,
+            label=label,
+            owner=owners[0] if owners else None,
+            confirmed=confirmed,
+        )
+        if contribution is None:
+            return None
+        return apply_contribution(self.data, contribution, now).parcel_id
+
     def prefill(self, suggestion: Suggestion | None, domain: str) -> Suggestion | None:
         """Fill in the carrier the user chose before, or the sender's carrier."""
         prefs = self.data.senders.get(organizational_domain(domain))
@@ -867,15 +1005,24 @@ class ParcelsEngine:
             authenticated=verdict.authenticated,
             source=source,
             suggestion=suggestion,
+            checks=verdict.check.as_dict() if verdict.check is not None else None,
         )
 
     def add_review(self, item: ReviewItem, record: MessageRecord | None) -> None:
-        """Put an e-mail in the review list, replacing an older item."""
+        """Put an e-mail in the review list, replacing an older item.
+
+        A fill of the local AI replaces only an older fill: the e-mail stays
+        added.
+        """
         review = self.data.review
-        for key in [k for k, r in review.items() if r.message == item.message]:
+        for key in [
+            k
+            for k, r in review.items()
+            if r.message == item.message and (r.fill or not item.fill)
+        ]:
             del review[key]
         review[item.id] = item
-        if record is not None:
+        if record is not None and not item.fill:
             record.state = MessageState.REVIEW
 
     def add_filtered(self, item: ReviewItem, record: MessageRecord | None) -> None:
@@ -984,6 +1131,8 @@ class ParcelsEngine:
                 else {"kind": MailKind.UNKNOWN.value}
             )
             suggestion = Suggestion.from_dict({**base, **overrides})
+        if item.fill:
+            return self._accept_fill(review_id, item, suggestion)
         if suggestion is None or not (
             suggestion.tracking_numbers
             or suggestion.order_numbers
@@ -1027,17 +1176,75 @@ class ParcelsEngine:
         self.async_changed()
         return sorted(touched)
 
+    def _accept_fill(
+        self, review_id: str, item: ReviewItem, suggestion: Suggestion | None
+    ) -> list[str]:
+        """Add what the local AI filled in, as the user confirmed it."""
+        data = self.data
+        if suggestion is not None and (
+            suggestion.carrier and suggestion.carrier not in CARRIER_NAMES
+        ):
+            raise validation_error("unknown_carrier")
+        record = data.messages.get(item.message)
+        now = dt_util.utcnow()
+        parcel_id = (
+            self.apply_fill(
+                suggestion,
+                record,
+                time=min(item.received or now, now),
+                label=organizational_domain(item.sender_domain),
+                now=now,
+                confirmed=True,
+            )
+            if suggestion is not None and record is not None
+            else None
+        )
+        if parcel_id is None:
+            del data.review[review_id]
+            self.async_changed()
+            raise validation_error("unknown_parcel")
+        data.review.pop(review_id, None)
+        self.async_changed()
+        return [parcel_id]
+
     def review_dismiss(self, review_id: str) -> None:
         """Drop an e-mail from the review list."""
         item = self._review(review_id)
         del self.data.review[review_id]
-        if (record := self.data.messages.get(item.message)) is not None:
+        if (
+            not item.fill
+            and (record := self.data.messages.get(item.message)) is not None
+        ):
             record.state = MessageState.DISMISSED
         self.async_changed()
 
-    def review_trust_sender(self, review_id: str) -> str:
-        """Trust the sender of a reviewed e-mail; returns its domain."""
-        return self.trust_domain(self._review(review_id).sender_domain)
+    def review_trust_sender(self, review_id: str) -> dict[str, Any]:
+        """Trust the sender of a reviewed e-mail and settle its e-mails under review.
+
+        The user has seen them and confirmed the risk, so the e-mails that
+        failed the sender checks are added as they are, when they hold
+        something to add. The others are read again, now that the sender is
+        trusted. Returns the trusted domain and how many e-mails were added,
+        are being read again and still need review.
+        """
+        org = self._trust(self._review(review_id).sender_domain)
+        data = self.data
+        added = kept = 0
+        hashes: list[str] = []
+        for key, item in list(data.review.items()):
+            if item.fill or organizational_domain(item.sender_domain) != org:
+                continue
+            if item.authenticated:
+                hashes.append(item.message)
+                continue
+            try:
+                self.review_accept(key)
+            except ServiceValidationError:
+                kept += 1
+            else:
+                added += 1
+        self._async_reprocess_later(hashes)
+        return {"domain": org, "added": added, "rechecking": len(hashes), "kept": kept}
 
     def review_ignore_sender(self, review_id: str) -> str:
         """Ignore the sender of a reviewed e-mail; returns its domain."""
@@ -1048,25 +1255,32 @@ class ParcelsEngine:
 
         Returns the organisational domain that is now trusted.
         """
+        org = self._trust(domain)
+        self._async_reprocess_later(
+            [
+                item.message
+                for item in self.data.review.values()
+                if not item.fill and organizational_domain(item.sender_domain) == org
+            ]
+        )
+        return org
+
+    def _trust(self, domain: str) -> str:
         org = organizational_domain(domain)
         if is_free_mail(org):
             raise validation_error("cannot_trust_free_mail", domain=org)
-        data = self.data
-        prefs = data.sender(org)
+        prefs = self.data.sender(org)
         prefs.trusted = True
         prefs.ignored = False
         prefs.updated = dt_util.utcnow()
-        hashes = [
-            item.message
-            for item in data.review.values()
-            if organizational_domain(item.sender_domain) == org
-        ]
         self.async_changed()
+        return org
+
+    def _async_reprocess_later(self, hashes: list[str]) -> None:
         if hashes:
             self.async_create_task(
                 self._async_reprocess_many(hashes), "parcels reprocess trusted sender"
             )
-        return org
 
     def ignore_domain(self, domain: str) -> str:
         """Ignore a sender organisation and drop its pending e-mails.
@@ -1086,7 +1300,9 @@ class ParcelsEngine:
         for key, item in list(data.review.items()):
             if organizational_domain(item.sender_domain) == org:
                 del data.review[key]
-                hashes.add(item.message)
+                if not item.fill:
+                    # A fill's e-mail stays added, as the parser read it.
+                    hashes.add(item.message)
         for key, entry in list(data.filtered.items()):
             if organizational_domain(entry.sender_domain) == org:
                 del data.filtered[key]
@@ -1230,6 +1446,115 @@ class ParcelsEngine:
                 await self.async_reprocess(key)
             except HomeAssistantError as err:
                 _LOGGER.debug("Reprocessing skipped an e-mail: %s", err)
+
+    async def async_check_again(
+        self, parcel_id: str, *, forced: bool = True
+    ) -> dict[str, int]:
+        """Read a parcel's e-mails again and ask the local AI what's missing.
+
+        Unlike reprocessing, the parcel stays on the page: an e-mail a parser
+        reads is added again in place, unless the user confirmed it under
+        review. Returns how many e-mails were read, queued for the AI, gone
+        from the mailboxes, or not downloaded.
+        """
+        parcel = self.parcel(parcel_id)
+        messages = self.data.messages
+        records = [
+            record
+            for key in {o.message for o in parcel.origins.values() if o.message}
+            if (record := messages.get(key)) is not None
+            and record.state is MessageState.APPLIED
+        ]
+        records.sort(key=lambda r: r.received or _EPOCH, reverse=True)
+        counts = {"read": 0, "queued": 0, "gone": 0, "failed": 0}
+        for record in records[:CHECK_AGAIN_MAX_EMAILS]:
+            fetched = await self.async_refetch(record)
+            if fetched.message is None or fetched.mailbox is None:
+                counts["gone" if fetched.gone else "failed"] += 1
+                continue
+            message, mailbox = fetched.message, fetched.mailbox
+            verdict = self.verify(message)
+            result = await self.async_parse(message, verdict)
+            counts["read"] += 1
+            if not (verdict.verified and is_confident(result)):
+                continue
+            now = dt_util.utcnow()
+            if self._parser_only(record.hash):
+                self.apply_result(
+                    result,
+                    record,
+                    source=Source.PARSER,
+                    time=self.message_time(message, now),
+                    label=organizational_domain(message.sender_domain),
+                    now=now,
+                )
+            if self.queue_fill(
+                message,
+                verdict,
+                result,
+                record,
+                mailbox=mailbox.entry_id,
+                owner=record.owners[0] if record.owners else mailbox.owner,
+                now=now,
+                forced=forced,
+            ):
+                counts["queued"] += 1
+        self.async_changed()
+        return counts
+
+    def _parser_only(self, message_hash: str) -> bool:
+        """Return True when only a parser added an e-mail, and nobody confirmed it.
+
+        What the local AI filled in has its own origin and doesn't count.
+        """
+        found = False
+        for parcel in self.data.parcels.values():
+            for origin in parcel.origins.values():
+                if origin.message != message_hash or origin.id.endswith(
+                    FILL_ORIGIN_SUFFIX
+                ):
+                    continue
+                if origin.source is not Source.PARSER or origin.confirmed:
+                    return False
+                found = True
+        return found
+
+    async def _async_fill_check(self) -> None:
+        """Check once, after the update, what an earlier release stored.
+
+        E-mails refused for their mail server are read again first, then the
+        open parcels without a date or items are checked again, within the
+        daily limit of the local AI.
+        """
+        data = self.data
+        refused = [
+            item.message
+            for item in data.review.values()
+            if item.reason == REASON_UNTRUSTED_SERVER and not item.fill
+        ]
+        await self._async_reprocess_many(refused)
+        lacking = [
+            parcel.id
+            for parcel in data.parcels.values()
+            if parcel.archived is None
+            and not parcel.state.terminal
+            and (parcel.state.eta is None or not parcel.state.items)
+        ]
+        checked = 0
+        for parcel_id in lacking:
+            if parcel_id not in data.parcels:
+                continue
+            try:
+                await self.async_check_again(parcel_id, forced=False)
+            except HomeAssistantError as err:
+                _LOGGER.debug("Checking a parcel again failed: %s", err)
+                continue
+            checked += 1
+        _LOGGER.debug(
+            "Read %d refused e-mails and checked %d parcels again",
+            len(refused),
+            checked,
+        )
 
     def _clear_outputs(self, key: str, now: datetime) -> None:
         """Undo everything an e-mail added: parcels, review and queue."""
@@ -1441,6 +1766,19 @@ class ParcelsEngine:
             "kept_apart": len(data.engine.get("kept_apart") or ()),
             "repair": data.engine.get(REPAIR_KEY),
             "reconcile_waiting": len(self._syncing | self._more),
+            # How the sender checks went for the newest e-mails under review:
+            # the shop's domain and the servers that wrote the headers only.
+            "sender_checks": [
+                {
+                    "sender": organizational_domain(item.sender_domain),
+                    "reason": item.reason,
+                    "checks": item.checks,
+                }
+                for item in sorted(
+                    data.review.values(), key=lambda item: item.created, reverse=True
+                )
+                if item.checks is not None
+            ][:MAX_SENDER_CHECKS],
             "ai": self.ai.diagnostics(),
         }
 

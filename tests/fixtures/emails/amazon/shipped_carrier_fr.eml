@@ -1,0 +1,167 @@
+Return-Path: <20261118140926a1b2c3@bounces.amazon.fr>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.fr header.s=sel1amz header.b=em8YIpQw;
+       dkim=pass header.i=@amazonses.com header.s=ug7nbtf4 header.b=gKycGuYC;
+       spf=pass (google.com: domain of 20261118140926a1b2c3@bounces.amazon.fr designates 192.0.2.56 as permitted sender) smtp.mailfrom=20261118140926a1b2c3@bounces.amazon.fr;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.fr
+Received: from a48-16.smtp-out.eu-west-1.amazonses.com (a48-16.smtp-out.eu-west-1.amazonses.com. [192.0.2.56])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Wed, 18 Nov 2026 14:09:26 +0100
+From: "Amazon.fr" <shipment-tracking@amazon.fr>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Exp=C3=A9di=C3=A9e_=3A_=C2=AB_Bouilloire_=C3=A9lectriqu?=
+ =?utf-8?q?e_en_verre=2C_1=2C7_L=2E=2E=2E_=C2=BB?=
+Date: Wed, 18 Nov 2026 14:09:26 +0100
+Message-ID: <010201920261118140926.shipped-carrier-fr-000000@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Amazon.fr
+Vos commandes | Votre compte
+
+Bonjour Alex,
+
+Votre colis a =C3=A9t=C3=A9 exp=C3=A9di=C3=A9.
+
+Livraison :
+vendredi 20 novembre
+
+Votre colis sera livr=C3=A9 par Colissimo.
+
+Suivre votre colis: https://www.amazon.fr/gp/r.html?C=3D05T7Q9X1M4K8B&K=3D1=
+V3JZ9Q7R2XW5&M=3Durn:rtn:msg:20261118140926a1b2c3d4e5f604&R=3D3HXK2P8Q5N7MZ=
+&T=3DC&U=3Dhttps%3A%2F%2Fwww.amazon.fr%2Fprogress-tracker%2Fpackage%2Fref%3=
+Dpe_2848631_123456789_TE_SIMP_typ%3F_encoding%3DUTF8%26orderId%3D171-293846=
+1-7745102%26shipmentId%3DZp3Kx6WnC%26packageIndex%3D0&H=3DQZXWTGBHJKL0PQ5RS=
+04&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Commande n=C2=B0 171-2938461-7745102
+
+Bouilloire =C3=A9lectrique en verre, 1,7 L, sans fil
+Quantit=C3=A9 : 1
+https://www.amazon.fr/gp/r.html?C=3D05T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:20261118140926a1b2c3d4e5f605&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%=
+2F%2Fwww.amazon.fr%2Fdp%2FB0C6Z3N4WP%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=
+=3DQZXWTGBHJKL0PQ5RS05&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Adresse de livraison Alex Doe, 1 rue Exemple, Paris
+
+Cet e-mail a =C3=A9t=C3=A9 envoy=C3=A9 depuis une adresse qui ne peut pas r=
+ecevoir de messages. Merci de ne pas y r=C3=A9pondre.
+
+Protection de vos informations personnelles
+
+=C2=A9 2026 Amazon.com, Inc. ou ses filiales. Tous droits r=C3=A9serv=C3=A9=
+s.
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"fr">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DUTF-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1.=
+0">
+<title>Amazon.fr</title>
+<style type=3D"text/css">
+body { margin: 0; padding: 0; background-color: #ffffff; }
+table { border-collapse: collapse; }
+.container { width: 600px; font-family: Arial, Helvetica, sans-serif; color=
+: #0f1111; }
+.h1 { font-size: 20px; font-weight: bold; margin: 16px 0 8px; }
+.h2 { font-size: 16px; font-weight: bold; margin: 16px 0 8px; color: #067d6=
+2; }
+.kv td { padding: 2px 8px 2px 0; font-size: 14px; }
+.button { background-color: #ffd814; border-radius: 20px; color: #0f1111;
+  padding: 8px 18px; text-decoration: none; display: inline-block; }
+.item td { vertical-align: top; padding: 8px 8px 8px 0; font-size: 14px; }
+.nav a { color: #0f1111; font-size: 13px; text-decoration: none; }
+.footer { font-size: 11px; color: #565959; padding-top: 24px; }
+</style>
+</head>
+<body>
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0"><tr>
+<td align=3D"center">
+<table role=3D"presentation" class=3D"container" width=3D"600" cellpadding=
+=3D"0"
+ cellspacing=3D"0">
+<tr><td class=3D"header"><a href=3D"https://www.amazon.fr/gp/r.html?C=3D05T=
+7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:20261118140926a1b2c3d4=
+e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.fr%=
+2Fref%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0PQ5RS01&amp;re=
+f_=3Dpe_2848631_123456789_TE_SIMP_typ"><img
+ src=3D"https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo.=
+_CB485934981_.png"
+ alt=3D"Amazon.fr" width=3D"98" height=3D"30" border=3D"0"></a></td>
+<td class=3D"nav" align=3D"right"><a href=3D"https://www.amazon.fr/gp/r.htm=
+l?C=3D05T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111814092=
+6a1b2c3d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.a=
+mazon.fr%2Fgp%2Fcss%2Forder-history%3Fref_%3Dpe_2848631_123456789_TE_SIMP_t=
+yp&amp;H=3DQZXWTGBHJKL0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Vos commandes</a> | <a href=3D"https://www.amazon.fr/gp/r.html?C=3D05T7Q9X=
+1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:20261118140926a1b2c3d4e5f6=
+03&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.fr%2Fgp=
+%2Fcss%2Fhomepage.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZ=
+XWTGBHJKL0PQ5RS03&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Votre compte</a></td></tr>
+<tr><td class=3D"content" colspan=3D"2">
+<p>Bonjour Alex,</p>
+<h1 class=3D"h1">Votre colis a =C3=A9t=C3=A9 exp=C3=A9di=C3=A9.</h1>
+<div class=3D"eta"><span class=3D"label">Livraison :</span><br><span class=
+=3D"value"><b>vendredi 20 novembre</b></span></div>
+<p>Votre colis sera livr=C3=A9 par Colissimo.</p>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.fr/gp/r.htm=
+l?C=3D05T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111814092=
+6a1b2c3d4e5f604&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.a=
+mazon.fr%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_2848631_123456789_TE_SIMP_=
+typ%3F_encoding%3DUTF8%26orderId%3D171-2938461-7745102%26shipmentId%3DZp3Kx=
+6WnC%26packageIndex%3D0&amp;H=3DQZXWTGBHJKL0PQ5RS04&amp;ref_=3Dpe_2848631_1=
+23456789_TE_SIMP_typ">Suivre votre colis</a></p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Commande n=C2=B0</td><td class=3D"v"><b>171-2938461-=
+7745102</b></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.fr/gp/r.html?C=
+=3D05T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:20261118140926a1=
+b2c3d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amaz=
+on.fr%2Fdp%2FB0C6Z3N4WP%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTG=
+BHJKL0PQ5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"http=
+s://m.media-amazon.com/images/I/416Z3N4WL._SS142_.jpg" alt=3D"Bouilloire =
+=C3=A9lectrique en verre, 1,7 L, sans fil" width=3D"90" height=3D"90" borde=
+r=3D"0"></a></td><td class=3D"desc"><a href=3D"https://www.amazon.fr/gp/r.h=
+tml?C=3D05T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:20261118140=
+926a1b2c3d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww=
+.amazon.fr%2Fdp%2FB0C6Z3N4WP%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQ=
+ZXWTGBHJKL0PQ5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Bouilloire =
+=C3=A9lectrique en verre, 1,7 L, sans fil</a><br><span>Quantit=C3=A9 : 1</s=
+pan></td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Adresse de livraison</td><td class=3D"v"><b>Alex Doe=
+, 1 rue Exemple, Paris</b></td></tr></table>
+</td></tr>
+<tr><td class=3D"footer" colspan=3D"2">
+<p>Cet e-mail a =C3=A9t=C3=A9 envoy=C3=A9 depuis une adresse qui ne peut pa=
+s recevoir de messages. Merci de ne pas y r=C3=A9pondre.</p>
+<p><a href=3D"https://www.amazon.fr/gp/r.html?C=3D05T7Q9X1M4K8B&amp;K=3D1V3=
+JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:20261118140926a1b2c3d4e5f606&amp;R=3D3HXK2P8=
+Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.fr%2Fgp%2Fhelp%2Fcustomer=
+%2Fdisplay.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJ=
+KL0PQ5RS06&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Protection de vos i=
+nformations personnelles</a></p>
+<p>=C2=A9 2026 Amazon.com, Inc. ou ses filiales. Tous droits r=C3=A9serv=C3=
+=A9s.</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 import hashlib
+from typing import Any
 
 from ..const import MailKind
 
@@ -24,7 +25,7 @@ class Link:
 
 @dataclass(frozen=True, slots=True)
 class AuthResult:
-    """The topmost Authentication-Results header added by the mail provider."""
+    """One Authentication-Results header, parsed."""
 
     authserv_id: str | None = None
     dkim_pass_domains: tuple[str, ...] = ()
@@ -32,6 +33,35 @@ class AuthResult:
     dmarc_domain: str | None = None
     spf_pass: bool = False
     spf_domain: str | None = None
+    # Result words ("pass", "fail", ...); "" when the method isn't there.
+    dkim: str = ""
+    dmarc: str = ""
+    spf: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AuthCheck:
+    """What the sender checks saw, without addresses: safe to show and log."""
+
+    headers: int = 0
+    servers: tuple[str, ...] = ()
+    used: int | None = None
+    dkim: str = ""
+    dmarc: str = ""
+    spf: str = ""
+    originals: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialise the details."""
+        return {
+            "headers": self.headers,
+            "servers": list(self.servers),
+            "used": self.used,
+            "dkim": self.dkim,
+            "dmarc": self.dmarc,
+            "spf": self.spf,
+            "originals": self.originals,
+        }
 
 
 @dataclass(slots=True)
@@ -53,6 +83,10 @@ class MailMessage:
     received: datetime | None = None
     headers: dict[str, str] = field(default_factory=dict)
     language: str | None = None
+    # Every Authentication-Results value, top-down, and how many headers
+    # were renamed Authentication-Results-Original by the provider.
+    auth_headers: tuple[str, ...] = ()
+    auth_originals: int = 0
 
     @property
     def sender_domain(self) -> str:
@@ -87,6 +121,7 @@ class SenderVerdict:
     shopify: bool = False
     method: str = "none"
     reason: str = ""
+    check: AuthCheck | None = None
 
     @property
     def verified(self) -> bool:

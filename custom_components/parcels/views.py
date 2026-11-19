@@ -4,14 +4,15 @@ A private parcel is shown in full to its owners (the people whose mailboxes
 it came from), or to administrators when it has no owner. Everyone else sees
 when it arrives, but not what it is or where it comes from.
 
-A delivery PIN or pickup code is only sent with a parcel's details, never in
-the snapshot that every open page receives.
+A delivery PIN or pickup code is sent with a parcel's details, and in the
+list only to those who may see the parcel, while it's on its way. Entities,
+events, logs, diagnostics and notifications never have it.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import re
@@ -38,6 +39,7 @@ from .models import (
     merchant_key,
     time_to_str,
 )
+from .parsers.senders import organizational_domain
 
 if TYPE_CHECKING:
     from .engine import ParcelsEngine
@@ -202,7 +204,8 @@ def parcel_json(
     """Return a parcel as the page shows it.
 
     ``shipment`` is the parcel's group from :func:`shipment_groups`. The PIN
-    or pickup code is only included with ``code``, for the details.
+    or pickup code is only included with ``code``, and never for a viewer who
+    may not see the parcel.
     """
     state = parcel.state
     eta = state.eta
@@ -231,6 +234,7 @@ def parcel_json(
         "owners": list(state.owners),
         "source": state.source.value,
         "ai": state.ai,
+        "ai_filled": state.ai_filled,
         "auto_merged": parcel.auto_merged.as_dict() if parcel.auto_merged else None,
         "provisional": state.provisional,
         "archived": parcel.archived is not None,
@@ -252,6 +256,7 @@ def parcel_json(
             items=[],
             source="parser",
             ai=False,
+            ai_filled=False,
             auto_merged=None,
             inferred=False,
             origins=[],
@@ -269,8 +274,14 @@ def mailbox_owner(hass: HomeAssistant, item: ReviewItem) -> str | None:
     return None
 
 
-def review_json(hass: HomeAssistant, item: ReviewItem) -> dict[str, Any]:
-    """Return an e-mail under "Needs review"."""
+def review_json(
+    hass: HomeAssistant, item: ReviewItem, trusted: Collection[str] = ()
+) -> dict[str, Any]:
+    """Return an e-mail under "Needs review".
+
+    ``trusted`` holds the trusted sender domains: an e-mail from one of them
+    that failed the sender checks is marked, since trusting can't help it.
+    """
     return {
         "id": item.id,
         "created": dt_to_str(item.created),
@@ -281,6 +292,10 @@ def review_json(hass: HomeAssistant, item: ReviewItem) -> dict[str, Any]:
         "mailbox_owner": mailbox_owner(hass, item),
         "reason": item.reason,
         "authenticated": item.authenticated,
+        "trusted_sender": not item.authenticated
+        and organizational_domain(item.sender_domain) in trusted,
+        "checks": item.checks,
+        "fill": item.fill,
         "source": "ai" if item.source.value == "ai" else "parser",
         "suggestion": item.suggestion.as_dict() if item.suggestion else None,
     }
@@ -370,8 +385,9 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
             for item in engine.suggestions
             if (found := suggestion_json(engine, item, viewer)) is not None
         ]
+        trusted = frozenset(data.trusted_domains())
         review = [
-            review_json(hass, item)
+            review_json(hass, item, trusted)
             for item in _newest_first(list(data.review.values()))
         ]
         filtered = [
@@ -382,7 +398,12 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
     )
     return {
         "parcels": [
-            parcel_json(parcel, viewer, shipment=groups.get(parcel.id))
+            parcel_json(
+                parcel,
+                viewer,
+                shipment=groups.get(parcel.id),
+                code=not parcel.state.terminal,
+            )
             for parcel in data.parcels.values()
         ],
         "review": review,

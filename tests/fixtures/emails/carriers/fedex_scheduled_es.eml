@@ -1,0 +1,84 @@
+Return-Path: <bounce-2b7d1a105a@bounce.fedex.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@fedex.com header.s=fdx1 header.b=6f17ad3f;
+       spf=pass (google.com: domain of bounce-2b7d1a105a@bounce.fedex.com
+ designates 192.0.2.162 as permitted sender) smtp.mailfrom=bounce-2b7d1a105a@bounce.fedex.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=fedex.com
+From: FedEx <TrackingUpdates@fedex.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Env=C3=ADo_de_FedEx_231171978263=3A_entrega_programada_?=
+ =?utf-8?q?para_el_jueves=2C_19_de_noviembre?=
+Date: Tue, 17 Nov 2026 07:25:00 +0000
+Message-ID: <20261117071000.5203@mail.example.com>
+MIME-Version: 1.0
+Content-Language: es-ES
+Content-Type: multipart/alternative; boundary="fdx_41c7e2aaac62"
+
+--fdx_41c7e2aaac62
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hola, Alex. Tu paquete tiene la entrega programada.
+
+Entrega programada:
+
+jueves, 19 de noviembre
+
+entre las 10:00 y las 14:00
+
+Número de seguimiento: 231171978263
+Remitente: Mango, Barcelona, ES
+Destinatario: Alex Doe, Madrid, ES
+Servicio: FedEx International Priority®
+
+¿No vas a estar en casa? Gestiona la entrega con FedEx Delivery Manager®.
+
+Seguir tu paquete [https://www.fedex.com/fedextrack/?trknbr=231171978263&locale=es_ES]
+
+No respondas a este mensaje. Este correo se ha enviado desde un buzón no supervisado.
+
+Política de privacidad [https://www.fedex.com/es-es/trust-center/privacy.html]
+
+© 2026 FedEx. Todos los derechos reservados.
+
+--fdx_41c7e2aaac62
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FedEx</title>
+<style>body{margin:0;background:#f2f2f2;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:20px 24px;background:#4d148c}.content{padding:24px}p.big{font-size:22px;font-weight:bold;color:#4d148c;margin:4px 0}td.label{color:#666;padding:4px 12px 4px 0;text-transform:uppercase;font-size:12px}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ff6200;color:#fff;text-decoration:none;border-radius:2px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.fedex.com/content/dam/fedex-com/logos/logo.png" alt="FedEx" width="110" height="32"></td></tr>
+<tr><td class="content">
+<h1>Hola, Alex. Tu paquete tiene la entrega programada.</h1>
+<p>Entrega programada:</p>
+<p class="big">jueves, 19 de noviembre</p>
+<p>entre las 10:00 y las 14:00</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Número de seguimiento</td><td class="value">231171978263</td></tr>
+<tr><td class="label">Remitente</td><td class="value">Mango<br>Barcelona, ES</td></tr>
+<tr><td class="label">Destinatario</td><td class="value">Alex Doe<br>Madrid, ES</td></tr>
+<tr><td class="label">Servicio</td><td class="value">FedEx International Priority®</td></tr>
+</table>
+<p>¿No vas a estar en casa? Gestiona la entrega con FedEx Delivery Manager®.</p>
+<p style="text-align:center"><a class="button" href="https://www.fedex.com/fedextrack/?trknbr=231171978263&amp;locale=es_ES">Seguir tu paquete</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>No respondas a este mensaje. Este correo se ha enviado desde un buzón no supervisado.</p>
+<p><a href="https://www.fedex.com/es-es/trust-center/privacy.html">Política de privacidad</a></p>
+<p>© 2026 FedEx. Todos los derechos reservados.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--fdx_41c7e2aaac62--

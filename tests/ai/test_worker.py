@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 import dataclasses
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import logging
 import types
 from typing import Any
@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, patch
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 import pytest
 
@@ -35,6 +36,7 @@ from custom_components.parcels.ai_worker import (
 )
 from custom_components.parcels.const import (
     AI_DAILY_LIMIT,
+    AI_FILL_DAILY_LIMIT,
     AI_SHADOW_DAILY_LIMIT,
     CONF_AI_MODE,
     CONF_ENTRY_TYPE,
@@ -42,6 +44,7 @@ from custom_components.parcels.const import (
     ENTRY_TYPE_MAILBOX,
     ISSUE_AI_REFUSED,
     ISSUE_AI_UNAVAILABLE,
+    REASON_AI_FILL,
     REASON_AI_REJECTED,
     REASON_AI_SUGGESTION,
     REASON_AI_TIMEOUT,
@@ -49,10 +52,11 @@ from custom_components.parcels.const import (
     REASON_UNKNOWN_FORMAT,
     MailKind,
 )
-from custom_components.parcels.engine import ParcelsEngine
+from custom_components.parcels.convert import fill_origin_id, message_origin_id
+from custom_components.parcels.engine import FILL_CHECK_KEY, ParcelsEngine
 from custom_components.parcels.mail.errors import MailError
-from custom_components.parcels.models import MessageState, Source
-from custom_components.parcels.parsers.base import MailMessage
+from custom_components.parcels.models import MessageState, ParcelStatus, Source
+from custom_components.parcels.parsers.base import MailMessage, SenderVerdict
 from custom_components.parcels.views import SYSTEM_VIEWER, Viewer, settings_json
 
 from ..common import (
@@ -879,6 +883,434 @@ async def test_shadow_candidates_keep_the_latest_twenty(
     assert shadow[0] == "hash5"
     assert shadow[-1] == "hash10"
     assert shadow.count("hash10") == 1
+
+
+# -- Filling in gaps ----------------------------------------------------------
+
+# The CTT parser reads this e-mail, but not its date, which the AI may find.
+NO_DATE = (
+    "O seu objeto RR482915732PT, enviado por Exemplo Loja, já está em trânsito "
+    "na rede CTT.\nN.º do objeto RR482915732PT\nEstado Em trânsito\n"
+    "Será entregue, previsivelmente, a 20 do corrente mês."
+)
+FILLED = date(2026, 11, 20)
+
+
+def dated(**values: Any) -> FakeResult:
+    """Return the AI's answer for the e-mail without a date, with its date."""
+    return result(
+        kind="in_transit",
+        tracking_numbers=[TRACKING],
+        eta_start="2026-11-20",
+        **values,
+    )
+
+
+async def test_fill_suggests_what_the_parser_missed(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """In suggest mode the date the AI found waits under review; Accept adds it."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    (parcel,) = engine.data.parcels.values()
+    assert parcel.state.eta is None
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+    assert engine.ai.queue_size == 1
+    assert not engine.data.ai.get("shadow")
+    generate.return_value = dated()
+
+    await engine.ai._async_step()
+
+    (item,) = engine.data.review.values()
+    assert item.reason == REASON_AI_FILL
+    assert item.fill
+    assert item.source is Source.AI
+    assert item.suggestion is not None
+    assert item.suggestion.eta_start == FILLED
+    assert item.suggestion.tracking_numbers == ()
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+    assert engine.data.parcels[parcel.id].state.eta is None
+    assert engine.ai.queue_size == 0
+    today = engine.ai.today()
+    assert today["fills"] == today["filled"] == today["calls"] == 1
+
+    engine.review_accept(item.id)
+
+    parcel = engine.data.parcels[parcel.id]
+    eta = parcel.state.eta
+    assert eta is not None
+    assert eta.start == FILLED
+    assert not parcel.state.ai_filled
+    assert parcel.origins[fill_origin_id(message.hash)].confirmed
+    assert not engine.data.review
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+
+
+async def test_fill_is_added_in_auto_mode(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """In auto mode the date is added at once, marked as the AI's."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message, mode="auto")
+    generate.return_value = dated()
+
+    await engine.ai._async_step()
+
+    assert not engine.data.review
+    (parcel,) = engine.data.parcels.values()
+    state = parcel.state
+    assert state.eta is not None
+    assert state.eta.start == FILLED
+    assert state.status is ParcelStatus.IN_TRANSIT
+    assert state.ai_filled
+    assert not state.ai
+    assert parcel.origins[message_origin_id(message.hash, 0)].source is Source.PARSER
+    assert engine.ai.today()["filled"] == 1
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+
+
+async def test_dismissing_a_fill_keeps_the_email(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """Dismissing what the AI found leaves the parsed e-mail as it was."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    generate.return_value = dated()
+    await engine.ai._async_step()
+    (item,) = engine.data.review.values()
+
+    engine.review_dismiss(item.id)
+
+    assert not engine.data.review
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+    (parcel,) = engine.data.parcels.values()
+    assert parcel.state.eta is None
+
+
+async def test_trusting_the_sender_keeps_a_fill(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """Trusting a sender doesn't read again an e-mail it already added."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    generate.return_value = dated()
+    await engine.ai._async_step()
+    (item,) = engine.data.review.values()
+
+    engine.trust_domain(message.sender_domain)
+    result = engine.review_trust_sender(item.id)
+    await hass.async_block_till_done()
+
+    assert list(engine.data.review.values()) == [item]
+    assert result["rechecking"] == result["added"] == result["kept"] == 0
+    assert engine.ai.queue_size == 0
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+
+
+async def test_ignoring_the_sender_drops_a_fill(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """Ignoring a sender drops what the AI found, not the parcel it added."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    generate.return_value = dated()
+    await engine.ai._async_step()
+
+    engine.ignore_domain(message.sender_domain)
+
+    assert not engine.data.review
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+    assert len(engine.data.parcels) == 1
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        "not JSON",
+        answer(kind="not_parcel"),
+        answer(kind="in_transit", tracking_numbers=[TRACKING]),
+    ],
+)
+async def test_fill_without_an_answer_is_dropped(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock, data: Any
+) -> None:
+    """An answer that fills nothing leaves the parsed e-mail as it was."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    generate.return_value = result(data=data)
+
+    await engine.ai._async_step()
+
+    assert not engine.data.review
+    assert engine.ai.queue_size == 0
+    assert engine.ai.today()["filled"] == 0
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+
+
+async def test_failed_fill_is_dropped_after_the_retry(
+    hass: HomeAssistant,
+    client: FakeMailClient,
+    generate: AsyncMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A fill that fails twice is dropped without a review item."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    generate.side_effect = RuntimeError(SECRET)
+
+    await engine.ai._async_step()
+    (entry,) = engine.ai.queue
+    assert entry["attempts"] == 1
+    freezer.tick(timedelta(minutes=30))
+    await engine.ai._async_step()
+
+    assert engine.ai.today()["fills"] == 2
+    assert engine.ai.queue_size == 0
+    assert not engine.data.review
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+
+
+async def test_fill_waits_for_unread_emails(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """E-mails no parser read go first, even when older."""
+    unread = ctt_message(number=1, received=RECEIVED - timedelta(hours=1))
+    engine = await async_setup(hass, client, unread, ctt_message(NO_DATE, number=2))
+    assert engine.ai.queue_size == 2
+    generate.return_value = result(kind="not_parcel")
+
+    await engine.ai._async_step()
+
+    (entry,) = engine.ai.queue
+    assert entry["fill"]
+    assert engine.ai.today()["fills"] == 0
+
+
+async def test_fill_daily_limit(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """After the daily fill limit, fills wait for the next day."""
+    engine = await async_setup(hass, client, ctt_message(NO_DATE))
+    engine.ai.today()["fills"] = AI_FILL_DAILY_LIMIT
+
+    assert await engine.ai._async_step() == 3600
+
+    generate.assert_not_awaited()
+    assert engine.ai.queue_size == 1
+
+
+async def test_turning_the_ai_off_drops_fills(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """With the AI off, queued fills go away without a review item."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    assert engine.ai.queue_size == 1
+
+    hass.config_entries.async_update_entry(
+        engine.entry, options={**engine.entry.options, CONF_AI_MODE: "off"}
+    )
+    await hass.async_block_till_done()
+    await engine.ai._async_step()
+
+    generate.assert_not_awaited()
+    assert engine.ai.queue_size == 0
+    assert not engine.data.review
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+
+
+# -- Check again --------------------------------------------------------------
+
+PARSED_DATE = (
+    "O seu objeto RR482915732PT está em trânsito.\nEntrega prevista: 20-11-2026"
+)
+
+
+async def test_check_again_asks_the_ai_and_keeps_the_parcel(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """Check again reads the e-mails again and asks the AI, past the daily
+    fill limit; the parcel stays on the page meanwhile."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    (parcel,) = engine.data.parcels.values()
+    engine.ai.drop(message.hash)
+    engine.ai.today()["fills"] = AI_FILL_DAILY_LIMIT
+
+    result = await engine.async_check_again(parcel.id)
+
+    assert result == {"read": 1, "queued": 1, "gone": 0, "failed": 0}
+    assert list(engine.data.parcels) == [parcel.id]
+    (entry,) = engine.ai.queue
+    assert entry["fill"]
+    assert entry["forced"]
+    generate.return_value = dated()
+
+    await engine.ai._async_step()
+
+    (item,) = engine.data.review.values()
+    assert item.fill
+    assert item.suggestion is not None
+    assert item.suggestion.eta_start == FILLED
+    assert engine.data.parcels[parcel.id].state.eta is None
+
+
+async def test_check_again_takes_what_the_parser_now_reads(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """A date the parser now reads updates the same parcel."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    (parcel,) = engine.data.parcels.values()
+    client.add(ctt_message(PARSED_DATE))
+
+    result = await engine.async_check_again(parcel.id)
+
+    assert result == {"read": 1, "queued": 0, "gone": 0, "failed": 0}
+    assert list(engine.data.parcels) == [parcel.id]
+    eta = engine.data.parcels[parcel.id].state.eta
+    assert eta is not None
+    assert eta.start == FILLED
+
+
+async def test_check_again_keeps_what_the_user_confirmed(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """An e-mail accepted under review isn't read again over the user's choices."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    (parcel,) = engine.data.parcels.values()
+    anchor = message_origin_id(message.hash, 0)
+    parcel.origins[anchor] = dataclasses.replace(parcel.origins[anchor], confirmed=True)
+    client.add(ctt_message(PARSED_DATE))
+
+    result = await engine.async_check_again(parcel.id)
+
+    assert result["read"] == 1
+    assert engine.data.parcels[parcel.id].origins[anchor].confirmed
+    assert engine.data.parcels[parcel.id].state.eta is None
+
+
+@pytest.mark.parametrize("deleted", [True, False])
+async def test_check_again_counts_emails_it_cant_download(
+    hass: HomeAssistant, client: FakeMailClient, deleted: bool
+) -> None:
+    """E-mails deleted from the mailbox, or not downloaded, are counted."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    (parcel,) = engine.data.parcels.values()
+    if deleted:
+        client.delete(message.provider_id)
+    else:
+        client.fetch_errors[message.provider_id] = MailError("offline")
+
+    result = await engine.async_check_again(parcel.id)
+
+    assert result == {
+        "read": 0,
+        "queued": 0,
+        "gone": int(deleted),
+        "failed": int(not deleted),
+    }
+    assert list(engine.data.parcels) == [parcel.id]
+
+
+async def test_check_again_unknown_parcel(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """A parcel that doesn't exist is a translated error."""
+    engine = await async_setup(hass, client)
+
+    with pytest.raises(ServiceValidationError):
+        await engine.async_check_again("p_missing")
+
+
+async def async_sync_again(hass: HomeAssistant, engine: ParcelsEngine) -> None:
+    """Read the mailbox again and wait for what runs after it."""
+    (mailbox,) = engine.mailboxes.values()
+    assert mailbox.coordinator is not None
+    await mailbox.coordinator.async_refresh()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+
+async def test_update_checks_open_parcels_once(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """After the update, the first mailbox sync checks open parcels without a
+    date once, within the daily fill limit."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    # As an earlier release left it: nothing asked of the AI, nothing checked.
+    engine.ai.drop(message.hash)
+    del engine.data.engine[FILL_CHECK_KEY]
+
+    await async_sync_again(hass, engine)
+
+    (entry,) = engine.ai.queue
+    assert entry["fill"]
+    assert not entry["forced"]
+    assert engine.data.engine[FILL_CHECK_KEY]
+    engine.ai.drop(message.hash)
+
+    await async_sync_again(hass, engine)
+
+    assert not engine.ai.queue
+
+
+async def test_update_check_waits_for_a_sync_that_works(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """While the mailbox can't be read, the check waits for the next sync."""
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    engine.ai.drop(message.hash)
+    del engine.data.engine[FILL_CHECK_KEY]
+    client.sync_error = MailError("offline")
+
+    await async_sync_again(hass, engine)
+
+    assert FILL_CHECK_KEY not in engine.data.engine
+    assert not engine.ai.queue
+    client.sync_error = None
+
+    await async_sync_again(hass, engine)
+
+    assert engine.data.engine[FILL_CHECK_KEY]
+    (entry,) = engine.ai.queue
+    assert entry["fill"]
+
+
+async def test_update_reads_refused_emails_again(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """E-mails an earlier release refused for their mail server are read once
+    more after the update."""
+    refused = SenderVerdict(
+        domain="ctt.pt", authenticated=False, known=True, reason="untrusted_authserv"
+    )
+    with patch("custom_components.parcels.engine.verify_sender", return_value=refused):
+        engine = await async_setup(hass, client, ctt_message(None))
+    (item,) = engine.data.review.values()
+    assert item.reason == "untrusted_authserv"
+    del engine.data.engine[FILL_CHECK_KEY]
+
+    await async_sync_again(hass, engine)
+
+    assert not engine.data.review
+    (parcel,) = engine.data.parcels.values()
+    assert parcel.state.tracking_number == TRACKING
+
+
+async def test_new_install_has_nothing_to_check(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """A new install reads its e-mails once, without checking them again."""
+    with patch.object(ParcelsEngine, "async_check_again") as check:
+        engine = await async_setup(hass, client, ctt_message(NO_DATE))
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    check.assert_not_called()
+    assert engine.data.engine[FILL_CHECK_KEY]
 
 
 # -- Diagnostics and counters -------------------------------------------------

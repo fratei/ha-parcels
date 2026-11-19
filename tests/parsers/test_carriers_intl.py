@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
+
 import pytest
 
 from custom_components.parcels.const import MailKind
+from custom_components.parcels.parsers.base import MailMessage, SenderVerdict
+from custom_components.parcels.parsers.carriers import parse_carrier
 
 from .test_carriers_common import (
+    LISBON,
     Case,
     Loader,
     VerdictFor,
@@ -158,6 +163,63 @@ CASES = (
         eta=eta("2026-11-17", "12:00", "15:30"),
         merchant="LEGO",
     ),
+    # UPS My Choice: a scheduled delivery date, with or without a window.
+    Case(
+        "ups_mychoice_scheduled_en",
+        "ups",
+        MailKind.IN_TRANSIT,
+        "1ZSFNGNR9304975047",
+        eta=eta("2026-11-19", "10:30", "14:30"),
+        merchant="Patagonia",
+    ),
+    Case(
+        "ups_mychoice_scheduled_pt",
+        "ups",
+        MailKind.IN_TRANSIT,
+        "1ZK1MM5P4097854882",
+        eta=eta("2026-11-19", "10:30", "14:30"),
+        merchant="Worten",
+    ),
+    Case(
+        "ups_mychoice_scheduled_es",
+        "ups",
+        MailKind.IN_TRANSIT,
+        "1Z61077F0256002853",
+        eta=eta("2026-11-19"),
+        merchant="PcComponentes",
+    ),
+    Case(
+        "ups_mychoice_scheduled_de",
+        "ups",
+        MailKind.IN_TRANSIT,
+        "1Z66JV826793840931",
+        eta=eta("2026-11-19", "10:30", "14:30"),
+        merchant="Zalando",
+    ),
+    Case(
+        "ups_mychoice_scheduled_fr",
+        "ups",
+        MailKind.IN_TRANSIT,
+        "1ZB02X3E2660794190",
+        eta=eta("2026-11-19", "10:30", "14:30"),
+        merchant="Fnac",
+    ),
+    Case(
+        "ups_mychoice_scheduled_it",
+        "ups",
+        MailKind.IN_TRANSIT,
+        "1Z7KT5MY7763672703",
+        eta=eta("2026-11-19"),
+        merchant="Yoox",
+    ),
+    Case(
+        "ups_mychoice_scheduled_nl",
+        "ups",
+        MailKind.IN_TRANSIT,
+        "1ZA2PF4N8724908966",
+        eta=eta("2026-11-19", "10:30", "14:30"),
+        merchant="Bol",
+    ),
     Case(
         "dhl_today_de",
         "dhl",
@@ -239,3 +301,30 @@ def test_ignores_email_without_parcel_news(
 ) -> None:
     """Newsletters and promotions give no result."""
     check_negative(name, load_eml, verdict_for)
+
+
+def test_ups_changed_delivery_date_is_delayed() -> None:
+    """A UPS notice that the delivery date changed is a delay with the new date."""
+    message = MailMessage(
+        message_id="<20261117093000.ef56@ups.com>",
+        provider_id="test",
+        provider="google",
+        mailbox="alex@example.com",
+        sender="mcinfo@ups.com",
+        sender_name="UPS",
+        subject="UPS Update: Your delivery date has changed",
+        date=datetime(2026, 11, 17, 9, 30, tzinfo=UTC),
+        text=(
+            "Hello Alex Doe,\n"
+            "Scheduled Delivery: Friday, 11/20/2026\n"
+            "Tracking Number 1ZWMGWFD4777499550\n"
+        ),
+    )
+    verdict = SenderVerdict(domain="ups.com", authenticated=True, known=True)
+    result = parse_carrier(message, verdict, LISBON, "ups")
+    assert result is not None
+    assert result.kind is MailKind.DELAYED
+    [shipment] = result.shipments
+    assert shipment.tracking_number == "1ZWMGWFD4777499550"
+    assert shipment.eta is not None
+    assert shipment.eta.start == date(2026, 11, 20)

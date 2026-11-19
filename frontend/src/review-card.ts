@@ -15,7 +15,7 @@ import { ParcelsCardBase, focusIsLost } from "./base-card.ts";
 import { CARRIER_NAMES, carrierOptions } from "./carriers.ts";
 import { cardTitle, reviewCardConfig, type ReviewCardConfig } from "./config.ts";
 import { parseInstant } from "./dates.ts";
-import { candidateLabel } from "./describe.ts";
+import { candidateLabel, candidateLines } from "./describe.ts";
 import { errorMessage } from "./errors.ts";
 import { formatDateRange, formatDateTime, formatWindow } from "./format.ts";
 import {
@@ -25,14 +25,16 @@ import {
   type FormProblem,
   type SuggestionForm,
 } from "./forms.ts";
-import { carrierLabel, kindLabel, mergeReasonLabel, parcelTitle, reasonLabel } from "./labels.ts";
-import { etaRange } from "./parcels.ts";
+import { carrierLabel, kindLabel, mergeReasonLabel, reasonLabel } from "./labels.ts";
+import { compareLikelihood, etaRange } from "./parcels.ts";
 import { defineElement, registerCard } from "./register.ts";
 import {
   aiQueueText,
   hideHandled,
   hidePending,
+  senderCheckRows,
   settleHidden,
+  trustResultText,
   unhide,
   withoutHidden,
   type HiddenItems,
@@ -42,9 +44,12 @@ import { baseStyles } from "./styles.ts";
 import type {
   FilteredItem,
   MergeSuggestion,
+  Parcel,
   ReviewItem,
+  SenderChecks,
   Snapshot,
   Suggestion,
+  TrustResult,
 } from "./types.ts";
 
 type Tab = "review" | "filtered";
@@ -106,6 +111,8 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     _itemErrors: { state: true },
     _hidden: { state: true },
     _confirmClearAll: { state: true },
+    _confirmTrust: { state: true },
+    _trustStatus: { state: true },
   };
 
   static override styles: CSSResultGroup = [
@@ -232,6 +239,21 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       .confirm p {
         margin: 0;
       }
+      .item .confirm {
+        margin: 12px 0 0;
+      }
+      .trust-status .alert {
+        margin: 0 0 12px;
+      }
+      .checks {
+        margin-top: 8px;
+        font-size: 0.875rem;
+      }
+      .checks summary {
+        padding: 12px 0;
+        cursor: pointer;
+        color: var(--secondary-text-color, #727272);
+      }
       .candidates {
         display: flex;
         flex-direction: column;
@@ -253,6 +275,15 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         flex: 1;
         min-width: 0;
       }
+      .subject-lines {
+        margin: 4px 0 8px;
+        font-size: 0.875rem;
+      }
+      .items-line {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
     `,
   ];
 
@@ -273,6 +304,10 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   declare private _hidden: HiddenItems<Snapshot>;
   /** True while "Clear all" waits for its confirmation. */
   declare private _confirmClearAll: boolean;
+  /** The review item whose "Trust this sender" waits for its confirmation. */
+  declare private _confirmTrust: string | null;
+  /** What the last "Trust this sender" did. */
+  declare private _trustStatus: string | null;
 
   /** The focused item before the current render, to move focus on when it's gone. */
   private _focusedItem: { id: string; index: number } | null = null;
@@ -292,6 +327,8 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     this._itemErrors = new Map();
     this._hidden = new Map();
     this._confirmClearAll = false;
+    this._confirmTrust = null;
+    this._trustStatus = null;
   }
 
   static getStubConfig(): Record<string, unknown> {
@@ -526,10 +563,28 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     const settings = this.snapshot?.settings;
     const queue = settings ? aiQueueText(settings.ai_queue, settings.ai_queue_seconds) : null;
     const queueLine = queue ? html`<p class="hint queue-hint">${queue}</p>` : nothing;
+    // Always rendered, so screen readers announce what "Trust this sender" did.
+    const trustLine = html`<div class="trust-status" role="status">
+      ${this._trustStatus
+        ? html`<div class="alert">
+            <ha-icon icon="mdi:shield-check-outline" aria-hidden="true"></ha-icon>
+            <span class="grow">${this._trustStatus}</span>
+            <button
+              type="button"
+              class="icon-btn"
+              aria-label=${STRINGS.dismissMessage}
+              title=${STRINGS.dismissMessage}
+              @click=${this._dismissTrustStatus}
+            >
+              <ha-icon icon="mdi:close" aria-hidden="true"></ha-icon>
+            </button>
+          </div>`
+        : nothing}
+    </div>`;
     if (!items.length && !suggestions.length) {
-      return html`${queueLine}<p class="empty">${STRINGS.emptyReview}</p>`;
+      return html`${trustLine}${queueLine}<p class="empty">${STRINGS.emptyReview}</p>`;
     }
-    return html`${queueLine}<div class="items">
+    return html`${trustLine}${queueLine}<div class="items">
       ${repeat(
         suggestions,
         (item) => item.id,
@@ -549,8 +604,17 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     const busy = this._busyItems.has(suggestion.id);
     const disabled = busy ? "true" : "false";
     const subjectId = `suggestion-subject-${index}`;
-    const title = parcelTitle(suggestion.parcel);
+    const title = candidateLabel(suggestion.parcel, locale);
     const reason = mergeReasonLabel(suggestion.reason);
+    const settings = this.snapshot?.settings;
+    const candidates = settings
+      ? [...suggestion.candidates].sort(
+          compareLikelihood(suggestion.parcel, {
+            today: settings.today,
+            timeZone: settings.time_zone,
+          }),
+        )
+      : suggestion.candidates;
     return html`<article
       class="item"
       tabindex="-1"
@@ -562,21 +626,16 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         <span class="badge warning">${STRINGS.possibleDuplicate}</span>
       </div>
       <h3 class="subject" id=${subjectId}>
-        ${fmt(STRINGS.suggestionTitle, { parcel: candidateLabel(suggestion.parcel, locale) })}
+        ${fmt(STRINGS.suggestionTitle, { parcel: candidateLines(suggestion.parcel, locale).title })}
       </h3>
+      <p class="subject-lines">${this._renderLines(suggestion.parcel)}</p>
       ${reason ? html`<p class="meta">${fmt(STRINGS.reasonIs, { reason })}</p>` : nothing}
       <p class="hint">${STRINGS.suggestionHint}</p>
       <ul class="candidates">
-        ${suggestion.candidates.map((candidate) => {
+        ${candidates.map((candidate) => {
           const label = candidateLabel(candidate, locale);
-          const extra = [candidate.order_numbers.join(", "), candidate.items.join(", ")]
-            .filter(Boolean)
-            .join(" · ");
           return html`<li class="candidate">
-            <span class="grow">
-              <span class="block">${label}</span>
-              ${extra ? html`<span class="meta block">${extra}</span>` : nothing}
-            </span>
+            <span class="grow">${this._renderLines(candidate)}</span>
             <button
               type="button"
               class="btn"
@@ -607,6 +666,14 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         </button>
       </div>
     </article>`;
+  }
+
+  /** The lines that tell parcels apart: shop and status, carrier and numbers, items. */
+  private _renderLines(parcel: Parcel): TemplateResult {
+    const lines = candidateLines(parcel, this.locale);
+    return html`<span class="block"><strong>${lines.title}</strong> · ${lines.when}</span>
+      <span class="meta block">${lines.carrier}</span>
+      <span class="meta block items-line">${lines.items ?? STRINGS.itemsNotKnown}</span>`;
   }
 
   private _renderFilteredList(items: readonly FilteredItem[]): TemplateResult {
@@ -704,12 +771,25 @@ export class ParcelsReviewCard extends ParcelsCardBase {
             <ha-icon icon="mdi:shield-alert-outline" aria-hidden="true"></ha-icon>
             <span class="grow">
               <strong class="block">${STRINGS.unverifiedSender}</strong>
-              ${STRINGS.unverifiedSenderHint}
+              ${item.trusted_sender
+                ? fmt(STRINGS.trustedSenderNote, { domain: item.sender_domain || item.sender })
+                : STRINGS.unverifiedSenderHint}
             </span>
           </div>`}
+      ${item.checks ? this._renderChecks(item.checks) : nothing}
       ${editing ? this._renderEditForm(item, busy) : this._renderSuggestion(item.suggestion)}
       ${this._renderError(item.id)} ${editing ? nothing : this._renderReviewActions(item, busy)}
     </article>`;
+  }
+
+  /** How the sender checks went: the headers, the servers that wrote them and the results. */
+  private _renderChecks(checks: SenderChecks): TemplateResult {
+    return html`<details class="checks">
+      <summary>${STRINGS.senderChecks}</summary>
+      <dl class="facts">
+        ${senderCheckRows(checks).map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}
+      </dl>
+    </details>`;
   }
 
   private _renderSuggestion(suggestion: Suggestion | null): TemplateResult {
@@ -776,22 +856,23 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       >
         ${STRINGS.dismiss}
       </button>
-      <button
-        type="button"
-        class="btn"
-        title=${fmt(STRINGS.trustSenderHint, { domain })}
-        aria-disabled=${disabled}
-        @click=${() =>
-          this._command(
-            item.id,
-            "review/trust_sender",
-            { review_id: item.id },
-            // The item stays: its e-mail is read again as a known sender's.
-            { hide: false },
-          )}
-      >
-        ${STRINGS.trustSender}
-      </button>
+      ${item.trusted_sender || item.fill
+        ? nothing
+        : html`<button
+            type="button"
+            class="btn"
+            data-trust
+            title=${fmt(STRINGS.trustSenderHint, { domain })}
+            aria-disabled=${disabled}
+            aria-expanded=${item.authenticated
+              ? nothing
+              : this._confirmTrust === item.id
+                ? "true"
+                : "false"}
+            @click=${() => this._askTrust(item)}
+          >
+            ${STRINGS.trustSender}
+          </button>`}
       <button
         type="button"
         class="btn danger"
@@ -801,6 +882,33 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       >
         ${STRINGS.ignoreSender}
       </button>
+    </div>
+    ${this._confirmTrust === item.id ? this._renderTrustConfirm(item, domain, busy) : nothing}`;
+  }
+
+  /** The confirmation of "Trust this sender" for an e-mail that failed the sender checks. */
+  private _renderTrustConfirm(item: ReviewItem, domain: string, busy: boolean): TemplateResult {
+    const questionId = `trust-question-${item.id}`;
+    return html`<div
+      class="confirm"
+      role="group"
+      aria-labelledby=${questionId}
+      @keydown=${(event: KeyboardEvent) => this._onTrustKeyDown(event, item.id)}
+    >
+      <p id=${questionId}>${fmt(STRINGS.trustQuestion, { domain })}</p>
+      <div class="row-actions">
+        <button
+          type="button"
+          class="btn danger primary"
+          aria-disabled=${busy ? "true" : "false"}
+          @click=${() => void this._trust(item)}
+        >
+          ${fmt(STRINGS.trustConfirm, { domain })}
+        </button>
+        <button type="button" class="btn" data-trust-cancel @click=${() => this._cancelTrust(item.id)}>
+          ${STRINGS.cancel}
+        </button>
+      </div>
     </div>`;
   }
 
@@ -1098,6 +1206,61 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     void this._command(item.id, "review/accept", { review_id: item.id });
   }
 
+  /** Trusts the sender at once when the e-mail passed the checks; otherwise asks first. */
+  private _askTrust(item: ReviewItem): void {
+    if (this._busyItems.has(item.id)) {
+      return;
+    }
+    if (item.authenticated) {
+      void this._trust(item);
+      return;
+    }
+    this._confirmTrust = item.id;
+    this._focusInItem(item.id, "[data-trust-cancel]");
+  }
+
+  private _cancelTrust(itemId: string): void {
+    this._confirmTrust = null;
+    this._focusInItem(itemId, "[data-trust]");
+  }
+
+  private _onTrustKeyDown(event: KeyboardEvent, itemId: string): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      this._cancelTrust(itemId);
+    }
+  }
+
+  private async _trust(item: ReviewItem): Promise<void> {
+    const domain = item.sender_domain || item.sender;
+    this._confirmTrust = null;
+    this._trustStatus = null;
+    this._focusInItem(item.id, "[data-trust]");
+    await this._command(
+      item.id,
+      "review/trust_sender",
+      { review_id: item.id },
+      {
+        // The item stays until the next list: its e-mail is added or read again.
+        hide: false,
+        onSuccess: (result) => {
+          const done = (result ?? {}) as Partial<TrustResult>;
+          this._trustStatus = trustResultText({
+            domain: done.domain ?? domain,
+            added: done.added ?? 0,
+            rechecking: done.rechecking ?? 0,
+            kept: done.kept ?? 0,
+          });
+        },
+      },
+    );
+  }
+
+  private _dismissTrustStatus(): void {
+    this._trustStatus = null;
+  }
+
   /**
    * Sends a review command for one item. The item disappears at once (unless `hide` is false),
    * so the next one can be used; if the command fails, it comes back with the error, or the
@@ -1107,7 +1270,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     itemId: string,
     command: string,
     data: Record<string, unknown>,
-    { hide = true, onSuccess }: { hide?: boolean; onSuccess?: () => void } = {},
+    { hide = true, onSuccess }: { hide?: boolean; onSuccess?: (result: unknown) => void } = {},
   ): Promise<void> {
     const hass = this.hass;
     if (!hass || this._busyItems.has(itemId) || this._hidden.has(itemId)) {
@@ -1119,13 +1282,13 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       this._hidden = hidePending(this._hidden, [itemId]);
     }
     try {
-      await callParcelsCommand(hass, command, data);
+      const result = await callParcelsCommand<unknown>(hass, command, data);
       if (hide) {
         this._hidden = hideHandled(this._hidden, [itemId], this.snapshot, (id) =>
           this._listed(id),
         );
       }
-      onSuccess?.();
+      onSuccess?.(result);
     } catch (error) {
       this._hidden = unhide(this._hidden, [itemId]);
       const message = fmt(STRINGS.actionFailed, { message: errorMessage(error) });

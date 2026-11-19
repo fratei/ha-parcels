@@ -26,6 +26,7 @@ export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
     owners: [],
     source: "parser",
     ai: false,
+    ai_filled: false,
     auto_merged: null,
     provisional: false,
     archived: false,

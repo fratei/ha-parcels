@@ -9,6 +9,10 @@ import pytest
 
 from custom_components.parcels.const import CONFIDENCE_APPLY, MailKind, ParcelStatus
 from custom_components.parcels.convert import (
+    fill_contribution,
+    fill_gaps,
+    fill_origin_id,
+    fill_suggestion,
     has_identifier,
     is_confident,
     result_contributions,
@@ -16,8 +20,17 @@ from custom_components.parcels.convert import (
     suggestion_from_result,
     suggestion_result,
 )
-from custom_components.parcels.models import MAX_ITEMS, Source, Suggestion
+from custom_components.parcels.dedup import Contribution, apply_contribution
+from custom_components.parcels.models import (
+    MAX_ITEMS,
+    ParcelsData,
+    ParcelState,
+    Source,
+    Suggestion,
+)
 from custom_components.parcels.parsers.base import Eta, ParsedShipment, ParseResult
+
+from .factories import T0, contribution
 
 SENT = datetime(2026, 11, 16, 14, 0, tzinfo=UTC)
 NUMBER = "RR123456785PT"
@@ -388,3 +401,187 @@ def test_results_agree_without_parser_eta() -> None:
     assert results_agree(parser, ai)
     # A delay keeps a parcel in transit, so both read the same status.
     assert results_agree(parser, _shadow(MailKind.IN_TRANSIT, NUMBER, None))
+
+
+def _state(*contributions: Contribution) -> ParcelState:
+    data = ParcelsData()
+    parcel_id = None
+    for item in contributions:
+        parcel_id = apply_contribution(data, item, T0).parcel_id
+    assert parcel_id is not None
+    return data.parcels[parcel_id].state
+
+
+def _parsed(kind: MailKind, **shipment: Any) -> ParseResult:
+    return _result(kind, ParsedShipment(kind=kind, **shipment))
+
+
+SHIPPED_GAPS = {"eta", "items", "tracking_number", "carrier"}
+
+
+@pytest.mark.parametrize(
+    ("result", "carrier_mail", "expected"),
+    [
+        (
+            _parsed(MailKind.SHIPPED, tracking_number=NUMBER, carrier="ctt"),
+            False,
+            {"eta", "items"},
+        ),
+        (
+            _parsed(MailKind.IN_TRANSIT, tracking_number=NUMBER, carrier="ctt"),
+            True,
+            {"eta"},
+        ),
+        (_result(MailKind.ORDER, order_numbers=("1001",)), False, {"eta", "items"}),
+        (_result(MailKind.SHIPPED, order_numbers=("1001",)), False, SHIPPED_GAPS),
+        (
+            _parsed(MailKind.SHIPPED, tracking_number=NUMBER, eta=ETA, items=("Lamp",)),
+            False,
+            {"carrier"},
+        ),
+        (_parsed(MailKind.DELIVERED, tracking_number=NUMBER), False, set()),
+        (_parsed(MailKind.CODE, tracking_number=NUMBER), False, set()),
+        (
+            _result(
+                MailKind.SHIPPED,
+                ParsedShipment(tracking_number=NUMBER),
+                ParsedShipment(tracking_number=OTHER_NUMBER),
+            ),
+            False,
+            set(),
+        ),
+    ],
+    ids=[
+        "shop",
+        "carrier",
+        "order",
+        "no_number",
+        "carrier_gap",
+        "delivered",
+        "code",
+        "two",
+    ],
+)
+def test_fill_gaps(result: ParseResult, carrier_mail: bool, expected: set[str]) -> None:
+    """The AI may fill in only what neither the e-mail nor the parcel has."""
+    state = _state(contribution("msg:other#0", orders=("1001",), merchant="Loja"))
+
+    assert fill_gaps(result, state, carrier_mail=carrier_mail) == expected
+
+
+def test_fill_gaps_from_the_parcel() -> None:
+    """What the parcel already knows from other e-mails isn't a gap."""
+    result = _result(MailKind.SHIPPED, order_numbers=("1001",))
+    known = contribution(
+        "msg:other#0", number=NUMBER, carrier="ctt", eta=ETA, items=("Lamp",)
+    )
+
+    assert fill_gaps(result, _state(known), carrier_mail=False) == set()
+    delivered = contribution("msg:late#0", number=NUMBER, kind=MailKind.DELIVERED)
+    shop = _parsed(MailKind.SHIPPED, tracking_number=NUMBER)
+    assert fill_gaps(shop, _state(delivered), carrier_mail=False) == set()
+
+
+def _ai(
+    *shipments: ParsedShipment, kind: MailKind = MailKind.SHIPPED, **kwargs: Any
+) -> ParseResult:
+    return ParseResult(
+        parser="ai", kind=kind, shipments=list(shipments), source="ai", **kwargs
+    )
+
+
+def test_fill_suggestion() -> None:
+    """Only the gaps are taken, with the parser's kind."""
+    parser = _parsed(MailKind.IN_TRANSIT, tracking_number=NUMBER, carrier="ctt")
+    ai = _ai(
+        ParsedShipment(tracking_number=NUMBER, carrier="dpd", eta=ETA),
+        kind=MailKind.OUT_FOR_DELIVERY,
+        merchant="Other",
+        items=("Lamp", "Rug"),
+    )
+
+    assert fill_suggestion(ai, {"eta", "items"}, parser) == Suggestion(
+        kind=MailKind.IN_TRANSIT,
+        eta_start=ETA.start,
+        eta_end=ETA.end,
+        items=("Lamp", "Rug"),
+    )
+    assert fill_suggestion(ai, {"items"}, parser) == Suggestion(
+        kind=MailKind.IN_TRANSIT, items=("Lamp", "Rug")
+    )
+
+
+def test_fill_suggestion_number() -> None:
+    """A missing number and carrier are filled when the AI found one of each."""
+    parser = _result(MailKind.SHIPPED, order_numbers=("1001",))
+    ai = _ai(ParsedShipment(tracking_number=NUMBER.lower(), carrier="ctt"))
+
+    assert fill_suggestion(ai, SHIPPED_GAPS, parser) == Suggestion(
+        kind=MailKind.SHIPPED, carrier="ctt", tracking_numbers=(NUMBER,)
+    )
+
+
+@pytest.mark.parametrize(
+    "ai",
+    [
+        None,
+        _ai(kind=MailKind.NOT_PARCEL),
+        _ai(ParsedShipment(tracking_number=OTHER_NUMBER, eta=ETA)),
+        _ai(
+            ParsedShipment(tracking_number=NUMBER, eta=ETA),
+            ParsedShipment(tracking_number=OTHER_NUMBER, eta=ETA),
+        ),
+        _ai(ParsedShipment(tracking_number=NUMBER)),
+        _ai(
+            ParsedShipment(eta=ETA),
+            ParsedShipment(eta=Eta(start=date(2026, 11, 20), end=date(2026, 11, 20))),
+        ),
+    ],
+    ids=["failed", "not_parcel", "other_number", "two_numbers", "nothing", "two_dates"],
+)
+def test_no_fill_suggestion(ai: ParseResult | None) -> None:
+    """Nothing is filled from an answer about another parcel or an unclear one."""
+    parser = _parsed(MailKind.SHIPPED, tracking_number=NUMBER)
+
+    assert fill_suggestion(ai, {"eta", "items"}, parser) is None
+
+
+def test_fill_contribution() -> None:
+    """A fill adds only its values, to the parcel of the e-mail's parser result."""
+    suggestion = Suggestion(
+        kind=MailKind.SHIPPED,
+        eta_start=ETA.start,
+        eta_end=ETA.end,
+        items=("Lamp",),
+        carrier="ctt",
+        tracking_numbers=(NUMBER,),
+    )
+
+    fill = fill_contribution(
+        suggestion, message_hash="abc", time=SENT, owner="person.one", label="Loja"
+    )
+
+    assert fill is not None
+    assert fill.anchor == "msg:abc#0"
+    origin = fill.origin
+    assert origin.id == fill_origin_id("abc") == "msg:abc#ai"
+    assert (origin.source, origin.message, origin.owners) == (
+        Source.AI,
+        "abc",
+        ("person.one",),
+    )
+    assert (origin.carrier, origin.tracking_number, origin.items) == (
+        "ctt",
+        NUMBER,
+        ("Lamp",),
+    )
+    assert origin.merchant is None
+    assert not origin.confirmed
+    [event] = fill.events
+    assert (event.status, event.kind, event.eta, event.time) == (None, None, ETA, SENT)
+    assert (
+        fill_contribution(
+            Suggestion(kind=MailKind.SHIPPED), message_hash="abc", time=SENT
+        )
+        is None
+    )

@@ -848,7 +848,7 @@ def test_empty_and_odd_messages() -> None:
 
 
 def test_graph_html_message() -> None:
-    """A Graph message keeps the topmost Authentication-Results only."""
+    """A Graph message keeps its Authentication-Results; -Original ones are counted."""
     message = message_from_graph(
         _graph("message_html.json"), mailbox="alex@example.com"
     )
@@ -872,6 +872,8 @@ def test_graph_html_message() -> None:
     assert message.auth is not None
     assert message.auth.authserv_id is None
     assert message.auth.dkim_pass_domains == ("loja-exemplo.example",)
+    assert len(message.auth_headers) == 1
+    assert message.auth_originals == 1
     assert message.language == "pt"
     verdict = verify_sender(message)
     assert verdict.authenticated

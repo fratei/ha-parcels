@@ -684,7 +684,7 @@ async def test_trust_sender(hass: HomeAssistant, mail: Mail) -> None:
     result = await call(hass, "trust_sender", {"review_id": review.id}, response=True)
     await async_wait_reprocess(hass)
 
-    assert result == {"domain": SHOP}
+    assert result == {"domain": SHOP, "added": 0, "rechecking": 1, "kept": 0}
     assert engine.data.senders[SHOP].trusted
     assert not engine.data.review
     numbers = {p.state.tracking_number for p in engine.data.parcels.values()}

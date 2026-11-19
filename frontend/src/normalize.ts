@@ -15,6 +15,7 @@ import type {
   ParcelSource,
   ParcelStatus,
   ReviewItem,
+  SenderChecks,
   Settings,
   Snapshot,
   Suggestion,
@@ -109,6 +110,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     owners: strs(raw.owners),
     source: source(raw.source),
     ai: raw.ai === true,
+    ai_filled: raw.ai_filled === true,
     auto_merged: autoMerged(raw.auto_merged),
     provisional: raw.provisional === true,
     archived: raw.archived === true,
@@ -156,8 +158,32 @@ export function normalizeReviewItem(raw: unknown): ReviewItem | null {
     mailbox_owner: str(raw.mailbox_owner),
     reason: text(raw.reason),
     authenticated: raw.authenticated === true,
+    trusted_sender: raw.trusted_sender === true,
+    checks: senderChecks(raw.checks),
+    fill: raw.fill === true,
     source: raw.source === "ai" ? "ai" : "parser",
     suggestion: normalizeSuggestion(raw.suggestion),
+  };
+}
+
+/** How the sender checks went; null when the item has none. */
+function senderChecks(raw: unknown): SenderChecks | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  const headers = count(raw.headers);
+  const used = raw.used;
+  return {
+    headers,
+    // Kept in order and position: an empty name is a header that named no server.
+    servers: Array.isArray(raw.servers)
+      ? raw.servers.map((server) => (typeof server === "string" ? server : ""))
+      : [],
+    used: Number.isSafeInteger(used) && (used as number) >= 0 && (used as number) < headers ? (used as number) : null,
+    dkim: text(raw.dkim),
+    dmarc: text(raw.dmarc),
+    spf: text(raw.spf),
+    originals: count(raw.originals),
   };
 }
 

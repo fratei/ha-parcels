@@ -16,6 +16,7 @@ import { ParcelsChipCard } from "./base-card.ts";
 import { renderChip } from "./chip.ts";
 import { cardTitle, weekCardConfig, type WeekCardConfig } from "./config.ts";
 import { addDays, startOfWeek } from "./dates.ts";
+import { FILTER_LABELS, PARCEL_FILTERS, type ParcelFilter } from "./filter.ts";
 import { RANGE_FORMAT, formatDate, formatDateRange } from "./format.ts";
 import { layoutWeek, type WeekItem, type WeekLayout } from "./placement.ts";
 import { defineElement, registerCard } from "./register.ts";
@@ -151,6 +152,34 @@ export class ParcelsWeekCard extends ParcelsChipCard {
         color: var(--secondary-text-color, #727272);
         text-align: center;
       }
+      .week-empty.stacked {
+        padding: 8px 16px;
+      }
+      .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 0 16px 8px;
+      }
+      .filter-btn {
+        min-height: 32px;
+        padding: 0 12px;
+        border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+        border-radius: 16px;
+        background: transparent;
+        color: var(--primary-text-color, #212121);
+        font-size: 0.8125rem;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      .filter-btn:hover {
+        background: color-mix(in srgb, var(--primary-color, #03a9f4) 8%, transparent);
+      }
+      .filter-btn[aria-pressed="true"] {
+        border-color: transparent;
+        background: color-mix(in srgb, var(--primary-color, #03a9f4) 18%, transparent);
+        color: var(--primary-color, #03a9f4);
+      }
 
       .days {
         display: flex;
@@ -219,6 +248,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
     snapshot: Snapshot;
     monday: string;
     showArchived: boolean;
+    filter: ParcelFilter;
     layout: WeekLayout;
   } | null = null;
 
@@ -304,22 +334,24 @@ export class ParcelsWeekCard extends ParcelsChipCard {
     }
     const monday = this._monday(snapshot);
     const showArchived = this._config.show_archived;
+    const filter = this._filter;
     const cache = this._layoutCache;
     if (
       cache &&
       cache.snapshot === snapshot &&
       cache.monday === monday &&
-      cache.showArchived === showArchived
+      cache.showArchived === showArchived &&
+      cache.filter === filter
     ) {
       return cache.layout;
     }
     const layout = layoutWeek(
-      snapshot.parcels,
+      this.filterParcels(snapshot, snapshot.parcels),
       monday,
       { today: snapshot.settings.today, timeZone: snapshot.settings.time_zone },
       { showArchived },
     );
-    this._layoutCache = { snapshot, monday, showArchived, layout };
+    this._layoutCache = { snapshot, monday, showArchived, filter, layout };
     return layout;
   }
 
@@ -377,7 +409,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
             </button>
           </div>
         </div>
-        ${this.renderBanners()}
+        ${this._renderFilters()} ${this.renderBanners()}
         ${snapshot && layout
           ? this._narrow
             ? this._renderStacked(snapshot, layout, range)
@@ -428,7 +460,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
             <span class="sr-only">${formatDate(day, locale, DAY_LONG)}</span>
           </div>`,
       )}
-      ${empty ? html`<p class="week-empty">${STRINGS.noDeliveriesThisWeek}</p>` : nothing}
+      ${empty ? html`<p class="week-empty">${this._emptyText()}</p>` : nothing}
       ${repeat(
         layout.items,
         (item) => item.parcel.id,
@@ -443,7 +475,9 @@ export class ParcelsWeekCard extends ParcelsChipCard {
   private _renderStacked(snapshot: Snapshot, layout: WeekLayout, range: string): TemplateResult {
     const locale = this.locale;
     const today = snapshot.settings.today;
-    return html`<ol class="days" aria-label=${fmt(STRINGS.weekOf, { range })}>
+    const filteredOut = this._filter !== "all" && layout.items.length === 0;
+    return html`${filteredOut ? html`<p class="week-empty stacked">${this._emptyText()}</p>` : nothing}
+      <ol class="days" aria-label=${fmt(STRINGS.weekOf, { range })}>
       ${layout.days.map((day, column) => {
         const items = layout.perDay[column] ?? [];
         const isToday = day === today;
@@ -490,6 +524,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
       continuesAfter,
       showRange: stacked,
       members: item.members,
+      possibly: this.possiblyFor(item.members),
       busy: item.members.some((member) => this._busyParcels.has(member.id)),
       position,
       onOpen: this.openDetails,
@@ -498,6 +533,28 @@ export class ParcelsWeekCard extends ParcelsChipCard {
       onUndoInferred: this.undoInferred,
       onKeepInferred: this.keepInferred,
     });
+  }
+
+  /** All, Active, Recent or Completed; the choice is kept on this device. */
+  private _renderFilters(): TemplateResult {
+    return html`<div class="filters" role="group" aria-label=${STRINGS.filterLabel}>
+      ${PARCEL_FILTERS.map(
+        (filter) =>
+          html`<button
+            type="button"
+            class="filter-btn"
+            aria-pressed=${this._filter === filter ? "true" : "false"}
+            title=${filter === "recent" ? STRINGS.filterRecentHint : nothing}
+            @click=${() => this.setFilter(filter)}
+          >
+            ${FILTER_LABELS[filter]}
+          </button>`,
+      )}
+    </div>`;
+  }
+
+  private _emptyText(): string {
+    return this._filter === "all" ? STRINGS.noDeliveriesThisWeek : STRINGS.filterEmptyWeek;
   }
 
   private _previousWeek(): void {

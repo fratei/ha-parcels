@@ -81,11 +81,41 @@ export function boxParcel(parcel: Parcel, members: readonly Parcel[]): Parcel {
     window_start: earliest(members.map((member) => member.window_start)),
     window_end: latest(members.map((member) => member.window_end)),
     ai: members.some((member) => member.ai),
+    ai_filled: members.some((member) => member.ai_filled),
     private: members.some((member) => member.private),
     has_code: members.some((member) => member.has_code),
+    pickup_code: boxCodes(members),
+    items: boxItems(parcel, members),
     auto_merged: members.find((member) => member.auto_merged)?.auto_merged ?? null,
     inferred: members.some((member) => member.inferred),
   };
+}
+
+/** The packages' different PINs, e.g. "4711, 0815", or null when none has one. */
+function boxCodes(members: readonly Parcel[]): string | null {
+  const codes = new Set<string>();
+  for (const member of members) {
+    const code = member.pickup_code?.trim();
+    if (code) {
+      codes.add(code);
+    }
+  }
+  return codes.size > 0 ? [...codes].join(", ") : null;
+}
+
+/** The shown package's items, then those only the other packages have. */
+function boxItems(parcel: Parcel, members: readonly Parcel[]): string[] {
+  const items = [...parcel.items];
+  const seen = new Set(items);
+  for (const member of members) {
+    for (const item of member.items) {
+      if (!seen.has(item)) {
+        seen.add(item);
+        items.push(item);
+      }
+    }
+  }
+  return items;
 }
 
 /** The visible packages of a parcel's shipment, by tracking number; empty when it's alone. */

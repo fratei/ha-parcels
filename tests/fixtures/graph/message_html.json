@@ -33,7 +33,7 @@
       "value": "spf=pass (sender IP is 192.0.2.25) smtp.mailfrom=mail.loja-exemplo.example; dkim=pass (signature was verified) header.d=loja-exemplo.example;dmarc=pass action=none header.from=loja-exemplo.example;compauth=pass reason=100"
     },
     {
-      "name": "Authentication-Results",
+      "name": "Authentication-Results-Original",
       "value": "mx.example.net; dkim=pass header.d=ctt.pt; dmarc=pass header.from=ctt.pt"
     },
     {

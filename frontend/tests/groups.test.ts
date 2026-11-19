@@ -69,6 +69,21 @@ describe("boxParcel", () => {
     assert.deepEqual(shown.auto_merged, MERGED);
     assert.equal(boxParcel(first, [first]), first);
   });
+
+  test("has every package's items and PINs", () => {
+    const first = pkg("p1", "61000012310051", { items: ["Brava bin"], pickup_code: "4711", has_code: true });
+    const members = [
+      first,
+      pkg("p2", "61000012310052", { items: ["Zeta plug", "Brava bin"], pickup_code: "4711", has_code: true }),
+      pkg("p3", "61000012310053", { items: ["Lumen lamp"], pickup_code: "0815", has_code: true }),
+      pkg("p4", "61000012310054"),
+    ];
+    const shown = boxParcel(first, members);
+    assert.deepEqual(shown.items, ["Brava bin", "Zeta plug", "Lumen lamp"]);
+    assert.equal(shown.pickup_code, "4711, 0815");
+    assert.equal(boxParcel(first, [first, pkg("p2", "61000012310052")]).pickup_code, "4711");
+    assert.equal(boxParcel(pkg("p5", "61000012310055"), [pkg("p5", "61000012310055"), pkg("p6", "61000012310056")]).pickup_code, null);
+  });
 });
 
 describe("shipmentPackages", () => {

@@ -1,5 +1,6 @@
-/** The review card's optimistic state and its local AI line, kept apart so they can be tested. */
+/** The review card's optimistic state and its text, kept apart so they can be tested. */
 import { STRINGS, fmt } from "./strings.ts";
+import type { SenderChecks, TrustResult } from "./types.ts";
 
 /**
  * Why an item is hidden: "pending" while its command runs, then the snapshot
@@ -104,4 +105,48 @@ export function aiQueueText(queue: number, seconds: number | null): string | nul
   return minutes < 120
     ? fmt(STRINGS.aiQueueMinutes, { queue: waiting, minutes })
     : fmt(STRINGS.aiQueueHours, { queue: waiting, hours: Math.round(minutes / 60) });
+}
+
+function counted(count: number, one: string, many: string): string | null {
+  if (count <= 0) {
+    return null;
+  }
+  return count === 1 ? one : fmt(many, { count });
+}
+
+/** "Trusted shop.example: added 1 e-mail, reading 2 e-mails again, 1 still needs review." */
+export function trustResultText(result: TrustResult): string {
+  const parts = [
+    counted(result.added, STRINGS.trustAddedOne, STRINGS.trustAddedMany),
+    counted(result.rechecking, STRINGS.trustRecheckOne, STRINGS.trustRecheckMany),
+    counted(result.kept, STRINGS.trustKeptOne, STRINGS.trustKeptMany),
+  ].filter((part): part is string => part !== null);
+  return parts.length
+    ? fmt(STRINGS.trustDoneWith, { domain: result.domain, parts: parts.join(", ") })
+    : fmt(STRINGS.trustDone, { domain: result.domain });
+}
+
+/** The rows of "Sender check details": headers, the servers that wrote them, and the results. */
+export function senderCheckRows(checks: SenderChecks): Array<[string, string]> {
+  const rows: Array<[string, string]> = [[STRINGS.checkHeaders, String(checks.headers)]];
+  if (checks.servers.length) {
+    rows.push([
+      STRINGS.checkServers,
+      checks.servers.map((server) => server || STRINGS.checkNoServer).join(", "),
+    ]);
+  }
+  if (checks.originals > 0) {
+    rows.push([STRINGS.checkOriginals, String(checks.originals)]);
+  }
+  if (checks.used === null) {
+    rows.push([STRINGS.checkUsed, STRINGS.checkUsedNone]);
+    return rows;
+  }
+  rows.push(
+    [STRINGS.checkUsed, fmt(STRINGS.checkUsedHeader, { n: checks.used + 1 })],
+    ["DKIM", checks.dkim || STRINGS.checkNoResult],
+    ["DMARC", checks.dmarc || STRINGS.checkNoResult],
+    ["SPF", checks.spf || STRINGS.checkNoResult],
+  );
+  return rows;
 }

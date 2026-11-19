@@ -1,0 +1,83 @@
+Return-Path: <bounce-5a1c0ef8bb@bounces.ups.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ups.com header.s=sel1 header.b=3c3435ad;
+       spf=pass (google.com: domain of bounce-5a1c0ef8bb@bounces.ups.com
+ designates 192.0.2.146 as permitted sender) smtp.mailfrom=bounce-5a1c0ef8bb@bounces.ups.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ups.com
+From: UPS <mcinfo@ups.com>
+To: Alex Doe <alex@example.com>
+Subject: UPS-update: bezorging gepland op donderdag 19-11-2026
+Date: Tue, 17 Nov 2026 07:21:00 +0000
+Message-ID: <20261117072100.3107@mail.example.com>
+MIME-Version: 1.0
+Content-Language: nl-NL
+Content-Type: multipart/alternative; boundary="b1_8e21c4da7f29"
+
+--b1_8e21c4da7f29
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+De bezorging van je pakket is gepland op donderdag 19-11-2026
+
+Hallo Alex Doe,
+
+Geplande bezorging: donderdag 19-11-2026
+Verwacht tijdvak: 10:30 - 14:30
+Afzender: Bol
+Trackingnummer: 1ZA2PF4N8724908966
+Aantal pakketten: 1
+UPS-service: UPS Standard®
+Ontvanger: Alex Doe, Amsterdam, NL
+
+Niet thuis? Wijzig de bezorging met UPS My Choice®.
+
+Volg je pakket [https://www.ups.com/track?loc=nl_NL&tracknum=1ZA2PF4N8724908966&requester=MC/trackdetails]
+
+© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.
+
+Privacyverklaring [https://www.ups.com/nl/nl/support/shipping-support/legal-terms-conditions/privacy-notice.page]
+
+Beantwoord deze e-mail niet.
+
+--b1_8e21c4da7f29
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UPS Update</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#351c15}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#351c15;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.ups.com/assets/resources/images/UPS_logo.svg" alt="UPS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>De bezorging van je pakket is gepland op donderdag 19-11-2026</h1>
+<p>Hallo Alex Doe,</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Geplande bezorging</td><td class="value">donderdag 19-11-2026</td></tr>
+<tr><td class="label">Verwacht tijdvak</td><td class="value">10:30 - 14:30</td></tr>
+<tr><td class="label">Afzender</td><td class="value">Bol</td></tr>
+<tr><td class="label">Trackingnummer</td><td class="value">1ZA2PF4N8724908966</td></tr>
+<tr><td class="label">Aantal pakketten</td><td class="value">1</td></tr>
+<tr><td class="label">UPS-service</td><td class="value">UPS Standard®</td></tr>
+<tr><td class="label">Ontvanger</td><td class="value">Alex Doe, Amsterdam, NL</td></tr>
+</table>
+<p>Niet thuis? Wijzig de bezorging met UPS My Choice®.</p>
+<p style="text-align:center"><a class="button" href="https://www.ups.com/track?loc=nl_NL&amp;tracknum=1ZA2PF4N8724908966&amp;requester=MC/trackdetails">Volg je pakket</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.</p>
+<p><a href="https://www.ups.com/nl/nl/support/shipping-support/legal-terms-conditions/privacy-notice.page">Privacyverklaring</a></p>
+<p>Beantwoord deze e-mail niet.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_8e21c4da7f29--

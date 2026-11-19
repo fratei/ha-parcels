@@ -35,13 +35,17 @@ from .const import (
     ParcelStatus,
 )
 from .parsers.base import Eta
+from .parsers.carriers import brand_carriers
 from .parsers.items import unique_items
-from .parsers.senders import KNOWN_SENDERS, lookup
+from .parsers.senders import KNOWN_SENDERS, lookup, organizational_domain
 from .parsers.tracking import detect_carrier, normalize_tracking_number, tracking_url
 
 _LOGGER = logging.getLogger(__name__)
 
 MAX_ITEMS = 20
+# Ends the ID of the origin that holds what the local AI filled in for an
+# e-mail a parser read: the parser's origins end in "#0", "#1"…
+FILL_ORIGIN_SUFFIX = "#ai"
 
 
 class Source(StrEnum):
@@ -502,6 +506,8 @@ class ParcelState:
     timeline: tuple[TimelineEntry, ...]
     # Delivered according to another parcel of the same merchant only.
     inferred: bool = False
+    # Some details were filled in by the local AI and aren't confirmed yet.
+    ai_filled: bool = False
 
     @property
     def carrier_name(self) -> str | None:
@@ -592,6 +598,56 @@ def is_carrier_mail(origin: Origin) -> bool:
     return (info := lookup(origin.label)) is not None and info.kind == "carrier"
 
 
+_BARE_DOMAIN = re.compile(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", re.IGNORECASE)
+
+# Carriers by their names' keys; a known merchant (Amazon) is never a carrier.
+_CARRIER_KEYS: frozenset[str] = frozenset(
+    key
+    for key in (
+        *(
+            merchant_key(name)
+            for code, name in CARRIER_NAMES.items()
+            if code != "other"
+        ),
+        *(
+            merchant_key(info.name)
+            for info in KNOWN_SENDERS.values()
+            if info.kind == "carrier"
+        ),
+    )
+    if key and key not in _KNOWN_MERCHANT_NAMES
+)
+
+
+def _bare_domain(name: str) -> bool:
+    """Return True for a merchant that is only a domain: ``shop.example``."""
+    return merchant_display(name) == name and bool(_BARE_DOMAIN.fullmatch(name.strip()))
+
+
+def carrier_like(name: str | None) -> bool:
+    """Return True when a merchant name is a carrier's: "CTT Expresso"."""
+    key = merchant_key(name)
+    if not key or key in _KNOWN_MERCHANT_NAMES:
+        return False
+    return key in _CARRIER_KEYS or bool(brand_carriers(name))
+
+
+def _own_mail(origin: Origin) -> bool:
+    """Return True when an e-mail's merchant is its sender's own name.
+
+    ``Lumenhaus`` from ``lumenhaus.example`` is; a name from a relay or a
+    status service's domain isn't.
+    """
+    key = merchant_key(origin.merchant)
+    first = re.sub(
+        r"[^0-9a-z]", "", organizational_domain(origin.label).partition(".")[0]
+    )
+    if not key or not first:
+        return False
+    short, long = sorted((key, first), key=len)
+    return short == long or (len(short) >= 4 and short in long)
+
+
 def _best_carrier(ranked: list[Origin], number: str | None) -> str | None:
     """Return a parcel's carrier from its origins, best first.
 
@@ -665,7 +721,8 @@ def derive_state(parcel: Parcel) -> ParcelState:
     if not carrier_set:
         carrier = _best_carrier(ranked, number)
 
-    # The merchant's own e-mails name it better than a carrier's.
+    # The shop's own e-mails name it best; a bare domain only counts when no
+    # e-mail gives a name, and a carrier is never the seller.
     merchant_set, merchant = manual_value("merchant")
     if not merchant_set:
         merchant = merchant_display(
@@ -673,15 +730,17 @@ def derive_state(parcel: Parcel) -> ParcelState:
                 (
                     o.merchant
                     for o in sorted(
-                        origins,
+                        (o for o in origins if o.merchant),
                         key=lambda o: (
-                            SOURCE_PRIORITY[o.source],
+                            _bare_domain(o.merchant or ""),
+                            not _own_mail(o),
                             is_carrier_mail(o),
+                            SOURCE_PRIORITY[o.source],
                             o.time,
                             o.id,
                         ),
                     )
-                    if o.merchant
+                    if not carrier_like(o.merchant)
                 ),
                 None,
             )
@@ -697,11 +756,13 @@ def derive_state(parcel: Parcel) -> ParcelState:
     pickup_code = latest("pickup_code")
 
     # A shipment's e-mails list what the package holds; an order's e-mails
-    # list the whole order, which may come in several packages.
-    shipped = [
-        o for o in origins if o.items and (o.tracking_number or o.amazon_shipment_id)
+    # list the whole order, which may come in several packages. What a parser
+    # or the user found replaces what the AI read.
+    listed = [o for o in origins if o.items and o.source is not Source.AI] or [
+        o for o in origins if o.items
     ]
-    items = unique_items(item for o in shipped or origins for item in o.items)
+    shipped = [o for o in listed if o.tracking_number or o.amazon_shipment_id]
+    items = unique_items(item for o in shipped or listed for item in o.items)
     order_numbers: list[str] = []
     shipment_ids: set[str] = set()
     owners: set[str] = set()
@@ -788,6 +849,11 @@ def derive_state(parcel: Parcel) -> ParcelState:
         default=None,
     )
     ai = found_by is Source.AI and not any(o.confirmed for o in origins)
+    # The AI filled in details of a parcel a parser found.
+    ai_filled = not ai and any(
+        o.source is Source.AI and o.id.endswith(FILL_ORIGIN_SUFFIX) and not o.confirmed
+        for o in origins
+    )
     provisional = not number and not shipment_ids and status is ParcelStatus.ORDERED
     return ParcelState(
         status=status,
@@ -810,6 +876,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
         last_event=max((e.time for e in parcel.events), default=None),
         timeline=tuple(timeline),
         inferred=status_inferred and status is ParcelStatus.DELIVERED,
+        ai_filled=ai_filled,
     )
 
 
@@ -981,6 +1048,11 @@ class ReviewItem:
     authenticated: bool
     source: Source
     suggestion: Suggestion | None = None
+    # The sender checks, without addresses: see parsers.base.AuthCheck.
+    checks: dict[str, Any] | None = None
+    # Details the local AI found that a parser missed in an e-mail it read;
+    # accepting adds them to the parcel of that e-mail.
+    fill: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the item."""
@@ -998,12 +1070,15 @@ class ReviewItem:
             "authenticated": self.authenticated,
             "source": self.source.value,
             "suggestion": self.suggestion.as_dict() if self.suggestion else None,
+            "checks": self.checks,
+            "fill": self.fill,
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ReviewItem:
         """Parse a serialised item."""
         suggestion = data.get("suggestion")
+        checks = data.get("checks")
         return cls(
             id=str(data["id"]),
             created=dt_from_str(data.get("created")) or dt_util.utcnow(),
@@ -1020,6 +1095,8 @@ class ReviewItem:
             suggestion=Suggestion.from_dict(suggestion)
             if isinstance(suggestion, Mapping)
             else None,
+            checks=dict(checks) if isinstance(checks, Mapping) else None,
+            fill=bool(data.get("fill", False)),
         )
 
 

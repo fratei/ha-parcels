@@ -672,3 +672,38 @@ def test_mark_delivered_from_any_status() -> None:
     assert parcel.state.status is S.DELIVERED
     assert parcel.state.delivered_at == at(hours=5)
     assert archive_parcel(data, parcel.id, at(days=1)).archived == at(days=1)
+
+
+def test_anchored_contribution() -> None:
+    """An anchored contribution joins the parcel holding its anchor, or nothing."""
+    data = ParcelsData()
+    shop = apply_contribution(
+        data,
+        contribution(
+            "msg:shop#0", kind=MailKind.ORDER, orders=("1001",), merchant="Loja"
+        ),
+        T0,
+    )
+    other = apply_contribution(
+        data,
+        contribution("msg:other#0", orders=("2002",), merchant="Loja", eta=_eta(20)),
+        T0,
+    )
+    fill = contribution("msg:shop#ai", source=Source.AI, eta=_eta(20), owner=None)
+    fill.events[0].status = fill.events[0].kind = None
+    fill.anchor = "msg:shop#0"
+
+    applied = apply_contribution(data, fill, at(hours=1))
+
+    assert applied.parcel_id == shop.parcel_id
+    assert not applied.created
+    assert applied.auto_merged is None
+    parcel = data.parcels[shop.parcel_id]
+    assert parcel.state.eta == _eta(20)
+    assert parcel.state.status is S.ORDERED
+    assert "msg:shop#ai" not in data.parcels[other.parcel_id].origins
+
+    remove_message(data, "shop", at(hours=2))
+    assert shop.parcel_id not in data.parcels
+    assert apply_contribution(data, fill, at(hours=3)).parcel_id is None
+    assert list(data.parcels) == [other.parcel_id]

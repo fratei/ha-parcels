@@ -25,6 +25,7 @@ from custom_components.parcels.dedup import (
     apply_contribution,
     dismiss_suggestion,
     infer_deliveries,
+    merge_parcels,
     order_parcels,
     reconcile,
     repair_store,
@@ -792,7 +793,7 @@ def test_order_merges_stack_on_a_carrier_pairing() -> None:
     """
     data = ParcelsData()
     lamp = _apply(
-        data, _amazon("msg:c1#0", ORDER_3, _nov(20, 9), _eta(23), items=[LAMP])
+        data, _amazon("msg:c1#0", ORDER_3, _nov(20, 9), _eta(30), items=[LAMP])
     )
     # The first sync reads the carrier's delivery before Amazon's e-mail.
     ctt = _apply(
@@ -855,7 +856,7 @@ def test_repaired_order_pairs_with_the_carrier() -> None:
     The guesses stay one: a single undo takes them back together.
     """
     data = _separate(
-        _amazon("msg:c1#0", ORDER_3, _nov(20, 9), _eta(23), items=[LAMP]),
+        _amazon("msg:c1#0", ORDER_3, _nov(20, 9), _eta(30), items=[LAMP]),
         _amazon(
             "msg:s1#0",
             ORDER_3,
@@ -884,7 +885,7 @@ def test_repaired_order_pairs_with_the_carrier() -> None:
 def test_guesses_on_one_parcel_undo_together() -> None:
     """A guess on a parcel that another guess made grows its flag."""
     data = ParcelsData()
-    _apply(data, _amazon("msg:c1#0", ORDER_3, _nov(20, 9), _eta(23), items=[LAMP]))
+    _apply(data, _amazon("msg:c1#0", ORDER_3, _nov(20, 9), _eta(30), items=[LAMP]))
     mug = _apply(
         data, _amazon("msg:s2#0", ORDER_3, _nov(21, 20), _eta(22), items=[MUG])
     )
@@ -1080,4 +1081,147 @@ def test_repair_cleans_items_and_merges_orders() -> None:
     assert parcel.state.status is ParcelStatus.DELIVERED
     assert parcel.auto_merged is not None
     assert parcel.auto_merged.reason == REASON_SAME_ORDER
+    assert repair_store(data, _nov(22, 9)) == set()
+
+
+@pytest.mark.parametrize("rival_eta", [_eta(7), _eta(11)], ids=["late", "early"])
+def test_delivery_another_order_could_be_is_suggested(rival_eta: Eta) -> None:
+    """A delivery joins the order due that day only when no other order could be it.
+
+    The shop's late parcel, or one due in the next days, may be the package
+    delivered, so the user picks.
+    """
+    data = ParcelsData()
+    due = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(5, 8), _eta(9), items=[MUG]))
+    rival = _apply(
+        data, _amazon("msg:a2#0", ORDER_2, _nov(4, 8), rival_eta, items=[LAMP])
+    )
+    applied = apply_contribution(
+        data,
+        _ctt("msg:c1#0", CTT_1, MailKind.OUT_FOR_DELIVERY, _nov(9, 9, 15)),
+        _nov(9, 9, 15),
+    )
+    assert applied.created
+    assert applied.auto_merged is None
+
+    result = reconcile(data, _nov(9, 9, 20))
+
+    assert not result.removed
+    [suggestion] = result.suggestions
+    assert suggestion.parcel_id == applied.parcel_id
+    assert set(suggestion.candidates) == {due, rival}
+
+
+def test_late_order_alone_is_only_suggested() -> None:
+    """A late order is a possible match for a delivery, never a sure one."""
+    data = ParcelsData()
+    late = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(4, 8), _eta(7)))
+    ctt = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)))
+
+    result = reconcile(data, _nov(9, 11))
+
+    assert not result.removed
+    assert [(s.parcel_id, s.candidates) for s in result.suggestions] == [(ctt, (late,))]
+
+
+def test_delivery_by_another_carrier_isnt_the_order() -> None:
+    """When the shop names the carrier, only that carrier's delivery pairs."""
+    data = ParcelsData()
+    _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(5, 8), _eta(9), carrier="gls"))
+    applied = apply_contribution(
+        data,
+        _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)),
+        _nov(9, 10, 40),
+    )
+    assert applied.created
+
+    result = reconcile(data, _nov(9, 11))
+
+    assert not result.removed
+    assert result.suggestions == []
+    assert infer_deliveries(data, _nov(10, 8)) == set()
+
+
+def test_inference_skips_a_delivery_another_order_could_be() -> None:
+    """A delivery that may be a late order's package infers nothing."""
+    data = ParcelsData()
+    # Read first, so nothing joins it when the orders are read.
+    _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)))
+    _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(5, 8), _eta(9)), SYNC)
+    _apply(data, _amazon("msg:a2#0", ORDER_2, _nov(4, 8), _eta(7)), SYNC)
+    assert len(data.parcels) == 3
+
+    assert infer_deliveries(data, _nov(10, 8)) == set()
+
+
+def test_inference_skips_another_orders_delivery() -> None:
+    """A delivery already linked to another order doesn't close this one."""
+    data = ParcelsData()
+    _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(5, 8), _eta(9)))
+    other = _apply(data, _amazon("msg:a2#0", ORDER_2, _nov(5, 9), _eta(9)))
+    ctt = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)))
+    assert len(data.parcels) == 3
+    merge_parcels(data, ctt, (other,), _nov(9, 11))
+
+    assert infer_deliveries(data, _nov(10, 8)) == set()
+
+
+def test_probably_delivered_order_may_still_be_the_package() -> None:
+    """An order only guessed delivered may be what a later delivery held.
+
+    The guess came from another delivery of the shop, so it isn't proof: the
+    later delivery is suggested with both orders, never merged with one.
+    """
+    data = ParcelsData()
+    # Read first, so nothing joins them when the orders are read.
+    first = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(8, 10, 40)))
+    second = _apply(data, _ctt("msg:c2#0", CTT_2, MailKind.DELIVERED, _nov(9, 10, 40)))
+    late = _apply(
+        data, _amazon("msg:a2#0", ORDER_2, _nov(3, 8), _eta(7), items=[LAMP]), SYNC
+    )
+    due = _apply(
+        data, _amazon("msg:a1#0", ORDER_1, _nov(8, 12), _eta(9), items=[MUG]), SYNC
+    )
+    assert infer_deliveries(data, _nov(9, 8)) == {late}
+    assert data.parcels[late].state.inferred
+
+    result = reconcile(data, _nov(9, 13))
+
+    assert not result.removed
+    suggested = {s.parcel_id: set(s.candidates) for s in result.suggestions}
+    assert suggested == {first: {late}, second: {due, late}}
+
+
+def test_repair_pairs_old_deliveries_with_their_orders() -> None:
+    """Stored deliveries older than a sync looks at join their only order."""
+    data = ParcelsData()
+    day = date(2026, 9, 30)
+    ctt = _apply(
+        data,
+        _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40) - _DAYS_40),
+    )
+    order = _apply(
+        data,
+        _amazon(
+            "msg:a1#0",
+            ORDER_1,
+            _nov(5, 8) - _DAYS_40,
+            Eta(start=day, end=day),
+            items=[MUG],
+        ),
+        SYNC - _DAYS_40,
+    )
+    assert infer_deliveries(data, _nov(10, 8) - _DAYS_40) == {order}
+    assert not reconcile(data, _nov(22, 8)).removed
+
+    changed = repair_store(data, _nov(22, 8))
+
+    assert order not in data.parcels
+    assert ctt in changed
+    parcel = data.parcels[ctt]
+    assert parcel.state.items == (MUG,)
+    assert parcel.state.status is ParcelStatus.DELIVERED
+    assert not parcel.state.inferred
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_DAY
     assert repair_store(data, _nov(22, 9)) == set()

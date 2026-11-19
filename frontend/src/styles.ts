@@ -361,7 +361,8 @@ export const chipStyles = css`
     min-width: 0;
   }
   .chip-title,
-  .chip-meta {
+  .chip-meta,
+  .chip-items {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -371,10 +372,39 @@ export const chipStyles = css`
     font-weight: 500;
     line-height: 1.3;
   }
+  .chip-line {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+  }
   .chip-meta {
+    flex: 1 1 auto;
+    min-width: 0;
     font-size: 0.75rem;
     line-height: 1.3;
     color: var(--secondary-text-color, #727272);
+  }
+  .chip-pin {
+    flex: none;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.3;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .chip-items {
+    font-size: 0.75rem;
+    line-height: 1.3;
+  }
+  .chip-title.unknown,
+  .chip-items.unknown {
+    color: var(--secondary-text-color, #727272);
+    font-style: italic;
+    font-weight: 400;
+  }
+  .chip-items.possibly {
+    font-style: italic;
   }
   .cont {
     flex: none;
@@ -416,11 +446,17 @@ export const chipStyles = css`
 
 export const dialogStyles = css`
   dialog {
+    /* The screen edges the device keeps for itself (status bar, notch, home
+       indicator): Home Assistant's values, which its apps set, else the browser's. */
+    --parcels-inset-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+    --parcels-inset-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+    --parcels-inset-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+    --parcels-inset-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
     box-sizing: border-box;
-    width: min(560px, calc(100vw - 32px));
+    width: min(560px, calc(100vw - 32px - var(--parcels-inset-left) - var(--parcels-inset-right)));
     max-width: none;
-    max-height: calc(100vh - 32px);
-    max-height: calc(100dvh - 32px);
+    max-height: calc(100vh - 32px - var(--parcels-inset-top) - var(--parcels-inset-bottom));
+    max-height: calc(100dvh - 32px - var(--parcels-inset-top) - var(--parcels-inset-bottom));
     padding: 0;
     border: none;
     border-radius: 16px;
@@ -465,6 +501,7 @@ export const dialogStyles = css`
     min-height: 0;
     padding: 0 24px 16px;
     overflow: auto;
+    overscroll-behavior: contain;
   }
   .dialog-actions {
     display: flex;
@@ -478,11 +515,13 @@ export const dialogStyles = css`
   .dialog-actions .spacer {
     flex: 1 1 auto;
   }
-  .dialog-error {
+  .dialog-error,
+  .dialog-status {
     flex: none;
     padding: 0 24px;
   }
-  .dialog-error .alert {
+  .dialog-error .alert,
+  .dialog-status .alert {
     margin: 0 0 12px;
   }
   .section-title {
@@ -491,13 +530,19 @@ export const dialogStyles = css`
     font-weight: 600;
     color: var(--secondary-text-color, #727272);
   }
-  @media (max-width: 600px) {
+  /* Full screen on phones, held clear of the edges the device keeps, so that the
+     header with the close button and the actions can always be reached. */
+  @media (max-width: 600px), (max-height: 500px) {
     dialog {
       width: 100vw;
       height: 100vh;
       height: 100dvh;
       max-height: none;
       margin: 0;
+      padding-top: var(--parcels-inset-top);
+      padding-right: var(--parcels-inset-right);
+      padding-bottom: var(--parcels-inset-bottom);
+      padding-left: var(--parcels-inset-left);
       border-radius: 0;
     }
     .dialog-header {
@@ -509,7 +554,8 @@ export const dialogStyles = css`
     .dialog-actions {
       padding: 12px 16px 16px;
     }
-    .dialog-error {
+    .dialog-error,
+    .dialog-status {
       padding: 0 16px;
     }
   }

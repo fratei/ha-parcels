@@ -7,6 +7,7 @@ states and error types, never an address, a token, a person or e-mail text.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from dataclasses import replace
 from http import HTTPStatus
 import json
 from typing import Any
@@ -32,6 +33,7 @@ from custom_components.parcels.const import (
 )
 from custom_components.parcels.engine import ParcelsEngine
 from custom_components.parcels.mail.errors import MailServerError
+from custom_components.parcels.parsers.auth import parse_authentication_results
 
 from .common import (
     ADDRESS,
@@ -160,6 +162,50 @@ async def test_hub(
     assert notifications["excluded_devices"] == 1
     assert notifications["test_device_set"] is True
     assert diagnostics["seventeentrack"]["tracked"] == 0
+
+
+async def test_sender_checks(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    hub: MockConfigEntry,
+    mailbox: MockConfigEntry,
+    client: FakeMailClient,
+    engine: ParcelsEngine,
+) -> None:
+    """An e-mail that failed the sender checks shows how they went.
+
+    Only the shop's domain and the names of the servers that wrote the
+    headers appear, so a user can tell why without sharing an address.
+    """
+    header = "mx.example.net; dkim=pass header.d=example-outfitters.co.uk"
+    client.add(
+        replace(
+            load_message("shopify/shipped_en.eml"),
+            provider_id="forged",
+            message_id="<forged@example-outfitters.co.uk>",
+            auth=parse_authentication_results(header),
+            auth_headers=(header,),
+        )
+    )
+    await mailbox.runtime_data.coordinator.async_refresh()
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, hub)
+
+    assert diagnostics["engine"]["sender_checks"] == [
+        {
+            "sender": "example-outfitters.co.uk",
+            "reason": "untrusted_authserv",
+            "checks": {
+                "headers": 1,
+                "servers": ["mx.example.net"],
+                "used": None,
+                "dkim": "",
+                "dmarc": "",
+                "spf": "",
+                "originals": 0,
+            },
+        }
+    ]
 
 
 async def test_mailbox(

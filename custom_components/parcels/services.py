@@ -237,14 +237,14 @@ async def _async_reprocess(call: ServiceCall) -> None:
 
 
 def _sender_service(
-    by_domain: Callable[[ParcelsEngine, str], str],
-    by_review: Callable[[ParcelsEngine, str], str],
+    by_domain: Callable[[ParcelsEngine, str], ServiceResponse],
+    by_review: Callable[[ParcelsEngine, str], ServiceResponse],
 ) -> Callable[[ServiceCall], Any]:
     async def handle(call: ServiceCall) -> ServiceResponse:
         engine = _engine(call.hass)
         if review_id := call.data.get(ATTR_REVIEW_ID):
-            return {ATTR_DOMAIN: by_review(engine, review_id)}
-        return {ATTR_DOMAIN: by_domain(engine, call.data[ATTR_DOMAIN])}
+            return by_review(engine, review_id)
+        return by_domain(engine, call.data[ATTR_DOMAIN])
 
     return handle
 
@@ -301,7 +301,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_TRUST_SENDER,
         _sender_service(
-            lambda engine, domain: engine.trust_domain(domain),
+            lambda engine, domain: {ATTR_DOMAIN: engine.trust_domain(domain)},
             lambda engine, review_id: engine.review_trust_sender(review_id),
         ),
         SENDER_SCHEMA,
@@ -312,8 +312,10 @@ def async_setup_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_IGNORE_SENDER,
         _sender_service(
-            lambda engine, domain: engine.ignore_domain(domain),
-            lambda engine, review_id: engine.review_ignore_sender(review_id),
+            lambda engine, domain: {ATTR_DOMAIN: engine.ignore_domain(domain)},
+            lambda engine, review_id: {
+                ATTR_DOMAIN: engine.review_ignore_sender(review_id)
+            },
         ),
         SENDER_SCHEMA,
         SupportsResponse.OPTIONAL,

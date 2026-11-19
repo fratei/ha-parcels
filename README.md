@@ -45,12 +45,15 @@ local AI model on your Home Assistant host.
   and a delivery or return e-mail without items updates the order's only open
   parcel. An e-mail that arrives late never moves a parcel back to an earlier
   status. Merges that rely on a guess (same shop, matching dates, only one
-  candidate) are marked, and you can undo them. When several parcels could
-  match, Parcels asks in **Needs review** instead. Parcels with different
-  tracking numbers are never merged.
+  candidate) are marked, and you can undo them. A guess counts only when no
+  other open parcel of that shop could be the one, late parcels and those due
+  in the next days included, and when the carriers named by the shop and the
+  delivery agree. When several parcels could match, Parcels asks in **Needs
+  review** instead. Parcels with different tracking numbers are never merged.
 - **Parcels without a tracking number**: when a carrier delivers another
   parcel from the same shop around the expected day, and no e-mail says
-  otherwise, the parcel is marked as probably delivered. You can undo that.
+  otherwise, the parcel is marked as probably delivered, unless that delivery
+  belongs to another order or another carrier. You can undo that.
   One with no news a week after its expected day is archived.
 - **Shipments of several packages**: packages sent together that arrive on the
   same day share one box, which says how many packages it holds. The details
@@ -63,15 +66,19 @@ local AI model on your Home Assistant host.
   tracking number's format gives it away, the parcel says "Carrier not known
   yet".
 - **Delivery PINs**: delivery PINs, one-time codes and pickup codes found in
-  e-mails are shown in the parcel's details (see
-  [Privacy and safety](#privacy-and-safety)).
+  e-mails are shown on the parcel's box until it's delivered, and in its
+  details (see [Privacy and safety](#privacy-and-safety)).
 - **A Parcels page** with a Monday-to-Sunday calendar of your deliveries, the
   parcels that don't have a date yet, and the e-mails Parcels wasn't sure
   about.
 - **On delivery day**: Live Activities on iPhones, a notification on iPads and
   Android phones, and a persistent notification in Home Assistant.
-- **Optional**: live carrier status from Home Assistant's 17TRACK integration,
-  and a local AI model that reads the e-mails no parser understands.
+- **Optional integrations**, both off until you set them up:
+  - [17TRACK](#17track), through Home Assistant's 17TRACK integration: the
+    carrier's status between e-mails, such as in transit, out for delivery or
+    delivered. It adds no delivery dates.
+  - A [local AI](#local-ai) model on your Home Assistant host: it reads the
+    e-mails no parser understands and fills in what a parser missed.
 
 ## Privacy and safety
 
@@ -91,6 +98,9 @@ local AI model on your Home Assistant host.
 - **Verified senders.** Parcels checks the `Authentication-Results` header
   that Microsoft or Google adds: an e-mail counts as coming from Amazon, a
   carrier or a shop only when DKIM or DMARC passes for that sender's domain.
+  Gmail's header must be the topmost one. An Outlook.com e-mail must carry
+  exactly one, since Microsoft renames those that arrive with the e-mail; one
+  with more waits for review, because a sender could have written the others.
   E-mails from other senders never create a parcel on their own; they wait for
   your review on the Parcels page, where you can trust or ignore the sender.
 - **Local AI only.** The AI fallback is off by default. Parcels only accepts an
@@ -100,13 +110,14 @@ local AI model on your Home Assistant host.
   status and time window, never item names unless you turn that on. A parcel
   marked private notifies only its owner and is only counted in the shared
   persistent notification.
-- **Delivery PINs** are shown only in a parcel's details, and to administrators
-  in the e-mails waiting for review. They never appear in entity states or
-  attributes, the recorder, events, logs, diagnostics, notifications or Live
-  Activities; a box only says "PIN in the details". Parcels hides a PIN once
+- **Delivery PINs** are shown only on the Parcels page, to the people who can
+  see the parcel: on its box until it's delivered, returned or cancelled, in
+  its details, and to administrators in the e-mails waiting for review. They
+  never appear in entity states or attributes, the recorder, events, logs,
+  diagnostics, notifications or Live Activities. Parcels hides a PIN once
   its parcel is delivered, returned or cancelled, and deletes it at the
   nightly cleanup or when the parcel is archived. A delivery that Parcels only
-  inferred keeps its PIN, in case the parcel hasn't arrived.
+  inferred keeps its PIN in the details, in case the parcel hasn't arrived.
 - **17TRACK** gets tracking numbers only, under a generic name, never item
   names, shops or the numbers of private parcels.
 - **Revoking access.** Delete the mailbox entry in Home Assistant, then remove
@@ -130,6 +141,9 @@ encryption key somewhere safe.
   your own): the app and Home Assistant exchange the tokens that start and
   update activities, also when you're away from home.
 - For the local AI: Home Assistant OS, which runs the Ollama app.
+- For 17TRACK: a free [17track.net](https://www.17track.net/) account whose
+  password has 16 characters or fewer, and Home Assistant's 17TRACK
+  integration.
 
 ## Install
 
@@ -246,6 +260,17 @@ See [The Parcels page](#the-parcels-page). Then, to get delivery day on your
 phones, choose the people to notify in the hub's options and follow
 [Delivery day](#delivery-day).
 
+### 7. Optional: 17TRACK and the local AI
+
+- **17TRACK**, for the carrier's status between e-mails: create a free account
+  at [17track.net](https://www.17track.net/) and add Home Assistant's
+  **17TRACK** integration. **Live status from 17TRACK** is on by default in the
+  Parcels options, so Parcels starts using it within 30 minutes, or at once
+  when you run the `parcels.refresh` action. See [17TRACK](#17track) for what
+  it sends and the limits of a free account.
+- **Local AI**, for e-mails no parser understands: install the Ollama app and
+  pick its AI task in the Parcels options. See [Local AI](#local-ai).
+
 ## Options
 
 Open **Settings > Devices & services > Parcels** and select the cog of an
@@ -261,7 +286,7 @@ entry.
 | Cut-off time | 22:00 | Remaining Live Activities end at this time. |
 | Combine Live Activities above | 3 | With more parcels than this on one day, they share one Live Activity. |
 | Show item names on the lock screen | off | When off, the lock screen shows shop, carrier, status and time window only. |
-| Live status from 17TRACK | on | Has effect only when the 17TRACK integration is set up. |
+| Live status from 17TRACK | on | Has effect only when the 17TRACK integration is set up. See [17TRACK](#17track). |
 | Test mode and Test device | off | Send Live Activities to the test device only. |
 | Archive delivered parcels after | 14 days | Archived parcels stay visible in past weeks. |
 | Delete delivered parcels after | 90 days | Must be more than the archive period. |
@@ -283,16 +308,28 @@ Parcels comes with three cards. They load automatically; you don't need to
 add a resource.
 
 - **Parcels week** (`custom:parcels-week-card`): a Monday-to-Sunday calendar
-  with the week's deliveries. Date ranges are drawn as bars and colored by
+  with the week's deliveries. Each box has three lines: the shop; the carrier
+  with the time window, package count and PIN; and the items, such as
+  "3 items · Lamp, Bin, Mat". Date ranges are drawn as bars and colored by
   status, delivered parcels show ✓ on their delivery day, and parcels found
   by the AI carry an "AI" badge until you confirm them. Packages of one
   shipment that arrive on the same day share a box with a package count.
+  Above the week you can show **All** parcels, the **Active** ones (not
+  delivered, returned or cancelled), the **Recent** ones (changed or expected
+  this week) or the **Completed** ones. Each device remembers the choice, and
+  **Parcels without a date** follows it too.
   Select a parcel for its timeline, carrier and carrier link, tracking
   number, the shipment's other packages, pickup point, PIN or pickup code and
   parcel ID, and to mark it delivered, edit it, make it private, merge, split
   or archive it. Merges and deliveries that Parcels guessed are marked there,
-  to keep or undo. The card also adds parcels by tracking number. Options:
-  `title` (an empty string hides it) and `show_archived` (default `true`).
+  to keep or undo. **Merge** lists the likely matches first (same order or
+  shop, still open, close dates), each with its items, order number, carrier,
+  tracking number, status and date; older parcels are behind **Show older**
+  and the search. For administrators, when a carrier's e-mails don't say
+  which of a shop's parcels it's delivering, the box says "Possibly: …" with
+  the candidates' items, and the details list them, to merge or rule out with
+  one tap. The card also adds parcels by tracking number. Options: `title`
+  (an empty string hides it) and `show_archived` (default `true`).
 - **Parcels without a date** (`custom:parcels-list-card`): active parcels that
   don't have a delivery date yet. Option: `title`.
 - **Parcels review** (`custom:parcels-review-card`): **Needs review** lists the
@@ -364,7 +401,13 @@ authenticated. In **Needs review** you can:
 
 - **Trust the sender**, for a shop that e-mails you itself: its e-mails are
   then treated like a known sender's, and those waiting in review are read
-  again.
+  again. When the e-mail failed the sender checks, Parcels first asks you to
+  confirm, since anyone can send e-mail that claims a domain. It then adds
+  that sender's e-mails waiting in review, as you have seen them. Later
+  e-mails that fail the checks still wait in review, marked as from a trusted
+  sender. **Sender check details** on such an e-mail show how many
+  authentication headers it had and which servers wrote them, with no
+  addresses.
 - **Ignore the sender**: Parcels stops reading its e-mails and drops those
   waiting in review.
 
@@ -433,18 +476,53 @@ notification** switch turns it off and on.
 
 ## 17TRACK
 
-Carriers e-mail the main steps only. For more frequent updates:
+Optional. Carriers e-mail the main steps only; 17TRACK follows the carrier's
+own tracking in between.
+
+- **What it adds**: the carrier's status between e-mails, such as in transit,
+  out for delivery, delivered, a failed attempt or ready for pickup, with the
+  carrier's own wording in the parcel's history.
+- **What it doesn't add**: delivery dates. Home Assistant's 17TRACK integration
+  gives no expected date, so a parcel without one stays under **No date yet**.
+  Amazon Logistics numbers aren't added either, because 17TRACK can't follow
+  them.
+- **What it sends**: tracking numbers only, each under a generic name such as
+  `parcels-1a2b3c`. Never item names, shops, or the numbers of private
+  parcels, because every Home Assistant user can see the 17TRACK packages.
+
+To set it up:
 
 1. Create an account at [17track.net](https://www.17track.net/). Home
    Assistant's integration only accepts passwords of 16 characters or fewer.
 2. Add Home Assistant's **17TRACK** integration.
-3. Keep **Live status from 17TRACK** on in the Parcels options.
+3. Keep **Live status from 17TRACK** on in the Parcels options. It's on by
+   default.
 
-Parcels adds the tracking numbers of active parcels to your 17TRACK account
-under a generic name, reads their status and archives them there once the
-parcel is done. It skips Amazon Logistics numbers, which 17TRACK can't follow,
-and private parcels, because every Home Assistant user can see the 17TRACK
-packages.
+Parcels adds the numbers of active parcels to your 17TRACK account, the
+parcels due soonest first and up to 10 at a time, reads their status every 30
+minutes (every 10 while one is out for delivery or due that day) and archives
+them there once the parcel is done, or when 17TRACK still can't find a number
+after two weeks. Numbers you added to 17TRACK yourself are read but never
+archived.
+
+**Limits of a free account.** 17TRACK gives free members a tracking quota of
+40 numbers, and paid plans 100 or 200
+([17TRACK app user manual](https://help.17track.net/hc/en-us/articles/360020938192-17TRACK-APP-user-manual),
+[pricing](https://buyer.17track.net/en/pricing)). By 17TRACK's quota rules,
+you can add as many numbers as the quota minus the numbers being tracked;
+adding or reactivating a number uses quota, and archiving or deleting one
+frees it. In practice a free account follows at most 40 numbers at once,
+including the ones you add yourself, and Parcels frees its own as parcels are
+done.
+
+When the account is full, 17TRACK refuses new numbers, and Parcels can't tell
+that refusal from others. It tries a refused number again after 6 and 12
+hours, then once a day while its parcel is active, so the number gets in once
+a place frees up. The hub's diagnostics show how many numbers are waiting
+(`failed`) and the last error, with 17TRACK's code when it gives one.
+
+17TRACK also sells a tracking API for developers, with its own free
+allowance. That's a different product, and Parcels doesn't use it.
 
 ## Local AI
 
@@ -476,6 +554,24 @@ Assistant host through Ollama; e-mails never leave your network.
 
 Parcels only sends e-mails from senders whose DKIM or DMARC passes, one at a
 time and newest first.
+
+**Filling in what a parser missed**: when a parser reads an e-mail but leaves
+out the delivery date, the items, or a shipping e-mail's tracking number or
+carrier, Parcels asks the AI for those details only, after the e-mails no
+parser read and for up to 20 e-mails a day. The parser's values always stay.
+In Suggest mode the details wait in **Needs review** as "The local AI found
+details the parser missed"; accept them to add them to the parcel. In
+Automatic mode they're added straight away, and the parcel shows "AI" until
+you confirm them in its details.
+
+**Check again**: an open parcel without a date has a **Check again** button in
+its details, for administrators. Parcels downloads the parcel's newest e-mails
+again (up to 5), reads them with the current parsers and asks the AI for what's
+still missing, even past the 20 a day. The parcel stays on the page meanwhile,
+and the details say what happened. Once, after updating from 0.1.3 or earlier,
+Parcels does this by itself when the first mail check ends, for open parcels
+that lack a date or items (within the 20 a day). It also reads again the
+e-mails held for review with "Authentication results from an unknown server".
 
 **What the AI sees**: the day the e-mail arrived, the sender's name and
 domain, the subject and the text a reader sees (text the HTML hides is left

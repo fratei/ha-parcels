@@ -20,6 +20,7 @@ from . import (
     ctt,
     dhl,
     dpd,
+    fedex,
     gls,
     inpost,
     mrw,
@@ -46,6 +47,7 @@ _SPECS: Final[dict[str, CarrierSpec]] = {
     "paack": paack.SPEC,
     "inpost": inpost.INPOST_SPEC,
     "vinted_go": inpost.VINTED_GO_SPEC,
+    "fedex": fedex.SPEC,
 }
 
 CARRIER_PARSERS: frozenset[str] = frozenset(_SPECS)

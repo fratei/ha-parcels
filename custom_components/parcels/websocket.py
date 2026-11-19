@@ -49,6 +49,21 @@ type Handler = Callable[
 ]
 
 
+def _send_validation_error(
+    connection: websocket_api.ActiveConnection,
+    msg_id: int,
+    err: ServiceValidationError,
+) -> None:
+    connection.send_error(
+        msg_id,
+        websocket_api.ERR_HOME_ASSISTANT_ERROR,
+        str(err),
+        translation_key=err.translation_key,
+        translation_domain=err.translation_domain,
+        translation_placeholders=err.translation_placeholders,
+    )
+
+
 def _expected_errors(func: Handler) -> Handler:
     """Answer a bad request with its error, without logging it as a failure."""
 
@@ -61,14 +76,7 @@ def _expected_errors(func: Handler) -> Handler:
         try:
             func(hass, connection, msg)
         except ServiceValidationError as err:
-            connection.send_error(
-                msg["id"],
-                websocket_api.ERR_HOME_ASSISTANT_ERROR,
-                str(err),
-                translation_key=err.translation_key,
-                translation_domain=err.translation_domain,
-                translation_placeholders=err.translation_placeholders,
-            )
+            _send_validation_error(connection, msg["id"], err)
 
     return handle
 
@@ -96,6 +104,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_filtered_clear_all,
         ws_suggestion_accept,
         ws_suggestion_dismiss,
+        ws_parcel_check_again,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -252,8 +261,9 @@ def ws_review_trust_sender(
     msg: dict[str, Any],
 ) -> None:
     """Trust the sender of an e-mail under review."""
-    domain = _engine(hass).review_trust_sender(msg["review_id"])
-    connection.send_result(msg["id"], {"domain": domain})
+    connection.send_result(
+        msg["id"], _engine(hass).review_trust_sender(msg["review_id"])
+    )
 
 
 @websocket_api.websocket_command(
@@ -395,3 +405,29 @@ def ws_suggestion_dismiss(
     _check_suggestion(hass, connection, engine, msg["suggestion_id"], parcel_id)
     engine.dismiss_suggestion(msg["suggestion_id"], parcel_id)
     connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {
+        p.Required("type"): f"{DOMAIN}/parcel/check_again",
+        p.Required("parcel_id"): cv.string,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_parcel_check_again(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Read a parcel's e-mails again, and ask the local AI what's missing."""
+    try:
+        engine = _engine(hass)
+        parcel = engine.parcel(msg["parcel_id"])
+        if not viewer_for(hass, connection.user).can_see(parcel):
+            raise validation_error("not_allowed")
+        result = await engine.async_check_again(parcel.id)
+    except ServiceValidationError as err:
+        _send_validation_error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], result)

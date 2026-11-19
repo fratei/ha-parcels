@@ -499,7 +499,7 @@
     },
     "trust_sender": {
       "name": "Trust sender",
-      "description": "Trusts a sender, so its e-mails are read as shipping e-mails, and reads its e-mails under review again. Give a domain or a review ID. Returns the trusted domain. Only administrators can use this action.",
+      "description": "Trusts a sender, so its e-mails are read as shipping e-mails, and reads its e-mails under review again. Give a domain or a review ID. With a review ID, the sender's e-mails under review that failed the sender checks are added too, since you have seen them, and the response counts what was added, what is being read again and what still needs review. Otherwise it returns the trusted domain. Only administrators can use this action.",
       "fields": {
         "domain": {
           "name": "Domain",

@@ -26,11 +26,25 @@ from pytest_homeassistant.common import (
 )
 from pytest_homeassistant.typing import MockHAClientWebSocket, WebSocketGenerator
 
-from custom_components.parcels.const import DOMAIN, SIGNAL_AI_UPDATED, MailKind
+from custom_components.parcels.const import (
+    DOMAIN,
+    REASON_AI_FILL,
+    SIGNAL_AI_UPDATED,
+    MailKind,
+    ParcelStatus,
+)
+from custom_components.parcels.convert import fill_contribution
 from custom_components.parcels.dedup import REASON_SAME_MERCHANT_DAY, apply_contribution
 from custom_components.parcels.engine import ParcelsEngine
-from custom_components.parcels.models import MessageState, Suggestion, order_key
-from custom_components.parcels.parsers.base import Eta
+from custom_components.parcels.models import (
+    MessageState,
+    ParcelEvent,
+    Source,
+    Suggestion,
+    order_key,
+)
+from custom_components.parcels.parsers.auth import parse_authentication_results
+from custom_components.parcels.parsers.base import Eta, MailMessage
 from custom_components.parcels.views import (
     SYSTEM_VIEWER,
     Viewer,
@@ -48,6 +62,7 @@ from .common import (
     add_hub,
     add_mailbox,
     async_setup_parcels,
+    load_message,
     patch_mail_clients,
 )
 from .factories import contribution
@@ -83,6 +98,7 @@ HIDDEN = {
     "items": [],
     "source": "parser",
     "ai": False,
+    "ai_filled": False,
     "auto_merged": None,
     "inferred": False,
     "origins": [],
@@ -352,8 +368,8 @@ async def test_private_parcels(
         alex_parcel,
         system_parcel,
     ]
-    # The code is only in the details.
-    assert alex[alex_parcel]["pickup_code"] is None
+    # The code is in the list for whoever may see the parcel.
+    assert alex[alex_parcel]["pickup_code"] == "4711"
     assert alex[alex_parcel]["has_code"]
     assert seen[alex_parcel] == {**alex[alex_parcel], **HIDDEN}
     assert seen[alex_parcel]["owners"] == [OWNER]
@@ -384,8 +400,9 @@ async def test_delivery_code_mail(
 ) -> None:
     """A delivery code e-mail fills in its parcel's details and nothing else.
 
-    It makes no parcel of its own, and the code isn't in the list, the
-    entities or the logs.
+    It makes no parcel of its own. The page's list has the code until the
+    parcel arrives, even a delivery that's only inferred; the entities and
+    the logs never do.
     """
     caplog.set_level(logging.DEBUG, logger="custom_components.parcels")
     freezer.move_to("2026-11-20 09:00:00+00:00")
@@ -402,13 +419,86 @@ async def test_delivery_code_mail(
     assert set(engine.data.parcels) == parcels
     listed = {p["id"]: p for p in (await result(ws, "parcels/list"))["parcels"]}
     assert listed[parcel_id]["has_code"]
-    assert listed[parcel_id]["pickup_code"] is None
+    assert listed[parcel_id]["pickup_code"] == DPD_CODE
     shown = await result(ws, "parcels/get", parcel_id=parcel_id)
     assert shown["parcel"]["pickup_code"] == DPD_CODE
     code = re.compile(rf"(?<![0-9A-Za-z]){DPD_CODE}(?![0-9A-Za-z])")
     for state in hass.states.async_all():
         assert not code.search(f"{state.state} {dict(state.attributes)}"), state
     assert not code.search(caplog.text)
+
+    parcel = engine.data.parcels[parcel_id]
+    parcel.events.append(
+        ParcelEvent(
+            time=dt_util.utcnow(),
+            source=Source.PARSER,
+            status=ParcelStatus.DELIVERED,
+            inferred=True,
+        )
+    )
+    parcel.touch(dt_util.utcnow())
+    assert parcel.state.pickup_code == DPD_CODE
+    listed = {p["id"]: p for p in (await result(ws, "parcels/list"))["parcels"]}
+    assert listed[parcel_id]["pickup_code"] is None
+
+
+async def test_ai_filled(
+    hass: HomeAssistant, engine: ParcelsEngine, ws: MockHAClientWebSocket
+) -> None:
+    """A parcel shows what the AI filled in until someone confirms it."""
+    data = engine.data
+    now = dt_util.utcnow()
+    applied = apply_contribution(
+        data, contribution("msg:m1#0", carrier="ctt", number=CTT_NUMBER), now
+    )
+    fill = fill_contribution(
+        Suggestion(kind=MailKind.SHIPPED, eta_start=date(2026, 11, 20)),
+        message_hash="m1",
+        time=now,
+    )
+    assert fill is not None
+    assert apply_contribution(data, fill, now).parcel_id == applied.parcel_id
+
+    listed = {p["id"]: p for p in (await result(ws, "parcels/list"))["parcels"]}
+    shown = listed[applied.parcel_id]
+    assert shown["ai_filled"]
+    assert not shown["ai"]
+    assert shown["eta_start"] == "2026-11-20"
+
+    await hass.services.async_call(
+        DOMAIN,
+        "update",
+        {"parcel_id": applied.parcel_id, "confirm": True},
+        blocking=True,
+    )
+
+    listed = {p["id"]: p for p in (await result(ws, "parcels/list"))["parcels"]}
+    assert not listed[applied.parcel_id]["ai_filled"]
+
+
+async def test_check_again(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    sam_ws: MockHAClientWebSocket,
+    sam: User,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An administrator reads a parcel's e-mails again; the parcel stays."""
+    (parcel_id,) = engine.data.parcels
+    sam_parcel = await add(hass, DHL_NUMBER, user=sam, carrier="dhl", private=True)
+
+    counts = await result(ws, "parcels/parcel/check_again", parcel_id=parcel_id)
+
+    assert counts == {"read": 1, "queued": 0, "gone": 0, "failed": 0}
+    assert parcel_id in engine.data.parcels
+    await refused(ws, "parcels/parcel/check_again", "not_allowed", parcel_id=sam_parcel)
+    await refused(
+        ws, "parcels/parcel/check_again", "unknown_parcel", parcel_id="p_missing"
+    )
+    assert no_errors_logged(caplog)
+    err = await error(sam_ws, "parcels/parcel/check_again", parcel_id=sam_parcel)
+    assert err["code"] == "unauthorized"
 
 
 async def test_shipments(
@@ -872,7 +962,7 @@ async def test_review_senders(
     await async_wait_reprocess(hass)
     ignored = await result(ws, "parcels/review/ignore_sender", review_id=review[UPS])
 
-    assert trusted == {"domain": SHOP}
+    assert trusted == {"domain": SHOP, "added": 0, "rechecking": 1, "kept": 0}
     assert ignored == {"domain": "ups.com"}
     assert not engine.data.review
     assert engine.data.senders[SHOP].trusted
@@ -883,6 +973,93 @@ async def test_review_senders(
         await refused(
             ws, f"parcels/review/{command}", "unknown_review", review_id=review[SHOP]
         )
+
+
+def forged_shop_mail(number: int) -> MailMessage:
+    """Return the shop's e-mail with a header the provider didn't write."""
+    header = "mx.example.net; dkim=pass header.d=loja-exemplo.example"
+    return replace(
+        load_message(SHOP_MAIL, mailbox=ADDRESS),
+        provider_id=f"forged-{number}",
+        message_id=f"<forged-{number}@loja-exemplo.example>",
+        auth=parse_authentication_results(header),
+        auth_headers=(header,),
+    )
+
+
+async def test_trust_unverified_sender(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    client: FakeMailClient,
+    ws: MockHAClientWebSocket,
+) -> None:
+    """Trusting a sender adds its e-mails that failed the checks, as seen.
+
+    Later e-mails that fail the checks still need review, with a note.
+    """
+    data = engine.data
+    (mailbox,) = engine.mailboxes.values()
+    assert mailbox.coordinator is not None
+    client.add(forged_shop_mail(1))
+    await mailbox.coordinator.async_refresh()
+    (forged,) = [r for r in data.review.values() if not r.authenticated]
+    assert forged.reason == "untrusted_authserv"
+    assert forged.checks == {
+        "headers": 1,
+        "servers": ["mx.example.net"],
+        "used": None,
+        "dkim": "",
+        "dmarc": "",
+        "spf": "",
+        "originals": 0,
+    }
+    listed = {r["id"]: r for r in (await result(ws, "parcels/list"))["review"]}
+    assert not listed[forged.id]["trusted_sender"]
+    # Another of the shop's e-mails that failed, with nothing to add.
+    data.messages["other"] = replace(data.messages[forged.message], hash="other")
+    data.review["r_other"] = replace(
+        forged, id="r_other", message="other", suggestion=None
+    )
+
+    trusted = await result(ws, "parcels/review/trust_sender", review_id=forged.id)
+    await async_wait_reprocess(hass)
+
+    assert trusted == {"domain": SHOP, "added": 1, "rechecking": 1, "kept": 1}
+    assert data.senders[SHOP].trusted
+    numbers = {p.state.tracking_number for p in data.parcels.values()}
+    assert numbers == {CTT_NUMBER, SHOP_NUMBER}
+    shop = [r for r in data.review.values() if r.sender_domain == SHOP]
+    assert [r.id for r in shop] == ["r_other"]
+    listed = {r["id"]: r for r in (await result(ws, "parcels/list"))["review"]}
+    assert listed["r_other"]["trusted_sender"]
+
+    client.add(forged_shop_mail(2))
+    await mailbox.coordinator.async_refresh()
+
+    (later,) = [
+        r for r in data.review.values() if r.sender_domain == SHOP and r.suggestion
+    ]
+    assert later.reason == "untrusted_authserv"
+    listed = {r["id"]: r for r in (await result(ws, "parcels/list"))["review"]}
+    assert listed[later.id]["trusted_sender"]
+    assert listed[later.id]["checks"] == later.checks
+
+
+async def test_review_lists_fills(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket, review: dict[str, str]
+) -> None:
+    """A review item that fills in a parcel's missing details says so."""
+    data = engine.data
+    item = data.review[review[SHOP]]
+    data.review["r_fill"] = replace(
+        item, id="r_fill", reason=REASON_AI_FILL, source=Source.AI, fill=True
+    )
+
+    listed = {r["id"]: r for r in (await result(ws, "parcels/list"))["review"]}
+
+    assert listed["r_fill"]["fill"]
+    assert listed["r_fill"]["reason"] == REASON_AI_FILL
+    assert not listed[item.id]["fill"]
 
 
 async def test_review_free_mail_sender(

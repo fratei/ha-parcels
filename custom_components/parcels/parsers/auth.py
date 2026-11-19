@@ -1,19 +1,25 @@
 """Sender authentication from the provider's Authentication-Results header.
 
-Only the topmost Authentication-Results header is used: it is the one the
-receiving provider (Gmail or Outlook.com) added. Headers further down can be
-written by anyone, including the sender.
+Gmail: only the topmost header is used; it is the one Gmail added. Headers
+further down can be written by anyone, including the sender.
+
+Outlook.com (Graph): Microsoft renames the headers it received to
+Authentication-Results-Original and adds its own, so exactly one is
+expected. Graph doesn't list headers in arrival order, so when there are
+two or more, none is trusted.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 import re
 
-from .base import AuthResult, MailMessage, SenderVerdict
+from .base import AuthCheck, AuthResult, MailMessage, SenderVerdict
 from .senders import lookup, organizational_domain
 
 GOOGLE_AUTHSERV_ID = "mx.google.com"
+MICROSOFT_AUTHSERV_IDS: frozenset[str] = frozenset({"mx.microsoft.com"})
 
 # DKIM signatures from these domains mean the e-mail was sent by Shopify on
 # behalf of a store.
@@ -24,6 +30,9 @@ _SHOPIFY_LINK_RE = re.compile(
     re.IGNORECASE,
 )
 _TOKEN_RE = re.compile(r"[^\s;]+|;")
+_WORD_RE = re.compile(r"[a-z]{1,16}")
+_SERVER_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,62}\.)*[a-z0-9-]{1,63}")
+MAX_SERVER_CHARS = 100
 _METHODS = frozenset(
     {
         "arc",
@@ -127,7 +136,12 @@ def parse_authentication_results(value: str) -> AuthResult:
         elif current is not None:
             current[2].setdefault(name, val)
 
+    words: dict[str, str] = {}
     for method, result, props in results:
+        if method in ("dkim", "dmarc", "spf"):
+            word = result if _WORD_RE.fullmatch(result) else "other"
+            if method not in words or (method == "dkim" and word == "pass"):
+                words[method] = word
         if method == "dkim" and result == "pass":
             domain = _domain_of(props.get("header.d", "")) or _domain_of(
                 props.get("header.i", "")
@@ -151,6 +165,9 @@ def parse_authentication_results(value: str) -> AuthResult:
         dmarc_domain=dmarc_domain,
         spf_pass=spf_pass,
         spf_domain=spf_domain,
+        dkim=words.get("dkim", ""),
+        dmarc=words.get("dmarc", ""),
+        spf=words.get("spf", ""),
     )
 
 
@@ -158,8 +175,19 @@ def _trusted_authserv(message: MailMessage, auth: AuthResult) -> bool:
     if message.provider == "google":
         return auth.authserv_id == GOOGLE_AUTHSERV_ID
     if message.provider == "microsoft":
-        return auth.authserv_id is None
+        # Outlook.com wrote no authserv-id until about September 2026, and
+        # "mx.microsoft.com 1" since; the version number isn't kept.
+        return auth.authserv_id is None or auth.authserv_id in MICROSOFT_AUTHSERV_IDS
     return False
+
+
+def _server(authserv_id: str | None) -> str:
+    """Return an authserv-id fit to show: a host name, "" or "(other)"."""
+    if authserv_id is None:
+        return ""
+    if len(authserv_id) <= MAX_SERVER_CHARS and _SERVER_RE.fullmatch(authserv_id):
+        return authserv_id
+    return "(other)"
 
 
 def _weak_shopify(message: MailMessage) -> bool:
@@ -188,14 +216,28 @@ def verify_sender(message: MailMessage, trusted: Iterable[str] = ()) -> SenderVe
     auth = message.auth
     if auth is None and (raw := message.headers.get("authentication-results")):
         auth = parse_authentication_results(raw)
+    parsed = [parse_authentication_results(value) for value in message.auth_headers]
+    if not parsed and auth is not None:
+        parsed = [auth]
+    check = AuthCheck(
+        headers=len(parsed),
+        servers=tuple(_server(result.authserv_id) for result in parsed),
+        originals=message.auth_originals,
+    )
+    reason = ""
     if auth is None:
+        reason = "no_auth_header"
+    elif message.provider == "microsoft" and len(parsed) > 1:
+        # Graph doesn't list headers in arrival order, so a second header
+        # may be the sender's, and there's no telling which is which.
+        reason = "multiple_auth_results"
+    elif not _trusted_authserv(message, auth):
+        reason = "untrusted_authserv"
+    if reason or auth is None:
         return SenderVerdict(
-            domain, False, known, shopify, method="none", reason="no_auth_header"
+            domain, False, known, shopify, method="none", reason=reason, check=check
         )
-    if not _trusted_authserv(message, auth):
-        return SenderVerdict(
-            domain, False, known, shopify, method="none", reason="untrusted_authserv"
-        )
+    check = replace(check, used=0, dkim=auth.dkim, dmarc=auth.dmarc, spf=auth.spf)
 
     dkim_orgs = {organizational_domain(d) for d in auth.dkim_pass_domains}
     if dkim_orgs & SHOPIFY_DKIM_DOMAINS:
@@ -213,7 +255,13 @@ def verify_sender(message: MailMessage, trusted: Iterable[str] = ()) -> SenderVe
             method = "dkim"
     if method == "none":
         return SenderVerdict(
-            domain, False, known, shopify, method="none", reason="not_aligned"
+            domain,
+            False,
+            known,
+            shopify,
+            method="none",
+            reason="not_aligned",
+            check=check,
         )
     return SenderVerdict(
         domain,
@@ -222,4 +270,5 @@ def verify_sender(message: MailMessage, trusted: Iterable[str] = ()) -> SenderVe
         shopify,
         method=method,
         reason="ok" if known else "unknown_sender",
+        check=check,
     )

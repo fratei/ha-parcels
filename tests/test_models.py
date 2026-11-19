@@ -191,9 +191,29 @@ def test_ai_flag_until_confirmed() -> None:
     origin = _origin(source=Source.AI, tracking_number="AI000000001")
     parcel = _parcel(_event(S.SHIPPED, at(), source=Source.AI), origins=(origin,))
     assert parcel.state.ai
+    assert not parcel.state.ai_filled
     origin.confirmed = True
     parcel.touch(at())
     assert not parcel.state.ai
+
+
+def test_ai_filled_until_confirmed() -> None:
+    """What the AI filled in for a parser's parcel is marked until confirmed."""
+    fill = _origin("msg:a#ai", source=Source.AI, items=("Lamp",))
+    parcel = _parcel(
+        _event(S.SHIPPED, at(), origin="msg:a#0"),
+        origins=(_origin("msg:a#0", tracking_number="05212345678901"), fill),
+    )
+    assert not parcel.state.ai
+    assert parcel.state.ai_filled
+    assert parcel.state.items == ("Lamp",)
+    # A parser's items replace the AI's.
+    parcel.origins["b"] = _origin("b", time=at(hours=1), items=("Desk lamp",))
+    parcel.touch(at())
+    assert parcel.state.items == ("Desk lamp",)
+    fill.confirmed = True
+    parcel.touch(at())
+    assert not parcel.state.ai_filled
 
 
 def test_provisional_until_tracked() -> None:
@@ -244,6 +264,45 @@ def test_carrier_mail_names_the_carrier() -> None:
     )
     assert parcel.state.carrier == "ctt_expresso"
     assert parcel.state.merchant == "Example Shop"
+
+
+def test_seller_is_the_shop_not_a_domain_or_carrier() -> None:
+    """The shop's own e-mails name the seller, even when they come later.
+
+    A status service wrote first and only gave its domain; the carrier's
+    e-mail named itself. Better evidence re-decides the seller.
+    """
+    number = "61234567890123"
+    service = _origin(
+        "service", label="statusmail.example", merchant="statusmail.example"
+    )
+    carrier = _origin(
+        "carrier",
+        label="cttexpresso.pt",
+        time=at(hours=1),
+        carrier="ctt_expresso",
+        tracking_number=number,
+        merchant="CTT Expresso",
+    )
+    parcel = _parcel(_event(S.SHIPPED, at()), origins=(service, carrier))
+    assert parcel.state.merchant == "statusmail.example"
+
+    parcel.origins["shop"] = _origin(
+        "shop", label="lumenhaus.example", time=at(hours=2), merchant="Lumenhaus"
+    )
+    parcel.touch(at(hours=2))
+    assert parcel.state.merchant == "Lumenhaus"
+
+    # Another shop's name from a sender of its own beats a name from elsewhere.
+    parcel.origins["relay"] = _origin(
+        "relay", label="notify.example", time=at(hours=-1), merchant="Lumenhaus Store"
+    )
+    parcel.touch(at(hours=2))
+    assert parcel.state.merchant == "Lumenhaus"
+
+    # A carrier's name is never the seller.
+    only_carrier = _parcel(_event(S.SHIPPED, at()), origins=(carrier,))
+    assert only_carrier.state.merchant is None
 
 
 def test_shop_mail_carrier_only_without_others() -> None:
@@ -387,6 +446,7 @@ def _full_data() -> ParcelsData:
                 True,
                 Source.AI,
                 suggestion,
+                fill=True,
             )
         },
         filtered={
@@ -410,6 +470,7 @@ def test_round_trip() -> None:
     assert parcel.state == data.parcels["p_test"].state
     assert parcel.origins["man:p_test"].merchant == ""
     assert loaded.review["r1"].suggestion == data.review["r1"].suggestion
+    assert loaded.review["r1"].fill
     assert loaded.trusted_domains() == ("example.com",)
 
 

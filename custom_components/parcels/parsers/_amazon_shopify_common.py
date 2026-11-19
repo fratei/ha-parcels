@@ -413,6 +413,230 @@ def carrier_near(
     return after[0].carrier if after else None
 
 
+# Labels before the name of the carrier ("Carrier: DPD", "Transportista SEUR").
+_CARRIER_LABEL_RE = re.compile(
+    words_regex(
+        (
+            "carrier",
+            "courier",
+            "shipping carrier",
+            "shipping company",
+            "delivery company",
+            "delivery partner",
+            "transportadora",
+            "transportador",
+            "empresa de transporte",
+            "empresa transportadora",
+            "operador logistico",
+            "transportista",
+            "empresa de mensajeria",
+            "agencia de transporte",
+            "mensajeria",
+            "versanddienstleister",
+            "versandunternehmen",
+            "versandpartner",
+            "zusteller",
+            "zustelldienst",
+            "paketdienst",
+            "lieferdienst",
+            "transporteur",
+            "livreur",
+            "societe de transport",
+            "corriere",
+            "vettore",
+            "vervoerder",
+            "bezorger",
+            "bezorgdienst",
+            "pakketdienst",
+        )
+    ).pattern
+    + r"[^\S\n]*(?P<colon>:)?"
+)
+# Words allowed between a delivery verb and the carrier ("delivered by
+# our partner DPD", "livré par l'intermédiaire de Colissimo").
+_CARRIER_FILLER = (
+    r"(?:l'\s*|(?:"
+    + "|".join(
+        (
+            "the",
+            "our",
+            "your",
+            "its",
+            "a",
+            "delivery",
+            "partner",
+            "carrier",
+            "courier",
+            "o",
+            "os",
+            "as",
+            "da",
+            "do",
+            "de",
+            "nosso",
+            "nossa",
+            "empresa",
+            "transportadora",
+            "parceiro",
+            "parceira",
+            "el",
+            "la",
+            "los",
+            "las",
+            "nuestro",
+            "nuestra",
+            "transportista",
+            "mensajeria",
+            "agencia",
+            "der",
+            "die",
+            "das",
+            "dem",
+            "den",
+            "unser",
+            "unsere",
+            "unserem",
+            "unseren",
+            "unseres",
+            "zusteller",
+            "versanddienstleister",
+            "paketdienst",
+            "le",
+            "les",
+            "du",
+            "notre",
+            "transporteur",
+            "partenaire",
+            "livreur",
+            "service",
+            "intermediaire",
+            "il",
+            "lo",
+            "i",
+            "gli",
+            "nostro",
+            "nostra",
+            "corriere",
+            "vettore",
+            "het",
+            "onze",
+            "ons",
+            "vervoerder",
+            "bezorger",
+            "pakketdienst",
+        )
+    )
+    + r")\s+)"
+)
+_ALIAS = rf"(?P<alias>{_CARRIER_RE.pattern})"
+
+
+def _verb_first(verbs: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?<![a-z0-9])(?:{verbs})(?:\s*:\s*|\s+)(?:{_CARRIER_FILLER}){{0,4}}{_ALIAS}"
+    )
+
+
+def _verb_last(prepositions: str, participles: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"(?<![a-z0-9])(?:{prepositions})\s+(?:{_CARRIER_FILLER}){{0,4}}{_ALIAS}"
+        rf"(?:\s+[a-z]+){{0,2}}?\s+(?:{participles})(?![a-z0-9])"
+    )
+
+
+# Phrases that say who delivers the parcel. Seller phrases ("sold by",
+# "dispatched from", "enviado por", "Versand durch", "expédié par",
+# "spedito da", "verzonden door") are left out: they name the merchant.
+_CARRIER_VERB_RES = (
+    _verb_first(
+        r"delivered\s+by|delivery\s+by|(?:shipped|sent|dispatched)\s+(?:with|via)"
+        r"|being\s+shipped\s+by|handed\s+(?:over\s+)?to"
+        r"|entregues?\s+(?:por|pel[ao]s?)|transportad[oa]s?\s+(?:por|pel[ao])"
+        r"|(?:enviad|expedid)[oa]s?\s+(?:com|atraves\s+d[aeo]s?)"
+        r"|entregad[oa]s?\s+por|enviad[oa]s?\s+(?:con|a\s+traves\s+de|mediante)"
+        r"|entregara\s+(?:por|con)|enviara\s+(?:con|mediante)"
+        r"|(?:zugestellt|geliefert|ausgeliefert)\s+(?:von|vom|durch)"
+        r"|(?:zustellung|lieferung|auslieferung)\s+(?:durch|mit|uber)"
+        r"|(?:versendet|versandt|verschickt|versand)\s+mit"
+        r"|livree?s?\s+par|acheminee?s?\s+par|expediee?s?\s+(?:avec|via)"
+        r"|livraison\s+(?:par|avec)|confiee?s?\s+(?:a|au)"
+        r"|consegnat[oaie]\s+(?:da|dal|dalla|dallo|tramite|con)"
+        r"|consegna\s+a\s+cura\s+d(?:i|el|ella)|spedit[oaie]\s+(?:con|tramite|via)"
+        r"|affidat[oaie]\s+a(?:l|lla)?"
+        r"|(?:bezorgd|geleverd|afgeleverd)\s+door|(?:bezorging|levering)\s+door"
+        r"|(?:verzonden|verstuurd)\s+(?:met|via)|overgedragen\s+aan"
+    ),
+    _verb_last(r"von|vom|durch", r"zugestellt|geliefert|ausgeliefert"),
+    _verb_last(r"mit", r"versendet|versandt|verschickt|zugestellt|geliefert"),
+    _verb_last(r"an", r"ubergeben"),
+    _verb_last(r"door", r"bezorgd|geleverd|afgeleverd"),
+    _verb_last(r"met|via", r"verzonden|verstuurd|bezorgd|geleverd"),
+    _verb_last(r"aan", r"overgedragen"),
+)
+_CLAUSE_END_RE = re.compile(r"[\n.;!?]")
+
+
+def _carrier_of(alias: str) -> str:
+    return _CARRIER_ALIASES[" ".join(alias.split())]
+
+
+def _carriers_in(folded: str, start: int, end: int) -> set[str]:
+    return {m.carrier for m in carrier_mentions(folded[start:end])}
+
+
+def _labelled_carriers(folded: str) -> Iterator[CarrierMention]:
+    """Yield the carriers given after a carrier label.
+
+    After a colon the value must start with the carrier's name; without one
+    the label must start its line and the value be only the name, so prose
+    ("Corriere della Sera") isn't read as a label.
+    """
+    for match in _CARRIER_LABEL_RE.finditer(folded):
+        line_start, line_end = line_bounds(folded, match.start())
+        colon = match.group("colon") is not None
+        if not colon and folded[line_start : match.start()].strip(_VALUE_STRIP):
+            continue
+        start, value = _strip_value(folded, match.end(), line_end)
+        if not value:
+            following = next_line(folded, line_end)
+            if following is None:
+                continue
+            start, value = _strip_value(folded, *following)
+        alias = (
+            _CARRIER_RE.match(value)
+            if colon
+            else _CARRIER_RE.fullmatch(value.rstrip(" .,;!"))
+        )
+        if alias is None or len(_carriers_in(value, 0, len(value))) != 1:
+            continue
+        yield CarrierMention(
+            start + alias.start(), start + alias.end(), _carrier_of(alias.group(0))
+        )
+
+
+def named_carriers(folded: str) -> list[CarrierMention]:
+    """Return the carriers folded text names as delivering a parcel, in order.
+
+    A carrier counts after a carrier label ("Carrier: DPD") or in a phrase
+    such as "delivered by DPD" or "von DPD zugestellt". A label or a
+    sentence that names several carriers ("DPD or Evri") counts for none.
+    """
+    found: dict[int, CarrierMention] = {}
+    for mention in _labelled_carriers(folded):
+        found.setdefault(mention.start, mention)
+    for pattern in _CARRIER_VERB_RES:
+        for match in pattern.finditer(folded):
+            start, end = match.span("alias")
+            clause_start = max(folded.rfind(c, 0, match.start()) for c in "\n.;!?")
+            clause_end = _CLAUSE_END_RE.search(folded, end)
+            stop = clause_end.start() if clause_end else len(folded)
+            if len(_carriers_in(folded, clause_start + 1, stop)) == 1:
+                found.setdefault(
+                    start, CarrierMention(start, end, _carrier_of(match["alias"]))
+                )
+    return sorted(found.values(), key=lambda m: m.start)
+
+
 @dataclass(frozen=True, slots=True)
 class FoundNumber:
     """A tracking number with the carrier it validates for."""

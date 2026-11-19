@@ -332,11 +332,42 @@ def test_time_windows(text: str) -> None:
         "avant 21h",
         "entro le 21:00",
         "voor 21:00",
+        "antes das 21:00",
+        "antes das 21h",
+        "vor 21:00 Uhr",
+        "vor 21 Uhr",
     ],
 )
 def test_open_ended_windows(text: str) -> None:
     """Open-ended windows return no start."""
     assert parse_time_window(text) == (None, time(21))
+
+
+@pytest.mark.parametrize(
+    ("text", "lang", "window_end"),
+    [
+        ("quinta-feira, 19 de novembro, antes das 20:00", "pt", time(20)),
+        ("Donnerstag, 19.11.2026, vor 12:00 Uhr", "de", time(12)),
+    ],
+)
+def test_date_with_open_ended_window(
+    text: str, lang: str, window_end: time, tz: ZoneInfo
+) -> None:
+    """A scheduled delivery "before" a time keeps the time as the window end."""
+    assert parse_eta(text, REF, tz, lang) == Eta(_day(19), _day(19), None, window_end)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Bitte warten Sie, bis das 2. Paket ankommt",
+        "vor 2 Tagen",
+        "vor 3 Wochen bestellt",
+    ],
+)
+def test_not_open_ended_windows(text: str) -> None:
+    """Articles and durations after "bis", "vor" or "antes" aren't windows."""
+    assert parse_time_window(text) is None
 
 
 @pytest.mark.parametrize(

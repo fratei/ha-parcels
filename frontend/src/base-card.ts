@@ -9,10 +9,21 @@ import {
 } from "lit";
 import { callParcelsService } from "./api.ts";
 import { chipSelector } from "./chip.ts";
+import { possiblyLine } from "./describe.ts";
 import "./details-dialog.ts";
 import type { ParcelsDetailsDialog } from "./details-dialog.ts";
 import { errorMessage } from "./errors.ts";
+import {
+  FILTER_EVENT,
+  FILTER_KEY,
+  isParcelFilter,
+  matchesFilter,
+  readFilter,
+  saveFilter,
+  type ParcelFilter,
+} from "./filter.ts";
 import { localeOptions, type LocaleOptions } from "./format.ts";
+import { suggestedCandidates } from "./parcels.ts";
 import { SnapshotController } from "./snapshot-controller.ts";
 import { STRINGS, fmt } from "./strings.ts";
 import type { HomeAssistant, Parcel, Snapshot } from "./types.ts";
@@ -151,14 +162,19 @@ export abstract class ParcelsCardBase extends LitElement {
   }
 }
 
-/** A card that shows parcel chips, which open the details dialog. */
+/**
+ * A card that shows parcel chips, which open the details dialog, under the
+ * parcel filter chosen on this device (shared by the cards on the page).
+ */
 export abstract class ParcelsChipCard extends ParcelsCardBase {
   static override properties: PropertyDeclarations = {
     _busyParcels: { state: true },
+    _filter: { state: true },
   };
 
   /** Parcels with an Undo or Keep running. */
   declare protected _busyParcels: ReadonlySet<string>;
+  declare protected _filter: ParcelFilter;
 
   /** The parcel whose chip had focus before the current render. */
   private _focusedParcel: string | null = null;
@@ -166,7 +182,78 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
   constructor() {
     super();
     this._busyParcels = new Set();
+    this._filter = readFilter();
   }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._filter = readFilter();
+    window.addEventListener(FILTER_EVENT, this._onFilterEvent);
+    window.addEventListener("storage", this._onStorage);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    window.removeEventListener(FILTER_EVENT, this._onFilterEvent);
+    window.removeEventListener("storage", this._onStorage);
+  }
+
+  /** Chooses the filter for every card on this device. */
+  protected setFilter(filter: ParcelFilter): void {
+    this._filter = filter;
+    saveFilter(filter);
+  }
+
+  /** The parcels the chosen filter shows. */
+  protected filterParcels(snapshot: Snapshot, parcels: readonly Parcel[]): readonly Parcel[] {
+    const filter = this._filter;
+    if (filter === "all") {
+      return parcels;
+    }
+    const context = { today: snapshot.settings.today, timeZone: snapshot.settings.time_zone };
+    return parcels.filter((parcel) => matchesFilter(parcel, filter, context));
+  }
+
+  private _candidates: { snapshot: Snapshot; map: Map<string, Parcel[]> } | null = null;
+
+  /**
+   * "Possibly: …" for a box whose items aren't known, from the merge
+   * suggestions about its packages (only administrators get suggestions).
+   */
+  protected possiblyFor(members: readonly Parcel[]): string | null {
+    const snapshot = this.snapshot;
+    if (!snapshot) {
+      return null;
+    }
+    if (this._candidates?.snapshot !== snapshot) {
+      this._candidates = { snapshot, map: suggestedCandidates(snapshot.merge_suggestions) };
+    }
+    const map = this._candidates.map;
+    const ids = new Set(members.map((member) => member.id));
+    const candidates = new Map<string, Parcel>();
+    for (const member of members) {
+      for (const candidate of map.get(member.id) ?? []) {
+        if (!ids.has(candidate.id)) {
+          candidates.set(candidate.id, candidate);
+        }
+      }
+    }
+    return candidates.size ? possiblyLine([...candidates.values()]) : null;
+  }
+
+  private readonly _onFilterEvent = (event: Event): void => {
+    const filter = (event as CustomEvent<unknown>).detail;
+    if (isParcelFilter(filter)) {
+      this._filter = filter;
+    }
+  };
+
+  /** Another tab of this browser chose a filter. */
+  private readonly _onStorage = (event: StorageEvent): void => {
+    if (event.key === null || event.key === FILTER_KEY) {
+      this._filter = readFilter();
+    }
+  };
 
   protected override willUpdate(changed: PropertyValues): void {
     super.willUpdate(changed);

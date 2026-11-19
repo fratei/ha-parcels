@@ -1,0 +1,83 @@
+Return-Path: <bounce-2b7d1a7076@bounce.fedex.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@fedex.com header.s=fdx1 header.b=6f1fa22b;
+       spf=pass (google.com: domain of bounce-2b7d1a7076@bounce.fedex.com
+ designates 192.0.2.166 as permitted sender) smtp.mailfrom=bounce-2b7d1a7076@bounce.fedex.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=fedex.com
+From: FedEx <TrackingUpdates@fedex.com>
+To: Alex Doe <alex@example.com>
+Subject: FedEx-zending 833879637036: bezorging gepland op donderdag 19 november
+Date: Tue, 17 Nov 2026 07:45:00 +0000
+Message-ID: <20261117073000.5207@mail.example.com>
+MIME-Version: 1.0
+Content-Language: nl-NL
+Content-Type: multipart/alternative; boundary="fdx_41c7e2ac5946"
+
+--fdx_41c7e2ac5946
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hallo Alex, de bezorging van je pakket is gepland.
+
+Geplande bezorging:
+
+donderdag 19 november
+
+tussen 10:00 en 14:00
+
+Trackingnummer: 833879637036
+Afzender: Coolblue, Rotterdam, NL
+Ontvanger: Alex Doe, Amsterdam, NL
+Service: FedEx International Priority®
+
+Niet thuis? Beheer je bezorging met FedEx Delivery Manager®.
+
+Volg je pakket [https://www.fedex.com/fedextrack/?trknbr=833879637036&locale=nl_NL]
+
+Beantwoord dit bericht niet. Deze e-mail is verzonden vanuit een mailbox die niet wordt gecontroleerd.
+
+Privacybeleid [https://www.fedex.com/nl-nl/trust-center/privacy.html]
+
+© 2026 FedEx. Alle rechten voorbehouden.
+
+--fdx_41c7e2ac5946
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FedEx</title>
+<style>body{margin:0;background:#f2f2f2;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:20px 24px;background:#4d148c}.content{padding:24px}p.big{font-size:22px;font-weight:bold;color:#4d148c;margin:4px 0}td.label{color:#666;padding:4px 12px 4px 0;text-transform:uppercase;font-size:12px}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ff6200;color:#fff;text-decoration:none;border-radius:2px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.fedex.com/content/dam/fedex-com/logos/logo.png" alt="FedEx" width="110" height="32"></td></tr>
+<tr><td class="content">
+<h1>Hallo Alex, de bezorging van je pakket is gepland.</h1>
+<p>Geplande bezorging:</p>
+<p class="big">donderdag 19 november</p>
+<p>tussen 10:00 en 14:00</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Trackingnummer</td><td class="value">833879637036</td></tr>
+<tr><td class="label">Afzender</td><td class="value">Coolblue<br>Rotterdam, NL</td></tr>
+<tr><td class="label">Ontvanger</td><td class="value">Alex Doe<br>Amsterdam, NL</td></tr>
+<tr><td class="label">Service</td><td class="value">FedEx International Priority®</td></tr>
+</table>
+<p>Niet thuis? Beheer je bezorging met FedEx Delivery Manager®.</p>
+<p style="text-align:center"><a class="button" href="https://www.fedex.com/fedextrack/?trknbr=833879637036&amp;locale=nl_NL">Volg je pakket</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Beantwoord dit bericht niet. Deze e-mail is verzonden vanuit een mailbox die niet wordt gecontroleerd.</p>
+<p><a href="https://www.fedex.com/nl-nl/trust-center/privacy.html">Privacybeleid</a></p>
+<p>© 2026 FedEx. Alle rechten voorbehouden.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--fdx_41c7e2ac5946--

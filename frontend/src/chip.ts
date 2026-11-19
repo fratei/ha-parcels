@@ -2,7 +2,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { classMap } from "lit/directives/class-map.js";
 import { styleMap } from "lit/directives/style-map.js";
-import { chipMeta, describeParcel } from "./describe.ts";
+import { chipMeta, chipPin, describeParcel, itemsSummary, sellerLine } from "./describe.ts";
 import type { LocaleOptions } from "./format.ts";
 import { boxParcel } from "./groups.ts";
 import { parcelTitle } from "./labels.ts";
@@ -22,6 +22,8 @@ export interface ChipOptions {
   showRange?: boolean;
   /** The packages of a shipment shown as one box, the parcel among them; absent when alone. */
   members?: readonly Parcel[];
+  /** "Possibly: …", shown instead of "Items not known yet" when a suggestion names candidates. */
+  possibly?: string | null;
   /** An Undo or Keep for this parcel (or a package in its box) is running. */
   busy?: boolean;
   /** Extra inline styles, e.g. the position in the week grid. */
@@ -133,10 +135,14 @@ function renderInferredNote(
   );
 }
 
+/** Keeps an empty line's height, so every chip has three lines. */
+const BLANK = "\u00a0";
+
 /**
- * A parcel coloured by its status, with its name, carrier and window, the
- * "AI" badge, a lock when private, a hint when the details hold a PIN and the
- * auto-merge and inferred-delivery notes. Packages of one shipment show as one
+ * A parcel coloured by its status, on three lines: the seller; the carrier,
+ * window and PIN; the items. Then the "AI" badge, a lock when private, a hint
+ * when only the details hold a PIN and the auto-merge and inferred-delivery
+ * notes. Packages of one shipment show as one
  * box with their count and a note per package. Tapping it opens the details
  * (of the box's first package); restricted parcels (another user's private
  * ones) aren't interactive.
@@ -148,12 +154,16 @@ export function renderChip(first: Parcel, options: ChipOptions): TemplateResult 
   const inBox = members.length > 1;
   const parcel = boxParcel(first, members);
   const title = parcelTitle(parcel);
+  const pin = chipPin(parcel);
+  const items = itemsSummary(parcel);
+  const possibly = items === null && !parcel.restricted ? (options.possibly ?? null) : null;
   const description = describeParcel(parcel, {
     locale,
     placement,
     count: members.length,
     continuesBefore: options.continuesBefore,
     continuesAfter: options.continuesAfter,
+    possibly,
   });
   const meta = chipMeta(parcel, {
     locale,
@@ -174,11 +184,26 @@ export function renderChip(first: Parcel, options: ChipOptions): TemplateResult 
     ${options.continuesBefore ? html`<span class="cont">‹</span>` : nothing}
     ${parcel.status === "delivered" ? html`<span class="check">✓</span>` : nothing}
     <span class="chip-text">
-      <span class="chip-title">${title}</span>
-      ${meta ? html`<span class="chip-meta">${meta}</span>` : nothing}
+      <span class=${classMap({ "chip-title": true, unknown: !parcel.restricted && !parcel.merchant?.trim() })}
+        >${sellerLine(parcel)}</span
+      >
+      <span class="chip-line">
+        <span class="chip-meta">${meta || BLANK}</span>
+        ${pin ? html`<span class="chip-pin">${pin}</span>` : nothing}
+      </span>
+      <span
+        class=${classMap({
+          "chip-items": true,
+          unknown: items === null && possibly === null && !parcel.restricted,
+          possibly: possibly !== null,
+        })}
+        >${items ?? possibly ?? (parcel.restricted ? BLANK : STRINGS.itemsNotKnown)}</span
+      >
     </span>
-    ${parcel.ai && !parcel.restricted ? html`<span class="badge ai">${STRINGS.aiBadge}</span>` : nothing}
-    ${parcel.has_code && !parcel.restricted
+    ${(parcel.ai || parcel.ai_filled) && !parcel.restricted
+      ? html`<span class="badge ai">${STRINGS.aiBadge}</span>`
+      : nothing}
+    ${parcel.has_code && !pin && !parcel.restricted
       ? html`<ha-icon class="lock" icon="mdi:dialpad" title=${STRINGS.hasCode}></ha-icon>`
       : nothing}
     ${parcel.private || parcel.restricted

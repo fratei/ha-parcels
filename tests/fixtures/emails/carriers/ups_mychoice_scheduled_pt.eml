@@ -1,0 +1,84 @@
+Return-Path: <bounce-5a1c0e5e10@bounces.ups.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ups.com header.s=sel1 header.b=3c2c3830;
+       spf=pass (google.com: domain of bounce-5a1c0e5e10@bounces.ups.com
+ designates 192.0.2.141 as permitted sender) smtp.mailfrom=bounce-5a1c0e5e10@bounces.ups.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ups.com
+From: UPS <mcinfo@ups.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Atualiza=C3=A7=C3=A3o_da_UPS=3A_entrega_agendada_para_q?=
+ =?utf-8?q?uinta-feira=2C_19/11/2026?=
+Date: Tue, 17 Nov 2026 07:16:00 +0000
+Message-ID: <20261117071600.3102@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_8e21c4d81b1c"
+
+--b1_8e21c4d81b1c
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A sua encomenda tem entrega agendada para quinta-feira, 19/11/2026
+
+Olá Alex Doe,
+
+Data de entrega agendada: quinta-feira, 19/11/2026
+Janela de entrega estimada: 10:30 - 14:30
+Enviado por: Worten
+Número de rastreamento: 1ZK1MM5P4097854882
+Número de embalagens: 1
+Serviço UPS: UPS Standard®
+Enviar para: Alex Doe, Lisboa, PT
+
+Não vai estar em casa? Altere a sua entrega com o UPS My Choice®.
+
+Seguir a encomenda [https://www.ups.com/track?loc=pt_PT&tracknum=1ZK1MM5P4097854882&requester=MC/trackdetails]
+
+© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.
+
+Aviso de privacidade [https://www.ups.com/pt/pt/support/shipping-support/legal-terms-conditions/privacy-notice.page]
+
+Não responda a este e-mail. A UPS não recebe as respostas.
+
+--b1_8e21c4d81b1c
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UPS Update</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#351c15}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#351c15;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.ups.com/assets/resources/images/UPS_logo.svg" alt="UPS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>A sua encomenda tem entrega agendada para quinta-feira, 19/11/2026</h1>
+<p>Olá Alex Doe,</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Data de entrega agendada</td><td class="value">quinta-feira, 19/11/2026</td></tr>
+<tr><td class="label">Janela de entrega estimada</td><td class="value">10:30 - 14:30</td></tr>
+<tr><td class="label">Enviado por</td><td class="value">Worten</td></tr>
+<tr><td class="label">Número de rastreamento</td><td class="value">1ZK1MM5P4097854882</td></tr>
+<tr><td class="label">Número de embalagens</td><td class="value">1</td></tr>
+<tr><td class="label">Serviço UPS</td><td class="value">UPS Standard®</td></tr>
+<tr><td class="label">Enviar para</td><td class="value">Alex Doe, Lisboa, PT</td></tr>
+</table>
+<p>Não vai estar em casa? Altere a sua entrega com o UPS My Choice®.</p>
+<p style="text-align:center"><a class="button" href="https://www.ups.com/track?loc=pt_PT&amp;tracknum=1ZK1MM5P4097854882&amp;requester=MC/trackdetails">Seguir a encomenda</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.</p>
+<p><a href="https://www.ups.com/pt/pt/support/shipping-support/legal-terms-conditions/privacy-notice.page">Aviso de privacidade</a></p>
+<p>Não responda a este e-mail. A UPS não recebe as respostas.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_8e21c4d81b1c--

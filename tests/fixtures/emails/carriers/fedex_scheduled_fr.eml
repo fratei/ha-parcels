@@ -1,0 +1,84 @@
+Return-Path: <bounce-2b7d1a4068@bounce.fedex.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@fedex.com header.s=fdx1 header.b=6f1ba7b5;
+       spf=pass (google.com: domain of bounce-2b7d1a4068@bounce.fedex.com
+ designates 192.0.2.164 as permitted sender) smtp.mailfrom=bounce-2b7d1a4068@bounce.fedex.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=fedex.com
+From: FedEx <TrackingUpdates@fedex.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Exp=C3=A9dition_FedEx_306307040908_=3A_livraison_pr?=
+ =?utf-8?q?=C3=A9vue_le_jeudi_19_novembre?=
+Date: Tue, 17 Nov 2026 07:35:00 +0000
+Message-ID: <20261117072000.5205@mail.example.com>
+MIME-Version: 1.0
+Content-Language: fr-FR
+Content-Type: multipart/alternative; boundary="fdx_41c7e2ab82d4"
+
+--fdx_41c7e2ab82d4
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bonjour Alex, la livraison de votre colis est programmée.
+
+Livraison prévue :
+
+jeudi 19 novembre
+
+entre 10h00 et 14h00
+
+Numéro de suivi: 306307040908
+Expéditeur: Decathlon, Lille, FR
+Destinataire: Alex Doe, Paris, FR
+Service: FedEx International Priority®
+
+Vous ne serez pas chez vous ? Gérez votre livraison avec FedEx Delivery Manager®.
+
+Suivre votre colis [https://www.fedex.com/fedextrack/?trknbr=306307040908&locale=fr_FR]
+
+Merci de ne pas répondre à ce message. Cet e-mail a été envoyé depuis une boîte aux lettres non surveillée.
+
+Politique de confidentialité [https://www.fedex.com/fr-fr/trust-center/privacy.html]
+
+© 2026 FedEx. Tous droits réservés.
+
+--fdx_41c7e2ab82d4
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FedEx</title>
+<style>body{margin:0;background:#f2f2f2;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:20px 24px;background:#4d148c}.content{padding:24px}p.big{font-size:22px;font-weight:bold;color:#4d148c;margin:4px 0}td.label{color:#666;padding:4px 12px 4px 0;text-transform:uppercase;font-size:12px}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ff6200;color:#fff;text-decoration:none;border-radius:2px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.fedex.com/content/dam/fedex-com/logos/logo.png" alt="FedEx" width="110" height="32"></td></tr>
+<tr><td class="content">
+<h1>Bonjour Alex, la livraison de votre colis est programmée.</h1>
+<p>Livraison prévue :</p>
+<p class="big">jeudi 19 novembre</p>
+<p>entre 10h00 et 14h00</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Numéro de suivi</td><td class="value">306307040908</td></tr>
+<tr><td class="label">Expéditeur</td><td class="value">Decathlon<br>Lille, FR</td></tr>
+<tr><td class="label">Destinataire</td><td class="value">Alex Doe<br>Paris, FR</td></tr>
+<tr><td class="label">Service</td><td class="value">FedEx International Priority®</td></tr>
+</table>
+<p>Vous ne serez pas chez vous ? Gérez votre livraison avec FedEx Delivery Manager®.</p>
+<p style="text-align:center"><a class="button" href="https://www.fedex.com/fedextrack/?trknbr=306307040908&amp;locale=fr_FR">Suivre votre colis</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Merci de ne pas répondre à ce message. Cet e-mail a été envoyé depuis une boîte aux lettres non surveillée.</p>
+<p><a href="https://www.fedex.com/fr-fr/trust-center/privacy.html">Politique de confidentialité</a></p>
+<p>© 2026 FedEx. Tous droits réservés.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--fdx_41c7e2ab82d4--

@@ -1,0 +1,82 @@
+Return-Path: <bounce-5a1c0ed9cc@bounces.ups.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ups.com header.s=sel1 header.b=3c329c94;
+       spf=pass (google.com: domain of bounce-5a1c0ed9cc@bounces.ups.com
+ designates 192.0.2.145 as permitted sender) smtp.mailfrom=bounce-5a1c0ed9cc@bounces.ups.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ups.com
+From: UPS <mcinfo@ups.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Aggiornamento_UPS=3A_consegna_programmata_per_gioved?=
+ =?utf-8?q?=C3=AC_19/11/2026?=
+Date: Tue, 17 Nov 2026 07:20:00 +0000
+Message-ID: <20261117072000.3106@mail.example.com>
+MIME-Version: 1.0
+Content-Language: it-IT
+Content-Type: multipart/alternative; boundary="b1_8e21c4da04c0"
+
+--b1_8e21c4da04c0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+La consegna del tuo pacco è programmata per giovedì 19/11/2026
+
+Ciao Alex Doe,
+
+Consegna programmata: giovedì 19/11/2026
+Mittente: Yoox
+Numero di tracking: 1Z7KT5MY7763672703
+Numero di colli: 1
+Servizio UPS: UPS Standard®
+Destinatario: Alex Doe, Roma, IT
+
+Non sarai a casa? Modifica la consegna con UPS My Choice®.
+
+Traccia il pacco [https://www.ups.com/track?loc=it_IT&tracknum=1Z7KT5MY7763672703&requester=MC/trackdetails]
+
+© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.
+
+Informativa sulla privacy [https://www.ups.com/it/it/support/shipping-support/legal-terms-conditions/privacy-notice.page]
+
+Non rispondere a questa e-mail.
+
+--b1_8e21c4da04c0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UPS Update</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#351c15}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#351c15;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.ups.com/assets/resources/images/UPS_logo.svg" alt="UPS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>La consegna del tuo pacco è programmata per giovedì 19/11/2026</h1>
+<p>Ciao Alex Doe,</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Consegna programmata</td><td class="value">giovedì 19/11/2026</td></tr>
+<tr><td class="label">Mittente</td><td class="value">Yoox</td></tr>
+<tr><td class="label">Numero di tracking</td><td class="value">1Z7KT5MY7763672703</td></tr>
+<tr><td class="label">Numero di colli</td><td class="value">1</td></tr>
+<tr><td class="label">Servizio UPS</td><td class="value">UPS Standard®</td></tr>
+<tr><td class="label">Destinatario</td><td class="value">Alex Doe, Roma, IT</td></tr>
+</table>
+<p>Non sarai a casa? Modifica la consegna con UPS My Choice®.</p>
+<p style="text-align:center"><a class="button" href="https://www.ups.com/track?loc=it_IT&amp;tracknum=1Z7KT5MY7763672703&amp;requester=MC/trackdetails">Traccia il pacco</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.</p>
+<p><a href="https://www.ups.com/it/it/support/shipping-support/legal-terms-conditions/privacy-notice.page">Informativa sulla privacy</a></p>
+<p>Non rispondere a questa e-mail.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_8e21c4da04c0--

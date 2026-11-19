@@ -30,6 +30,7 @@ MAX_URL_CHARS = 2048
 MAX_LINKS = 300
 MAX_LINK_TEXT_CHARS = 200
 MAX_HEADER_CHARS = 4000
+MAX_AUTH_HEADERS = 8
 MAX_SHOPIFY_HEADERS = 20
 LANGUAGE_SAMPLE_CHARS = 3000
 
@@ -1563,6 +1564,13 @@ def _kept_headers(raw: list[tuple[str, str]]) -> dict[str, str]:
     return headers
 
 
+def _auth_headers(raw: list[tuple[str, str]]) -> tuple[tuple[str, ...], int]:
+    """Return every Authentication-Results value, top-down, and the -Original count."""
+    values = [v[:MAX_HEADER_CHARS] for k, v in raw if k == "authentication-results"]
+    originals = sum(1 for k, _ in raw if k == "authentication-results-original")
+    return tuple(values[:MAX_AUTH_HEADERS]), originals
+
+
 def _address(message: Message, name: str, raw: str) -> tuple[str, str]:
     """Return (display name, lowercased address) of an address header."""
     addresses: tuple[Any, ...] = ()
@@ -1614,8 +1622,9 @@ def message_from_bytes(
 ) -> MailMessage:
     """Parse an RFC 5322 message (Gmail ``format=raw``).
 
-    The HTML part is preferred over the plain text part. Only the topmost
-    Authentication-Results header is kept and parsed.
+    The HTML part is preferred over the plain text part. The topmost
+    Authentication-Results header is parsed; all of them are kept for the
+    sender checks.
     """
     message = BytesParser(policy=policy.default).parsebytes(raw)
     raw_headers = _raw_headers(message)
@@ -1624,6 +1633,7 @@ def message_from_bytes(
         return next((v for k, v in raw_headers if k == name), "")
 
     headers = _kept_headers(raw_headers)
+    auth_headers, auth_originals = _auth_headers(raw_headers)
     sender_name, sender = _address(message, "From", first("from"))
     _, reply_to = _address(message, "Reply-To", first("reply-to"))
     subject = _decoded_header(message, "Subject", first("subject"))
@@ -1645,6 +1655,8 @@ def message_from_bytes(
         received=None,
         headers=headers,
         language=_guess_language(headers, subject, text),
+        auth_headers=auth_headers,
+        auth_originals=auth_originals,
     )
 
 
@@ -1674,7 +1686,8 @@ def message_from_graph(item: Mapping[str, Any], *, mailbox: str) -> MailMessage:
     """Build a message from a Microsoft Graph message resource.
 
     Expects the body as HTML (``Prefer: outlook.body-content-type="html"``)
-    and ``internetMessageHeaders``, which Graph lists top-down.
+    and ``internetMessageHeaders``. Graph lists the provider's headers
+    first, but not in arrival order; see ``auth.verify_sender``.
     """
     raw_headers: list[tuple[str, str]] = []
     for header in item.get("internetMessageHeaders") or ():
@@ -1683,6 +1696,7 @@ def message_from_graph(item: Mapping[str, Any], *, mailbox: str) -> MailMessage:
             if isinstance(name, str) and isinstance(value, str):
                 raw_headers.append((name.strip().lower(), " ".join(value.split())))
     headers = _kept_headers(raw_headers)
+    auth_headers, auth_originals = _auth_headers(raw_headers)
     sender_name, sender = _graph_address(item.get("from"))
     reply_to = ""
     for recipient in item.get("replyTo") or ():
@@ -1717,4 +1731,6 @@ def message_from_graph(item: Mapping[str, Any], *, mailbox: str) -> MailMessage:
         received=received,
         headers=headers,
         language=_guess_language(headers, subject, text),
+        auth_headers=auth_headers,
+        auth_originals=auth_originals,
     )

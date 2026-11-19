@@ -1,0 +1,80 @@
+Return-Path: <bounce-2b7d19f853@bounce.fedex.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@fedex.com header.s=fdx1 header.b=6f15b004;
+       spf=pass (google.com: domain of bounce-2b7d19f853@bounce.fedex.com
+ designates 192.0.2.161 as permitted sender) smtp.mailfrom=bounce-2b7d19f853@bounce.fedex.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=fedex.com
+From: FedEx <TrackingUpdates@fedex.com>
+To: Alex Doe <alex@example.com>
+Subject: Envio FedEx 521680287562: entrega agendada para quinta-feira, 19 de novembro
+Date: Tue, 17 Nov 2026 07:20:00 +0000
+Message-ID: <20261117070500.5202@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="fdx_41c7e2aa4129"
+
+--fdx_41c7e2aa4129
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Olá Alex. A sua encomenda tem entrega agendada.
+
+Entrega agendada:
+
+quinta-feira, 19 de novembro, antes das 20:00
+
+Número de rastreio: 521680287562
+Remetente: Zara, Arteixo, ES
+Destinatário: Alex Doe, Lisboa, PT
+Serviço: FedEx International Economy®
+
+Não vai estar em casa? Faça a gestão da entrega com o FedEx Delivery Manager®.
+
+Seguir a encomenda [https://www.fedex.com/fedextrack/?trknbr=521680287562&locale=pt_PT]
+
+Não responda a esta mensagem. Este e-mail foi enviado a partir de uma caixa de correio não monitorizada.
+
+Política de privacidade [https://www.fedex.com/pt-pt/trust-center/privacy.html]
+
+© 2026 FedEx. Todos os direitos reservados.
+
+--fdx_41c7e2aa4129
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FedEx</title>
+<style>body{margin:0;background:#f2f2f2;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:20px 24px;background:#4d148c}.content{padding:24px}p.big{font-size:22px;font-weight:bold;color:#4d148c;margin:4px 0}td.label{color:#666;padding:4px 12px 4px 0;text-transform:uppercase;font-size:12px}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#ff6200;color:#fff;text-decoration:none;border-radius:2px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.fedex.com/content/dam/fedex-com/logos/logo.png" alt="FedEx" width="110" height="32"></td></tr>
+<tr><td class="content">
+<h1>Olá Alex. A sua encomenda tem entrega agendada.</h1>
+<p>Entrega agendada:</p>
+<p class="big">quinta-feira, 19 de novembro, antes das 20:00</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Número de rastreio</td><td class="value">521680287562</td></tr>
+<tr><td class="label">Remetente</td><td class="value">Zara<br>Arteixo, ES</td></tr>
+<tr><td class="label">Destinatário</td><td class="value">Alex Doe<br>Lisboa, PT</td></tr>
+<tr><td class="label">Serviço</td><td class="value">FedEx International Economy®</td></tr>
+</table>
+<p>Não vai estar em casa? Faça a gestão da entrega com o FedEx Delivery Manager®.</p>
+<p style="text-align:center"><a class="button" href="https://www.fedex.com/fedextrack/?trknbr=521680287562&amp;locale=pt_PT">Seguir a encomenda</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Não responda a esta mensagem. Este e-mail foi enviado a partir de uma caixa de correio não monitorizada.</p>
+<p><a href="https://www.fedex.com/pt-pt/trust-center/privacy.html">Política de privacidade</a></p>
+<p>© 2026 FedEx. Todos os direitos reservados.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--fdx_41c7e2aa4129--

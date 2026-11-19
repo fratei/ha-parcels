@@ -110,6 +110,11 @@ def check_case(case: Case, load_eml: Loader, verdict_for: VerdictFor) -> None:
     """Assert that the fixture of ``case`` parses to what the case expects."""
     message, verdict, parser = _load(case.name, load_eml, verdict_for)
     assert parser == case.parser
+    check_result(case, message, verdict)
+
+
+def check_result(case: Case, message: MailMessage, verdict: SenderVerdict) -> None:
+    """Assert that the carrier parser of ``case`` reads ``message`` as expected."""
     tz = zone(case.name)
     result = parse_carrier(message, verdict, tz, case.parser)
     assert result is not None
@@ -228,8 +233,8 @@ RETURNS = {
 }
 
 
-def test_carrier_parsers_match_the_sender_hints() -> None:
-    """The handled ids are the carrier hints of the sender allow-list."""
+def test_carrier_parsers() -> None:
+    """Each carrier with a dedicated parser has its own id."""
     assert {
         "ctt",
         "ctt_expresso",
@@ -244,7 +249,12 @@ def test_carrier_parsers_match_the_sender_hints() -> None:
         "paack",
         "inpost",
         "vinted_go",
+        "fedex",
     } == CARRIER_PARSERS
+
+
+def test_carrier_parsers_match_the_sender_hints() -> None:
+    """The handled ids are the carrier hints of the sender allow-list."""
     hints = {info.parser for info in senders.KNOWN_SENDERS.values()}
     assert hints >= CARRIER_PARSERS
 
@@ -438,6 +448,7 @@ def test_every_fixture_has_expectations() -> None:
     # Imported here: those modules import this one.
     from . import (
         test_carriers_es,
+        test_carriers_fedex,
         test_carriers_intl,
         test_carriers_lockers,
         test_carriers_pt,
@@ -448,6 +459,7 @@ def test_every_fixture_has_expectations() -> None:
         test_carriers_es,
         test_carriers_intl,
         test_carriers_lockers,
+        test_carriers_fedex,
     )
     names = [case.name for module in modules for case in module.CASES]
     names += [name for module in modules for name in module.NEGATIVE]

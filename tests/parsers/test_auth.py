@@ -9,7 +9,10 @@ from custom_components.parcels.parsers.auth import (
     verify_sender,
 )
 from custom_components.parcels.parsers.base import MailMessage
-from custom_components.parcels.parsers.normalize import message_from_bytes
+from custom_components.parcels.parsers.normalize import (
+    message_from_bytes,
+    message_from_graph,
+)
 
 GMAIL_AMAZON = (
     "mx.google.com;\n"
@@ -304,3 +307,150 @@ def test_verify_fixture(load_eml, verdict_for) -> None:
     assert verdict.authenticated
     assert verdict.reason == "unknown_sender"
     assert verdict_for(message, ["loja-exemplo.example"]).reason == "ok"
+
+
+OUTLOOK_CTT = (
+    "spf=pass (sender IP is 192.0.2.10) smtp.mailfrom=bounce.ctt.pt; dkim=pass"
+    " (signature was verified) header.d=ctt.pt;dmarc=pass action=none"
+    " header.from=ctt.pt;compauth=pass reason=100"
+)
+GRAPH_MARKER = ("X-IncomingTopHeaderMarker", "OriginalChecksum:0A1B;Count:12")
+
+
+def _graph(address: str, *headers: tuple[str, str]) -> MailMessage:
+    """Build a Graph message; ``headers`` are (name, value) in Graph's order."""
+    return message_from_graph(
+        {
+            "id": "g1",
+            "internetMessageId": "<20261117091200.g1@mail.example.net>",
+            "from": {"emailAddress": {"name": "Sender", "address": address}},
+            "subject": "Your order has shipped",
+            "sentDateTime": "2026-11-17T09:12:00Z",
+            "receivedDateTime": "2026-11-17T09:12:05Z",
+            "body": {"contentType": "html", "content": "<p>Hello</p>"},
+            "internetMessageHeaders": [
+                {"name": name, "value": value} for name, value in headers
+            ],
+        },
+        mailbox="alex@example.com",
+    )
+
+
+@pytest.mark.parametrize("prefix", ["", "mx.microsoft.com 1; ", "MX.Microsoft.com; "])
+def test_verify_outlook_authserv_ids(prefix: str) -> None:
+    """Outlook.com writes its header with or without an authserv-id."""
+    message = _graph(
+        "noreply@ctt.pt",
+        ("Received", "from mail.example.net by mx.example.outlook.com"),
+        ("Authentication-Results", prefix + OUTLOOK_CTT),
+        GRAPH_MARKER,
+    )
+    verdict = verify_sender(message)
+    assert verdict.verified
+    assert verdict.method == "dmarc"
+    assert verdict.check is not None
+    assert verdict.check.used == 0
+
+
+@pytest.mark.parametrize(
+    "server",
+    ["mx.microsoft.com.example.net", "protection.outlook.com", "mx.google.com"],
+)
+def test_verify_outlook_other_servers(server: str) -> None:
+    """Only Microsoft's own authserv-id counts in an Outlook.com mailbox."""
+    message = _graph(
+        "noreply@ctt.pt", ("Authentication-Results", f"{server} 1; {OUTLOOK_CTT}")
+    )
+    verdict = verify_sender(message)
+    assert not verdict.authenticated
+    assert verdict.reason == "untrusted_authserv"
+    assert verdict.check is not None
+    assert verdict.check.servers == (server,)
+    assert verdict.check.used is None
+
+
+@pytest.mark.parametrize("forged_first", [True, False])
+def test_verify_outlook_two_headers_fail_closed(forged_first: bool) -> None:
+    """With two headers, one may be the sender's, and Graph's order can't tell."""
+    provider = (
+        "Authentication-Results",
+        "spf=fail smtp.mailfrom=ctt.pt; dkim=none; dmarc=fail header.from=ctt.pt",
+    )
+    forged = (
+        "Authentication-Results",
+        "dkim=pass header.d=ctt.pt; dmarc=pass header.from=ctt.pt",
+    )
+    pair = (forged, provider) if forged_first else (provider, forged)
+    verdict = verify_sender(_graph("noreply@ctt.pt", *pair, GRAPH_MARKER))
+    assert not verdict.authenticated
+    assert verdict.reason == "multiple_auth_results"
+    assert verdict.check is not None
+    assert verdict.check.headers == 2
+    assert verdict.check.servers == ("", "")
+    assert verdict.check.used is None
+
+
+def test_verify_outlook_ignores_original_headers() -> None:
+    """Microsoft renames headers from earlier hops; they're counted, not used."""
+    message = _graph(
+        "noreply@ctt.pt",
+        ("Authentication-Results", "mx.microsoft.com 1; " + OUTLOOK_CTT),
+        GRAPH_MARKER,
+        ("Authentication-Results-Original", "mx.google.com; dkim=pass header.d=x.pt"),
+    )
+    verdict = verify_sender(message)
+    assert verdict.verified
+    assert verdict.check is not None
+    assert verdict.check.headers == 1
+    assert verdict.check.originals == 1
+
+
+def test_sender_check_details() -> None:
+    """The details hold server names and outcomes, never addresses."""
+    message = _graph(
+        "noreply@ctt.pt",
+        ("Authentication-Results", "mx.microsoft.com 1; " + OUTLOOK_CTT),
+    )
+    check = verify_sender(message).check
+    assert check is not None
+    assert check.as_dict() == {
+        "headers": 1,
+        "servers": ["mx.microsoft.com"],
+        "used": 0,
+        "dkim": "pass",
+        "dmarc": "pass",
+        "spf": "pass",
+        "originals": 0,
+    }
+
+
+def test_sender_check_gmail_uses_first_header() -> None:
+    """Gmail's own header is the topmost one; the others are only counted."""
+    message = _message(
+        "CTT <noreply@ctt.pt>",
+        "mx.google.com; dkim=pass header.d=ctt.pt; spf=softfail"
+        " smtp.mailfrom=ctt.pt; dmarc=pass header.from=ctt.pt",
+        "dkim=fail header.d=ctt.pt",
+    )
+    verdict = verify_sender(message)
+    assert verdict.verified
+    assert verdict.check is not None
+    assert verdict.check.servers == ("mx.google.com", "")
+    assert verdict.check.used == 0
+    assert verdict.check.spf == "softfail"
+
+
+@pytest.mark.parametrize("server", ["alex@example.com", "x" * 300, "bad_host!"])
+def test_sender_check_hides_odd_server_names(server: str) -> None:
+    """Anything that isn't a plain host name is reported as "(other)"."""
+    message = _message("CTT <noreply@ctt.pt>", f"{server}; dkim=pass header.d=ctt.pt")
+    check = verify_sender(message).check
+    assert check is not None
+    assert check.servers == ("(other)",)
+
+
+def test_sender_check_without_header() -> None:
+    """No header, no servers."""
+    check = verify_sender(_message("CTT <noreply@ctt.pt>")).check
+    assert check is not None
+    assert (check.headers, check.servers, check.used) == (0, (), None)

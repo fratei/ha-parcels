@@ -1,0 +1,83 @@
+Return-Path: <bounce-5a1c0e3f21@bounces.ups.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ups.com header.s=sel1 header.b=3c2a9f17;
+       spf=pass (google.com: domain of bounce-5a1c0e3f21@bounces.ups.com
+ designates 192.0.2.140 as permitted sender) smtp.mailfrom=bounce-5a1c0e3f21@bounces.ups.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ups.com
+From: UPS <mcinfo@ups.com>
+To: Alex Doe <alex@example.com>
+Subject: UPS Update: Package Scheduled for Delivery Thursday, 11/19/2026
+Date: Tue, 17 Nov 2026 07:15:00 +0000
+Message-ID: <20261117071500.3101@mail.example.com>
+MIME-Version: 1.0
+Content-Language: en-US
+Content-Type: multipart/alternative; boundary="b1_8e21c4d7a0b3"
+
+--b1_8e21c4d7a0b3
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Your package is scheduled for delivery Thursday, 11/19/2026
+
+Hello Alex Doe,
+
+Scheduled Delivery: Thursday, 11/19/2026
+Estimated Delivery Window: 10:30 AM - 2:30 PM
+Shipper: Patagonia
+Tracking Number: 1ZSFNGNR9304975047
+Number of Packages: 1
+UPS Service: UPS Standard®
+Ship To: Alex Doe, Lisbon, PT
+
+Not going to be home? Change your delivery with UPS My Choice®.
+
+Track Package [https://www.ups.com/track?loc=en_US&tracknum=1ZSFNGNR9304975047&requester=MC/trackdetails]
+
+© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.
+
+Privacy Notice [https://www.ups.com/us/en/support/shipping-support/legal-terms-conditions/privacy-notice.page]
+
+Do not reply to this e-mail. UPS will not receive your reply.
+
+--b1_8e21c4d7a0b3
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UPS Update</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#351c15}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#351c15;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.ups.com/assets/resources/images/UPS_logo.svg" alt="UPS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Your package is scheduled for delivery Thursday, 11/19/2026</h1>
+<p>Hello Alex Doe,</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Scheduled Delivery</td><td class="value">Thursday, 11/19/2026</td></tr>
+<tr><td class="label">Estimated Delivery Window</td><td class="value">10:30 AM - 2:30 PM</td></tr>
+<tr><td class="label">Shipper</td><td class="value">Patagonia</td></tr>
+<tr><td class="label">Tracking Number</td><td class="value">1ZSFNGNR9304975047</td></tr>
+<tr><td class="label">Number of Packages</td><td class="value">1</td></tr>
+<tr><td class="label">UPS Service</td><td class="value">UPS Standard®</td></tr>
+<tr><td class="label">Ship To</td><td class="value">Alex Doe, Lisbon, PT</td></tr>
+</table>
+<p>Not going to be home? Change your delivery with UPS My Choice®.</p>
+<p style="text-align:center"><a class="button" href="https://www.ups.com/track?loc=en_US&amp;tracknum=1ZSFNGNR9304975047&amp;requester=MC/trackdetails">Track Package</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.</p>
+<p><a href="https://www.ups.com/us/en/support/shipping-support/legal-terms-conditions/privacy-notice.page">Privacy Notice</a></p>
+<p>Do not reply to this e-mail. UPS will not receive your reply.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_8e21c4d7a0b3--

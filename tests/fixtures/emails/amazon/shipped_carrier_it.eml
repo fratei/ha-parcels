@@ -1,0 +1,169 @@
+Return-Path: <20261118121540a1b2c3@bounces.amazon.it>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.it header.s=sel1amz header.b=qNNcVPlT;
+       dkim=pass header.i=@amazonses.com header.s=ug7nbtf4 header.b=gKycGuYC;
+       spf=pass (google.com: domain of 20261118121540a1b2c3@bounces.amazon.it designates 192.0.2.57 as permitted sender) smtp.mailfrom=20261118121540a1b2c3@bounces.amazon.it;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.it
+Received: from a48-17.smtp-out.eu-west-1.amazonses.com (a48-17.smtp-out.eu-west-1.amazonses.com. [192.0.2.57])
+        by mx.google.com with ESMTPS id x12si4455667wrb.120.2026.11.16
+        for <alex@example.com>;
+        Wed, 18 Nov 2026 12:15:40 +0100
+From: "Amazon.it" <conferma-spedizione@amazon.it>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Spedito=3A_=22Macchina_per_caff=C3=A8_espresso=2C_15_ba?=
+ =?utf-8?q?r=2E=2E=2E=22?=
+Date: Wed, 18 Nov 2026 12:15:40 +0100
+Message-ID: <010201920261118121540.shipped-carrier-it-000000@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Amazon.it
+I miei ordini | Il mio account
+
+Ciao Alex,
+
+Il tuo pacco =C3=A8 stato spedito.
+
+Arrivo:
+venerd=C3=AC 20 novembre
+
+Corriere: BRT
+
+Traccia il pacco: https://www.amazon.it/gp/r.html?C=3D05T7Q9X1M4K8B&K=3D1V3=
+JZ9Q7R2XW5&M=3Durn:rtn:msg:20261118121540a1b2c3d4e5f604&R=3D3HXK2P8Q5N7MZ&T=
+=3DC&U=3Dhttps%3A%2F%2Fwww.amazon.it%2Fprogress-tracker%2Fpackage%2Fref%3Dp=
+e_2848631_123456789_TE_SIMP_typ%3F_encoding%3DUTF8%26orderId%3D402-8391746-=
+2209384%26shipmentId%3DVb8Nq2TsJ%26packageIndex%3D0&H=3DQZXWTGBHJKL0PQ5RS04=
+&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Ordine n. 402-8391746-2209384
+
+Macchina per caff=C3=A8 espresso, 15 bar, con montalatte
+Quantit=C3=A0: 1
+https://www.amazon.it/gp/r.html?C=3D05T7Q9X1M4K8B&K=3D1V3JZ9Q7R2XW5&M=3Durn=
+:rtn:msg:20261118121540a1b2c3d4e5f605&R=3D3HXK2P8Q5N7MZ&T=3DC&U=3Dhttps%3A%=
+2F%2Fwww.amazon.it%2Fdp%2FB0B9T2K7HQ%2Fref%3Dpe_2848631_123456789_TE_dp_1&H=
+=3DQZXWTGBHJKL0PQ5RS05&ref_=3Dpe_2848631_123456789_TE_SIMP_typ
+
+Indirizzo di consegna Alex Doe, Via Esempio 1, Milano
+
+Questa e-mail =C3=A8 stata inviata da un indirizzo che non pu=C3=B2 ricever=
+e messaggi. Ti preghiamo di non rispondere.
+
+Informativa sulla privacy
+
+=C2=A9 2026 Amazon.com, Inc. o societ=C3=A0 affiliate. Tutti i diritti rise=
+rvati.
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"it">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DUTF-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1.=
+0">
+<title>Amazon.it</title>
+<style type=3D"text/css">
+body { margin: 0; padding: 0; background-color: #ffffff; }
+table { border-collapse: collapse; }
+.container { width: 600px; font-family: Arial, Helvetica, sans-serif; color=
+: #0f1111; }
+.h1 { font-size: 20px; font-weight: bold; margin: 16px 0 8px; }
+.h2 { font-size: 16px; font-weight: bold; margin: 16px 0 8px; color: #067d6=
+2; }
+.kv td { padding: 2px 8px 2px 0; font-size: 14px; }
+.button { background-color: #ffd814; border-radius: 20px; color: #0f1111;
+  padding: 8px 18px; text-decoration: none; display: inline-block; }
+.item td { vertical-align: top; padding: 8px 8px 8px 0; font-size: 14px; }
+.nav a { color: #0f1111; font-size: 13px; text-decoration: none; }
+.footer { font-size: 11px; color: #565959; padding-top: 24px; }
+</style>
+</head>
+<body>
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=
+=3D"0"><tr>
+<td align=3D"center">
+<table role=3D"presentation" class=3D"container" width=3D"600" cellpadding=
+=3D"0"
+ cellspacing=3D"0">
+<tr><td class=3D"header"><a href=3D"https://www.amazon.it/gp/r.html?C=3D05T=
+7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:20261118121540a1b2c3d4=
+e5f601&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.it%=
+2Fref%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJKL0PQ5RS01&amp;re=
+f_=3Dpe_2848631_123456789_TE_SIMP_typ"><img
+ src=3D"https://m.media-amazon.com/images/G/30/x-locale/common/amazon-logo.=
+_CB485934981_.png"
+ alt=3D"Amazon.it" width=3D"98" height=3D"30" border=3D"0"></a></td>
+<td class=3D"nav" align=3D"right"><a href=3D"https://www.amazon.it/gp/r.htm=
+l?C=3D05T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111812154=
+0a1b2c3d4e5f602&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.a=
+mazon.it%2Fgp%2Fcss%2Forder-history%3Fref_%3Dpe_2848631_123456789_TE_SIMP_t=
+yp&amp;H=3DQZXWTGBHJKL0PQ5RS02&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>I miei ordini</a> | <a href=3D"https://www.amazon.it/gp/r.html?C=3D05T7Q9X=
+1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:20261118121540a1b2c3d4e5f6=
+03&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.it%2Fgp=
+%2Fcss%2Fhomepage.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZ=
+XWTGBHJKL0PQ5RS03&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"
+>Il mio account</a></td></tr>
+<tr><td class=3D"content" colspan=3D"2">
+<p>Ciao Alex,</p>
+<h1 class=3D"h1">Il tuo pacco =C3=A8 stato spedito.</h1>
+<div class=3D"eta"><span class=3D"label">Arrivo:</span><br><span class=3D"v=
+alue"><b>venerd=C3=AC 20 novembre</b></span></div>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Corriere:</td><td class=3D"v"><b>BRT</b></td></tr></=
+table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.it/gp/r.htm=
+l?C=3D05T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:2026111812154=
+0a1b2c3d4e5f604&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.a=
+mazon.it%2Fprogress-tracker%2Fpackage%2Fref%3Dpe_2848631_123456789_TE_SIMP_=
+typ%3F_encoding%3DUTF8%26orderId%3D402-8391746-2209384%26shipmentId%3DVb8Nq=
+2TsJ%26packageIndex%3D0&amp;H=3DQZXWTGBHJKL0PQ5RS04&amp;ref_=3Dpe_2848631_1=
+23456789_TE_SIMP_typ">Traccia il pacco</a></p>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Ordine n.</td><td class=3D"v"><b>402-8391746-2209384=
+</b></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.it/gp/r.html?C=
+=3D05T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:20261118121540a1=
+b2c3d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amaz=
+on.it%2Fdp%2FB0B9T2K7HQ%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=3DQZXWTG=
+BHJKL0PQ5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ"><img src=3D"http=
+s://m.media-amazon.com/images/I/419T2K7HL._SS142_.jpg" alt=3D"Macchina per =
+caff=C3=A8 espresso, 15 bar, con montalatte" width=3D"90" height=3D"90" bor=
+der=3D"0"></a></td><td class=3D"desc"><a href=3D"https://www.amazon.it/gp/r=
+.html?C=3D05T7Q9X1M4K8B&amp;K=3D1V3JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:202611181=
+21540a1b2c3d4e5f605&amp;R=3D3HXK2P8Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fw=
+ww.amazon.it%2Fdp%2FB0B9T2K7HQ%2Fref%3Dpe_2848631_123456789_TE_dp_1&amp;H=
+=3DQZXWTGBHJKL0PQ5RS05&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Macchin=
+a per caff=C3=A8 espresso, 15 bar, con montalatte</a><br><span>Quantit=C3=
+=A0: 1</span></td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Indirizzo di consegna</td><td class=3D"v"><b>Alex Do=
+e, Via Esempio 1, Milano</b></td></tr></table>
+</td></tr>
+<tr><td class=3D"footer" colspan=3D"2">
+<p>Questa e-mail =C3=A8 stata inviata da un indirizzo che non pu=C3=B2 rice=
+vere messaggi. Ti preghiamo di non rispondere.</p>
+<p><a href=3D"https://www.amazon.it/gp/r.html?C=3D05T7Q9X1M4K8B&amp;K=3D1V3=
+JZ9Q7R2XW5&amp;M=3Durn:rtn:msg:20261118121540a1b2c3d4e5f606&amp;R=3D3HXK2P8=
+Q5N7MZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.it%2Fgp%2Fhelp%2Fcustomer=
+%2Fdisplay.html%3Fref_%3Dpe_2848631_123456789_TE_SIMP_typ&amp;H=3DQZXWTGBHJ=
+KL0PQ5RS06&amp;ref_=3Dpe_2848631_123456789_TE_SIMP_typ">Informativa sulla p=
+rivacy</a></p>
+<p>=C2=A9 2026 Amazon.com, Inc. o societ=C3=A0 affiliate. Tutti i diritti r=
+iservati.</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>
+
+--=_parcels_b1--

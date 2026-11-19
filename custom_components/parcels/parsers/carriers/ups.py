@@ -1,8 +1,10 @@
 """UPS e-mails: "UPS Update", UPS My Choice windows and Access Point pickups.
 
 "UPS Update: Package Scheduled for Delivery Today" with an estimated
+window, UPS My Choice "scheduled delivery" notices with a day and often a
 window, "Your package was delivered", "Your package is at a UPS Access
-Point" and delay notices. Numbers are 1Z codes with a check digit.
+Point" and delay or new-delivery-date notices. Numbers are 1Z codes with a
+check digit.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from typing import Final
 
 from ...const import MailKind
 from ._common import CarrierSpec
+from ._phrases import NEW_DATE_PHRASES, SCHEDULED_PHRASES
 
 SPEC: Final = CarrierSpec(
     carrier="ups",
@@ -32,13 +35,7 @@ SPEC: Final = CarrierSpec(
         (MailKind.OUT_FOR_DELIVERY, "entrega programada para hoy"),
         (MailKind.OUT_FOR_DELIVERY, "zustellung heute geplant"),
         (MailKind.OUT_FOR_DELIVERY, "livraison prevue aujourd'hui"),
-        (MailKind.IN_TRANSIT, "scheduled for delivery"),
-        (MailKind.DELAYED, "new delivery date"),
-        (MailKind.DELAYED, "neues zustelldatum"),
-        (MailKind.DELAYED, "nova data de entrega"),
-        (MailKind.DELAYED, "nueva fecha de entrega"),
-        (MailKind.DELAYED, "nouvelle date de livraison"),
-        (MailKind.DELAYED, "nuova data di consegna"),
-        (MailKind.DELAYED, "nieuwe bezorgdatum"),
+        *((MailKind.IN_TRANSIT, phrase) for phrase in SCHEDULED_PHRASES),
+        *((MailKind.DELAYED, phrase) for phrase in NEW_DATE_PHRASES),
     ),
 )

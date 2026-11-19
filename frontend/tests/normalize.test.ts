@@ -130,6 +130,7 @@ describe("normalizeParcel", () => {
       owners: ["user-1"],
       source: "seventeentrack",
       ai: true,
+      ai_filled: true,
       auto_merged: { origin: "o2", at: "2026-07-14T08:00:00+00:00", reason: "Same tracking number" },
       provisional: true,
       archived: true,
@@ -248,6 +249,44 @@ describe("normalizeReviewItem", () => {
     assert.equal(plain.authenticated, true);
     assert.equal(plain.source, "parser");
     assert.equal(plain.suggestion, null);
+  });
+
+  test("keeps the sender checks, the trusted-sender note and fills", () => {
+    const item = normalizeReviewItem({
+      id: "r3",
+      trusted_sender: true,
+      fill: true,
+      checks: {
+        headers: 2,
+        servers: ["mx.example.net", "", 3],
+        used: 1,
+        dkim: "pass",
+        dmarc: "fail",
+        spf: 7,
+        originals: 1,
+      },
+    });
+    assert.ok(item);
+    assert.equal(item.trusted_sender, true);
+    assert.equal(item.fill, true);
+    assert.deepEqual(item.checks, {
+      headers: 2,
+      servers: ["mx.example.net", "", ""],
+      used: 1,
+      dkim: "pass",
+      dmarc: "fail",
+      spf: "",
+      originals: 1,
+    });
+    const odd = normalizeReviewItem({ id: "r4", checks: { headers: 1, servers: "x", used: 1 } });
+    assert.ok(odd?.checks);
+    assert.deepEqual(odd.checks.servers, []);
+    assert.equal(odd.checks.used, null);
+    const plain = normalizeReviewItem({ id: "r5", trusted_sender: "yes", fill: 1, checks: "x" });
+    assert.ok(plain);
+    assert.equal(plain.trusted_sender, false);
+    assert.equal(plain.fill, false);
+    assert.equal(plain.checks, null);
   });
 });
 

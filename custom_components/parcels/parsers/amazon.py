@@ -26,6 +26,7 @@ from ..const import MailKind
 from . import tracking
 from ._amazon_shopify_common import (
     MAX_POINT_CHARS,
+    CarrierMention,
     FoundNumber,
     KindPattern,
     add_item,
@@ -39,6 +40,7 @@ from ._amazon_shopify_common import (
     label_values,
     line_bounds,
     local_date,
+    named_carriers,
     own_https_url,
     pickup_point,
     quantity_items,
@@ -743,6 +745,84 @@ def _track_url(ctx: _Context, shipment_id: str | None) -> str | None:
     return None
 
 
+# The heading of each package's part of a multi-package e-mail
+# ("Package 1 of 2", "Paquete 2 de 2", "Paket 1 von 2", "Colis 1 sur 2").
+_PACKAGE_HEADING_RE = re.compile(
+    r"^[^\S\n]*(?:package|parcel|shipment|delivery|pacote|embalagem|encomenda"
+    r"|envio|entrega|paquete|paket|sendung|lieferung|colis|envoi|livraison"
+    r"|pacco|spedizione|consegna|pakket|zending|levering)\s+(\d{1,2})\s*"
+    r"(?:(?:of|de|von|sur|di|van)\s+|/\s*)(\d{1,2})(?![0-9])",
+    re.MULTILINE,
+)
+
+
+def _package_blocks(ctx: _Context, count: int) -> list[tuple[int, int]] | None:
+    """Return the span of each package's part of the e-mail, in order.
+
+    A part runs from its heading to the next one; the headings must number
+    the packages 1 to ``count`` in order, else the parts are unknown.
+    """
+    headings = list(_PACKAGE_HEADING_RE.finditer(ctx.folded))
+    if [(int(m[1]), int(m[2])) for m in headings] != [
+        (index, count) for index in range(1, count + 1)
+    ]:
+        return None
+    starts = [m.start() for m in headings]
+    return list(zip(starts, [*starts[1:], len(ctx.folded)], strict=True))
+
+
+def _only(carriers: set[str]) -> str | None:
+    return next(iter(carriers)) if len(carriers) == 1 else None
+
+
+def _blocks_of(
+    text: str, number: str, blocks: list[tuple[int, int]]
+) -> set[int | None]:
+    """Return the parts a number is written in (None: before the first part)."""
+    pattern = re.compile(
+        rf"(?<![0-9A-Za-z]){re.escape(number)}(?![0-9A-Za-z])", re.IGNORECASE
+    )
+    return {
+        next((i for i, (start, end) in enumerate(blocks) if start <= pos < end), None)
+        for pos in (m.start() for m in pattern.finditer(text))
+    }
+
+
+def _carriers(
+    ctx: _Context, count: int, numbers: list[FoundNumber]
+) -> list[tuple[str | None, str | None]]:
+    """Return the carrier and tracking number of each package.
+
+    The carrier is the one the e-mail names (Amazon's own delivery service
+    whenever it's named, since Amazon hands many parcels to other
+    carriers), unless a tracking number shows another. With several
+    packages, a carrier or number goes to a package only when it's written
+    in that package's part of the e-mail alone; nothing is guessed.
+    """
+    named: list[CarrierMention] = named_carriers(ctx.folded)
+    named += [m for m in carrier_mentions(ctx.folded) if m.carrier == "amazon"]
+    if count == 1:
+        if other := next((n for n in numbers if n.carrier != "amazon"), None):
+            return [(other.carrier, other.number)]
+        if own := next((n for n in numbers if n.carrier == "amazon"), None):
+            return [("amazon", own.number)]
+        return [(_only({m.carrier for m in named}), None)]
+    everywhere = "amazon" if {m.carrier for m in named} == {"amazon"} else None
+    blocks = _package_blocks(ctx, count)
+    if blocks is None:
+        return [(everywhere, None)] * count
+    where = {n.number: _blocks_of(ctx.text, n.number, blocks) for n in numbers}
+    found: list[tuple[str | None, str | None]] = []
+    for index, (start, end) in enumerate(blocks):
+        inside = [n for n in numbers if index in where[n.number]]
+        if len(inside) == 1 and where[inside[0].number] == {index}:
+            found.append((inside[0].carrier, inside[0].number))
+            continue
+        carriers = {m.carrier for m in named if start <= m.start < end}
+        found.append((everywhere or _only(carriers), None))
+    return found
+
+
 def _status_shipments(
     ctx: _Context,
     kind: MailKind,
@@ -764,24 +844,20 @@ def _status_shipments(
         marks = [(pos, index) for index, (pos, _) in enumerate(etas) if pos >= 0]
         if len(marks) == len(slots):
             per_slot = _group_items(ctx, marks, len(slots))
-    other = next((n for n in numbers if n.carrier != "amazon"), None)
-    own = next((n for n in numbers if n.carrier == "amazon"), None)
-    # Amazon hands many parcels to other carriers, so its own delivery
-    # service counts only when the e-mail names it or has its number.
-    logistics = any(m.carrier == "amazon" for m in carrier_mentions(ctx.folded))
+    carriers = _carriers(ctx, len(slots), numbers)
     shipments: list[ParsedShipment] = []
     for index, shipment_id in enumerate(slots):
         if len(etas) == len(slots):
             eta: Eta | None = etas[index][1]
         else:
             eta = etas[0][1] if etas else None
-        carrier: str | None = "amazon" if logistics else None
-        number: str | None = None
-        if single and other is not None:
-            carrier, number = other.carrier, other.number
-        elif single and own is not None:
-            carrier, number = "amazon", own.number
-        url = _track_url(ctx, shipment_id) if carrier in (None, "amazon") else None
+        carrier, number = carriers[index]
+        # Amazon's page tracks the parcel until the carrier's number is known.
+        url = (
+            _track_url(ctx, shipment_id)
+            if number is None or carrier == "amazon"
+            else None
+        )
         if url is None and number is not None:
             url = tracking.tracking_url(carrier, number)
         shipments.append(

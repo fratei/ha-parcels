@@ -1,0 +1,84 @@
+Return-Path: <bounce-5a1c0e9bee@bounces.ups.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@ups.com header.s=sel1 header.b=3c2f6a62;
+       spf=pass (google.com: domain of bounce-5a1c0e9bee@bounces.ups.com
+ designates 192.0.2.143 as permitted sender) smtp.mailfrom=bounce-5a1c0e9bee@bounces.ups.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=ups.com
+From: UPS <mcinfo@ups.com>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?UPS_Update=3A_Zustellung_geplant_f=C3=BCr_Donnerstag=2C?=
+ =?utf-8?q?_19=2E11=2E2026?=
+Date: Tue, 17 Nov 2026 07:18:00 +0000
+Message-ID: <20261117071800.3104@mail.example.com>
+MIME-Version: 1.0
+Content-Language: de-DE
+Content-Type: multipart/alternative; boundary="b1_8e21c4d90fee"
+
+--b1_8e21c4d90fee
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Die Zustellung Ihrer Sendung ist für Donnerstag, 19.11.2026 geplant
+
+Hallo Alex Doe,
+
+Geplante Zustellung: Donnerstag, 19.11.2026
+Voraussichtliches Zustellzeitfenster: 10:30 - 14:30 Uhr
+Versender: Zalando
+Sendungsnummer: 1Z66JV826793840931
+Anzahl der Pakete: 1
+UPS Service: UPS Standard®
+Empfänger: Alex Doe, Berlin, DE
+
+Sie sind nicht zu Hause? Ändern Sie die Zustellung mit UPS My Choice®.
+
+Sendung verfolgen [https://www.ups.com/track?loc=de_DE&tracknum=1Z66JV826793840931&requester=MC/trackdetails]
+
+© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.
+
+Datenschutzhinweis [https://www.ups.com/de/de/support/shipping-support/legal-terms-conditions/privacy-notice.page]
+
+Bitte antworten Sie nicht auf diese E-Mail.
+
+--b1_8e21c4d90fee
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UPS Update</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#351c15}.content{padding:24px}td.label{color:#666;padding:4px 12px 4px 0}td.value{font-weight:bold}.button{display:inline-block;padding:12px 24px;background:#351c15;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://www.ups.com/assets/resources/images/UPS_logo.svg" alt="UPS" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Die Zustellung Ihrer Sendung ist für Donnerstag, 19.11.2026 geplant</h1>
+<p>Hallo Alex Doe,</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Geplante Zustellung</td><td class="value">Donnerstag, 19.11.2026</td></tr>
+<tr><td class="label">Voraussichtliches Zustellzeitfenster</td><td class="value">10:30 - 14:30 Uhr</td></tr>
+<tr><td class="label">Versender</td><td class="value">Zalando</td></tr>
+<tr><td class="label">Sendungsnummer</td><td class="value">1Z66JV826793840931</td></tr>
+<tr><td class="label">Anzahl der Pakete</td><td class="value">1</td></tr>
+<tr><td class="label">UPS Service</td><td class="value">UPS Standard®</td></tr>
+<tr><td class="label">Empfänger</td><td class="value">Alex Doe, Berlin, DE</td></tr>
+</table>
+<p>Sie sind nicht zu Hause? Ändern Sie die Zustellung mit UPS My Choice®.</p>
+<p style="text-align:center"><a class="button" href="https://www.ups.com/track?loc=de_DE&amp;tracknum=1Z66JV826793840931&amp;requester=MC/trackdetails">Sendung verfolgen</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.</p>
+<p><a href="https://www.ups.com/de/de/support/shipping-support/legal-terms-conditions/privacy-notice.page">Datenschutzhinweis</a></p>
+<p>Bitte antworten Sie nicht auf diese E-Mail.</p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_8e21c4d90fee--

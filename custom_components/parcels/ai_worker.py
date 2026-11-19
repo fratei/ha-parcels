@@ -18,7 +18,7 @@ import asyncio
 from collections.abc import Callable
 import contextlib
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -39,12 +39,14 @@ from .ai import (
 )
 from .const import (
     AI_DAILY_LIMIT,
+    AI_FILL_DAILY_LIMIT,
     AI_RETRY_DELAY,
     AI_SHADOW_DAILY_LIMIT,
     CONFIDENCE_APPLY,
     DOMAIN,
     ISSUE_AI_REFUSED,
     ISSUE_AI_UNAVAILABLE,
+    REASON_AI_FILL,
     REASON_AI_REJECTED,
     REASON_AI_SUGGESTION,
     REASON_AI_TIMEOUT,
@@ -54,7 +56,13 @@ from .const import (
     AIMode,
     MailKind,
 )
-from .convert import is_confident, results_agree, suggestion_from_result
+from .convert import (
+    fill_suggestion,
+    is_confident,
+    merge_fills,
+    results_agree,
+    suggestion_from_result,
+)
 from .models import (
     MessageRecord,
     MessageState,
@@ -80,6 +88,7 @@ QUEUE_MAX_AGE = timedelta(days=1)
 # Longest sleep; changes, new mailboxes and midnight wake the worker sooner.
 IDLE_WAIT = timedelta(hours=1)
 SHADOW_CANDIDATES = 20
+_NEVER = datetime.min.replace(tzinfo=UTC)
 STATS_DAYS = 14
 STAT_KEYS = (
     "calls",
@@ -91,6 +100,8 @@ STAT_KEYS = (
     "shadow",
     "agree",
     "disagree",
+    "fills",
+    "filled",
 )
 
 STATUS_OFF = "off"
@@ -221,11 +232,13 @@ class AIWorker:
         self.today()[name] += 1
         self.engine.async_schedule_save()
 
-    def _count_call(self, started: float, *, shadow: bool) -> None:
+    def _count_call(self, started: float, *, shadow: bool, fill: bool = False) -> None:
         """Count a call that reached the AI task, and how long it took."""
         self._count("calls")
         if shadow:
             self._count("shadow")
+        if fill:
+            self._count("fills")
         timing = self._day("timing")
         timing["calls"] = int(timing.get("calls", 0)) + 1
         timing["seconds"] = float(timing.get("seconds", 0.0)) + max(
@@ -298,8 +311,13 @@ class AIWorker:
         review: ReviewItem,
         known: bool,
         forced: bool = False,
+        fill: bool = False,
     ) -> None:
-        """Queue an e-mail; ``review`` is used if the AI can't help."""
+        """Queue an e-mail; ``review`` is used if the AI can't help.
+
+        A ``fill`` entry is an e-mail a parser read: the AI only fills in what
+        the parser missed, and nothing goes to review when it can't.
+        """
         self._discard(key)
         self.queue.append(
             {
@@ -311,6 +329,7 @@ class AIWorker:
                 "received": dt_to_str(received),
                 "forced": forced,
                 "known": known,
+                "fill": fill,
                 "review": review.as_dict(),
             }
         )
@@ -325,15 +344,22 @@ class AIWorker:
 
     @callback
     def drop_domain(self, org: str) -> list[str]:
-        """Forget the e-mails of a sender organisation; returns their hashes."""
+        """Forget the e-mails of a sender organisation; returns their hashes.
+
+        Fills are dropped too, but their e-mails were already read, so their
+        hashes aren't returned.
+        """
         messages = self.engine.data.messages
         dropped: list[str] = []
         queue = self.queue
+        changed = False
         for entry in list(queue):
             domain = str(entry["review"].get("sender_domain", ""))
             if organizational_domain(domain) == org:
                 queue.remove(entry)
-                dropped.append(entry["hash"])
+                changed = True
+                if not entry.get("fill"):
+                    dropped.append(entry["hash"])
         shadow = self._shadow()
         shadow[:] = [
             key
@@ -341,7 +367,7 @@ class AIWorker:
             if (record := messages.get(key)) is None
             or organizational_domain(record.sender_domain) != org
         ]
-        if dropped:
+        if changed:
             async_dispatcher_send(self.hass, SIGNAL_AI_UPDATED)
         return dropped
 
@@ -377,6 +403,12 @@ class AIWorker:
 
     def _remove(self, entry: dict[str, Any]) -> None:
         self.queue[:] = [item for item in self.queue if item is not entry]
+
+    def _drop(self, entry: dict[str, Any]) -> None:
+        """Drop a fill: its e-mail stays added as the parser read it."""
+        self._remove(entry)
+        self.engine.async_schedule_save()
+        async_dispatcher_send(self.hass, SIGNAL_AI_UPDATED)
 
     def _set_busy(self, key: str | None) -> None:
         if self._busy != key:
@@ -442,17 +474,24 @@ class AIWorker:
 
     def _record(self, entry: dict[str, Any]) -> MessageRecord | None:
         record = self.engine.data.messages.get(entry["hash"])
-        if record is None or record.state is not MessageState.QUEUED:
+        wanted = MessageState.APPLIED if entry.get("fill") else MessageState.QUEUED
+        if record is None or record.state is not wanted:
             return None
         return record
 
     def _next_entry(self, now: datetime) -> dict[str, Any] | None:
-        """Return the newest due entry that a loaded mailbox can download."""
+        """Return the next due entry that a loaded mailbox can download.
+
+        E-mails no parser read go first, newest first; fills come after them
+        and wait while today's fill limit is reached, unless forced.
+        """
         engine = self.engine
+        fills_full = self.today()["fills"] >= AI_FILL_DAILY_LIMIT
         best: dict[str, Any] | None = None
-        best_time: datetime | None = None
+        best_rank: tuple[bool, bool, datetime] | None = None
         changed = False
         for entry in list(self.queue):
+            fill = bool(entry.get("fill"))
             record = self._record(entry)
             if record is None:
                 self._remove(entry)
@@ -461,8 +500,11 @@ class AIWorker:
             if not record.refs:
                 # Every mailbox that had it was removed.
                 self._remove(entry)
-                record.state = MessageState.IGNORED
+                if not fill:
+                    record.state = MessageState.IGNORED
                 changed = True
+                continue
+            if fill and fills_full and not entry.get("forced"):
                 continue
             not_before = dt_from_str(entry.get("not_before"))
             if not_before is not None and not_before > now:
@@ -472,10 +514,9 @@ class AIWorker:
             received = dt_from_str(entry.get("received")) or dt_from_str(
                 entry.get("queued")
             )
-            if best is None or (
-                received is not None and (best_time is None or received > best_time)
-            ):
-                best, best_time = entry, received
+            rank = (not fill, received is not None, received or _NEVER)
+            if best_rank is None or rank > best_rank:
+                best, best_rank = entry, rank
         if changed:
             engine.async_changed()
         return best
@@ -508,7 +549,10 @@ class AIWorker:
         notify: bool = True,
         **changes: Any,
     ) -> None:
-        """Move an entry to "Needs review"."""
+        """Move an entry to "Needs review"; a fill is only dropped."""
+        if entry.get("fill"):
+            self._drop(entry)
+            return
         self._remove(entry)
         record = self._record(entry)
         if record is None:
@@ -566,7 +610,9 @@ class AIWorker:
         if not self._current(entry):
             return
         if message is None:
-            if gone:
+            if gone and entry.get("fill"):
+                self._drop(entry)
+            elif gone:
                 self._remove(entry)
                 record.state = MessageState.IGNORED
                 engine.async_changed()
@@ -580,7 +626,17 @@ class AIWorker:
         if not self._current(entry):
             return
         org = organizational_domain(message.sender_domain)
-        if not entry.get("forced") and verdict.verified and is_confident(parsed):
+        fill = bool(entry.get("fill"))
+        gaps: set[str] = set()
+        if fill:
+            # Only for an e-mail a parser read and added; and only what's
+            # still missing.
+            if verdict.verified and is_confident(parsed):
+                gaps = engine.fill_gaps_for(record.hash, parsed)
+            if not gaps:
+                self._drop(entry)
+                return
+        elif not entry.get("forced") and verdict.verified and is_confident(parsed):
             # A trusted sender or a newer parser can read it now.
             self._remove(entry)
             engine.apply_result(
@@ -597,7 +653,7 @@ class AIWorker:
         if entity_id is None:
             return
         try:
-            validation = await self._async_extract(entity_id, message)
+            validation = await self._async_extract(entity_id, message, fill=fill)
         except AIRefused as err:
             self._last_error = f"refused:{err.reason}"
             self._raise_issue(ISSUE_AI_REFUSED, reason=err.reason)
@@ -632,6 +688,18 @@ class AIWorker:
         now = dt_util.utcnow()
         if not self._current(entry) or (record := self._record(entry)) is None:
             return
+        if fill:
+            self._fill(
+                entry,
+                record,
+                message,
+                parsed,
+                validation.result,
+                # The parcel may have changed meanwhile.
+                engine.fill_gaps_for(record.hash, parsed),
+                now,
+            )
+            return
         self._decide(
             entry,
             record,
@@ -643,7 +711,12 @@ class AIWorker:
         )
 
     async def _async_extract(
-        self, entity_id: str, message: MailMessage, *, shadow: bool = False
+        self,
+        entity_id: str,
+        message: MailMessage,
+        *,
+        shadow: bool = False,
+        fill: bool = False,
     ) -> Validation:
         """Ask the AI task to read an e-mail; count the calls that reached it."""
         started = self.hass.loop.time()
@@ -656,12 +729,12 @@ class AIWorker:
         except AIUnavailable:
             # An AI task that is down was never called.
             if self._entity_available():
-                self._count_call(started, shadow=shadow)
+                self._count_call(started, shadow=shadow, fill=fill)
             raise
         except AIError:
-            self._count_call(started, shadow=shadow)
+            self._count_call(started, shadow=shadow, fill=fill)
             raise
-        self._count_call(started, shadow=shadow)
+        self._count_call(started, shadow=shadow, fill=fill)
         return validation
 
     def _decide(
@@ -721,6 +794,55 @@ class AIWorker:
                 suggestion_from_result(result), message.sender_domain
             ),
         )
+
+    def _fill(
+        self,
+        entry: dict[str, Any],
+        record: MessageRecord,
+        message: MailMessage,
+        parsed: ParseResult,
+        result: ParseResult | None,
+        gaps: set[str],
+        now: datetime,
+    ) -> None:
+        """Add, or suggest, the gaps the AI filled in an e-mail a parser read.
+
+        Only checked values that fill a gap count: the parser's values always
+        win. In Auto mode they're added, marked as the AI's until confirmed;
+        otherwise they wait in "Needs review".
+        """
+        engine = self.engine
+        suggestion = fill_suggestion(result, gaps, parsed)
+        if suggestion is None:
+            self._drop(entry)
+            return
+        self._remove(entry)
+        self._count("filled")
+        if engine.ai_mode is AIMode.AUTO:
+            engine.apply_fill(
+                suggestion,
+                record,
+                time=engine.message_time(message, now),
+                label=organizational_domain(message.sender_domain),
+                now=now,
+            )
+        else:
+            if (old := engine.fill_item(record.hash)) is not None and old.suggestion:
+                suggestion = merge_fills(old.suggestion, suggestion)
+            item = ReviewItem.from_dict(entry["review"])
+            engine.add_review(
+                replace(
+                    item,
+                    id=new_id("r"),
+                    created=now,
+                    reason=REASON_AI_FILL,
+                    source=Source.AI,
+                    suggestion=suggestion,
+                    fill=True,
+                ),
+                record,
+            )
+        engine.async_changed()
 
     async def _async_shadow(self, key: str) -> None:
         """Read an e-mail that a parser handled, and compare the answers."""

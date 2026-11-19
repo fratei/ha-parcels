@@ -21,6 +21,7 @@ PARSER_HINTS = {
     "gls",
     "seur",
     "ups",
+    "fedex",
     "dhl",
     "correos_express",
     "mrw",

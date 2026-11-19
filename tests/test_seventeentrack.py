@@ -49,6 +49,7 @@ from custom_components.parcels.parsers.tracking import s10_check_digit
 from custom_components.parcels.seventeentrack import (
     ADD_RETRIES,
     ADD_RETRY_DELAY,
+    ADD_RETRY_LATER,
     MAX_ADDS,
     MAX_HISTORY,
     NOT_FOUND_ARCHIVE,
@@ -681,13 +682,17 @@ async def test_failed_add_is_retried_later(
     assert records(engine)[CTT]["added"] == dt_to_str(NOW_DT + ADD_RETRY_DELAY)
 
 
-async def test_add_gives_up_after_three_failures(
+async def test_refused_add_is_tried_daily_after_three_failures(
     engine: ParcelsEngine,
     tracker: SeventeenTrackSync,
     track: FakeSeventeenTrack,
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    """After three failed adds the number isn't tried again until it's forgotten."""
+    """After three refusals a number is tried once a day until its parcel ends.
+
+    17TRACK refuses new numbers while the account is full, so a refused number
+    must get in once a place frees up.
+    """
     parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
     track.errors["add_package"] = HomeAssistantError("refused")
 
@@ -696,19 +701,100 @@ async def test_add_gives_up_after_three_failures(
         freezer.tick(ADD_RETRY_DELAY * count)
         await tracker.async_refresh()
 
-    assert failures(engine)[CTT]["count"] == ADD_RETRIES
+    assert failures(engine)[CTT] == {
+        "count": ADD_RETRIES,
+        "retry": dt_to_str(dt_util.utcnow() + ADD_RETRY_LATER),
+    }
 
-    freezer.tick(ADD_RETRY_DELAY * ADD_RETRIES)
+    freezer.tick(ADD_RETRY_LATER - timedelta(minutes=1))
     await tracker.async_refresh()
 
     assert track.numbers("add_package") == [CTT] * ADD_RETRIES
+
+    freezer.tick(timedelta(minutes=1))
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == [CTT] * (ADD_RETRIES + 1)
+    assert failures(engine)[CTT]["count"] == ADD_RETRIES + 1
+
+    del track.errors["add_package"]
+    freezer.tick(ADD_RETRY_LATER)
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == [CTT] * (ADD_RETRIES + 2)
+    assert failures(engine) == {}
+    assert CTT in records(engine)
 
     mark_delivered(engine.data, parcel.id, dt_util.utcnow())
     engine.async_changed()
     await tracker.async_refresh()
 
+    assert track.numbers("add_package") == [CTT] * (ADD_RETRIES + 2)
+
+
+async def test_refused_numbers_are_forgotten_when_the_parcel_ends(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A delivered parcel's refused number is never tried again."""
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    track.errors["add_package"] = HomeAssistantError("refused")
+    await tracker.async_refresh()
+
+    mark_delivered(engine.data, parcel.id, dt_util.utcnow())
+    engine.async_changed()
+    freezer.tick(ADD_RETRY_LATER)
+    await tracker.async_refresh()
+
     assert failures(engine) == {}
-    assert track.numbers("add_package") == [CTT] * ADD_RETRIES
+    assert track.numbers("add_package") == [CTT]
+
+
+async def test_refusal_code_is_kept_without_the_message(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """17TRACK's status code shows in diagnostics; other messages never do."""
+
+    class RequestError(Exception):
+        """Stands in for pyseventeentrack's RequestError."""
+
+    class InvalidTrackingNumberError(Exception):
+        """Stands in for pyseventeentrack's InvalidTrackingNumberError."""
+
+    add_parcel(engine, "ctt", CTT, carrier="ctt")
+    track.errors["add_package"] = RequestError("Non-zero status code in response: -7")
+
+    await tracker.async_refresh()
+
+    assert tracker.last_error == "add_package: RequestError (code -7)"
+    assert tracker.diagnostics()["last_error"] == "add_package: RequestError (code -7)"
+    assert logged_warnings(caplog) == [
+        "17TRACK add_package failed (RequestError (code -7))"
+    ]
+
+    track.errors["add_package"] = InvalidTrackingNumberError(
+        f"Recently added package not found by tracking number: {CTT}"
+    )
+    freezer.tick(ADD_RETRY_DELAY)
+    await tracker.async_refresh()
+
+    assert tracker.last_error == "add_package: InvalidTrackingNumberError"
+    assert CTT not in caplog.text
+
+    track.errors["add_package"] = RequestError(
+        f"Non-zero status code in response: 5 {CTT}"
+    )
+    freezer.tick(ADD_RETRY_DELAY * 2)
+    await tracker.async_refresh()
+
+    assert tracker.last_error == "add_package: RequestError"
+    assert CTT not in caplog.text
 
 
 async def test_adds_at_most_ten_numbers_per_refresh(
@@ -726,6 +812,48 @@ async def test_adds_at_most_ten_numbers_per_refresh(
     await tracker.async_refresh()
 
     assert track.numbers("add_package") == numbers
+
+
+async def test_adds_the_parcels_due_soonest_first(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """Late parcels come first, then today's, later dates, and no date last."""
+    numbers = [s10(20000001 + index) for index in range(6)]
+    add_parcel(engine, "undated", numbers[0], carrier="ctt")
+    add_parcel(
+        engine,
+        "next week",
+        numbers[1],
+        carrier="ctt",
+        eta=Eta(start=TODAY + timedelta(days=5), end=TODAY + timedelta(days=6)),
+    )
+    add_parcel(
+        engine,
+        "late",
+        numbers[2],
+        carrier="ctt",
+        eta=Eta(start=TODAY - timedelta(days=2), end=TODAY - timedelta(days=1)),
+    )
+    add_parcel(engine, "out", numbers[3], carrier="ctt", kind=MailKind.OUT_FOR_DELIVERY)
+    add_parcel(
+        engine,
+        "tomorrow",
+        numbers[4],
+        carrier="ctt",
+        eta=Eta(start=TODAY + timedelta(days=1), end=TODAY + timedelta(days=1)),
+    )
+    add_parcel(engine, "undated later", numbers[5], carrier="ctt")
+
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == [
+        numbers[2],
+        numbers[3],
+        numbers[4],
+        numbers[1],
+        numbers[0],
+        numbers[5],
+    ]
 
 
 async def test_unreadable_packages_skip_the_refresh(

@@ -8,8 +8,11 @@ Home Assistant user can list 17TRACK packages.
 
 Each refresh:
 
-- adds the numbers of active parcels that 17TRACK doesn't have yet, except
-  Amazon Logistics numbers, which 17TRACK can't follow;
+- adds the numbers of active parcels that 17TRACK doesn't have yet, the ones
+  due soonest first and at most 10 at a time, except Amazon Logistics numbers,
+  which 17TRACK can't follow. A refused number is tried again later, and once
+  a day after three refusals, because 17TRACK refuses new numbers while the
+  account's quota is used up;
 - reads the packages and turns new statuses into events of their parcel;
 - archives the packages it added once their parcel is finished, archived,
   private or gone, or when 17TRACK still can't find them after two weeks.
@@ -20,8 +23,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import logging
+import re
 from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.core import CALLBACK_TYPE, callback
@@ -56,8 +60,14 @@ MAX_HISTORY: Final = 10
 MAX_INFO_CHARS: Final = 160
 MIN_NUMBER_CHARS: Final = 8
 NOT_FOUND_ARCHIVE: Final = timedelta(days=14)
+# A refused number is tried again after 6 and 12 hours, then once a day while
+# its parcel is active: 17TRACK refuses new numbers while the account is full,
+# and Parcels can't tell that apart from other refusals.
 ADD_RETRIES: Final = 3
 ADD_RETRY_DELAY: Final = timedelta(hours=6)
+ADD_RETRY_LATER: Final = timedelta(days=1)
+# pyseventeentrack's text for a refusal, which holds only 17TRACK's code.
+_REFUSAL: Final = re.compile(r"Non-zero status code in response: (-?\d{1,6})")
 
 # Package statuses of the core integration, as slugs (see its package_state
 # selector). Not found and expired carry no news.
@@ -114,6 +124,12 @@ def _current_number(parcel: Parcel) -> str | None:
 
 def _amazon(number: str, carrier: str | None) -> bool:
     return carrier == "amazon" or detect_carrier(number) == "amazon"
+
+
+def _add_order(parcel: Parcel) -> tuple[date, datetime]:
+    """Sort key that adds late parcels first, then by date, undated ones last."""
+    eta = parcel.state.eta
+    return (eta.start if eta is not None else date.max), parcel.created
 
 
 def _clip(text: Any) -> str | None:
@@ -293,8 +309,12 @@ class SeventeenTrackSync:
 
     @callback
     def _failure(self, action: str, err: BaseException) -> None:
-        self.last_error = f"{action}: {type(err).__name__}"
-        _LOGGER.warning("17TRACK %s failed (%s)", action, type(err).__name__)
+        # Never the message itself: some hold the tracking number.
+        error = type(err).__name__
+        if (refusal := _REFUSAL.fullmatch(str(err))) is not None:
+            error += f" (code {refusal[1]})"
+        self.last_error = f"{action}: {error}"
+        _LOGGER.warning("17TRACK %s failed (%s)", action, error)
 
     async def _async_call(
         self, service: str, data: dict[str, Any], *, response: bool = False
@@ -350,7 +370,8 @@ class SeventeenTrackSync:
         records = self._packages
         failed = self._failed
         adds = 0
-        for number, parcel in self._wanted().items():
+        wanted = sorted(self._wanted().items(), key=lambda item: _add_order(item[1]))
+        for number, parcel in wanted:
             if number in records:
                 continue
             if (package := packages.get(number)) is not None:
@@ -363,9 +384,7 @@ class SeventeenTrackSync:
                 continue
             failure = failed.get(number)
             if failure is not None and (
-                failure.get("count", 0) >= ADD_RETRIES
-                or (retry := dt_from_str(failure.get("retry"))) is None
-                or now < retry
+                (retry := dt_from_str(failure.get("retry"))) is None or now < retry
             ):
                 continue
             if adds >= MAX_ADDS:
@@ -383,10 +402,10 @@ class SeventeenTrackSync:
             except Exception as err:
                 self._failure("add_package", err)
                 count = int((failure or {}).get("count", 0)) + 1
-                failed[number] = {
-                    "count": count,
-                    "retry": dt_to_str(now + ADD_RETRY_DELAY * count),
-                }
+                delay = (
+                    ADD_RETRY_LATER if count >= ADD_RETRIES else ADD_RETRY_DELAY * count
+                )
+                failed[number] = {"count": count, "retry": dt_to_str(now + delay)}
                 continue
             failed.pop(number, None)
             records[number] = {

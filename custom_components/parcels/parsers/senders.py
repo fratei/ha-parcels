@@ -142,6 +142,7 @@ KNOWN_SENDERS: dict[str, SenderInfo] = {
     ),
     # Carriers with a dedicated parser
     **_entries(("ctt.pt",), "CTT", "carrier", "ctt", "ctt"),
+    **_entries(("fedex.com",), "FedEx", "carrier", "fedex", "fedex"),
     # CTT Expresso moved its notifications from no-reply@cttexpresso.pt to
     # no-reply@notifications.cttexpress.com.
     **_entries(
@@ -242,7 +243,6 @@ KNOWN_SENDERS: dict[str, SenderInfo] = {
     ),
     # Carriers read by the generic parser
     **_entries(("correos.es",), "Correos", "carrier", "correos", None),
-    **_entries(("fedex.com",), "FedEx", "carrier", "fedex", None),
     **_entries(("tnt.com",), "TNT", "carrier", "tnt", None),
     **_entries(("postnl.nl",), "PostNL", "carrier", "postnl", None),
     **_entries(("usps.com",), "USPS", "carrier", "usps", None),

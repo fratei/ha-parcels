@@ -313,6 +313,261 @@ def test_carrier_named_in_email(parse: Parse) -> None:
     assert shipment.eta == _day(20)
 
 
+type Edit = Callable[[str], str]
+
+
+@pytest.fixture
+def parse_edited(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> Callable[[str, Edit], ParseResult]:
+    """Return a helper that parses an Amazon fixture with its text edited."""
+
+    def run(name: str, edit: Edit) -> ParseResult:
+        message = load_eml(f"amazon/{name}.eml")
+        verdict = verdict_for(message)
+        message = dataclasses.replace(message, text=edit(message.text))
+        result = parse_amazon(message, verdict, tz)
+        assert result is not None
+        return result
+
+    return run
+
+
+def _appended(extra: str) -> Edit:
+    return lambda text: f"{text}\n{extra}\n"
+
+
+def _replaced(edits: dict[str, str]) -> Edit:
+    def edit(text: str) -> str:
+        for old, new in edits.items():
+            assert text.count(old) == 1
+            text = text.replace(old, new)
+        return text
+
+    return edit
+
+
+def _amazon_url(tld: str, result: ParseResult, index: int) -> str:
+    """Return the cleaned Amazon tracking page of a package."""
+    return (
+        f"https://www.amazon.{tld}/progress-tracker/package"
+        f"?orderId={result.order_numbers[0]}"
+        f"&shipmentId={result.shipments[index].amazon_shipment_id}"
+        f"&packageIndex={index}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "language", "tld", "carrier", "eta"),
+    [
+        ("shipped_carrier_pt", "pt", "es", "ctt_expresso", _day(21)),
+        ("shipped_carrier_es", "es", "es", "seur", _day(20)),
+        ("shipped_carrier_en", "en", "co.uk", "dpd", _day(20)),
+        ("shipped_carrier_de", "de", "de", "dhl", _day(20)),
+        ("shipped_carrier_fr", "fr", "fr", "colissimo", _day(20)),
+        ("shipped_carrier_it", "it", "it", "brt", _day(20)),
+        ("shipped_carrier_nl", "nl", "nl", "postnl", _day(20)),
+    ],
+)
+def test_carrier_named_without_number(
+    parse: Parse, name: str, language: str, tld: str, carrier: str, eta: Eta
+) -> None:
+    """The carrier an e-mail names is kept even without its tracking number.
+
+    Until the carrier's number is known, Amazon's tracking page is the link.
+    """
+    result = parse(name)
+    assert result.kind is MailKind.SHIPPED
+    assert result.language == language
+    [shipment] = result.shipments
+    assert shipment.carrier == carrier
+    assert shipment.tracking_number is None
+    assert shipment.eta == eta
+    assert shipment.tracking_url == _amazon_url(tld, result, 0)
+
+
+def test_each_package_has_the_carrier_of_its_block(parse: Parse) -> None:
+    """Packages handed to different carriers each get their own carrier.
+
+    A tracking number in one package's block belongs to that package only.
+    """
+    result = parse("shipped_two_carriers_es")
+    first, second = result.shipments
+    assert (first.carrier, first.tracking_number, first.eta) == ("seur", None, _day(20))
+    assert first.tracking_url == _amazon_url("es", result, 0)
+    assert first.items == ("Zapatillas de running para hombre, talla 43, gris",)
+    assert (second.carrier, second.tracking_number, second.eta) == (
+        "ups",
+        "1ZWMGWFD4777499550",
+        _day(23),
+    )
+    assert second.tracking_url == tracking.tracking_url("ups", "1ZWMGWFD4777499550")
+    assert second.items == ("Calcetines deportivos transpirables, pack de 3",)
+
+
+def test_carriers_of_the_whole_order_are_not_guessed(parse: Parse) -> None:
+    """Carriers named for the whole order aren't given to any one package."""
+    result = parse("shipped_carrier_ambiguous_en")
+    assert [(s.carrier, s.tracking_number) for s in result.shipments] == [
+        (None, None),
+        (None, None),
+    ]
+    assert [s.tracking_url for s in result.shipments] == [
+        _amazon_url("co.uk", result, index) for index in range(2)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "extra", "carrier"),
+    [
+        ("shipped_en_uk", "Carrier: DPD", "dpd"),
+        ("shipped_en_uk", "Courier \u2013 Evri", "evri"),
+        ("delayed_en_us", "Your package will be delivered by UPS.", "ups"),
+        ("delayed_en_us", "Shipped with USPS", "usps"),
+        ("shipped_recommendations_pt", "Transportadora: CTT", "ctt"),
+        ("shipped_recommendations_pt", "Transportadora:\nCTT Expresso", "ctt_expresso"),
+        (
+            "shipped_duplicate_item_pt",
+            "A sua encomenda será entregue pela CTT Expresso.",
+            "ctt_expresso",
+        ),
+        (
+            "shipped_recommendations_es",
+            "Transportista: Correos Express",
+            "correos_express",
+        ),
+        ("delivered_photo_es", "Entregado por Correos.", "correos"),
+        ("shipped_de", "Versanddienstleister: Hermes", "hermes"),
+        ("shipped_de", "Ihr Paket wird von DPD zugestellt.", "dpd"),
+        ("delayed_de", "Zustellung durch GLS", "gls"),
+        ("out_for_delivery_fr", "Transporteur : Chronopost", "chronopost"),
+        ("attempted_fr", "Votre colis est acheminé par La Poste.", "la_poste"),
+        ("arriving_today_it", "Corriere: SDA", "sda"),
+        (
+            "attempted_it",
+            "Il pacco sarà consegnato dal corriere Poste Italiane.",
+            "poste_italiane",
+        ),
+        ("delivered_nl", "Vervoerder: PostNL", "postnl"),
+        ("delivered_nl", "Je pakket is door DPD bezorgd.", "dpd"),
+    ],
+)
+def test_carrier_named_by_label_or_verb(
+    parse_edited: Callable[[str, Edit], ParseResult],
+    name: str,
+    extra: str,
+    carrier: str,
+) -> None:
+    """A carrier counts after a carrier label or a delivery verb."""
+    result = parse_edited(name, _appended(extra))
+    [shipment] = result.shipments
+    assert shipment.carrier == carrier
+    assert shipment.tracking_number is None
+    assert shipment.tracking_url is not None
+    assert "/progress-tracker/package?" in shipment.tracking_url
+
+
+@pytest.mark.parametrize(
+    ("name", "extra"),
+    [
+        ("shipped_en_uk", "Sold by Amazon EU S.à r.l."),
+        ("shipped_en_uk", "Dispatched from and sold by Amazon."),
+        ("shipped_en_uk", "Sold by: DPD Outlet Store"),
+        ("shipped_en_uk", "Dispatched by: GLS Shop"),
+        ("shipped_en_uk", "Your parcel will be delivered by DPD or Evri."),
+        ("shipped_en_uk", "Carrier: DPD\nCourier: Evri"),
+        ("shipped_en_uk", "Carrier: Amazon"),
+        ("shipped_recommendations_pt", "Vendido e enviado por: CTT Loja"),
+        ("shipped_recommendations_es", "Vendido y enviado por Amazon"),
+        ("delivered_photo_es", "Entregado por Amazon Logistics.\nTransportista: SEUR"),
+        ("shipped_de", "Verkauf und Versand durch Amazon"),
+        ("shipped_de", "Versand durch: DHL Shop"),
+        ("out_for_delivery_fr", "Expédié par : Chronopost Boutique"),
+        ("arriving_today_it", "Venduto e spedito da: BRT Store"),
+        ("arriving_today_it", "Corriere della Sera"),
+        ("delivered_nl", "Verkocht en verzonden door: GLS Winkel"),
+    ],
+)
+def test_no_carrier_from_sellers_or_conflicts(
+    parse_edited: Callable[[str, Edit], ParseResult], name: str, extra: str
+) -> None:
+    """Sellers aren't carriers, and conflicting carriers leave it unknown."""
+    result = parse_edited(name, _appended(extra))
+    [shipment] = result.shipments
+    assert shipment.carrier is None
+    assert shipment.tracking_number is None
+
+
+_NUMBER = "1ZWMGWFD4777499550"
+
+
+@pytest.mark.parametrize(
+    ("edits", "expected"),
+    [
+        (
+            {
+                "Package 1 of 2\n": "Package 1 of 2\nCarrier: UPS\n",
+                "Package 2 of 2\n": "Package 2 of 2\nCarrier: DPD\n",
+            },
+            [("ups", None), ("dpd", None)],
+        ),
+        (
+            {"Package 2 of 2\n": "Package 2 of 2\nShipped with USPS\n"},
+            [(None, None), ("usps", None)],
+        ),
+        (
+            {"Package 1 of 2\n": "Package 1 of 2\nCarrier: UPS\nCourier: DPD\n"},
+            [(None, None), (None, None)],
+        ),
+        (
+            {"Package 1 of 2\n": "Delivered by UPS.\nPackage 1 of 2\n"},
+            [(None, None), (None, None)],
+        ),
+        (
+            {"Package 1 of 2\n": f"Package 1 of 2\nUPS tracking number: {_NUMBER}\n"},
+            [("ups", _NUMBER), (None, None)],
+        ),
+        (
+            {
+                "Package 1 of 2\n": f"Package 1 of 2\nTracking number: {_NUMBER}\n",
+                "Package 2 of 2\n": f"Package 2 of 2\nTracking number: {_NUMBER}\n",
+            },
+            [(None, None), (None, None)],
+        ),
+        (
+            {
+                "Package 1 of 2\n": (
+                    f"Package 1 of 2\nTracking number: {_NUMBER}\n"
+                    "Tracking number: 1ZDKWG7R3659985008\n"
+                )
+            },
+            [(None, None), (None, None)],
+        ),
+        (
+            {"Package 1 of 2\n": "Delivered by Amazon Logistics.\nPackage 1 of 2\n"},
+            [("amazon", None), ("amazon", None)],
+        ),
+    ],
+)
+def test_carrier_and_number_per_package(
+    parse_edited: Callable[[str, Edit], ParseResult],
+    edits: dict[str, str],
+    expected: list[tuple[str | None, str | None]],
+) -> None:
+    """A package gets a carrier or number only from its own block."""
+    result = parse_edited("shipped_two_packages_en_us", _replaced(edits))
+    assert [(s.carrier, s.tracking_number) for s in result.shipments] == expected
+    for index, (carrier, number) in enumerate(expected):
+        url = (
+            tracking.tracking_url(carrier, number)
+            if carrier is not None and number is not None
+            else _amazon_url("com", result, index)
+        )
+        assert result.shipments[index].tracking_url == url
+
+
 @pytest.mark.parametrize(
     ("name", "point", "code", "event"),
     [

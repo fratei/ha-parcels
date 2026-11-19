@@ -6,7 +6,9 @@ import {
   hideHandled,
   hidePending,
   isHidden,
+  senderCheckRows,
   settleHidden,
+  trustResultText,
   unhide,
   withoutHidden,
   type HiddenItems,
@@ -69,5 +71,80 @@ describe("local AI line", () => {
     assert.equal(aiQueueText(60, 7140), "60 e-mails waiting for the local AI, about 119 min");
     assert.equal(aiQueueText(70, 7200), "70 e-mails waiting for the local AI, about 2 h");
     assert.equal(aiQueueText(90, 9000), "90 e-mails waiting for the local AI, about 3 h");
+  });
+});
+
+describe("trusting a sender", () => {
+  test("says what happened to the sender's e-mails", () => {
+    assert.equal(
+      trustResultText({ domain: "shop.example", added: 1, rechecking: 2, kept: 1 }),
+      "Trusted shop.example: added 1 e-mail, reading 2 e-mails again, 1 still needs review.",
+    );
+    assert.equal(
+      trustResultText({ domain: "shop.example", added: 3, rechecking: 1, kept: 2 }),
+      "Trusted shop.example: added 3 e-mails, reading 1 e-mail again, 2 still need review.",
+    );
+    assert.equal(
+      trustResultText({ domain: "shop.example", added: 0, rechecking: 1, kept: 0 }),
+      "Trusted shop.example: reading 1 e-mail again.",
+    );
+    assert.equal(
+      trustResultText({ domain: "shop.example", added: 0, rechecking: 0, kept: 0 }),
+      "Trusted shop.example.",
+    );
+  });
+});
+
+describe("sender check details", () => {
+  const NO_RESULTS = { dkim: "", dmarc: "", spf: "" };
+
+  test("lists the headers and the servers that wrote them, in order", () => {
+    assert.deepEqual(
+      senderCheckRows({
+        headers: 2,
+        servers: ["mx.example.net", ""],
+        used: null,
+        originals: 1,
+        ...NO_RESULTS,
+      }),
+      [
+        ["Authentication headers", "2"],
+        ["Servers, in order", "mx.example.net, (no name)"],
+        ["Renamed by the mail provider", "1"],
+        ["Header used", "None"],
+      ],
+    );
+  });
+
+  test("shows the results of the header used", () => {
+    assert.deepEqual(
+      senderCheckRows({
+        headers: 1,
+        servers: ["mx.provider.example"],
+        used: 0,
+        dkim: "pass",
+        dmarc: "fail",
+        spf: "",
+        originals: 0,
+      }),
+      [
+        ["Authentication headers", "1"],
+        ["Servers, in order", "mx.provider.example"],
+        ["Header used", "Header 1"],
+        ["DKIM", "pass"],
+        ["DMARC", "fail"],
+        ["SPF", "none"],
+      ],
+    );
+  });
+
+  test("an e-mail without headers", () => {
+    assert.deepEqual(
+      senderCheckRows({ headers: 0, servers: [], used: null, originals: 0, ...NO_RESULTS }),
+      [
+        ["Authentication headers", "0"],
+        ["Header used", "None"],
+      ],
+    );
   });
 });

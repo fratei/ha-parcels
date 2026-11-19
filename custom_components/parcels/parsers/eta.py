@@ -1884,8 +1884,9 @@ _TIME_RANGE_RE = re.compile(
     + _NOT_TIME_AFTER
 )
 _UNTIL_RE = re.compile(
-    r"(?<![a-z])(?P<kw>no\s+later\s+than|by|before|until|till|ate|antes\s+de|antes"
-    r"|hasta|bis\s+spatestens|spatestens\s+um|spatestens|bis|avant|jusqu'a"
+    r"(?<![a-z])(?P<kw>no\s+later\s+than|by|before|until|till|ate|antes\s+das"
+    r"|antes\s+de|antes|hasta|bis\s+spatestens|spatestens\s+um|spatestens|bis|vor"
+    r"|avant|jusqu'a"
     r"|jusqu\s+a|au\s+plus\s+tard\s+a|entro|prima\s+delle|voor|uiterlijk\s+om"
     r"|uiterlijk|tot)\s+(?:(?P<art>as|las|la|les|le|ore|om|het)\s+)?(?:ore\s+)?"
     + _TIME.format(p="b")
