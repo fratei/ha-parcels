@@ -4,8 +4,13 @@ Public API (stable; used by the parsers, the engine and the AI checks):
 ``normalize_tracking_number``, ``s10_check_digit``, ``is_s10``,
 ``ups_check_digit_ok``, ``check_digit_ok``, ``validate_tracking_number``,
 ``detect_carrier``, ``find_tracking_numbers``, ``numbers_from_url`` and
-``tracking_url``, plus the tables ``S10_CARRIERS``, ``CARRIER_PATTERNS``
-and ``URL_TEMPLATES``.
+``tracking_url``, plus the tables ``S10_CARRIERS``, ``CARRIER_PATTERNS``,
+``URL_TEMPLATES`` and ``SEARCH_PAGES`` and the pattern ``PAACK_ID_RE``.
+
+Paack's order IDs ("Ab3dE7gH9_1": nine letters and digits in mixed case,
+"_" and the package number) are the only numbers kept as written: Paack's
+page reads them case by case, so they are never uppercased, and they are
+only valid for Paack.
 
 Everything here is pure: links are taken apart, never fetched.
 """
@@ -39,6 +44,9 @@ _SSCC_RE = re.compile(r"00\d{18}")
 _USPS_RE = re.compile(r"9[2-5]\d{20}")
 _FEDEX96_RE = re.compile(r"96\d{20}")
 _GENERIC_RE = re.compile(r"[0-9A-Z]{8,35}")
+# Paack's order ID: the shop's reference (nine letters and digits, case
+# significant), "_" and the package number.
+PAACK_ID_RE = re.compile(r"[0-9A-Za-z]{9}_\d{1,2}")
 _S10_WEIGHTS = (8, 6, 4, 2, 3, 5, 9, 7)
 _FEDEX_WEIGHTS = (3, 1, 7)
 
@@ -83,8 +91,14 @@ class TrackingMatch:
 
 
 def normalize_tracking_number(value: str) -> str:
-    """Uppercase a tracking number and drop spaces, dashes and dots."""
-    return _STRIP_RE.sub("", value).upper()
+    """Uppercase a tracking number and drop spaces, dashes and dots.
+
+    Paack's order IDs (``PAACK_ID_RE``) keep their case.
+    """
+    number = _STRIP_RE.sub("", value)
+    if PAACK_ID_RE.fullmatch(number):
+        return number
+    return number.upper()
 
 
 def s10_check_digit(serial: str) -> int:
@@ -181,7 +195,8 @@ _RULES: dict[str, tuple[tuple[str, Callable[[str], bool] | None], ...]] = {
     "correos_express": ((r"\d{10,23}", None),),
     "mrw": ((r"\d{8,14}", None),),
     "nacex": ((r"\d{4}/?\d{6,10}", None), (r"\d{8,12}", None)),
-    "paack": ((r"[0-9A-Z]{8,24}", None),),
+    # Paack's label barcode; the order ID is checked by PAACK_ID_RE.
+    "paack": ((r"5340\d{14}", None), (r"[0-9A-Z]{8,24}", None)),
     "inpost": ((r"\d{24}", None), (r"[0-9A-Z]{10,24}", None)),
     "vinted_go": (
         (r"(?:17|18)\d{14}", None),  # unverified
@@ -229,6 +244,7 @@ _DETECT_RULES: tuple[tuple[re.Pattern[str], str, Callable[[str], bool] | None], 
     (_compile(r"LP\d{14}"), "cainiao", None),
     (_compile(r"YT\d{16}"), "yunexpress", None),
     (_compile(r"VGS[0-9A-Z]{6,30}"), "vinted_go", None),  # unverified
+    (_compile(r"5340\d{14}"), "paack", None),  # Paack's label barcode
     (_FEDEX96_RE, "fedex", _fedex96_ok),
     (_USPS_RE, "usps", _gs1_ok),
 )
@@ -248,8 +264,8 @@ _S10_COUNTRIES: dict[str, str] = {
 }
 
 # Official tracking pages; {n} is the URL-encoded number. Carriers missing
-# here (PostNL and Nacex need a postcode or an agency code, InPost and Paack
-# have no stable public link) get the 17TRACK page.
+# here and from SEARCH_PAGES (PostNL and Nacex need a postcode or an agency
+# code, InPost has no stable public link) get the 17TRACK page.
 URL_TEMPLATES: dict[str, str] = {
     "ctt": "https://www.ctt.pt/feapl_2/app/open/objectSearch/objectSearch.jspx?objects={n}",
     "ctt_expresso": "https://www.ctt.pt/feapl_2/app/open/objectSearch/objectSearch.jspx?objects={n}",
@@ -274,6 +290,13 @@ URL_TEMPLATES: dict[str, str] = {
     "bpost": "https://track.bpost.cloud/btr/web/#/search?itemCode={n}&lang=en",
     "vinted_go": "https://vintedgo.com/en/tracking/{n}",
     "tnt": "https://www.tnt.com/express/en_gc/site/shipping-tools/tracking.html?searchType=con&cons={n}",
+}
+
+# Carriers whose page asks for the number and the postcode: their search
+# page, never a link that carries the postcode. 17TRACK can't follow them
+# without the postcode either.
+SEARCH_PAGES: dict[str, str] = {
+    "paack": "https://paack.co/shipments/tracking",
 }
 
 # Link hosts that are tracking pages although they don't send e-mail:
@@ -680,12 +703,15 @@ def validate_tracking_number(number: str, carrier: str | None = None) -> bool:
     Without a carrier (or with "other") any known format, or the generic
     shape of 8-35 letters and digits with at least six digits, is accepted.
     Formats without a check digit are only checked for length and charset.
+    Paack's order IDs are only valid with the carrier "paack".
     """
     number = normalize_tracking_number(number)
     if not number or len(number) > MAX_NUMBER_CHARS:
         return False
     if carrier in ("", "other"):
         carrier = None
+    if PAACK_ID_RE.fullmatch(number):
+        return carrier == "paack"
     if _S10_RE.fullmatch(number):
         return is_s10(number) and (carrier is None or carrier in S10_CARRIERS)
     if number.startswith("1Z"):
@@ -764,6 +790,19 @@ _TOKEN_RE = re.compile(
     _B + r"(?:(?P<grouped>\d{4}(?:[ \u00a0]\d{4}){2,6}(?:[ \u00a0]\d{1,3})?)"
     r"|(?P<slash>\d{4}/\d{6,10})"
     r"|(?P<plain>[0-9A-Z]{8,35}))" + _E
+)
+# Paack's order IDs, found only next to Paack's name (or in a Paack e-mail).
+_PAACK_TEXT_RE = re.compile(_B + PAACK_ID_RE.pattern + _E)
+# The order-number label of Paack's e-mail footer, right before the ID, in
+# folded text: "Order number", "Número de pedido", "N.º de pedido", "Número
+# da encomenda", "Numéro de commande", "N° de commande", "Numero d'ordine".
+_PAACK_LABEL_RE = re.compile(
+    r"(?<![a-z0-9])(?:order\s*(?:number|no\.?|nr\.?|id|#)"
+    r"|(?:numero|num\.?|nr\.?|n\.?\s*[o°]\.?)\s*(?:de|da|do|du)\s+"
+    r"(?:pedido|encomenda|commande)"
+    r"|(?:numero|num\.?|nr\.?|n\.?\s*[o°]\.?|n\.)\s*"
+    r"(?:d['\u2019]\s*|di\s+|dell['\u2019]\s*)?"
+    r"ordine)\s*[:#]?\s*$"
 )
 _URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 # An address starts where a run of address characters starts, so a long run
@@ -910,6 +949,33 @@ def _merge(
         )
 
 
+def _find_paack_ids(
+    text: str,
+    folded: str,
+    carrier: str | None,
+    found: dict[str, tuple[int, TrackingMatch]],
+) -> None:
+    """Add Paack's order IDs whose nearest label names Paack.
+
+    In a Paack e-mail (``carrier`` "paack") a tracking word, or the footer's
+    order-number label right before the ID, is enough unless another
+    carrier is named closer; the shape alone never is.
+    """
+    for match in _PAACK_TEXT_RE.finditer(text):
+        start, end = match.span()
+        number = match.group(0)
+        if not _plausible(text, start, end, number) or (
+            text[end : end + 1] == "." and text[end + 1 : end + 2].isalnum()
+        ):
+            continue
+        low = _context_start(text, start)
+        context, brand = _read_context(folded, low, start)
+        if (brand or carrier) != "paack":
+            continue
+        if context or _PAACK_LABEL_RE.search(folded, low, start):
+            _merge(found, start, TrackingMatch(number, "paack", False))
+
+
 def find_tracking_numbers(text: str, carrier: str | None = None) -> list[TrackingMatch]:
     """Find tracking numbers in text.
 
@@ -918,7 +984,8 @@ def find_tracking_numbers(text: str, carrier: str | None = None) -> list[Trackin
     are found anywhere. Other numbers need a tracking word or a carrier name
     as their nearest label, no order/phone/price word closer to them, and a
     known format: the given carrier's, the named carrier's, or a long
-    generic code. Text inside links and e-mail addresses is ignored.
+    generic code. Paack's order IDs also need Paack: its name, or the
+    carrier "paack". Text inside links and e-mail addresses is ignored.
 
     Returns validated matches first, then the others, each in text order,
     deduplicated by normalised number.
@@ -963,6 +1030,7 @@ def find_tracking_numbers(text: str, carrier: str | None = None) -> list[Trackin
         prev_end, prev_ok, prev_brand = end, result is not None, brand
         if result is not None:
             _merge(found, start, result)
+    _find_paack_ids(text, folded, carrier, found)
 
     ordered = sorted(found.values(), key=lambda item: (not item[1].validated, item[0]))
     return [item for _, item in ordered]
@@ -1030,9 +1098,13 @@ def _url_values(
 def _url_match(
     value: str, strong: bool, host_carrier: str | None, aggregator: bool
 ) -> TrackingMatch | None:
+    number = normalize_tracking_number(value)
+    if PAACK_ID_RE.fullmatch(number):
+        if strong and host_carrier == "paack":
+            return TrackingMatch(number, "paack", False)
+        return None
     if not strong and _LOWER_RE.search(value):
         return None
-    number = normalize_tracking_number(value)
     if (
         len(number) > MAX_NUMBER_CHARS
         or not _URL_NUMBER_RE.fullmatch(number)
@@ -1064,14 +1136,17 @@ def _numbers_from_url(url: str, depth: int) -> list[TrackingMatch]:
         return []
     tracking_host, host_carrier = _link_host(host)
     aggregator = tracking_host and host_carrier is None
+    # Paack's links also carry the postcode, the e-mail address, the phone
+    # and opaque slot tokens: only the tracking number parameter is read.
+    any_value = tracking_host and host_carrier != "paack"
     nested: list[str] = []
-    values = _url_values(parts.query, parts.path, tracking_host, nested)
+    values = _url_values(parts.query, parts.path, any_value, nested)
     fragment = parts.fragment
     if fragment:
         frag_path, sep, frag_query = fragment.partition("?")
         if not sep and "=" in frag_path:
             frag_path, frag_query = "", frag_path
-        values += _url_values(frag_query, frag_path, tracking_host, nested)
+        values += _url_values(frag_query, frag_path, any_value, nested)
     found: list[TrackingMatch] = []
     for value, strong in values[:_MAX_URL_VALUES]:
         match = _url_match(value, strong, host_carrier, aggregator)
@@ -1090,7 +1165,8 @@ def numbers_from_url(url: str) -> list[TrackingMatch]:
     ``nums``...) count on any site. On carrier tracking sites (a known
     carrier domain or a tracking host such as 17track.net) generic
     parameters (``id``, ``objects``, ``query``...) and path segments count
-    too, and the host's carrier is used. A link wrapped in another link's
+    too, and the host's carrier is used; on Paack's sites only the tracking
+    number parameters count. A link wrapped in another link's
     parameter (click trackers) is read once. Validated matches come first.
     """
     found: dict[str, tuple[int, TrackingMatch]] = {}
@@ -1101,7 +1177,12 @@ def numbers_from_url(url: str) -> list[TrackingMatch]:
 
 
 def tracking_url(carrier: str | None, number: str) -> str:
-    """Return the carrier's official tracking page, else the 17TRACK page."""
+    """Return the carrier's official tracking page, else the 17TRACK page.
+
+    Carriers in ``SEARCH_PAGES`` get their search page, without the number.
+    """
+    if page := SEARCH_PAGES.get(carrier or ""):
+        return page
     number = normalize_tracking_number(number)
     template = URL_TEMPLATES.get(carrier or "", "")
     if not template.startswith("https://"):

@@ -360,3 +360,180 @@ def test_url_templates_are_https() -> None:
     for template in URL_TEMPLATES.values():
         assert template.startswith("https://")
         assert template.count("{n}") == 1
+
+
+# --- Paack ---------------------------------------------------------------------
+
+# Made-up Paack order IDs (nine letters and digits in mixed case, "_" and the
+# package number) and a made-up label barcode.
+PAACK_ID = "Qm7Rt2Kp9_2"
+PAACK_LETTERS = "AbCdEfGhJ_12"
+PAACK_BARCODE = "534000077712340056"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (PAACK_ID, PAACK_ID),
+        (" Qm7Rt2Kp9 _2\u200b", PAACK_ID),
+        ("qm7rt2kp9_12", "qm7rt2kp9_12"),
+        ("Qm7Rt2Kp9", "QM7RT2KP9"),
+        ("Qm7Rt2Kp9_123", "QM7RT2KP9_123"),
+        ("ab-12.cd 34", "AB12CD34"),
+    ],
+)
+def test_normalize_keeps_paack_ids(value: str, expected: str) -> None:
+    """Paack's order IDs keep their case and package number; others go upper."""
+    assert normalize_tracking_number(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("number", "carrier", "valid"),
+    [
+        (PAACK_ID, "paack", True),
+        (PAACK_LETTERS, "paack", True),
+        ("qm7rt2kp9_2", "paack", True),
+        (PAACK_BARCODE, "paack", True),
+        ("PK7311804926", "paack", True),
+        (PAACK_ID, None, False),
+        (PAACK_ID, "other", False),
+        (PAACK_ID, "gls", False),
+        (PAACK_ID, "seur", False),
+        ("Qm7Rt2Kp_2", "paack", False),
+        ("Qm7Rt2Kp9_123", "paack", False),
+        ("Qm7Rt2Kp9_x", "paack", False),
+    ],
+)
+def test_validate_paack_numbers(number: str, carrier: str | None, valid: bool) -> None:
+    """Paack's order IDs are only valid for Paack; its barcode is valid too."""
+    assert validate_tracking_number(number, carrier) is valid
+
+
+def test_detect_paack_barcode() -> None:
+    """The 5340 barcode names Paack; the order ID's shape alone doesn't."""
+    assert detect_carrier(PAACK_BARCODE) == "paack"
+    assert detect_carrier("5340000777123400") is None
+    assert detect_carrier(PAACK_ID) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"Código Paack: {PAACK_ID}",
+        f"Paack {PAACK_ID}",
+        f"Your Paack tracking number is {PAACK_ID}.",
+    ],
+)
+def test_find_paack_ids_next_to_paack(text: str) -> None:
+    """Next to Paack's name, its order ID is found as written."""
+    assert _found(text) == [(PAACK_ID, "paack", False)]
+    assert _found(text, "paack") == [(PAACK_ID, "paack", False)]
+
+
+def test_find_paack_ids_in_paack_mail() -> None:
+    """In a Paack e-mail a tracking word is enough, unless another carrier is named."""
+    assert _found(f"Tracking number: {PAACK_ID}", "paack") == [
+        (PAACK_ID, "paack", False)
+    ]
+    assert _found(f"GLS tracking number: {PAACK_ID}", "paack") == []
+
+
+@pytest.mark.parametrize(
+    ("text", "carrier"),
+    [
+        (f"Tracking number: {PAACK_ID}", None),
+        (f"Tracking number: {PAACK_ID}", "gls"),
+        (f"Paack file report_{PAACK_ID}", None),
+        (f"Paack code {PAACK_ID}_7", None),
+        (f"Paack code {PAACK_ID}.pdf", None),
+        (f"{PAACK_ID} is on its way", "paack"),
+        (f"Order number: {PAACK_ID}", None),
+    ],
+)
+def test_paack_ids_need_paack(text: str, carrier: str | None) -> None:
+    """The bare shape, or a tracking word without Paack's name, isn't enough."""
+    assert _found(text, carrier) == []
+
+
+def test_find_paack_barcode() -> None:
+    """The barcode is found after a tracking word, and named Paack."""
+    assert _found(f"Tracking ID: {PAACK_BARCODE}") == [(PAACK_BARCODE, "paack", False)]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://paack.co/shipments/tracking/order?tracking_number={PAACK_ID}"
+        "&postal_code=1000-001",
+        f"https://mydeliveries.paack.app/tracking?tracking_number={PAACK_ID}"
+        "&postal_code=28001",
+        "https://paack.co/shipments/preferences/timeslot?email=alex%40example.com"
+        f"&phone=%2B351900000000&order_id=a1b2&postal_code=1000-001"
+        f"&tracking_number={PAACK_ID}",
+    ],
+)
+def test_numbers_from_paack_links(url: str) -> None:
+    """Paack's links give the order ID as written, from tracking_number only."""
+    assert _from_url(url) == [(PAACK_ID, "paack", False)]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://shop.example/track?tracking_number={PAACK_ID}",
+        f"https://t.17track.net/en#nums={PAACK_ID}",
+        f"https://paack.co/shipments/tracking/{PAACK_ID}",
+        f"https://paack.co/shipments/tracking/order?id={PAACK_ID}",
+        "https://paack.co/shipments/timeslot/direct/QWERTY12345ASDFG67890ZX",
+        "https://paack.co/shipments/address/reverse/AB12CD34EF56GH78",
+        "https://paack.co/shipments/tracking/order?tracking_number=x&postal_code=28001",
+    ],
+)
+def test_paack_links_without_order_id(url: str) -> None:
+    """Other sites, other parameters and Paack's opaque tokens give nothing."""
+    assert _from_url(url) == []
+
+
+def test_paack_tracking_url() -> None:
+    """Paack's page needs a postcode: the link is its search page."""
+    url = tracking_url("paack", PAACK_ID)
+    assert url == "https://paack.co/shipments/tracking"
+    assert tracking_url("paack", PAACK_BARCODE) == url
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"Order number: {PAACK_ID}",
+        f"Order No. {PAACK_ID}",
+        f"Número de pedido: {PAACK_ID}",
+        f"N.º de pedido: {PAACK_ID}",
+        f"Núm. de pedido: {PAACK_ID}",
+        f"Número da encomenda: {PAACK_ID}",
+        f"Numéro de commande : {PAACK_ID}",
+        f"N° de commande : {PAACK_ID}",
+        f"Numero d'ordine: {PAACK_ID}",
+        f"N. ordine: {PAACK_ID}",
+        f"Número de pedido\n{PAACK_ID}",
+        f"NÚMERO DE PEDIDO:\n\n{PAACK_ID}",
+    ],
+)
+def test_find_paack_ids_after_footer_label(text: str) -> None:
+    """In a Paack e-mail, the order number in its footer is Paack's ID."""
+    assert _found(text, "paack") == [(PAACK_ID, "paack", False)]
+    assert _found(text) == []
+    assert _found(text, "gls") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"GLS order number: {PAACK_ID}",
+        f"Order number: 12345\n{PAACK_ID}",
+        f"Número de pedido: ver abaixo\nReferência interna: {PAACK_ID}",
+        f"Order number in your account. Reference {PAACK_ID}",
+    ],
+)
+def test_footer_label_must_be_next_to_paack_id(text: str) -> None:
+    """The label must be the one right before the ID, and not name another carrier."""
+    assert _found(text, "paack") == []

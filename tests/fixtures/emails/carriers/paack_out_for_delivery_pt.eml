@@ -1,0 +1,76 @@
+Return-Path: <bounce-9e24b7f013@bounces.paack.co>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@paack.co header.s=sel1 header.b=b25f0d1c;
+       spf=pass (google.com: domain of bounce-9e24b7f013@bounces.paack.co
+ designates 192.0.2.61 as permitted sender) smtp.mailfrom=bounce-9e24b7f013@bounces.paack.co;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=paack.co
+From: Paack <no-reply@paack.co>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?=F0=9F=93=A6_Prepare-se!_O_seu_pedido_est=C3=A1_a_camin?=
+ =?utf-8?q?ho=2E?=
+Date: Wed, 25 Nov 2026 08:05:00 +0000
+Message-ID: <20261125080500.1b9f@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: multipart/alternative; boundary="b1_8e3f1a6c0d27"
+
+--b1_8e3f1a6c0d27
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Paack
+
+Prepare-se! O seu pedido está a caminho.
+
+Olá Alex,
+
+Será entregue em 25 de novembro entre as 10:00 e as 12:00.
+
+Encomenda de
+Amazon
+
+Seguir a encomenda [https://paack.co/shipments/tracking/order?tracking_number=Rb5Lq2Vm7_1&postal_code=4099-321]
+
+Número de pedido: Rb5Lq2Vm7_1
+
+Paack Logistics · Rua Exemplo 1, 1000-001 Lisboa
+
+Política de privacidade [https://www.paack.co/privacy-policy]
+
+--b1_8e3f1a6c0d27
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prepare-se! O seu pedido está a caminho.</title>
+<style>body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#333}.wrap{max-width:600px;margin:0 auto;background:#fff}.head{padding:24px;background:#2b2bff}.content{padding:24px}.slot{font-size:18px;font-weight:bold}td.label{color:#666;padding:4px 0}td.value{font-weight:bold;padding:0 0 8px}.button{display:inline-block;padding:12px 24px;background:#2b2bff;color:#fff;text-decoration:none;border-radius:4px}.foot{padding:16px 24px;font-size:11px;color:#888}</style>
+</head>
+<body>
+<div class="wrap">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td class="head"><img src="https://assets.paack.co/email/logo-paack.png" alt="Paack" width="120" height="40"></td></tr>
+<tr><td class="content">
+<h1>Prepare-se! O seu pedido está a caminho.</h1>
+<p>Olá Alex,</p>
+<p class="slot">Será entregue em 25 de novembro entre as 10:00 e as 12:00.</p>
+<table class="details" role="presentation" cellpadding="0" cellspacing="0">
+<tr><td class="label">Encomenda de</td></tr>
+<tr><td class="value">Amazon</td></tr>
+</table>
+<p style="text-align:center"><a class="button" href="https://paack.co/shipments/tracking/order?tracking_number=Rb5Lq2Vm7_1&amp;postal_code=4099-321">Seguir a encomenda</a></p>
+</td></tr>
+<tr><td class="foot">
+<p>Número de pedido: Rb5Lq2Vm7_1</p>
+<p>Paack Logistics · Rua Exemplo 1, 1000-001 Lisboa</p>
+<p><a href="https://www.paack.co/privacy-policy">Política de privacidade</a></p>
+</td></tr>
+</table>
+</div>
+</body>
+</html>
+
+--b1_8e3f1a6c0d27--
