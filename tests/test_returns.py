@@ -752,6 +752,47 @@ async def test_check_drops_refunds_from_review(
     assert engine.diagnostics()["refunds_dropped"] == 2
 
 
+async def test_check_drops_filtered_refunds_named_only_in_the_body(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """A refund that only its body names, set aside earlier, is dropped too.
+
+    Shop's parser can't read it, and its subject has no shipping words, so
+    it's sure not to be about a parcel: as a refund, it's dropped.
+    """
+    client = FakeMailClient()
+    client.add(
+        replace(
+            load_message("shop/out_for_delivery_pt.eml"),
+            provider_id="body_refund.eml",
+            subject="Informação sobre o seu artigo",
+            text="Reembolso: 12,99 €.",
+            links=(),
+        )
+    )
+    add_hub(hass)
+    add_mailbox(hass)
+
+    with patch_mail_clients(client):
+        with parsed_as({"body_refund.eml": old_result(MailKind.UNKNOWN)}):
+            engine = await async_setup_parcels(hass)
+        record = record_of(engine, "body_refund.eml")
+        # As after the local AI found it isn't about a parcel.
+        (item,) = engine.data.review.values()
+        del engine.data.review[item.id]
+        engine.add_filtered(item, record)
+        assert record.state is MessageState.FILTERED
+
+        check = await async_check(hass, engine, freezer)
+
+    assert check["counts"] == {**NO_COUNTS, "read": 1, "refunds": 1}
+    assert not engine.data.filtered
+    assert not engine.data.review
+    assert not engine.data.parcels
+    assert record_of(engine, "body_refund.eml").state is MessageState.NOT_PARCEL
+    assert engine.diagnostics()["refunds_dropped"] == 1
+
+
 async def test_check_takes_dropped_refunds_off_the_ai_lists(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory, local_ai: str
 ) -> None:

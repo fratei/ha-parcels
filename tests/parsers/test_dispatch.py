@@ -525,12 +525,12 @@ RETURN_SUBJECT = "Informação sobre o seu artigo"
             MailKind.NOT_PARCEL,
             (NOTE_REFUND,),
         ),
-        # A body that only opens with an amount refunded is skipped as before.
+        # A body that only opens with an amount refunded is a refund: dropped.
         (
             "devolucoes@amazon.es",
             "Reembolso: 12,99 €.",
             MailKind.NOT_PARCEL,
-            (),
+            (NOTE_REFUND,),
         ),
         (
             "info@ctt.pt",

@@ -356,6 +356,27 @@ async def test_refund_answer_is_dropped_silently(
     assert engine.diagnostics()["refunds_dropped"] == 1
 
 
+async def test_not_parcel_answer_about_a_refund_is_dropped_silently(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """A refund the AI reads as "not about a parcel" isn't filtered, only counted."""
+    message = shop_message(
+        "An update on order #1001",
+        "Your refund will follow once the item arrives at our warehouse.",
+    )
+    engine = await async_setup(hass, client, message)
+    assert engine.ai.queue_size == 1
+    generate.return_value = result(kind="not_parcel")
+
+    await engine.ai._async_step()
+
+    assert engine.data.messages[message.hash].state is MessageState.NOT_PARCEL
+    assert not engine.data.filtered
+    assert not engine.data.review
+    assert engine.ai.today()["filtered"] == 0
+    assert engine.diagnostics()["refunds_dropped"] == 1
+
+
 async def test_queued_refund_is_dropped_without_the_ai(
     hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
 ) -> None:

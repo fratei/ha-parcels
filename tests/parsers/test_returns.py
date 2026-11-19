@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from custom_components.parcels.const import MailKind
+from custom_components.parcels.const import CONFIDENCE_APPLY, MailKind
 from custom_components.parcels.parsers.base import (
     Eta,
     MailMessage,
@@ -416,13 +416,25 @@ def test_refund_is_dropped(kind: MailKind, merchant: bool) -> None:
 
 
 @pytest.mark.parametrize(
-    ("kind", "dropped"),
-    [(MailKind.RETURN, True), (MailKind.UNKNOWN, False), (MailKind.NOT_PARCEL, False)],
+    ("kind", "confidence", "dropped"),
+    [
+        (MailKind.RETURN, 0.9, True),
+        (MailKind.UNKNOWN, 0.9, False),
+        (MailKind.NOT_PARCEL, CONFIDENCE_APPLY, True),
+        (MailKind.NOT_PARCEL, CONFIDENCE_APPLY - 0.01, False),
+    ],
+    ids=["return", "unknown", "sure-not-parcel", "doubtful-not-parcel"],
 )
-def test_weak_refund_only_ends_a_return(kind: MailKind, dropped: bool) -> None:
-    """A refund only named in the body drops a "return" e-mail, nothing else."""
+def test_weak_refund_ends_a_return_or_a_sure_not_parcel(
+    kind: MailKind, confidence: float, dropped: bool
+) -> None:
+    """A refund only named in the body drops a "return" or "not a parcel" e-mail.
+
+    A doubtful "not a parcel", such as the AI's for an e-mail with a tracking
+    number, stays for review; an unread e-mail is read as usual.
+    """
     message = _message("Update on order 123", "Refund: €12.99 for the returned item.")
-    result = reclassify(_result(kind), message, TZ, merchant=True)
+    result = reclassify(_result(kind, confidence), message, TZ, merchant=True)
     assert (result.notes == (NOTE_REFUND,)) is dropped
     assert result.kind is (MailKind.NOT_PARCEL if dropped else kind)
 

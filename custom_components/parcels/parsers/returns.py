@@ -24,7 +24,7 @@ from datetime import tzinfo
 from enum import StrEnum
 import re
 
-from ..const import MailKind
+from ..const import CONFIDENCE_APPLY, MailKind
 from ._amazon_shopify_common import fold_text, label_values
 from .base import Eta, MailMessage, ParsedShipment, ParseResult
 from .eta import parse_eta
@@ -443,8 +443,9 @@ def reclassify(
     ``NOT_PARCEL`` result only gains the refund note. ``merchant`` is True
     for the shops' own parsers (Amazon, Shop, Shopify): their return
     e-mails are about customer returns unless they say otherwise. A weak
-    refund only counts for a ``RETURN`` result, and a pickup label in an
-    ``UNKNOWN`` e-mail needs customer-return wording too.
+    refund only counts for a ``RETURN`` result or a sure ``NOT_PARCEL`` one,
+    and a pickup label in an ``UNKNOWN`` e-mail needs customer-return wording
+    too.
     """
     if result.kind not in _TOUCHED_KINDS:
         return result
@@ -454,7 +455,7 @@ def reclassify(
             return _customer_return(result, message, tz, result.confidence)
         return result
     if found.kind is ReturnClass.REFUND:
-        if found.weak and result.kind is not MailKind.RETURN:
+        if found.weak and not _ends_with_a_refund(result):
             return result
         return ParseResult(
             parser=result.parser,
@@ -481,6 +482,18 @@ def reclassify(
             result, message, tz, SUBJECT_CONFIDENCE, received=found.received
         )
     return result
+
+
+def _ends_with_a_refund(result: ParseResult) -> bool:
+    """Return True when a refund only named in the body decides the e-mail.
+
+    It ends a "return" reading, or a sure "not about a parcel" one: neither
+    is a parcel event. A doubtful "not a parcel", such as the AI's for an
+    e-mail with a tracking number, waits for review instead.
+    """
+    if result.kind is MailKind.RETURN:
+        return True
+    return result.kind is MailKind.NOT_PARCEL and result.confidence >= CONFIDENCE_APPLY
 
 
 def _customer_return(
