@@ -69,7 +69,7 @@ from ..parsers.amazon import product_buttons
 from ..parsers.base import Eta, MailMessage, ParsedShipment, ParseResult
 from ..parsers.carriers import brand_carriers, phrase_regex
 from ..parsers.carriers._phrases import PICKUP_NAME_LABELS, PICKUP_POINT_LABELS
-from ..parsers.codes import code_spans, compact_code, mask_codes
+from ..parsers.codes import code_spans, compact_code, find_code, mask_codes
 from ..parsers.eta import (
     date_expressions,
     find_delivery_eta,
@@ -95,6 +95,7 @@ from ..parsers.senders import KNOWN_SENDERS, lookup, organizational_domain
 from ..parsers.tracking import (
     detect_carrier,
     find_tracking_numbers,
+    named_carriers,
     normalize_tracking_number,
     tracking_url,
     validate_tracking_number,
@@ -126,8 +127,11 @@ MAX_PICKUP_CODE_CHARS = 20
 LABEL_WINDOW_CHARS = 40
 
 NOTE_ADDED_BY_DETECTOR = "tracking_added_by_detector"
+NOTE_CODE_FROM_TEXT = "pickup_code_from_text"
 NOTE_ITEM_RECOMMENDED = "item_recommended"
+NOTE_ITEM_IS_NUMBER = "item_is_number"
 NOTE_KIND_FROM_TEXT = "kind_from_text"
+NOTE_NOT_OUT_TODAY = "out_for_delivery_not_today"
 NOTE_ETA_DROPPED_FOR_KIND = "eta_dropped_for_kind"
 NOTE_ETA_FROM_TEXT = "eta_from_text"
 NOTE_ORDER_MOVED_TO_TRACKING = "order_moved_to_tracking"
@@ -146,6 +150,8 @@ REPAIR_LONG_CHARS = 12
 
 # In these e-mails a bare "Code:" names the code to collect the parcel.
 _LOCKER_KINDS = frozenset({MailKind.READY_FOR_PICKUP, MailKind.ATTEMPTED})
+# No code is read from the e-mail for these kinds.
+_NO_CODE_KINDS = frozenset({MailKind.DELIVERED, MailKind.NOT_PARCEL})
 # No delivery is pending in these e-mails, so their dates are deadlines
 # (to collect, pay or return by) or past dates, never delivery dates.
 _NO_ETA_KINDS = frozenset(
@@ -908,7 +914,20 @@ class _Checker:
             # A tracking or order number is never the code.
             self.error("pickup_code_is_number")
             pickup_code = None
+        if pickup_code is None and kind not in _NO_CODE_KINDS:
+            pickup_code = self.code_from_text(
+                kind, [*(number for number, _ in numbers), *kept_orders]
+            )
+        items = self.items_without_numbers(
+            items,
+            {
+                *(number for number, _ in numbers),
+                *kept_orders,
+                *([pickup_code] if pickup_code else []),
+            },
+        )
         eta = self.checked_eta(kind)
+        kind = self.out_today(kind, eta)
         if kind is MailKind.NOT_PARCEL:
             if any(n not in detected or n in strong for n, _ in numbers):
                 self.error("not_parcel_has_tracking")
@@ -983,6 +1002,27 @@ class _Checker:
             return kind
         self.notes.append(NOTE_KIND_FROM_TEXT)
         return detected
+
+    def out_today(self, kind: MailKind, eta: Eta | None) -> MailKind:
+        """Return in transit for "out for delivery" with a later delivery date.
+
+        Out for delivery means today. Models also answer it for a parcel
+        that reached a depot and is delivered tomorrow; with no such wording
+        in the e-mail and a delivery date after the day it arrived, the
+        parcel is in transit.
+        """
+        if (
+            kind is not MailKind.OUT_FOR_DELIVERY
+            or eta is None
+            or eta.start <= self.reference
+        ):
+            return kind
+        subject = self.message.subject or ""
+        text = self.message.text or ""
+        if MailKind.OUT_FOR_DELIVERY in text_kinds(subject, text, lang=self.language):
+            return kind
+        self.notes.append(NOTE_NOT_OUT_TODAY)
+        return MailKind.IN_TRANSIT
 
     def read_codes(self, kind: MailKind) -> None:
         """Find the values the e-mail writes as a delivery or pickup code."""
@@ -1101,6 +1141,16 @@ class _Checker:
             self.notes.append(NOTE_ITEM_RECOMMENDED)
         return tuple(unique_items(kept))
 
+    def items_without_numbers(
+        self, items: tuple[str, ...], numbers: set[str]
+    ) -> tuple[str, ...]:
+        """Drop items that are a kept tracking or order number or code."""
+        compact = {compact_code(number) for number in numbers}
+        kept = tuple(item for item in items if compact_code(item) not in compact)
+        if len(kept) < len(items):
+            self.notes.append(NOTE_ITEM_IS_NUMBER)
+        return kept
+
     def pickup_point(self, kind: MailKind) -> str | None:
         try:
             text = _text_value(self.data.get("pickup_point"))
@@ -1162,6 +1212,29 @@ class _Checker:
         if match is None:
             self.error("pickup_code_not_in_email")
             return None
+        return " ".join(match.group(0).split())
+
+    def code_from_text(self, kind: MailKind, numbers: list[str]) -> str | None:
+        """Return the e-mail's one delivery or pickup code, or None.
+
+        Used when the checks leave no code: the model gave none, or one the
+        e-mail doesn't write (often cut short). Values that are a kept
+        tracking or order number don't count. With two or more codes,
+        none is guessed.
+        """
+        locker = kind in _LOCKER_KINDS
+        excluded = {compact_code(number) for number in numbers}
+        codes = {
+            compact_code(self.code_text[start:end])
+            for start, end in code_spans(self.code_text, locker=locker)
+        }
+        if len(codes - excluded) != 1:
+            return None
+        code = find_code(self.code_text, exclude=numbers, locker=locker)
+        match = code and _written_pattern(code, r"\s\-").search(self.code_text)
+        if not match:
+            return None
+        self.notes.append(NOTE_CODE_FROM_TEXT)
         return " ".join(match.group(0).split())
 
     def orders(self) -> list[str]:
@@ -1286,6 +1359,8 @@ class _Checker:
             ):
                 continue
             distance = _edit_distance(compact.upper(), candidate, limit)
+            if distance > limit:
+                continue
             if distance < best_distance:
                 best_distance = distance
                 best = {candidate: token}
@@ -1420,7 +1495,29 @@ class _Checker:
                 continue
             found[number] = number_carrier
             detected.add(number)
+        if carrier is None and None in found.values():
+            self.context_carriers(found)
         return list(found.items()), detected
+
+    def context_carriers(self, found: dict[str, str | None]) -> None:
+        """Give numbers without a carrier the one carrier the e-mail names.
+
+        A shop's e-mail often names the carrier next to a number whose format
+        fits many carriers ("affidato a BRT. Numero di spedizione: …"). The
+        detector reads the carrier from the number's context; that carrier is
+        used only when the e-mail names no other ("GLS or SEUR" stays unknown).
+        """
+        named = named_carriers(self.detector_text)
+        if len(named) != 1:
+            return
+        context = {
+            match.number: match.carrier
+            for match in find_tracking_numbers(self.detector_text)
+            if match.carrier in named
+        }
+        for number, number_carrier in found.items():
+            if number_carrier is None and number in context:
+                found[number] = context[number]
 
     def ai_numbers(self, carrier: str | None, orders: set[str]) -> list[str]:
         values = _as_list(self.data.get("tracking_numbers"))
@@ -1718,23 +1815,34 @@ def _generic_place(text: str) -> bool:
 
 
 def _edit_distance(first: str, second: str, limit: int) -> int:
-    """Return the Levenshtein distance, or ``limit + 1`` when it is larger."""
+    """Return the edit distance, or ``limit + 1`` when it is larger.
+
+    A changed, dropped or added character is one edit, and so is a swap of
+    two neighbouring characters (optimal string alignment).
+    """
     if abs(len(first) - len(second)) > limit:
         return limit + 1
+    before: list[int] = []
     previous = list(range(len(second) + 1))
     for row, char in enumerate(first, 1):
         current = [row]
         for column, other in enumerate(second, 1):
-            current.append(
-                min(
-                    previous[column] + 1,
-                    current[column - 1] + 1,
-                    previous[column - 1] + (char != other),
-                )
+            cost = min(
+                previous[column] + 1,
+                current[column - 1] + 1,
+                previous[column - 1] + (char != other),
             )
+            if (
+                row > 1
+                and column > 1
+                and char == second[column - 2]
+                and first[row - 2] == other
+            ):
+                cost = min(cost, before[column - 2] + 1)
+            current.append(cost)
         if min(current) > limit:
             return limit + 1
-        previous = current
+        before, previous = previous, current
     return min(previous[-1], limit + 1)
 
 

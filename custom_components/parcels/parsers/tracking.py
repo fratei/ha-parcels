@@ -968,6 +968,20 @@ def find_tracking_numbers(text: str, carrier: str | None = None) -> list[Trackin
     return [item for _, item in ordered]
 
 
+def named_carriers(text: str) -> set[str]:
+    """Return the carriers the text names, read as ``find_tracking_numbers`` does.
+
+    Names inside links and e-mail addresses don't count.
+    """
+    if not text:
+        return set()
+    text = _EMAIL_RE.sub(_blank, _URL_RE.sub(_blank, text[:MAX_SCAN_CHARS]))
+    return {
+        CARRIER_WORDS[_SPACES_RE.sub(" ", match.group(0))]
+        for match in _CARRIER_WORD_RE.finditer(fold_aligned(text))
+    }
+
+
 _URL_VALUE_SPLIT_RE = re.compile(r"[,;|+\s]+")
 _URL_NUMBER_RE = re.compile(r"[0-9A-Z/]+")
 _LOWER_RE = re.compile(r"[a-z]")

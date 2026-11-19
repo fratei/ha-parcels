@@ -33,6 +33,7 @@ from ..parsers.base import MailMessage
 from ..parsers.tracking import (
     is_s10,
     normalize_tracking_number,
+    numbers_from_url,
     ups_check_digit_ok,
     validate_tracking_number,
 )
@@ -45,6 +46,8 @@ MAX_SUBJECT_CHARS = 300
 MAX_LINK_ENTRIES = 15
 MAX_NUMBERS_PER_LINK = 3
 MAX_LINK_NUMBERS = 10
+# Links wrapped in one link (click trackers) that are read, once.
+MAX_WRAPPED_LINKS = 3
 
 WEEKDAY_NAMES = (
     "Monday",
@@ -349,35 +352,53 @@ def link_domain(url: str) -> str | None:
     return host.removeprefix("www.") or None
 
 
-def link_numbers(url: str) -> tuple[str, ...]:
-    """Return tracking numbers written in a link's URL. Never fetches it.
+def _link_values(url: str) -> tuple[list[str], list[str]]:
+    """Return the values in a link that may be numbers, and the links in it.
 
     Values of tracking-like query parameters, the path segment after a
     tracking-like segment, and S10, UPS and Amazon numbers anywhere count.
+    Parameter values that are links themselves (click trackers) are returned
+    apart.
     """
     try:
         parts = urlsplit(url)
     except ValueError:
-        return ()
-    found: list[str] = []
-
-    def add(value: str) -> None:
-        number = _link_value(value)
-        if number and number not in found:
-            found.append(number)
-
+        return [], []
+    values: list[str] = []
+    nested: list[str] = []
     for query in (parts.query, parts.fragment):
         for key, value in parse_qsl(query):
-            if _LINK_KEY_RE.search(key) or key.lower() in _LINK_EXACT_KEYS:
-                for piece in re.split(r"[,;|\s]+", value):
-                    add(piece)
+            if value.strip().lower().startswith(("http://", "https://")):
+                nested.append(value.strip())
+            elif _LINK_KEY_RE.search(key) or key.lower() in _LINK_EXACT_KEYS:
+                values.extend(re.split(r"[,;|\s]+", value))
     segments = [unquote(segment) for segment in parts.path.split("/") if segment]
     for previous, segment in pairwise(segments):
         if _LINK_KEY_RE.search(previous):
-            for piece in re.split(r"[,;|+_\s]+", segment):
-                add(piece)
-    for match in _STRONG_TOKEN_RE.finditer(unquote(url)):
-        add(match.group(0))
+            values.extend(re.split(r"[,;|+_\s]+", segment))
+    values.extend(match.group(0) for match in _STRONG_TOKEN_RE.finditer(unquote(url)))
+    return values, nested
+
+
+def link_numbers(url: str) -> tuple[str, ...]:
+    """Return tracking numbers written in a link's URL. Never fetches it.
+
+    The link is read as above, then a link wrapped in it (click trackers)
+    the same way, then as the parsers read it (``numbers_from_url``).
+    """
+    found: list[str] = []
+
+    def add(number: str | None) -> None:
+        if number and number not in found:
+            found.append(number)
+
+    values, nested = _link_values(url)
+    for link in nested[:MAX_WRAPPED_LINKS]:
+        values += _link_values(link)[0]
+    for value in values:
+        add(_link_value(value))
+    for match in numbers_from_url(url):
+        add(match.number)
     return tuple(found[:MAX_NUMBERS_PER_LINK])
 
 

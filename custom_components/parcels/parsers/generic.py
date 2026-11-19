@@ -484,6 +484,7 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"(?:delivery|shipping|shipment) delay",
         r"delayed (?:delivery|shipment)",
         r"later than (?:expected|planned|originally (?:expected|planned))",
+        r"(?:will )?(?:arrive|be delivered|reach you) later than (?:expected|planned)",
         r"new (?:estimated )?delivery date",
         r"delivery (?:has been )?(?:rescheduled|postponed)",
         r"(?:esta|encontra-se|foi) atrasad[ao]",
@@ -492,13 +493,15 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"nova data (?:prevista )?de entrega",
         r"entrega (?:foi )?reagendada",
         r"mais tarde do que (?:o )?previsto",
+        r"(?:vai |vao )?(?:chegar|ser entregues?) mais tarde do que (?:o )?previsto",
         r"(?:esta|ha sido|se ha) retrasad[oa]",
-        r"(?:sufre|tiene) (?:un )?retraso",
+        r"(?:sufre|tiene|lleva) (?:un (?:ligero |pequeno )?)?retraso",
         r"retraso en (?:la entrega|el envio|tu pedido|su pedido)",
         r"nueva fecha (?:estimada )?de entrega",
         r"entrega (?:ha sido )?reprogramada",
         r"mas tarde de lo previsto",
         r"(?:ist|wurde|hat sich) (?:leider )?verzogert",
+        r"(?:verzogert|verspatet) sich",
         r"verzogerung (?:bei|der|ihrer|deiner) (?:zustellung|lieferung|sendung|bestellung)",
         r"(?:liefer|zustell)verzogerung",
         r"(?:ist|wird) (?:leider )?verspatet",
@@ -506,7 +509,7 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"spater als (?:erwartet|geplant|angekundigt)",
         r"(?:est|a ete) (?:legerement )?retardee?",
         r"retard (?:de|dans la) livraison",
-        r"(?:a|prend|accuse) du retard",
+        r"(?:a|aura|prend|accuse) du retard",
         r"nouvelle date de livraison",
         r"livraison (?:reportee|reprogrammee)",
         r"plus tard que prevu",
@@ -519,7 +522,8 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"(?:is|zijn|wordt) vertraagd",
         r"vertraging (?:bij|in|van) (?:de |je |uw )?(?:bezorging|levering|zending"
         r"|bestelling)",
-        r"(?:heeft|loopt) vertraging",
+        r"(?:heeft|loopt) (?:een (?:dag |paar dagen |kleine |lichte )?|enige |wat )?"
+        r"vertraging",
         r"nieuwe (?:bezorgdatum|leverdatum)",
         r"later dan (?:verwacht|gepland)",
         r"bezorging (?:is )?uitgesteld",
@@ -538,17 +542,23 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"customs (?:clearance )?(?:cleared|completed|complete|done)",
         r"(?:esta|encontra-se|segue) em transito",
         r"(?:chegou|deu entrada) (?:ao|no|na) (?:centro|armazem)",
+        r"(?:esta|encontra-se|se encontra) (?:no|na) (?:nosso |nossa )?(?:centro de "
+        r"(?:distribuicao|triagem)|delegacao|plataforma)",
         r"(?:(?:saiu|partiu|saida|partida) (?:do|da|dos|das)|deixou (?:o|a|os|as))"
         r" (?:nosso |nossa |seu |sua )?" + _PT_PLACES,
         r"desalfandegad[ao]",
         r"desalfandegamento (?:concluido|efetuado|efectuado|realizado)",
         r"(?:esta|se encuentra|sigue) en transito",
         r"(?:ha )?llegado (?:al|a la) (?:centro|delegacion|almacen|plataforma)",
+        r"(?:esta|se encuentra) en (?:nuestro |nuestra |el |la )?(?:centro de "
+        r"(?:reparto|distribucion|clasificacion)|delegacion|plataforma)",
         r"(?:(?:ha |han )?(?:salido|partido)|salio|salieron|partio|partieron|salida)"
         r" (?:del|de (?:la|los|las|nuestro|nuestra|su)) " + _ES_PLACES,
         r"(?:despachad[oa]|liberad[oa]) (?:de|por|en) (?:la )?aduana",
         r"(?:im|ins) (?:start-?|ziel-?)?paketzentrum",
         r"(?:im|ins) (?:verteil|sortier)zentrum",
+        r"(?:in|im) (?:unserem |unserer |dem |der |ihrem |deinem )?(?:depot"
+        r"|zustelldepot|zustellbasis)(?: in [a-z\-]+)? (?:angekommen|eingetroffen)",
         r"(?:hat|haben) (?:(?:heute|soeben|gerade|bereits|jetzt|nun) )?(?:das|den|die"
         r"|unser|unseren|unsere) " + _DE_PLACES + r"(?: in [a-z\-]+)? verlassen",
         r"verliess(?:en)? (?:das|den|die|unser|unseren|unsere) " + _DE_PLACES,
@@ -556,6 +566,8 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"verzollt",
         r"(?:est|sont) (?:actuellement )?en transit",
         r"(?:est|sont) en cours d'acheminement",
+        r"(?:est|sont) arrivee?s? (?:(?:dans|a|sur) (?:notre |nos |l'|la |le )?|au )"
+        r"(?:agence|depot|centre de (?:tri|distribution)|plateforme|hub)",
         r"(?:a|ont) quitte (?:le |la |l'|les |son |sa |notre |nos |leur )?"
         + _FR_PLACES,
         r"(?:(?:est|sont) (?:parti|sorti)e?s?|depart|sortie) (?:du |de la |de l'|des "
@@ -563,6 +575,9 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"dedouanee?s?",
         r"dedouanement (?:termine|effectue)",
         r"(?:e|sono) in transito",
+        r"(?:e|sono) (?:arrivat|giunt)[oaie] (?:nella|nel|al|alla|presso (?:la|il)) "
+        r"(?:nostra |nostro )?(?:filiale|deposito|hub|centro (?:di smistamento"
+        r"|di distribuzione|operativo))",
         r"(?:(?:e|sono) (?:partit|uscit)[oaie]|partenza|uscita) (?:dal|dall'|dallo"
         r"|dalla|dai|dagli|dalle) ?" + _IT_PLACES,
         r"(?:ha|hanno) lasciato (?:il|lo|la|l'|i|gli|le) ?(?:nostro |nostra )?"
@@ -570,6 +585,10 @@ KIND_PHRASES: dict[MailKind, tuple[str, ...]] = {
         r"sdoganat[oaie]",
         r"(?:is |wordt |werd )?gesorteerd",
         r"(?:in|bij) (?:het|ons) (?:sorteercentrum|distributiecentrum)",
+        r"(?:is |zijn )?aangekomen (?:in|bij|op) (?:het |de |ons |onze )?(?:depot"
+        r"|sorteercentrum|distributiecentrum|pakketcentrum|hub)",
+        r"(?:in|bij|op) (?:het |de |ons |onze )?(?:depot|pakketcentrum|hub)"
+        r"(?: in [a-z\-]+)? aangekomen",
         r"(?:heeft|hebben) (?:(?:vandaag|zojuist|net|nu) )?(?:het|de|ons|onze) "
         + _NL_PLACES
         + r"(?: in [a-z\-]+)? verlaten",
@@ -977,6 +996,34 @@ _ABSENCE_CONDITIONS = frozenset({"als", "indien", "mocht", "mochten"})
 ABSENCE_QUESTION_SENTENCES = 2
 ABSENCE_REACH = 240
 
+# German and Dutch warn in the present tense that an uncollected parcel goes
+# back to the sender ("Nach Ablauf der Lagerfrist geht das Paket an den
+# Absender zurück", "Daarna gaat het terug naar de afzender"). One of these
+# words earlier in the sentence makes "back to the sender" such a warning,
+# unless a participle says it already happened. Folded words.
+RETURN_WARNING_WORDS: frozenset[str] = frozenset(
+    {
+        *("ablauf", "danach", "anschliessend", "sonst", "andernfalls", "dann"),
+        *("innerhalb", "spatestens"),
+        *("daarna", "vervolgens", "anders", "dan", "binnen", "uiterlijk"),
+    }
+)
+RETURN_PAST_WORDS: frozenset[str] = frozenset(
+    {
+        *("zuruckgeschickt", "zuruckgesendet", "zuruckgesandt", "zuruckgegangen"),
+        *("geschickt", "gesendet", "gesandt", "retourniert"),
+        *("teruggestuurd", "teruggezonden", "gestuurd", "gezonden", "gegaan"),
+        "geretourneerd",
+    }
+)
+_SENDER_WORD_RE = re.compile(
+    r"sender|remetente|remitente|absender|expediteur|mittente|afzender"
+)
+# A warning only counts in an e-mail that also says the parcel waits for
+# pickup or that delivery failed.
+_WARNING_KINDS = frozenset({MailKind.READY_FOR_PICKUP, MailKind.ATTEMPTED})
+RETURN_WARNING_REACH = 160
+
 # "Delivered to the carrier / pickup point / depot" is not a delivery to the
 # customer. Checked right after a DELIVERED match, pickup places first so
 # that "the DPD Pickup point" isn't read as "DPD".
@@ -1246,6 +1293,22 @@ def _absence_scopes(folded: str, conditional: frozenset[str]) -> list[tuple[int,
     return scopes
 
 
+def _return_warning(folded: str, match: re.Match[str]) -> bool:
+    """Return True when "back to the sender" warns of what happens later."""
+    if not _SENDER_WORD_RE.search(match.group()):
+        return False
+    head = folded[max(0, match.start() - RETURN_WARNING_REACH) : match.start()]
+    cut = _SENTENCE_START_RE.search(head)
+    if cut is not None:
+        head = head[cut.end() :]
+    tail = _SENTENCE_END_RE.search(folded, match.end())
+    end = tail.start() if tail else min(len(folded), match.end() + 80)
+    words = _TOKEN_RE.findall(folded[match.start() : end])
+    return not any(word in RETURN_PAST_WORDS for word in words) and any(
+        word in RETURN_WARNING_WORDS for word in _TOKEN_RE.findall(head)
+    )
+
+
 def _kinds(
     folded: str,
     regexes: Mapping[MailKind, re.Pattern[str]],
@@ -1254,9 +1317,13 @@ def _kinds(
     """Return every kind with an unguarded match in folded text."""
     found: set[MailKind] = set()
     scopes: list[tuple[int, int]] | None = None
+    warned = False
     for kind, regex in regexes.items():
         for match in regex.finditer(folded):
             if _guarded(folded, match.start(), conditional):
+                continue
+            if kind is MailKind.RETURN and _return_warning(folded, match):
+                warned = True
                 continue
             real = kind
             if kind is MailKind.DELIVERED:
@@ -1269,6 +1336,8 @@ def _kinds(
             found.add(real)
             if real is kind:
                 break
+    if warned and not found & _WARNING_KINDS:
+        found.add(MailKind.RETURN)
     return found
 
 

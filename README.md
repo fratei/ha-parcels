@@ -409,7 +409,8 @@ How they behave:
 - A delivered parcel shows "Delivered ✓" with the time, and its activity ends
   30 minutes later.
 - Apple ends activities after 8 hours, so an undelivered parcel's activity is
-  restarted after 7.5 hours.
+  restarted after 7.5 hours. The new activity plays the start alert once,
+  because iOS doesn't let a new activity start silently.
 - At the cut-off (22:00) the remaining activities end. Undelivered parcels stay
   in the persistent notification.
 - Apple limits how often activities can start remotely, so a parcel starts
@@ -424,8 +425,10 @@ days.
 
 From the start time until the next morning, a persistent notification in Home
 Assistant (`parcels_today`) lists the day's parcels with their shop, carrier,
-status and time window, and links to the Parcels page. Private parcels are
-only counted. Parcels ready for pickup stay in it for up to a week. The **Daily
+status and time window, and links to the Parcels page. Packages of one shipment
+with the same status share a line, with their count ("4 packages"); delivered
+ones keep their own line, with the time. Private parcels are only counted.
+Parcels ready for pickup stay in it for up to a week. The **Daily
 notification** switch turns it off and on.
 
 ## 17TRACK
@@ -476,13 +479,13 @@ time and newest first.
 
 **What the AI sees**: the day the e-mail arrived, the sender's name and
 domain, the subject and the text a reader sees (text the HTML hides is left
-out), with each link reduced to its domain and the numbers in it, up to 6,000
-characters. It never sees your address, the other headers, images or
-attachments. Parcels calls the AI task directly, not through an action, so the
-e-mail isn't written to the recorder. Home Assistant keeps the conversation in
-memory for up to 10 minutes, where administrators can watch it, and Parcels
-removes the e-mail text from the debug and error logs of the Ollama, AI task
-and conversation integrations.
+out), with each link reduced to its domain and the numbers in it (or in the
+link it forwards to), up to 6,000 characters. It never sees your address, the
+other headers, images or attachments. Parcels calls the AI task directly, not
+through an action, so the e-mail isn't written to the recorder. Home Assistant
+keeps the conversation in memory for up to 10 minutes, where administrators can
+watch it, and Parcels removes the e-mail text from the debug and error logs of
+the Ollama, AI task and conversation integrations.
 
 Parcels checks every answer: tracking numbers must appear in the e-mail as
 written and match their carrier's format, check digit included where there is

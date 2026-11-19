@@ -12,13 +12,16 @@ from custom_components.parcels.ai.validate import (
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
     NOTE_ADDED_BY_DETECTOR,
+    NOTE_CODE_FROM_TEXT,
     NOTE_ETA_DROPPED_FOR_KIND,
     NOTE_ETA_FROM_TEXT,
+    NOTE_ITEM_IS_NUMBER,
     NOTE_ITEM_RECOMMENDED,
     NOTE_KIND_FROM_TEXT,
     NOTE_MERCHANT_FROM_SENDER,
     NOTE_MERCHANT_FROM_TEXT,
     NOTE_MERCHANT_IS_CARRIER,
+    NOTE_NOT_OUT_TODAY,
     NOTE_ORDER_FROM_TEXT,
     NOTE_ORDER_MOVED_TO_TRACKING,
     NOTE_PICKUP_POINT_DROPPED,
@@ -302,7 +305,7 @@ def test_time_window(
     """Delivery windows are normalized to times of day."""
     result = checked(
         answer(
-            kind="out_for_delivery",
+            kind="in_transit",
             eta_start="2026-11-19",
             eta_end="2026-11-19",
             window_start=window_start,
@@ -610,6 +613,51 @@ def test_ai_carrier(
         assert not any(note.startswith("carrier") for note in result.notes)
 
 
+@pytest.mark.parametrize(
+    ("text", "number", "carrier"),
+    [
+        (
+            "Il tuo ordine è stato affidato a BRT. Numero di spedizione: "
+            "058123456789012",
+            "058123456789012",
+            "brt",
+        ),
+        (
+            "Je bestelling wordt bezorgd door DPD. Pakketnummer: 05212345678901",
+            "05212345678901",
+            "dpd",
+        ),
+        (
+            "We ship with GLS or SEUR, depending on your area. "
+            "Tracking number: 58123456789",
+            "58123456789",
+            None,
+        ),
+        (
+            "Your order has shipped. Tracking number: 58123456789.\n"
+            "Returns are free at any CTT store.",
+            "58123456789",
+            None,
+        ),
+        (
+            "Your order has shipped. Tracking number: 58123456789.\n"
+            "PS: choose DHL Express next time.",
+            "58123456789",
+            None,
+        ),
+    ],
+    ids=["it-brt", "nl-dpd", "two-carriers", "returns-footer", "ps-ad"],
+)
+def test_carrier_from_the_numbers_context(
+    text: str, number: str, carrier: str | None
+) -> None:
+    """With no carrier otherwise, a number takes the one carrier named by it."""
+    result = checked(answer(kind="shipped", tracking_numbers=[number]), text)
+    (shipment,) = result.shipments
+    assert shipment.tracking_number == number
+    assert shipment.carrier == carrier
+
+
 # Tracking and order numbers
 
 
@@ -728,11 +776,23 @@ def test_miscopied_order_number_is_repaired(answered: str, expected: str) -> Non
     assert "order_not_in_email" not in result.notes
 
 
+def test_order_number_with_neighbouring_digits_swapped_is_repaired() -> None:
+    """Two neighbouring digits swapped count as one miscopied character."""
+    result = checked(
+        answer(kind="order", order_numbers=["4501238675", "4501299999"]),
+        "Encomendas n.º 4501238765 e 4501299999 confirmadas.",
+    )
+    assert result.order_numbers == ("4501238765", "4501299999")
+    assert NOTE_ORDER_FROM_TEXT in result.notes
+    assert "order_not_in_email" not in result.notes
+
+
 @pytest.mark.parametrize(
     ("answered", "text"),
     [
         ("450123456", "Encomendas n.º 4501234567 e 4501234568 confirmadas."),
         ("12346", "Encomenda n.º 12345 confirmada."),
+        ("4501268735", "Encomenda n.º 4501238765 confirmada."),
         ("RR12345678PT", f"Objeto {S10} enviado."),
         ("91234567", "Telefone: 912345678"),
         ("1811202", "Encomenda confirmada em 18-11-2026."),
@@ -760,8 +820,19 @@ S10_LINK = f"https://www.ctt.pt/feapl_2/app/open/objectSearch/x?objects={S10}"
         (S10_BAD_CHECK_DIGIT, "Siga o envio no link abaixo.", [S10_LINK], S10),
         ("RR123456786PT", "Número de objeto: RR 1234 5678 5 PT", [], S10),
         (f"{UPS_NUMBER}5", f"Envio {UPS_NUMBER} a caminho.", [], UPS_NUMBER),
+        ("1Z999AA10123465784", f"Envio {UPS_NUMBER} a caminho.", [], UPS_NUMBER),
+        ("RR124356785PT", "Siga o envio no link abaixo.", [S10_LINK], S10),
     ],
-    ids=["href", "text-url", "text", "check-digit", "spaced", "extra-char"],
+    ids=[
+        "href",
+        "text-url",
+        "text",
+        "check-digit",
+        "spaced",
+        "extra-char",
+        "swap",
+        "swap-link",
+    ],
 )
 def test_miscopied_tracking_number_is_repaired(
     answered: str, text: str, links: list[str], expected: str
@@ -978,7 +1049,7 @@ def test_detector_recovers_missed_dpd_number() -> None:
     """A DPD number the model missed in "A sua encomenda …" is still found."""
     result = checked(
         answer(
-            kind="out_for_delivery",
+            kind="in_transit",
             carrier="",
             eta_start="amanhã",
             window_start="9h",
@@ -1188,7 +1259,9 @@ def test_values_as_long_as_their_caps_were_cut() -> None:
     assert cut.merchant is None
     assert cut.order_numbers == ()
     assert cut.shipments[0].pickup_point is None
-    assert cut.shipments[0].pickup_code is None
+    # The cut code is dropped; the e-mail's one code is read instead.
+    assert cut.shipments[0].pickup_code == "4821"
+    assert NOTE_CODE_FROM_TEXT in cut.notes
     assert cut.items == ("Tapete de banho\u2026",)
     assert set(cut.notes) >= {
         "merchant_cut",
@@ -1268,6 +1341,26 @@ def test_repeated_items_are_merged() -> None:
     assert result.items == (full,)
 
 
+def test_items_that_are_numbers_or_codes_are_dropped() -> None:
+    """A kept tracking or order number or code given as an item isn't a product."""
+    result = checked(
+        answer(
+            kind="ready_for_pickup",
+            tracking_numbers=[S10],
+            order_numbers=["4512345"],
+            pickup_code="739 215",
+            items=[S10, "#4512345", "739215", "Exemplo Caneca 300 ml"],
+        ),
+        f"Encomenda n.º 4512345: o objeto {S10} está disponível para levantamento "
+        "no cacifo. Código de levantamento: 739 215. Exemplo Caneca 300 ml",
+    )
+    assert result.items == ("Exemplo Caneca 300 ml",)
+    assert result.shipments[0].items == result.items
+    assert result.shipments[0].pickup_code == "739 215"
+    assert NOTE_ITEM_IS_NUMBER in result.notes
+    assert result.confidence == CONFIDENCE_HIGH
+
+
 def test_pickup_code_is_never_a_tracking_number() -> None:
     """A tracking number the model also gave as the code isn't the code."""
     result = checked(
@@ -1341,6 +1434,46 @@ def test_pickup_code_must_be_in_text() -> None:
     )
     assert "pickup_code_not_in_email" in result.notes
     assert result.shipments[0].pickup_code is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "code", "text"),
+    [
+        ("ready_for_pickup", "73921X", "Código de levantamento: 739 215"),
+        ("ready_for_pickup", None, "Código de levantamento: 739 215"),
+        ("attempted", None, "Não estava em casa. Código: 739 215"),
+        ("out_for_delivery", None, "Em distribuição hoje. PIN de entrega: 739 215"),
+    ],
+    ids=["miscopied", "missed", "locker-label", "delivery-pin"],
+)
+def test_pickup_code_from_text(kind: str, code: str | None, text: str) -> None:
+    """When the checks leave no code, the e-mail's one code is used."""
+    result = checked(
+        answer(kind=kind, tracking_numbers=[S10], pickup_code=code),
+        f"Objeto {S10}.\n{text}",
+    )
+    assert NOTE_CODE_FROM_TEXT in result.notes
+    assert result.shipments[0].pickup_code == "739 215"
+
+
+@pytest.mark.parametrize(
+    ("kind", "text"),
+    [
+        ("ready_for_pickup", "Código de levantamento: 739 215\nPIN: 4821"),
+        ("delivered", "Entregue. Código de entrega: 739 215"),
+        ("not_parcel", "Código promocional: 739215"),
+        ("shipped", "Encomenda n.º 4512345. Código: 4512345"),
+    ],
+    ids=["two-codes", "delivered", "not-parcel", "only-a-number"],
+)
+def test_pickup_code_not_from_text(kind: str, text: str) -> None:
+    """No code is taken with two codes, after delivery, or from a number."""
+    result = checked(
+        answer(kind=kind, order_numbers=["4512345"], pickup_code=None),
+        f"Encomenda n.º 4512345.\n{text}",
+    )
+    assert NOTE_CODE_FROM_TEXT not in result.notes
+    assert all(shipment.pickup_code is None for shipment in result.shipments)
 
 
 @pytest.mark.parametrize("code", ["482913", "482 913", "Código: 482913"])
@@ -1561,6 +1694,81 @@ def test_carrier_departure_is_in_transit(
     """A "shipment update" saying a parcel left a carrier's centre is in transit."""
     result = checked(answer(kind=kind), text, subject=subject, language=language)
     assert result.kind is MailKind.IN_TRANSIT
+
+
+@pytest.mark.parametrize(
+    ("subject", "text", "language"),
+    [
+        pytest.param(
+            "Update on your parcel",
+            "Your parcel is at our hub in Leeds. Expected delivery: tomorrow.",
+            "en",
+            id="en-hub",
+        ),
+        pytest.param(
+            "Atualização",
+            "A sua encomenda está no armazém de Lisboa. Entrega prevista: amanhã.",
+            "pt",
+            id="pt-armazem",
+        ),
+        pytest.param(
+            "Sendungsinfo",
+            "Deine Sendung ist im Lager Hamburg. Zustellung voraussichtlich morgen.",
+            "de",
+            id="de-lager",
+        ),
+    ],
+)
+def test_out_for_delivery_with_a_later_date(
+    subject: str, text: str, language: str
+) -> None:
+    """Out for delivery means today; a later date without that wording is transit."""
+    result = checked(
+        answer(kind="out_for_delivery", eta_start="2026-11-19"),
+        text,
+        subject=subject,
+        language=language,
+    )
+    assert result.kind is MailKind.IN_TRANSIT
+    assert NOTE_NOT_OUT_TODAY in result.notes
+    assert result.shipments[0].eta is not None
+    assert result.shipments[0].eta.start == NOV_19
+
+
+@pytest.mark.parametrize(
+    ("text", "language", "eta_start"),
+    [
+        pytest.param(
+            "Your parcel is out for delivery today. If we miss you, we'll try "
+            "again tomorrow.",
+            "en",
+            "2026-11-19",
+            id="en-try-again",
+        ),
+        pytest.param(
+            "A sua encomenda está hoje em distribuição.",
+            "pt",
+            "2026-11-19",
+            id="pt-hoje",
+        ),
+        pytest.param(
+            "Your parcel is at our hub in Leeds. Expected delivery: today.",
+            "en",
+            "2026-11-18",
+            id="en-today",
+        ),
+    ],
+)
+def test_out_for_delivery_kept(text: str, language: str, eta_start: str) -> None:
+    """Out-for-delivery wording, or a delivery today, keeps the model's kind."""
+    result = checked(
+        answer(kind="out_for_delivery", eta_start=eta_start),
+        text,
+        subject="Update on your parcel",
+        language=language,
+    )
+    assert result.kind is MailKind.OUT_FOR_DELIVERY
+    assert NOTE_NOT_OUT_TODAY not in result.notes
 
 
 def test_result_fields() -> None:

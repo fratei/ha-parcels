@@ -241,6 +241,23 @@ the repo, it fell short on tracking numbers, right in 21 of 22 e-mails (see
 | A tracking number written only in a tracking link came back with one character wrong and was dropped, leaving the parcel without one. | As with order numbers, a tracking number that isn't in the e-mail becomes the e-mail's number, from the text or a link, when exactly one number is one character away, passes the carrier's format and check digit, and isn't an order number, a code, a date or a phone or tax number. Otherwise it is dropped. |
 | A hyphen-joined order number came back as two parts, and the second part was kept as an order number of its own. | An order number written only as a hyphen- or slash-separated part of a longer number becomes that number when exactly one number contains it, and is dropped otherwise. |
 
+### What the later runs showed
+
+Runs of `f117f4c` on this set and on two more private sets (see
+[Results](#results)), and made-up probes, showed these patterns, fixed in
+0.1.3:
+
+| Observed | What Parcels does |
+|---|---|
+| An order number came back with two neighbouring digits swapped and was dropped. | Swapping two neighbouring characters counts as one character away, for order and tracking numbers. A tracking number must still pass the carrier's format and check digit. |
+| A number written only in a link, with a carrier parameter the AI's link reader didn't know or inside a link wrapped by a click tracker, never reached the model or the checks, so a right answer was dropped. | The AI's link reader reads links as the parsers do, including the link a click tracker forwards to: carriers' own parameters on any site, generic ones such as `id` or `q` only on carrier sites. |
+| The model cut a pickup code short, and the checks dropped it. | When no code is left, the parcel isn't delivered and the e-mail is about a parcel, the e-mail's pickup code or PIN is used if it gives exactly one that isn't a kept number. |
+| An item came back as a tracking or order number or a code. | Such an item is dropped. |
+| A warning that an uncollected parcel goes back to the sender was read as a return in German and Dutch. | A return-to-sender warning in a pickup or missed-delivery notice isn't a return; a parcel on its way back still is. |
+| Delay wordings ("will arrive later than expected", "verzögert sich", "loopt een dag vertraging op") gave no kind. | They are delayed in the seven languages. |
+| An arrival at the carrier's depot that announced delivery the next day came back as out for delivery. | Arriving at a carrier's depot, branch, hub, or sorting or distribution centre is in transit. Without an out-for-delivery wording, out for delivery becomes in transit when the delivery date is after the day the e-mail arrived. |
+| A shop's e-mail named the carrier next to a number that fits many carriers, and the model gave no carrier. | When the e-mail names exactly one carrier, a kept number takes the carrier named next to it. A carrier named only in a returns footer or an ad isn't taken. |
+
 ## Results
 
 Fill in one row per run. Record the host's hardware (CPU, GPU, RAM), the
@@ -249,8 +266,10 @@ commit whose instructions and checks were used.
 
 *This set* is the evaluation set above. *Held-out* is a private held-out set
 of 22 made-up e-mails in 7 languages, kept outside the repo; it shows how
-the checks hold on e-mails they weren't written from. All runs so far used
-`qwen3:4b-instruct` on the same Home Assistant host.
+the checks hold on e-mails they weren't written from. *Second private set*
+(13) and *third private set* (15): made-up e-mails in 7 languages, written
+after `2ed6a52`, independently of the checks, and kept outside the repo. All
+runs so far used `qwen3:4b-instruct` on the same Home Assistant host.
 
 | Date | Model | E-mails | Parcels version | Host | Tracking, e-mails right (model / after checks) | Dates right | Kinds right | Bar | Median s | p90 s | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -258,6 +277,12 @@ the checks hold on e-mails they weren't written from. All runs so far used
 | 2026-11-18 | qwen3:4b-instruct | this set (41) | `2ed6a52` | CPU only, Home Assistant 2026.11.2, Ollama 0.40.16 | 31 / 41 of 41 | 74 of 74 (100%) | 41 of 41 (100%) | Pass | 36.6 | 39.4 | Nothing else running on Ollama. Mean 35.2 s, max 40.9 s. |
 | 2026-11-18 | qwen3:4b-instruct | held-out (22) | `2ed6a52` | as above | 17 / 21 of 22 | 38 of 40 (95.0%) | 20 of 22 (90.9%) | Fail (tracking) | 33.2 | 75.0 | Some calls waited behind Parcels' own AI calls on the host: mean 40.8 s, max 89.3 s. |
 | 2026-11-18 | qwen3:4b-instruct | held-out (22) | 0.1.2 | as above | – / 19 of 22 | 26 of 40 (65.0%) | 17 of 22 (77.3%) | Fail | – | – | For comparison; only the scores after checks were recorded. |
+| 2026-11-18 | qwen3:4b-instruct | this set (41) | `f117f4c` | as above | 34 / 41 of 41 | 74 of 74 (100%) | 41 of 41 (100%) | Pass | 32.2 | 38.4 | Mean 32.3 s, max 39.9 s. One order number came back with two neighbouring digits swapped and was dropped; 0.1.3 repairs it. |
+| 2026-11-18 | qwen3:4b-instruct | held-out (22) | `f117f4c` | as above | 17 / 22 of 22 | 40 of 40 (100%) | 21 of 22 (95.5%) | Pass | 35.8 | 40.7 | Mean 35.6 s, max 41.4 s. The kind miss is an "on its way" e-mail, which is left to the model. |
+| 2026-11-18 | qwen3:4b-instruct | second private set (13) | `2ed6a52` | as above | 10 / 13 of 13 | 26 of 26 (100%) | 13 of 13 (100%) | Pass | 31.6 | 47.6 | Mean 33.0 s, max 54.1 s. |
+| 2026-11-18 | qwen3:4b-instruct | second private set (13) | `f117f4c` | as above | 10 / 13 of 13 | 26 of 26 (100%) | 13 of 13 (100%) | Pass | 38.2 | 55.5 | Mean 38.8 s, max 62.8 s. Calls slowed as the hour-long run went on, with the same instructions: host load, not the code. |
+| 2026-11-18 | qwen3:4b-instruct | third private set (15) | `2ed6a52` | as above | 12 / 13 of 15 | 30 of 30 (100%) | 12 of 15 (80.0%) | Fail | 33.6 | 37.9 | Mean 32.6 s, max 38.2 s. The model followed text hidden in one e-mail's HTML. |
+| 2026-11-18 | qwen3:4b-instruct | third private set (15) | `f117f4c` | as above | 13 / 14 of 15 | 30 of 30 (100%) | 12 of 15 (80.0%) | Fail | 37.9 | 42.6 | Mean 37.7 s, max 43.3 s. The hidden text no longer reached the model. |
 
 Per field, after checks (model in parentheses):
 
@@ -275,3 +300,35 @@ Per field, after checks (model in parentheses):
 | pickup_point | 97.6% (97.6%) | 100% (97.6%) | 100% (100%) |
 | pickup_code | 100% (100%) | 100% (100%) | 100% (100%) |
 | items (recall) | 100% (100%) | 100% (100%) | 100% (100%) |
+
+Per field for `f117f4c` and the private sets, after checks (model in parentheses):
+
+| Field | `f117f4c`, this set | `f117f4c`, held-out | `2ed6a52`, second set | `f117f4c`, second set | `2ed6a52`, third set | `f117f4c`, third set |
+|---|---|---|---|---|---|---|
+| kind | 100% (80.5%) | 95.5% (77.3%) | 100% (76.9%) | 100% (76.9%) | 80.0% (73.3%) | 80.0% (80.0%) |
+| merchant | 100% (97.2%) | 100% (100%) | 100% (100%) | 100% (100%) | 92.9% (92.9%) | 92.9% (92.9%) |
+| carrier | 100% (95.1%) | 100% (100%) | 100% (100%) | 100% (100%) | 85.7% (92.9%) | 100% (100%) |
+| tracking_numbers | 100% (82.9%) | 100% (77.3%) | 100% (76.9%) | 100% (76.9%) | 86.7% (80.0%) | 93.3% (86.7%) |
+| order_numbers | 97.6% (85.4%) | 100% (81.8%) | 100% (76.9%) | 100% (69.2%) | 100% (66.7%) | 100% (73.3%) |
+| eta_start | 100% (67.6%) | 100% (65.0%) | 100% (69.2%) | 100% (76.9%) | 100% (60.0%) | 100% (60.0%) |
+| eta_end | 100% (70.3%) | 100% (70.0%) | 100% (76.9%) | 100% (76.9%) | 100% (66.7%) | 100% (60.0%) |
+| window_start | 100% (97.3%) | 100% (100%) | 100% (84.6%) | 100% (84.6%) | 100% (93.3%) | 100% (100%) |
+| window_end | 100% (97.3%) | 100% (100%) | 100% (84.6%) | 100% (84.6%) | 100% (93.3%) | 100% (100%) |
+| pickup_point | 100% (100%) | 100% (100%) | 100% (100%) | 100% (100%) | 100% (86.7%) | 100% (86.7%) |
+| pickup_code | 100% (100%) | 100% (100%) | 92.3% (92.3%) | 100% (100%) | 100% (100%) | 100% (100%) |
+| items (recall) | 100% (100%) | 100% (100%) | 100% (100%) | 100% (100%) | 100% (100%) | 100% (100%) |
+
+A private set stops being held out once its misses feed a fix. The held-out
+set's misses fed `f117f4c`. The second set's misses fed 0.1.3's pickup-code
+fallback and item-noise check. The third set's e-mails were never given to the
+checks' author; its misses feed 0.1.3's link reader, return-warning, delay and
+depot-arrival fixes. So no set here measures 0.1.3 untouched; live use is the
+next honest measure.
+
+### Known limits
+
+- An "on its way" e-mail is left to the model, which may answer shipped or in
+  transit.
+- A shop named only mid-sentence after a "sent by" phrase (pt
+  `enviado por <shop>`) isn't read as the merchant.
+- The carrier detector doesn't know Colis Privé, so only the model can name it.

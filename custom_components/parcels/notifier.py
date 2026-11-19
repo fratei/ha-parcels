@@ -101,6 +101,7 @@ from .const import (
 )
 from .models import Parcel, ParcelsData, ParcelState, local_date
 from .parsers.base import Eta
+from .views import shipment_groups
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -848,16 +849,34 @@ def _persistent_order(state: ParcelState) -> tuple[int, int, str]:
 
 
 def _persistent_message(
-    listed: list[ParcelState], private: int, day: date, today: date, path: str
+    listed: list[tuple[str, ParcelState]],
+    private: int,
+    day: date,
+    today: date,
+    path: str,
 ) -> str:
-    """Return the Markdown of the persistent notification."""
+    """Return the Markdown of the persistent notification.
+
+    ``listed`` pairs each parcel with its shipment. Packages of one shipment
+    with the same status share a line; a delivered one keeps its own, with
+    its time. The count in the title stays in packages.
+    """
     total = len(listed) + private
     lines = [
         f"**{total} parcel{'' if total == 1 else 's'} {_day_word(day, today)}**",
         "",
     ]
-    for state in sorted(listed, key=_persistent_order):
-        parts = [*(_names(state) or ["Parcel"]), _persistent_status(state, day, today)]
+    rows: dict[tuple[str, str, int], list[ParcelState]] = {}
+    ordered = sorted(listed, key=lambda item: _persistent_order(item[1]))
+    for index, (shipment, state) in enumerate(ordered):
+        status = _persistent_status(state, day, today)
+        alone = index if state.status is S.DELIVERED else -1
+        rows.setdefault((shipment, status, alone), []).append(state)
+    for (_, status, _), states in rows.items():
+        parts = _names(states[0]) or ["Parcel"]
+        if len(states) > 1:
+            parts.append(f"{len(states)} packages")
+        parts.append(status)
         lines.append("- " + SEP.join(_markdown(part) for part in parts))
     if private:
         lines.append(f"- +{private} private parcel{'' if private == 1 else 's'}")
@@ -1724,7 +1743,11 @@ class Notifier:
                 return
         day = self._data["days"].get(shown.isoformat())
         board = set(day["board"]) if day is not None else set()
-        listed: list[ParcelState] = []
+        # Grouped as the page shows them to someone who sees no private parcel.
+        shipments = shipment_groups(
+            parcel for parcel in parcels.values() if not parcel.private
+        )
+        listed: list[tuple[str, ParcelState]] = []
         private = 0
         for parcel in parcels.values():
             state = parcel.state
@@ -1735,7 +1758,7 @@ class Notifier:
             if parcel.private:
                 private += 1
             else:
-                listed.append(state)
+                listed.append((shipments.get(parcel.id, parcel.id), state))
         if not listed and not private:
             self._dismiss_persistent()
             return

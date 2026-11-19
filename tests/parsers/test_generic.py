@@ -843,6 +843,192 @@ def test_text_kinds_lists_every_kind() -> None:
 
 
 @pytest.mark.parametrize(
+    ("subject", "text", "lang", "kind"),
+    [
+        (
+            "Information zu deiner Sendung",
+            "Dein Paket liegt zur Abholung bereit. Nach Ablauf der Lagerfrist "
+            "geht das Paket an den Absender zurück.",
+            "de",
+            MailKind.READY_FOR_PICKUP,
+        ),
+        (
+            "Information zu deiner Sendung",
+            "Dein Paket liegt in der Packstation bereit. Holst du es nicht "
+            "innerhalb von 7 Tagen ab, schicken wir es an den Absender zurück.",
+            "de",
+            MailKind.READY_FOR_PICKUP,
+        ),
+        (
+            "Informatie over je pakket",
+            "Je pakket ligt klaar bij het afhaalpunt. Je kunt het 7 dagen "
+            "ophalen. Daarna gaat het pakket terug naar de afzender.",
+            "nl",
+            MailKind.READY_FOR_PICKUP,
+        ),
+        (
+            "Informatie over je pakket",
+            "Je pakket ligt klaar bij het afhaalpunt. Haal je het niet op vóór "
+            "25 november, dan sturen we het terug naar de afzender.",
+            "nl",
+            MailKind.READY_FOR_PICKUP,
+        ),
+        (
+            "Informatie over je pakket",
+            "We hebben je gemist. We konden je pakket niet bezorgen. Je kunt "
+            "het 7 dagen ophalen bij het afhaalpunt. Daarna gaat het pakket "
+            "terug naar de afzender.",
+            "nl",
+            MailKind.ATTEMPTED,
+        ),
+    ],
+    ids=["de-lagerfrist", "de-packstation", "nl-daarna", "nl-dan", "nl-gemist"],
+)
+def test_return_warning_in_a_pickup_notice(
+    subject: str, text: str, lang: str, kind: MailKind
+) -> None:
+    """Sending the parcel back if nobody collects it is a warning, not a return."""
+    assert detect_kind(subject, text, lang=lang) == (kind, "body")
+    assert MailKind.RETURN not in text_kinds(subject, text, lang=lang)
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        (
+            "Dein Paket lag 7 Tage zur Abholung bereit und wurde nicht abgeholt. "
+            "Es geht jetzt an den Absender zurück.",
+            "de",
+        ),
+        (
+            "Dein Paket lag zur Abholung bereit. Nach Ablauf der Lagerfrist "
+            "wurde es an den Absender zurückgeschickt.",
+            "de",
+        ),
+        (
+            "Je pakket lag klaar bij het afhaalpunt en is niet opgehaald. "
+            "Daarom gaat het terug naar de afzender.",
+            "nl",
+        ),
+        (
+            "Je pakket lag klaar bij het afhaalpunt. Daarna hebben we het "
+            "terug naar de afzender gestuurd.",
+            "nl",
+        ),
+    ],
+    ids=["de-jetzt", "de-past", "nl-daarom", "nl-past"],
+)
+def test_return_after_a_pickup_period_stays_a_return(text: str, lang: str) -> None:
+    """A parcel that went back after its pickup period is a return."""
+    subject = "Informatie over je pakket" if lang == "nl" else "Information"
+    assert detect_kind(subject, text, lang=lang) == (MailKind.RETURN, "body")
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        pytest.param(
+            "A sua encomenda vai chegar mais tarde do que o previsto.",
+            "pt",
+            id="pt-vai-chegar",
+        ),
+        pytest.param("Tu envío lleva retraso.", "es", id="es-lleva"),
+        pytest.param(
+            "Your parcel will arrive later than expected.", "en", id="en-will-arrive"
+        ),
+        pytest.param(
+            "Die Zustellung deiner Sendung verzögert sich.", "de", id="de-sich"
+        ),
+        pytest.param("Je pakket loopt een dag vertraging op.", "nl", id="nl-dag"),
+        pytest.param("Votre colis aura du retard.", "fr", id="fr-aura"),
+        pytest.param(
+            "Je pakket loopt een dag vertraging op wegens een storing in het "
+            "distributiecentrum.",
+            "nl",
+            id="nl-facility",
+        ),
+        pytest.param("Je pakket loopt vertraging op door drukte.", "nl", id="nl-loopt"),
+        pytest.param("La tua spedizione è in ritardo.", "it", id="it-ritardo"),
+    ],
+)
+def test_delay_wordings(text: str, lang: str) -> None:
+    """A delay notice reads as delayed under a neutral subject."""
+    assert detect_kind("Update on your parcel", text, lang=lang) == (
+        MailKind.DELAYED,
+        "body",
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        pytest.param(
+            "A sua encomenda não vai chegar mais tarde do que o previsto.",
+            "pt",
+            id="pt-nao",
+        ),
+        pytest.param(
+            "Your parcel won't arrive later than expected.", "en", id="en-wont"
+        ),
+        pytest.param(
+            "If your parcel will arrive later than expected, we'll tell you.",
+            "en",
+            id="en-if",
+        ),
+        pytest.param("Je pakket heeft geen vertraging.", "nl", id="nl-geen"),
+    ],
+)
+def test_delay_wordings_guarded(text: str, lang: str) -> None:
+    """A negated or conditional delay wording is not a delay."""
+    assert MailKind.DELAYED not in text_kinds("Update on your parcel", text, lang=lang)
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        pytest.param(
+            "A sua encomenda já está no nosso centro de distribuição.",
+            "pt",
+            id="pt-centro",
+        ),
+        pytest.param(
+            "Tu paquete ya está en nuestro centro de reparto.", "es", id="es-centro"
+        ),
+        pytest.param(
+            "Deine Sendung ist in unserem Depot angekommen.", "de", id="de-depot"
+        ),
+        pytest.param("Votre colis est arrivé dans notre agence.", "fr", id="fr-agence"),
+        pytest.param(
+            "La tua spedizione è arrivata nella nostra filiale.",
+            "it",
+            id="it-filiale",
+        ),
+        pytest.param("Je pakket is aangekomen in ons depot.", "nl", id="nl-depot"),
+        pytest.param(
+            "Your parcel has arrived at our local depot.", "en", id="en-depot"
+        ),
+        pytest.param(
+            "Tu envío ha llegado a la delegación de tu zona.",
+            "es",
+            id="es-delegacion",
+        ),
+    ],
+)
+def test_depot_arrivals(text: str, lang: str) -> None:
+    """An arrival at a depot or hub is in transit."""
+    assert detect_kind("Update on your parcel", text, lang=lang) == (
+        MailKind.IN_TRANSIT,
+        "body",
+    )
+
+
+def test_depot_arrival_guarded() -> None:
+    """A depot arrival in a condition is not in transit."""
+    text = "Sobald deine Sendung in unserem Depot angekommen ist, melden wir uns."
+    assert not text_kinds("Update on your parcel", text, lang="de")
+
+
+@pytest.mark.parametrize(
     ("subject", "text", "lang"),
     [
         ("Your parcel will be delivered tomorrow", "", "en"),

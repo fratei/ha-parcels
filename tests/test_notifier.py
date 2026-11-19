@@ -947,6 +947,44 @@ async def test_persistent_notification(env: Env, hass: HomeAssistant) -> None:
     ]
 
 
+async def test_persistent_notification_one_line_per_shipment(
+    env: Env, hass: HomeAssistant
+) -> None:
+    """Packages of one shipment share a line per status; delivered ones don't."""
+    env.hub()
+    packages = [
+        env.parcel(eta=on(), merchant="Loja Exemplo", carrier="gls") for _ in range(4)
+    ]
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+
+    await env.goto(at(8))
+    assert persistent(hass) == lines(
+        "**5 parcels today**",
+        "",
+        f"- Loja Exemplo{SEP}GLS{SEP}4 packages{SEP}Expected today",
+        f"- Zalando{SEP}CTT{SEP}Expected today",
+        "",
+        f"[Open Parcels]({PATH})",
+    )
+
+    await env.goto(at(10, 42))
+    env.change(packages[0], S.DELIVERED)
+    await env.goto(at(11, 5))
+    env.change(packages[2], S.DELIVERED)
+    await env.settle()
+    assert persistent(hass) == lines(
+        "**5 parcels today**",
+        "",
+        f"- Loja Exemplo{SEP}GLS{SEP}2 packages{SEP}Expected today",
+        f"- Zalando{SEP}CTT{SEP}Expected today",
+        f"- Loja Exemplo{SEP}GLS{SEP}Delivered 10:42 {CHECK}",
+        f"- Loja Exemplo{SEP}GLS{SEP}Delivered 11:05 {CHECK}",
+        "",
+        f"[Open Parcels]({PATH})",
+    )
+
+
 async def test_pickup(env: Env, hass: HomeAssistant) -> None:
     """Ready after the cut-off: on the lock screen the next day, then only listed."""
     phone = env.phone("Alex iPhone", ALEX)

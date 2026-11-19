@@ -6,10 +6,12 @@ from dataclasses import replace
 from datetime import UTC, datetime
 import json
 from typing import Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from homeassistant.helpers import llm, selector
 import probatio
+import pytest
 
 from custom_components.parcels.ai.prompt import (
     AI_STRUCTURE,
@@ -23,6 +25,7 @@ from custom_components.parcels.ai.prompt import (
     build_input,
     build_prompt,
     json_schema,
+    link_numbers,
     structure_schema,
 )
 from custom_components.parcels.const import AI_MAX_INPUT_CHARS, MailKind
@@ -232,6 +235,70 @@ def test_links_reduced_to_domain_and_numbers(tz: ZoneInfo) -> None:
     assert text.endswith(
         f"Links:\n- ctt.pt: RR123456785PT\n- loja-exemplo.pt\n{END_MARKER}"
     )
+
+
+DHL_LINK = (
+    "https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html"
+    "?piececode=00340434161094015902"
+)
+GLS_LINK = "https://gls-group.com/PT/pt/seguimento-envio?match=12345678901"
+
+
+def wrapped(url: str) -> str:
+    """Return a link to a click tracker that redirects to ``url``."""
+    return f"https://click.loja-exemplo.pt/ls/click?upn=a1b2&url={quote(url, safe='')}"
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (DHL_LINK, ("00340434161094015902",)),
+        (wrapped(DHL_LINK), ("00340434161094015902",)),
+        (wrapped(GLS_LINK), ("12345678901",)),
+        (
+            "https://tracking.dpd.de/status/en_US/parcel?q=01234567890123",
+            ("01234567890123",),
+        ),
+        (
+            wrapped("https://loja-exemplo.pt/conta/seguimento?trackingNo=ABC123456789"),
+            ("ABC123456789",),
+        ),
+    ],
+)
+def test_link_numbers_read_like_the_parsers(url: str, expected: tuple[str]) -> None:
+    """Carrier parameters and links wrapped by click trackers are read."""
+    assert link_numbers(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://loja-exemplo.pt/pesquisa?q=01234567890123",
+        wrapped("https://loja-exemplo.pt/pesquisa?id=01234567890123"),
+        "https://loja-exemplo.pt/conta?ref=01234567890123",
+    ],
+)
+def test_link_numbers_skip_generic_parameters_off_carrier_sites(url: str) -> None:
+    """Generic parameters such as q, id and ref count only on carrier sites."""
+    assert link_numbers(url) == ()
+
+
+def test_link_numbers_capped() -> None:
+    """A link gives at most three numbers, also when it is wrapped."""
+    numbers = [f"0123456789012{digit}" for digit in range(5)]
+    url = wrapped(
+        "https://tracking.dpd.de/status/en_US/parcel?"
+        + "&".join(f"q={number}" for number in numbers)
+    )
+    assert link_numbers(url) == tuple(numbers[:3])
+
+
+def test_wrapped_link_in_text_shows_its_number(tz: ZoneInfo) -> None:
+    """A tracking link wrapped by a click tracker keeps its number."""
+    message = make_message(f"Siga a sua encomenda: {wrapped(GLS_LINK)}")
+    text = build_input(message, tz)
+    assert "Siga a sua encomenda: [link: click.loja-exemplo.pt: 12345678901]" in text
+    assert "http" not in text
 
 
 def test_long_text_is_trimmed(tz: ZoneInfo) -> None:
