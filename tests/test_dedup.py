@@ -18,6 +18,7 @@ from custom_components.parcels.dedup import (
     mark_delivered,
     merge_parcels,
     order_parcels,
+    paack_amazon_counts,
     parcel_order_keys,
     remove_message,
     split_parcel,
@@ -396,6 +397,51 @@ def test_paack_barcode_joins_amazon() -> None:
     )
     assert paack.parcel_id == amazon.parcel_id
     assert paack.auto_merged is None
+
+
+def test_paack_amazon_counts() -> None:
+    """Paack's e-mails are counted by whether their ID names a shipment.
+
+    Each e-mail counts once, with no ID or shop name, so users can share the
+    counts.
+    """
+    data = ParcelsData()
+    sent = [
+        contribution(
+            "msg:a#0",
+            label="amazon.es",
+            merchant="Amazon.es",
+            shipment_id=SHIPMENT,
+            carrier="paack",
+            number=PAACK_BARCODE,
+        ),
+        *(
+            contribution(
+                origin_id,
+                label="paack.co",
+                source=source,
+                kind=MailKind.IN_TRANSIT,
+                carrier="paack",
+                number=number,
+                merchant=merchant,
+            )
+            for origin_id, source, number, merchant in (
+                ("msg:p1#0", Source.PARSER, PAACK_ID, "Amazon"),
+                ("msg:p1#ai", Source.AI, PAACK_ID, None),
+                ("msg:p2#0", Source.PARSER, f"{SHIPMENT.lower()}_2", "Amazon"),
+                ("msg:p3#0", Source.PARSER, PAACK_BARCODE, "Amazon"),
+                ("msg:p4#0", Source.PARSER, f"{SHIPMENT}_2", None),
+                ("msg:p5#0", Source.PARSER, f"{SHIPMENT[:-1]}X_1", "Casa Exemplo"),
+            )
+        ),
+    ]
+    for index, item in enumerate(sent):
+        apply_contribution(data, item, at(hours=index))
+
+    assert paack_amazon_counts(data) == {
+        "naming_amazon": {"matched": 1, "unmatched": 1, "without_id": 1},
+        "not_naming_amazon": {"matched": 1, "unmatched": 1, "without_id": 0},
+    }
 
 
 def test_same_merchant_and_dates_is_flagged() -> None:

@@ -82,6 +82,7 @@ from .dedup import (
     infer_deliveries,
     mark_delivered,
     merge_parcels,
+    paack_amazon_counts,
     reconcile,
     remove_message,
     repair_store,
@@ -1783,6 +1784,7 @@ class ParcelsEngine:
                 1 for parcel in data.parcels.values() if parcel.auto_merged
             ),
             "kept_apart": len(data.engine.get("kept_apart") or ()),
+            "paack_amazon": paack_amazon_counts(data),
             "repair": data.engine.get(REPAIR_KEY),
             "reconcile_waiting": len(self._syncing | self._more),
             # How the sender checks went for the newest e-mails under review:

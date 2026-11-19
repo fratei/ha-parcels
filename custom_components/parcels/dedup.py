@@ -313,6 +313,38 @@ def _origins_linked(first: Origin, second: Origin) -> bool:
     )
 
 
+def paack_amazon_counts(data: ParcelsData) -> dict[str, dict[str, int]]:
+    """Count Paack's e-mails by whether their order ID names an Amazon shipment.
+
+    Each e-mail counts once: "matched" when its order ID starts with the
+    shipment ID of an Amazon e-mail, "unmatched" when no Amazon shipment
+    fits, "without_id" when no order ID was read. The counts hold no ID or
+    shop name.
+    """
+    shipments = {
+        origin.amazon_shipment_id
+        for origin in _all_origins(data)
+        if origin.amazon_shipment_id
+    }
+    emails: defaultdict[str, list[Origin]] = defaultdict(list)
+    for origin in _all_origins(data):
+        if (info := lookup(origin.label)) is not None and info.carrier == "paack":
+            emails[origin.message or origin.id].append(origin)
+    counts = {
+        group: {"matched": 0, "unmatched": 0, "without_id": 0}
+        for group in ("naming_amazon", "not_naming_amazon")
+    }
+    for origins in emails.values():
+        stems = {stem for origin in origins if (stem := _paack_stem(origin))}
+        if stems & shipments:
+            result = "matched"
+        else:
+            result = "unmatched" if stems else "without_id"
+        amazon = any(merchant_key(origin.merchant) == "amazon" for origin in origins)
+        counts["naming_amazon" if amazon else "not_naming_amazon"][result] += 1
+    return counts
+
+
 def _most_recent(data: ParcelsData, parcel_ids: Iterable[str]) -> str:
     return max(
         parcel_ids,

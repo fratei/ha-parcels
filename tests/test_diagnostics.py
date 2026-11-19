@@ -31,12 +31,15 @@ from custom_components.parcels.const import (
     CONF_TEST_DEVICE,
     DEFAULT_INTERVAL_MINUTES,
 )
+from custom_components.parcels.diagnostics import async_get_config_entry_diagnostics
 from custom_components.parcels.engine import ParcelsEngine
 from custom_components.parcels.mail.errors import MailServerError
 from custom_components.parcels.parsers.auth import parse_authentication_results
+from custom_components.parcels.parsers.normalize import message_from_bytes
 
 from .common import (
     ADDRESS,
+    EMAIL_FIXTURES,
     OTHER_OWNER,
     OWNER,
     FakeMailClient,
@@ -68,6 +71,8 @@ E_MAIL_DETAILS = (
     "Worten",
     "Example Outfitters",
 )
+# The shipment in amazon/shipped_recommendations_pt.eml.
+AMAZON_SHIPMENT = "Pz6WnT4cR"
 
 
 @pytest.fixture(autouse=True)
@@ -206,6 +211,44 @@ async def test_sender_checks(
             },
         }
     ]
+
+
+async def test_paack_amazon(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    hub: MockConfigEntry,
+    mailbox: MockConfigEntry,
+) -> None:
+    """Paack's e-mails that name an Amazon shipment are counted, without IDs.
+
+    Paack's order ID is taken to be Amazon's shipment ID and a package
+    number; the counts show whether that holds.
+    """
+    freezer.move_to("2026-11-25 09:00:00+00:00")
+    raw = (EMAIL_FIXTURES / "carriers/paack_out_for_delivery_pt.eml").read_bytes()
+    paack = message_from_bytes(
+        raw.replace(b"Rb5Lq2Vm7", AMAZON_SHIPMENT.encode()),
+        mailbox=ADDRESS,
+        provider_id="paack",
+        provider="google",
+    )
+    client = FakeMailClient()
+    client.add("amazon/shipped_recommendations_pt.eml")
+    client.add(paack)
+    with patch_mail_clients(client):
+        await async_setup_parcels(hass)
+
+        # Called directly: eight days on, the test client's token expired.
+        diagnostics = await async_get_config_entry_diagnostics(hass, hub)
+
+    engine_data = diagnostics["engine"]
+    assert engine_data["paack_amazon"] == {
+        "naming_amazon": {"matched": 1, "unmatched": 0, "without_id": 0},
+        "not_naming_amazon": {"matched": 0, "unmatched": 0, "without_id": 0},
+    }
+    # Paack's e-mail joined the Amazon parcel.
+    assert engine_data["parcels"] == {"out_for_delivery": 1}
+    assert AMAZON_SHIPMENT not in json.dumps(diagnostics)
 
 
 async def test_mailbox(
