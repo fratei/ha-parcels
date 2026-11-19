@@ -287,8 +287,8 @@ def _names_shipment(paack: Origin, amazon: Origin) -> bool:
 def _same_shipment(first: Origin, second: Origin) -> bool:
     """Return True when two origins are about the same Amazon shipment.
 
-    Both give its shipment ID, or one is Paack's order ID that starts with
-    the other's shipment ID. Case counts: the IDs are case-sensitive.
+    Both give its shipment ID, or one is Paack's order ID whose part before
+    "_" is the other's shipment ID. Case counts: the IDs are case-sensitive.
     """
     if (
         first.amazon_shipment_id
@@ -316,10 +316,10 @@ def _origins_linked(first: Origin, second: Origin) -> bool:
 def paack_amazon_counts(data: ParcelsData) -> dict[str, dict[str, int]]:
     """Count Paack's e-mails by whether their order ID names an Amazon shipment.
 
-    Each e-mail counts once: "matched" when its order ID starts with the
-    shipment ID of an Amazon e-mail, "unmatched" when no Amazon shipment
-    fits, "without_id" when no order ID was read. The counts hold no ID or
-    shop name.
+    Each e-mail counts once: "matched" when the part of its order ID before
+    "_" is the shipment ID of an Amazon e-mail, "unmatched" when no Amazon
+    shipment fits, "without_id" when no order ID was read. The counts hold
+    no ID or shop name.
     """
     shipments = {
         origin.amazon_shipment_id
