@@ -262,10 +262,10 @@ export function returnChipSelector(returnId: string): string {
 
 /**
  * A customer return on its pickup day, in the returns colour with a
- * parcel-going-out icon: the
- * shop; how far it is ("Return pickup", "Return picked up"…) and the carrier;
- * the items. A lock when private. Tapping it opens the return's details;
- * someone else's private return isn't interactive.
+ * parcel-going-out icon: the shop; how far it is ("Return pickup", "Return
+ * picked up"…) and the carrier; the items. A lock when private. Tapping it
+ * opens the return's details; someone else's private return isn't
+ * interactive.
  */
 export function renderReturnChip(ret: CustomerReturn, options: ReturnChipOptions): TemplateResult {
   const description = describeReturn(ret, options.locale, options.today);

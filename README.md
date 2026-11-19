@@ -2,9 +2,9 @@
 
 A Home Assistant integration that tracks your parcels from your shipping
 e-mails. It reads Outlook.com and Gmail mailboxes with read-only access, keeps
-each parcel once, shows the week's deliveries on a Parcels page and, on
-delivery day, puts them on your iPhones as Live Activities and in a persistent
-notification in Home Assistant.
+each parcel once, shows the week's deliveries and return pickups on a Parcels
+page and, on delivery day, puts the day's parcels on your iPhones as Live
+Activities and in a persistent notification in Home Assistant.
 
 Everything runs in Home Assistant. Parcels has no server of its own: it talks
 to Microsoft or Google with an app you register yourself, and, only if you
@@ -31,9 +31,10 @@ local AI model on your Home Assistant host.
   Gmail, signed in from Home Assistant with OAuth. Add as many as you like.
 - **Senders it understands**: Amazon (amazon.es, .com, .co.uk, .de, .fr, .it
   and .nl), Shopify stores, Shop, and the carriers CTT and CTT Expresso, DPD,
-  GLS, SEUR, UPS, DHL, Correos Express, MRW, Nacex, Paack, and InPost and
-  Vinted Go. In other e-mails a generic detector finds tracking numbers, and
-  checks the check digit of UPS (`1Z…`) and postal (`AB123456785PT`) numbers.
+  GLS, SEUR, UPS, FedEx, DHL, Correos Express, MRW, Nacex, Paack, and InPost
+  and Vinted Go. In other e-mails a generic detector finds tracking numbers,
+  and checks the check digit of UPS (`1Z…`) and postal (`AB123456785PT`)
+  numbers.
 - **Languages**: Portuguese, Spanish, English, German, French, Italian and
   Dutch. Delivery dates such as "amanhã, entre as 13:00 e as 14:00" or
   "übermorgen" are read relative to the day the e-mail was sent.
@@ -42,14 +43,15 @@ local AI model on your Home Assistant host.
   get. An order e-mail creates a provisional parcel that the shipping e-mail
   later completes, also when the carrier's e-mail names only the shop. A
   later e-mail about the same order and items updates that order's parcel,
-  and a delivery or return e-mail without items updates the order's only open
-  parcel. An e-mail that arrives late never moves a parcel back to an earlier
-  status. Merges that rely on a guess (same shop, matching dates, only one
-  candidate) are marked, and you can undo them. A guess counts only when no
-  other open parcel of that shop could be the one, late parcels and those due
-  in the next days included, and when the carriers named by the shop and the
-  delivery agree. When several parcels could match, Parcels asks in **Needs
-  review** instead. Parcels with different tracking numbers are never merged.
+  and a delivery e-mail without items, or one saying the parcel went back to
+  its sender, updates the order's only open parcel. An e-mail that arrives
+  late never moves a parcel back to an earlier status. Merges that rely on a
+  guess (same shop, matching dates, only one candidate) are marked, and you
+  can undo them. A guess counts only when no other open parcel of that shop
+  could be the one, late parcels and those due in the next days included, and
+  when the carriers named by the shop and the delivery agree. When several
+  parcels could match, Parcels asks in **Needs review** instead. Parcels with
+  different tracking numbers are never merged.
 - **Parcels without a tracking number**: when a carrier delivers another
   parcel from the same shop around the expected day, and no e-mail says
   otherwise, the parcel is marked as probably delivered, unless that delivery
@@ -81,12 +83,35 @@ local AI model on your Home Assistant host.
   opens its search page. Parcels never keeps the postcode, e-mail address or
   phone number in Paack's links, and doesn't add Paack's numbers to
   [17TRACK](#17track), which can't follow them without the postcode.
+- **Returns**: an item you send back to a shop becomes a return of its own,
+  apart from the parcel it came in, which keeps its delivery day. The return
+  shows on its pickup day, in its own color and with an outgoing-parcel icon.
+  The pickup day is the date in the shop's e-mail, or the working day after
+  the e-mail when the e-mail says so, such as "Pickup date: next working day",
+  in any of the seven languages. When an Amazon return e-mail gives no day,
+  the pickup goes on the working day after the e-mail, when Amazon's carrier
+  usually comes; other returns without a day show on their first e-mail's
+  day. Working days are Monday to Friday, without the public holidays of Home
+  Assistant's country when the `holidays` package, which Home Assistant's
+  Workday and Holiday integrations use, is available. A return is done once
+  its day has passed or the shop says it has the items. If the parcel the
+  items came in still shows as on its way, it's marked as probably delivered,
+  and you can undo that. A parcel that the carrier takes back to the shop
+  undelivered isn't a return: it shows as "Returned to sender".
+- **Refunds**: refund e-mails from shops, in any of the seven languages, are
+  ignored: those whose subject is about a refund or that say a refund was
+  made, and those whose text opens with a refund and that are read as a
+  return or, with confidence, as not about a parcel. They never create or
+  change a parcel or a return, and never appear in **Needs review** or
+  **Filtered**; the hub's diagnostics only count them. Carriers' e-mails, and
+  e-mails read as about an order, a shipment, a delivery or a cancellation,
+  are read as usual.
 - **Delivery PINs**: delivery PINs, one-time codes and pickup codes found in
   e-mails are shown on the parcel's box until it's delivered, and in its
   details (see [Privacy and safety](#privacy-and-safety)).
-- **A Parcels page** with a Monday-to-Sunday calendar of your deliveries, the
-  parcels that don't have a date yet, and the e-mails Parcels wasn't sure
-  about.
+- **A Parcels page** with a Monday-to-Sunday calendar of your deliveries and
+  return pickups, the parcels that don't have a date yet, and the e-mails
+  Parcels wasn't sure about.
 - **On delivery day**: Live Activities on iPhones, a notification on iPads and
   Android phones, and a persistent notification in Home Assistant.
 - **Optional integrations**, both off until you set them up:
@@ -105,9 +130,14 @@ local AI model on your Home Assistant host.
   account, so no third party holds a token for your mailbox. Home Assistant
   stores the tokens in its configuration.
 - **E-mails aren't kept.** Parcels downloads e-mails that look like shipping
-  e-mails, reads them in memory and keeps only what it found (shop, carrier,
-  tracking number, dates, status) plus a hash of each e-mail's ID, so it never
-  reads one twice. E-mail bodies are never stored or logged.
+  e-mails, reads them in memory and keeps only what it found, such as the
+  shop, carrier, tracking and order numbers, items, dates and status. For
+  each e-mail it keeps a hash of its ID, the ID your mailbox gives it, the
+  sender's domain, when it arrived and what Parcels did with it, to recognize
+  the e-mails it has read and to download one again when needed. E-mails in
+  **Needs review** and **Filtered** also keep their sender's address and
+  subject until they leave the list. E-mail bodies are never stored or
+  logged.
 - **No remote content.** Images, tracking pixels and links in e-mails are
   never loaded. Tracking links are built from each carrier's public URL
   pattern.
@@ -305,7 +335,7 @@ entry.
 | Show item names on the lock screen | off | When off, the lock screen shows shop, carrier, status and time window only. |
 | Live status from 17TRACK | on | Has effect only when the 17TRACK integration is set up. See [17TRACK](#17track). |
 | Test mode and Test device | off | Send Live Activities to the test device only. |
-| Archive delivered parcels after | 14 days | Archived parcels stay visible in past weeks. |
+| Archive delivered parcels after | 14 days | Archived parcels stay visible in past weeks. Return pickups are archived this long after their day. |
 | Delete delivered parcels after | 90 days | Must be more than the archive period. |
 | Local AI task | none | See [Local AI](#local-ai). |
 | AI mode | Suggest | Off, Suggest (review every result) or Automatic (known or trusted senders). |
@@ -335,6 +365,13 @@ add a resource.
   delivered, returned or cancelled), the **Recent** ones (changed or expected
   this week) or the **Completed** ones. Each device remembers the choice, and
   **Parcels without a date** follows it too.
+  Return pickups are pink, with an outgoing-parcel icon, the shop, "Return
+  pickup" (later "Return picked up" or "Received by the shop", and "Return
+  started" while there's no pickup day), the carrier and the items. They're
+  **Active** until done, **Completed** after, and **Recent** when their day
+  is in this week. Select one for its pickup day and how it was worked out,
+  the carrier, the parcel its items came in and its e-mails; administrators
+  can remove it there. A parcel's details list its returns.
   Select a parcel for its timeline, carrier and carrier link, tracking
   number, the shipment's other packages, pickup point, PIN or pickup code and
   parcel ID, and to mark it delivered, edit it, make it private, merge, split
@@ -356,9 +393,10 @@ add a resource.
   it says how many and, after the AI's first answer, about how long they'll
   take. **Filtered** lists e-mails that looked like shipping e-mails but
   turned out not to be about a parcel; you can move them back, or clear one or
-  all of them. A cleared e-mail isn't read again. Items leave the list as soon
-  as you act on them, and come back with the error if the action fails.
-  Option: `title`.
+  all of them. A cleared e-mail isn't read again, apart from one check for
+  returns after updating to 0.1.5 (see [Troubleshooting](#troubleshooting)).
+  Items leave the list as soon as you act on them, and come back with the
+  error if the action fails. Option: `title`.
 
 Delivery notifications open `/dashboard-parcels/week`. To make them land on
 your page, go to **Settings > Dashboards > Add dashboard > New dashboard from
@@ -405,8 +443,9 @@ views:
 For a month view, add Home Assistant's own calendar card with
 `calendar.parcels`. It has no week grid, which is why Parcels brings its own.
 
-Parcels marked private show only to their owner. The review list's actions
-need an administrator.
+Parcels marked private show only to their owner. A return of a private parcel
+is private too: others see only "Private return" on its day. The review list's
+actions need an administrator.
 
 ### Trusted and ignored senders
 
@@ -491,6 +530,10 @@ ones keep their own line, with the time. Private parcels are only counted.
 Parcels ready for pickup stay in it for up to a week. The **Daily
 notification** switch turns it off and on.
 
+Return pickups show only on the Parcels page and in `calendar.parcels`: they
+start no Live Activity or notification, and aren't in the persistent
+notification or the sensors.
+
 ## 17TRACK
 
 Optional. Carriers e-mail the main steps only; 17TRACK follows the carrier's
@@ -503,11 +546,14 @@ own tracking in between.
   gives no expected date, so a parcel without one stays under **No date yet**.
 - **What it leaves out**, so they don't take up places in your account:
   - Amazon Logistics numbers, which 17TRACK can't follow;
-  - Paack's numbers, and GLS's when Home Assistant's country is Portugal.
-    17TRACK follows them only with the recipient's postcode
+  - Paack's and SEUR's numbers, and GLS's when Home Assistant's country is
+    Portugal, Spain or the Netherlands. 17TRACK follows them only with the
+    recipient's postcode, and SEUR's also with the last four digits of a
+    phone number
     ([17TRACK's list](https://res.17track.net/asset/carrier/info/additional_parameters.json)),
     and Home Assistant's 17TRACK integration sends only the number, so they
     would stay "Not Found";
+  - the tracking numbers of returns;
   - the numbers of parcels without news for three weeks. 17TRACK's
     [API documentation](https://api.17track.net/en/doc?version=v2.4) says
     tracking stops after 30 days without carrier events.
@@ -580,7 +626,9 @@ Assistant host through Ollama; e-mails never leave your network.
      the rest go to review.
 
 Parcels only sends e-mails from senders whose DKIM or DMARC passes, one at a
-time and newest first.
+time and newest first. The refunds and returns that the parsers recognize are
+never sent: refunds are dropped, and a return the parsers can't read with
+confidence waits in **Needs review**.
 
 **Filling in what a parser missed**: when a parser reads an e-mail but leaves
 out the delivery date, the items, or a shipping e-mail's tracking number or
@@ -619,7 +667,12 @@ only a part of a hyphen- or slash-joined number. Parcels' own tracking number
 detector always runs as well. The kind, the delivery date, the merchant and
 the pickup point are checked against the e-mail's own wording: a date to
 collect, pay or return by is never taken as a delivery date, and when the
-e-mail's words give a kind, a kind they don't support is replaced by it.
+e-mail's words give a kind, a kind they don't support is replaced by it. An
+answer that a parcel was returned is then sorted by the e-mail's own wording,
+as the parsers' readings are: an item sent back to the shop becomes a return,
+a parcel going back to its sender stays one, and a refund is dropped, as is a
+refund e-mail that the answer says with confidence isn't about a parcel.
+Paack's order IDs are kept as the e-mail writes them.
 [docs/ai-benchmark.md](docs/ai-benchmark.md) lists the checks.
 
 Limits: 5 minutes per e-mail, one retry, 50 e-mails a day, and only the last
@@ -656,7 +709,7 @@ with made-up e-mails before you rely on it.
 | `sensor.parcels_ready_for_pickup` | Parcels waiting at a pickup point or locker. |
 | `sensor.parcels_delivered_today` | Parcels delivered today. |
 | `sensor.parcels_ai_queue` | E-mails waiting for the local AI. |
-| `calendar.parcels` | Expected and actual deliveries. |
+| `calendar.parcels` | Expected and actual deliveries, and return pickups. |
 | `switch.parcels_live_activities` | Live Activities and phone notifications. |
 | `switch.parcels_daily_notification` | The persistent notification. |
 
@@ -675,7 +728,7 @@ carrier, status and dates. Each mailbox has a **Last sync** sensor and a
 | `parcels.merge` | Merges parcels that are the same delivery. |
 | `parcels.split` | Moves e-mails or entries of a parcel to a new parcel. |
 | `parcels.undo_merge` | Splits a parcel that Parcels merged automatically. |
-| `parcels.undo_delivery` | Takes back a delivery that Parcels inferred, from another parcel of the same shop or from three weeks without news, and doesn't infer it again. |
+| `parcels.undo_delivery` | Takes back a delivery that Parcels inferred, from another parcel of the same shop, from a return of its items or from three weeks without news, and doesn't infer it again. |
 | `parcels.refresh` | Checks all mailboxes, and 17TRACK when it's on, now. |
 | `parcels.reprocess` | Reads a parcel's or review item's e-mails again with the current parsers, optionally with the AI. Administrators only. |
 | `parcels.trust_sender` | Trusts a sender's domain, so its e-mails are read as shipping e-mails. Administrators only. |
@@ -687,7 +740,10 @@ carrier, status and dates. Each mailbox has a **Last sync** sensor and a
 `parcels_parcel_added`, `parcels_status_changed` (with `previous_status`) and
 `parcels_delivered` carry `parcel_id`, `status`, `carrier`, `eta_start`,
 `eta_end`, `private` and `owners`, and for shared parcels also `merchant` and
-`tracking_number`. They never carry item names. For example:
+`tracking_number`. They never carry item names. Returns fire no events, and
+neither do deliveries that Parcels only inferred, archived parcels, or news
+more than a day old, such as old e-mails read in a mailbox's first sync. For
+example:
 
 ```yaml
 triggers:
@@ -714,7 +770,38 @@ actions:
 - **A parcel shows as delivered but hasn't arrived.** If its details say the
   delivery was inferred, select **Undo**. A parcel without news for three
   weeks shows as delivered in a past week, on its last expected day or the
-  day of its last news, whichever is later.
+  day of its last news, whichever is later. So does a parcel whose items you
+  send back, never later than the day the return started.
+- **A parcel has no date yet.** Shops and carriers often give the day only in
+  a later e-mail. With the [local AI](#local-ai), Parcels asks it for a date
+  a parser missed, and administrators can select **Check again** in the
+  parcel's details. For UPS parcels,
+  [UPS My Choice](https://www.ups.com/pt/en/track/ups-my-choice) is free and
+  e-mails the delivery day, which Parcels reads. UPS's and FedEx's tracking
+  pages can also e-mail you updates about one shipment. FedEx Delivery
+  Manager works only when the shop turns it on; in Portugal, recipients can't
+  sign up for it
+  ([FedEx](https://www.fedex.com/en-pt/shipping-tools/deliverymanager.html)).
+- **A return shows on the wrong day.** Its details say how the day was
+  worked out. Public holidays count only when Home Assistant's country is set
+  and the `holidays` package is available; the hub's diagnostics show which
+  (`working_days`). An administrator can remove the return: its e-mails
+  aren't read again, and a delivery that Parcels inferred only from it is
+  undone.
+- **A refund isn't on the page.** That's by design: refund e-mails are
+  ignored. The hub's diagnostics count them (`refunds_dropped`).
+- **After updating to 0.1.5**, Parcels checks once for returns that earlier
+  versions missed, when its first mail check ends. It downloads again, at
+  most 100 and newest first, the e-mails it filed as returned, then, from the
+  last 30 days, the ones it set aside (in **Filtered**, cleared, under review
+  or found not to be about a parcel) from known or trusted senders and the
+  ones it couldn't download, from any sender. Refunds are dropped and returns
+  become returns; the rest stays as it was, except the e-mails it couldn't
+  download, which are read as new. E-mails from ignored senders are skipped.
+  Each mailbox also reads its first-sync period again on its next check,
+  which finds the e-mails the earlier filter skipped; e-mails read before are
+  skipped, and as in a first sync, the local AI only gets the last 14 days.
+  The hub's diagnostics show the result (`returns_check`).
 - **Paack's e-mails wait in review.** Earlier versions couldn't read Paack's
   order IDs. After the update, Parcels reads once more the Paack e-mails whose
   local AI reading was rejected, and adds the ones it now understands. Accept
@@ -735,7 +822,14 @@ actions:
   Home Assistant app, remote access, the **Live Activities** switch, test mode
   and the people to notify, then try `parcels.test_live_activity`.
 - **Diagnostics.** **Download diagnostics** on the hub or a mailbox gives
-  counts and states, without addresses, tokens or parcel details.
+  counts and states, without addresses, tokens or parcel details. The hub's
+  include the last 14 days' e-mails counted by day, sender and state, with
+  senders other than known or trusted ones counted as "other"
+  (`recent_emails`), where working days come from (`working_days`), the
+  refunds ignored (`refunds_dropped`), the check after updating to 0.1.5
+  (`returns_check`) and Paack's matches (`paack_amazon`); its 17TRACK part
+  counts the numbers 17TRACK can't find, by carrier
+  (`not_found_by_carrier`).
 
 ## Development
 

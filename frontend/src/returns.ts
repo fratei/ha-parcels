@@ -1,8 +1,8 @@
 /**
  * Customer returns: items sent back to a shop. They show on their pickup day
  * in their own colour, with a parcel-going-out icon and the words "Return
- * pickup", apart from
- * the deliveries; the parcel they came in keeps its own day.
+ * pickup", apart from the deliveries; the parcel they came in keeps its own
+ * day.
  */
 import { compareYmd } from "./dates.ts";
 import { itemsSummary } from "./describe.ts";

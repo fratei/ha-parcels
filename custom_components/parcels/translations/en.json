@@ -432,7 +432,7 @@
     },
     "undo_delivery": {
       "name": "Undo inferred delivery",
-      "description": "Takes back a delivery that Parcels inferred, from another parcel of the same shop or from three weeks without news, and doesn't infer it again.",
+      "description": "Takes back a delivery that Parcels inferred, from another parcel of the same shop, from a return of its items or from three weeks without news, and doesn't infer it again.",
       "fields": {
         "parcel_id": {
           "name": "Parcel ID",

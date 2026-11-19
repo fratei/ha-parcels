@@ -258,6 +258,23 @@ Runs of `f117f4c` on this set and on two more private sets (see
 | An arrival at the carrier's depot that announced delivery the next day came back as out for delivery. | Arriving at a carrier's depot, branch, hub, or sorting or distribution centre is in transit. Without an out-for-delivery wording, out for delivery becomes in transit when the delivery date is after the day the e-mail arrived. |
 | A shop's e-mail named the carrier next to a number that fits many carriers, and the model gave no carrier. | When the e-mail names exactly one carrier, a kept number takes the carrier named next to it. A carrier named only in a returns footer or an ad isn't taken. |
 
+### What changed in 0.1.5
+
+0.1.5 keeps the instructions and the answer's structure. Every e-mail in
+these sets gets the same input as with 0.1.4, byte for byte, and scoring the
+saved answers again with 0.1.5 gives the same results on every set. The input
+differs only for an e-mail with a link to Paack's tracking page: the link's
+order ID is now listed with it, read from the `tracking_number` parameter
+alone. What Parcels does with some answers changed:
+
+| Answer | What Parcels does |
+|---|---|
+| `return` | `customer_return` isn't one of the model's kinds; an answer of it is read as `return`. The e-mail's own wording then sorts the answer, as it sorts the parsers' readings: an item the customer sends back becomes a return pickup linked to its order, and a parcel going back to its sender undelivered stays a return. |
+| `return` or `not_parcel` for a refund e-mail | When the subject is about a refund or the e-mail says a refund was made, the answer is dropped and the e-mail is only counted in the diagnostics. When the text only opens with a refund, a `not_parcel` answer must be sure (confidence 0.7 or more) to be dropped; a doubtful one goes to review. |
+| A Paack order ID, such as `Ab3Cd4Ef5_1` | In Paack's e-mails it's kept as the e-mail writes it, upper and lower case included, and moved from the order numbers to the tracking numbers, although Paack labels it as an order number. Its first nine characters are never a number of their own. 0.1.4 upper-cased it and dropped it as `tracking_invalid`, which sent the e-mail to review. |
+
+Refund and return e-mails that the parsers recognise never reach the model.
+
 ## Results
 
 Fill in one row per run. Record the host's hardware (CPU, GPU, RAM), the
