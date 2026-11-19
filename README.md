@@ -59,8 +59,8 @@ local AI model on your Home Assistant host.
   deliveries. A parcel with a tracking number that's on its way, with no news
   from e-mails or 17TRACK for three weeks, counted from its last expected day
   when that's later, is marked as probably delivered, on its last expected
-  day if it has one. You can undo that or keep it, and news about the parcel
-  takes it back.
+  day or the day of its last news, whichever is later. You can undo that or
+  keep it, and news about the parcel takes it back.
 - **Shipments of several packages**: packages sent together that arrive on the
   same day share one box, which says how many packages it holds. The details
   list every package with its tracking number. Packages that arrive on
@@ -713,7 +713,8 @@ actions:
   `parcel_id`.
 - **A parcel shows as delivered but hasn't arrived.** If its details say the
   delivery was inferred, select **Undo**. A parcel without news for three
-  weeks shows as delivered on its last expected day, in a past week.
+  weeks shows as delivered in a past week, on its last expected day or the
+  day of its last news, whichever is later.
 - **Paack's e-mails wait in review.** Earlier versions couldn't read Paack's
   order IDs. After the update, Parcels reads once more the Paack e-mails whose
   local AI reading was rejected, and adds the ones it now understands. Accept
