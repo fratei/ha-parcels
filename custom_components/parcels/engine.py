@@ -49,6 +49,7 @@ from .const import (
     EVENT_STATUS_CHANGED,
     ISSUE_PARSER_OUTDATED,
     REASON_AI_FILL,
+    REASON_AI_REJECTED,
     REASON_LOW_CONFIDENCE,
     REASON_RESTORED,
     REASON_UNKNOWN_FORMAT,
@@ -162,6 +163,10 @@ CHECK_AGAIN_MAX_EMAILS = 5
 # for their mail server (0.1.3 didn't know Outlook.com's).
 FILL_CHECK_KEY = "fill_check"
 REASON_UNTRUSTED_SERVER = "untrusted_authserv"
+# Set once the first mailbox sync after the update read again the Paack
+# e-mails under review whose AI reading was rejected: earlier releases
+# couldn't read Paack's order IDs.
+PAACK_CHECK_KEY = "paack_check"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -209,6 +214,16 @@ def review_reason(verdict: SenderVerdict, result: ParseResult) -> str:
     if result.is_parcel:
         return REASON_LOW_CONFIDENCE
     return REASON_UNKNOWN_FORMAT
+
+
+def _paack_rejected(item: ReviewItem) -> bool:
+    """Return True for an e-mail from or about Paack whose AI reading was rejected."""
+    if item.reason != REASON_AI_REJECTED:
+        return False
+    info = lookup(item.sender_domain)
+    return (info is not None and info.carrier == "paack") or (
+        item.suggestion is not None and item.suggestion.carrier == "paack"
+    )
 
 
 def _aware(value: datetime) -> datetime:
@@ -446,6 +461,15 @@ class ParcelsEngine:
             data.engine[FILL_CHECK_KEY] = True
             self.async_schedule_save()
             self.async_create_task(self._async_fill_check(), "parcels fill check")
+        if (
+            ok
+            and self._started
+            and not (self._syncing or self._more)
+            and not data.engine.get(PAACK_CHECK_KEY)
+        ):
+            data.engine[PAACK_CHECK_KEY] = True
+            self.async_schedule_save()
+            self.async_create_task(self._async_paack_check(), "parcels paack check")
 
     @callback
     def _reconcile(self, now: datetime) -> bool:
@@ -1573,6 +1597,52 @@ class ParcelsEngine:
             len(refused),
             checked,
         )
+
+    async def _async_paack_check(self) -> None:
+        """Read Paack's e-mails rejected under review again, once after the update.
+
+        An e-mail the parsers now read is decided anew, without the local AI;
+        the others stay under review as they were.
+        """
+        data = self.data
+        items = [item for item in data.review.values() if _paack_rejected(item)]
+        counts = {"read": 0, "kept": 0, "gone": 0, "failed": 0}
+        for item in items:
+            if (record := data.messages.get(item.message)) is None:
+                continue
+            fetched = await self.async_refetch(record)
+            if fetched.message is None or fetched.mailbox is None:
+                counts["gone" if fetched.gone else "failed"] += 1
+                continue
+            message, mailbox = fetched.message, fetched.mailbox
+            verdict = self.verify(message)
+            result = await self.async_parse(message, verdict)
+            if not is_confident(result):
+                counts["kept"] += 1
+                continue
+            if data.review.get(item.id) is not item:
+                # The user settled it meanwhile.
+                continue
+            now = dt_util.utcnow()
+            self._clear_outputs(record.hash, now)
+            self._decide(
+                message,
+                verdict,
+                result,
+                record,
+                mailbox=mailbox.entry_id,
+                owner=record.owners[0] if record.owners else mailbox.owner,
+                first_sync=False,
+                now=now,
+            )
+            # What the parsers read isn't filled in or shadow-checked by the AI.
+            self.ai.drop(record.hash)
+            counts["read"] += 1
+        if counts["read"]:
+            self.async_changed()
+        else:
+            self.async_schedule_save()
+        _LOGGER.debug("Paack's rejected e-mails read again: %s", counts)
 
     def _clear_outputs(self, key: str, now: datetime) -> None:
         """Undo everything an e-mail added: parcels, review and queue."""
