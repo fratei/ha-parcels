@@ -84,6 +84,7 @@ AMAZON = "TBA123456789012"
 PAACK_ID = "Qm7Rt2Kp9_2"
 PAACK_BARCODE = "534000077712340056"
 GLS = "61234567890"
+SEUR = "04512345678912"
 
 
 class FakeSeventeenTrack:
@@ -993,7 +994,8 @@ async def test_numbers_17track_cannot_follow_are_not_added(
     tracker: SeventeenTrackSync,
     track: FakeSeventeenTrack,
 ) -> None:
-    """Paack's numbers, and GLS's in Portugal, need a postcode in 17TRACK.
+    """Paack's and SEUR's numbers, and GLS's in Portugal, need the recipient's
+    postcode in 17TRACK, and SEUR's also the last digits of their phone.
 
     Its services take only a number and a name, so these numbers would stay
     "Not Found" and use up places in the account.
@@ -1003,6 +1005,7 @@ async def test_numbers_17track_cannot_follow_are_not_added(
     add_parcel(engine, "paack id", "Wx4Hn8Tz3_1")
     add_parcel(engine, "barcode", PAACK_BARCODE, carrier="other")
     add_parcel(engine, "gls", GLS, carrier="gls")
+    add_parcel(engine, "seur", SEUR, carrier="seur")
     ctt = add_parcel(engine, "ctt", CTT, carrier="ctt")
 
     await tracker.async_refresh()
@@ -1012,21 +1015,38 @@ async def test_numbers_17track_cannot_follow_are_not_added(
     assert failures(engine) == {}
 
 
-@pytest.mark.parametrize("country", [None, "ES"])
-async def test_gls_is_added_outside_portugal(
+@pytest.mark.parametrize("country", [None, "DE", "IT"])
+async def test_gls_is_added_where_it_needs_no_postcode(
     hass: HomeAssistant,
     engine: ParcelsEngine,
     tracker: SeventeenTrackSync,
     track: FakeSeventeenTrack,
     country: str | None,
 ) -> None:
-    """Only GLS Portugal needs a postcode in 17TRACK."""
+    """17TRACK needs GLS's postcode only in some countries."""
     hass.config.country = country
     gls = add_parcel(engine, "gls", GLS, carrier="gls")
 
     await tracker.async_refresh()
 
     assert track.calls == [get_call(track), add_call(track, GLS, gls)]
+
+
+@pytest.mark.parametrize("country", ["ES", "NL", "PT"])
+async def test_gls_is_left_out_where_it_needs_a_postcode(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    country: str,
+) -> None:
+    """GLS in Spain, the Netherlands and Portugal needs the postcode."""
+    hass.config.country = country
+    add_parcel(engine, "gls", GLS, carrier="gls")
+
+    await tracker.async_refresh()
+
+    assert track.calls == [get_call(track)]
 
 
 async def test_numbers_17track_cannot_follow_leave_it(

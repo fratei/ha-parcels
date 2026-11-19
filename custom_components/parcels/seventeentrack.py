@@ -81,10 +81,16 @@ ADD_RETRY_LATER: Final = timedelta(days=1)
 _REFUSAL: Final = re.compile(r"Non-zero status code in response: (-?\d{1,6})")
 # Carriers that 17TRACK follows only with the recipient's postcode, which the
 # add_package service can't send, so their numbers would stay "Not Found":
-# Paack (17TRACK key 100364), and in Portugal GLS (100316 and 100646). See
+# Paack (17TRACK key 100364) and SEUR (100438, which also needs the last
+# digits of the recipient's phone) everywhere, and GLS in Portugal (100316,
+# 100646), Spain (100189, 199992) and the Netherlands (100384). See
 # https://res.17track.net/asset/carrier/info/additional_parameters.json
-_NEEDS_POSTCODE: Final = frozenset({"paack"})
-_NEEDS_POSTCODE_IN: Final[Mapping[str, frozenset[str]]] = {"PT": frozenset({"gls"})}
+_NEEDS_POSTCODE: Final = frozenset({"paack", "seur"})
+_NEEDS_POSTCODE_IN: Final[Mapping[str, frozenset[str]]] = {
+    "ES": frozenset({"gls"}),
+    "NL": frozenset({"gls"}),
+    "PT": frozenset({"gls"}),
+}
 
 # Package statuses of the core integration, as slugs (see its package_state
 # selector). Not found and expired carry no news.
