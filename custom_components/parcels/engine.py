@@ -131,6 +131,7 @@ from .parsers.tracking import (
     detect_carrier,
     normalize_tracking_number,
 )
+from .quiet import infer_quiet_deliveries
 from .store import ParcelsStore, apply_retention
 
 if TYPE_CHECKING:
@@ -460,7 +461,7 @@ class ParcelsEngine:
         try:
             data = self.data
             result = reconcile(data, now)
-            inferred = infer_deliveries(data, now)
+            inferred = infer_deliveries(data, now) | infer_quiet_deliveries(data, now)
         finally:
             self._reconciling = False
         self._suggestions = {item.id: item for item in result.suggestions}

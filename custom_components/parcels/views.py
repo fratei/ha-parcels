@@ -40,6 +40,7 @@ from .models import (
     time_to_str,
 )
 from .parsers.senders import organizational_domain
+from .quiet import inferred_reason
 
 if TYPE_CHECKING:
     from .engine import ParcelsEngine
@@ -225,6 +226,7 @@ def parcel_json(
         "window_end": time_to_str(eta.window_end) if eta else None,
         "delivered_at": dt_to_str(state.delivered_at),
         "inferred": state.inferred,
+        "inferred_reason": inferred_reason(parcel),
         "pickup_point": state.pickup_point,
         "pickup_code": state.pickup_code if code else None,
         "has_code": bool(state.pickup_code),
@@ -259,6 +261,7 @@ def parcel_json(
             ai_filled=False,
             auto_merged=None,
             inferred=False,
+            inferred_reason=None,
             origins=[],
             shipment_group=None,
         )
@@ -430,7 +433,11 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
                 if entry.kind is not None
                 else "updated"
             ),
-            "source": "inferred" if entry.inferred else entry.source.value,
+            "source": (
+                ("quiet" if entry.kind is None else "inferred")
+                if entry.inferred
+                else entry.source.value
+            ),
             "label": entry.label or "",
         }
         for entry in state.timeline

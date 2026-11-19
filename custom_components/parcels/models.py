@@ -384,7 +384,8 @@ class ParcelEvent:
     clears_eta: bool = False
     label: str | None = None
     force: bool = False
-    # A delivery concluded from another parcel of the same merchant.
+    # A delivery concluded from another parcel of the same merchant (kind
+    # "delivered"), or from three weeks without news (no kind).
     inferred: bool = False
     id: str = field(default_factory=lambda: secrets.token_hex(6))
 

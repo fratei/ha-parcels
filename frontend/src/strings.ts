@@ -226,6 +226,7 @@ export const STRINGS = {
   mergedNoticeNoReason: "Merged automatically. Check that it's one parcel.",
   inferredNotice:
     "Probably delivered: another parcel from this shop was delivered around the expected day. Undo if it hasn't arrived.",
+  inferredQuietNotice: "Probably delivered: no news for three weeks. Undo if it hasn't arrived.",
 
   markDelivered: "Mark delivered",
   editDate: "Edit date",
@@ -311,6 +312,7 @@ export const SOURCE_LABELS: Readonly<Record<string, string>> = {
   manual: "Added by hand",
   seventeentrack: "17TRACK",
   inferred: "Inferred from another delivery",
+  quiet: "No news for three weeks",
 };
 
 /** Known review reasons; anything else is shown as sent by the integration. */

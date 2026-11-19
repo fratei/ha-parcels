@@ -121,6 +121,7 @@ describe("normalizeParcel", () => {
       window_start: "13:00",
       window_end: "15:00",
       inferred: true,
+      inferred_reason: "quiet",
       pickup_point: "Example Locker 12",
       pickup_code: "123456",
       has_code: true,
@@ -153,6 +154,7 @@ describe("normalizeParcel", () => {
       auto_merged: { at: "2026-07-14T08:00:00Z" },
       has_code: "yes",
       shipment_group: 7,
+      inferred_reason: "pigeon",
     });
     assert.ok(parcel);
     assert.equal(parcel.status, "teleported");
@@ -164,6 +166,7 @@ describe("normalizeParcel", () => {
     assert.equal(parcel.auto_merged, null);
     assert.equal(parcel.has_code, false);
     assert.equal(parcel.shipment_group, null);
+    assert.equal(parcel.inferred_reason, null);
     assert.equal(normalizeParcel([]), null);
     assert.equal(normalizeParcel("p1"), null);
   });
@@ -304,6 +307,7 @@ describe("normalizeDetails", () => {
         5,
         { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "" },
         { time: "2026-07-16T08:00:00Z", status: "delivered", source: "pigeon", label: "" },
+        { time: "2026-07-17T08:00:00Z", status: "delivered", source: "quiet", label: "" },
       ],
       orders: [{ id: "o1", number: "ORDER-1", parcel_ids: ["p1"] }],
       origins: [{ id: "m1", label: "E-mail from Example Shop", source: "parser", time: null }, { label: "No id" }],
@@ -314,6 +318,7 @@ describe("normalizeDetails", () => {
       { time: "2026-07-14T08:00:00Z", status: "delivered", source: "ai", label: "Delivered" },
       { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "" },
       { time: "2026-07-16T08:00:00Z", status: "delivered", source: "parser", label: "" },
+      { time: "2026-07-17T08:00:00Z", status: "delivered", source: "quiet", label: "" },
     ]);
     assert.deepEqual(details.orders, [
       { id: "o1", merchant: null, number: "ORDER-1", placed_at: null, parcel_ids: ["p1"] },

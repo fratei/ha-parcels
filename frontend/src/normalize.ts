@@ -101,6 +101,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     window_end: str(raw.window_end),
     delivered_at: str(raw.delivered_at),
     inferred: raw.inferred === true,
+    inferred_reason: raw.inferred_reason === "shop" || raw.inferred_reason === "quiet" ? raw.inferred_reason : null,
     pickup_point: str(raw.pickup_point),
     pickup_code: str(raw.pickup_code),
     has_code: raw.has_code === true,
@@ -271,7 +272,7 @@ function timelineEntry(raw: unknown): TimelineEntry | null {
   return {
     time: text(raw.time),
     status: text(raw.status) as ParcelStatus,
-    source: raw.source === "inferred" ? "inferred" : source(raw.source),
+    source: raw.source === "inferred" || raw.source === "quiet" ? raw.source : source(raw.source),
     label: text(raw.label),
   };
 }

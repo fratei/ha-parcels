@@ -20,8 +20,14 @@ export type ParcelStatus = (typeof PARCEL_STATUSES)[number];
 
 export type ParcelSource = "parser" | "ai" | "manual" | "seventeentrack";
 
-/** A timeline entry's source; "inferred" marks a delivery worked out from another parcel's. */
-export type TimelineSource = ParcelSource | "inferred";
+/**
+ * A timeline entry's source. Inferred deliveries: "inferred" when worked out
+ * from another parcel's, "quiet" after three weeks without news.
+ */
+export type TimelineSource = ParcelSource | "inferred" | "quiet";
+
+/** Why a delivery was inferred; see `TimelineSource`. */
+export type InferredReason = "shop" | "quiet";
 
 export type AiMode = "off" | "suggest" | "auto";
 
@@ -45,8 +51,13 @@ export interface Parcel {
   window_start: string | null;
   window_end: string | null;
   delivered_at: string | null;
-  /** Delivered only by inference: another parcel from the shop was delivered then. */
+  /** Delivered only by inference, until the user keeps or undoes it. */
   inferred: boolean;
+  /**
+   * Why: "shop" when another parcel from the shop was delivered around its
+   * dates, "quiet" when it had no news for three weeks; null when not inferred.
+   */
+  inferred_reason: InferredReason | null;
   pickup_point: string | null;
   /**
    * The PIN or pickup code. The list has it while the parcel is on its way;
