@@ -285,8 +285,15 @@ def test_paack_keeps_no_postcode_email_or_phone(load_eml: Loader) -> None:
         ("Encomenda de: Amazon\n", "Amazon"),
         ("Order from\nCasa Exemplo\n", "Casa Exemplo"),
         ("Pedido de:\nCasa Exemplo\n", "Casa Exemplo"),
+        # The shop on the label's line, in Paack's languages.
+        ("Pedido de Casa Exemplo\n", "Casa Exemplo"),
+        ("Commande auprès de\nCasa Exemplo\n", "Casa Exemplo"),
+        ("Commande auprès de Casa Exemplo\n", "Casa Exemplo"),
+        ("Ordine di Casa Exemplo\n", "Casa Exemplo"),
+        ("Order from Casa Exemplo\n", "Casa Exemplo"),
         # A sentence that starts like the label isn't a label.
         ("Order from Monday to Friday.\n", None),
+        ("Pedido de devolução em curso.\n", None),
     ],
 )
 def test_paack_reads_shop_label(text: str, merchant: str | None) -> None:

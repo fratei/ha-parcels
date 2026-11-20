@@ -621,12 +621,26 @@ KIND_EXCLUSIONS: Final[dict[MailKind, tuple[str, ...]]] = {
         "sera retourne",
         "wordt teruggestuurd",
     ),
+    # "Não será entregue": a parcel that won't come isn't on its way.
+    MailKind.IN_TRANSIT: (
+        "nao sera entregue",
+        "nao vai ser entregue",
+        "no sera entregado",
+        "no sera entregada",
+        "non sara consegnato",
+        "non sara consegnata",
+    ),
 }
 
 # Kinds whose matches are skipped after a future or negating auxiliary
 # ("will be delivered", "wird heute ... zugestellt", "no ha sido entregado").
 AUX_CHECKED_KINDS: Final[frozenset[MailKind]] = frozenset(
-    {MailKind.DELIVERED, MailKind.READY_FOR_PICKUP, MailKind.RETURN}
+    {
+        MailKind.DELIVERED,
+        MailKind.READY_FOR_PICKUP,
+        MailKind.RETURN,
+        MailKind.CANCELLED,
+    }
 )
 FUTURE_WORDS: Final[frozenset[str]] = frozenset(
     {

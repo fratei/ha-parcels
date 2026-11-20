@@ -110,6 +110,7 @@ MAX_CONFIDENCE = 0.95
 KIND_PRIORITY: tuple[MailKind, ...] = (
     MailKind.ATTEMPTED,
     MailKind.RETURN,
+    MailKind.CANCELLED,
     MailKind.CUSTOMS,
     MailKind.READY_FOR_PICKUP,
     MailKind.DELIVERED,
@@ -225,8 +226,11 @@ class CarrierSpec:
     that aren't about a parcel the user receives. ``strip_slash`` drops "/"
     from numbers. ``resolve`` picks the carrier id from the folded subject
     and first lines. ``merchant_labels`` name the shop like the shared
-    labels, but also start sentences, so they need a colon or a line of
-    their own; ``default_merchant`` is used when the e-mail names no shop.
+    labels, but also start sentences, so they need a colon, a line of their
+    own or nothing but the shop after them; ``default_merchant`` is used
+    when the e-mail names no shop. ``decisive`` phrases are the carrier's
+    status headlines: they decide the kind wherever they stand, over the
+    other wording of the e-mail, unless they're negated or hypothetical.
     """
 
     carrier: str
@@ -244,6 +248,7 @@ class CarrierSpec:
     resolve: Callable[[str], str] | None = None
     merchant_labels: tuple[str, ...] = ()
     default_merchant: str | None = None
+    decisive: tuple[tuple[MailKind, str], ...] = ()
 
 
 @dataclass(slots=True)
@@ -315,16 +320,33 @@ class _KindMatch:
     start: int
     end: int
     collected: bool = False
+    decisive: bool = False
 
 
 @lru_cache(maxsize=64)
-def _kind_regexes(spec: CarrierSpec) -> tuple[tuple[MailKind, re.Pattern[str]], ...]:
+def _kind_regexes(
+    spec: CarrierSpec,
+) -> tuple[tuple[MailKind, re.Pattern[str], bool], ...]:
+    """Return (kind, regex, decisive): the shared phrases with the carrier's,
+    then the carrier's decisive phrases.
+    """
     extra: dict[MailKind, list[str]] = {}
     for kind, phrase in spec.phrases:
         extra.setdefault(kind, []).append(phrase)
-    return tuple(
-        (kind, phrase_regex((*phrases, *extra.get(kind, ()))))
-        for kind, phrases in KIND_PHRASES.items()
+    decisive: dict[MailKind, list[str]] = {}
+    for kind, phrase in spec.decisive:
+        decisive.setdefault(kind, []).append(phrase)
+    kinds = (*KIND_PHRASES, *(kind for kind in extra if kind not in KIND_PHRASES))
+    return (
+        *(
+            (
+                kind,
+                phrase_regex((*KIND_PHRASES.get(kind, ()), *extra.get(kind, ()))),
+                False,
+            )
+            for kind in kinds
+        ),
+        *((kind, phrase_regex(tuple(found)), True) for kind, found in decisive.items()),
     )
 
 
@@ -345,6 +367,9 @@ def _tokens_before(s: str, clause_start: int, start: int) -> list[str]:
 def _negated(tokens: list[str]) -> bool:
     last = tokens[-3:]
     for index, token in enumerate(last):
+        # French elides "ne" before a vowel: "n'est plus", "n'a pas".
+        if token.startswith("n'") and len(token) > 2:
+            return True
         if token not in NEGATION_WORDS:
             continue
         following = last[index + 1] if index + 1 < len(last) else ""
@@ -377,7 +402,11 @@ def _match_ok(s: str, match: _KindMatch, exclusions: list[tuple[int, int]]) -> b
         s, clause_start, match.start
     ):
         return False
-    if (match.kind in AUX_CHECKED_KINDS or match.collected) and (
+    if match.decisive:
+        # A headline states the status itself: only a negation undoes it.
+        if _negated(tokens):
+            return False
+    elif (match.kind in AUX_CHECKED_KINDS or match.collected) and (
         _negated(tokens) or _future(tokens)
     ):
         return False
@@ -391,8 +420,8 @@ def _match_ok(s: str, match: _KindMatch, exclusions: list[tuple[int, int]]) -> b
 def _kind_matches(s: str, spec: CarrierSpec) -> list[_KindMatch]:
     """Find the status phrases in folded text, minus hypothetical ones."""
     found = [
-        _KindMatch(kind, match.start(), match.end())
-        for kind, regex in _kind_regexes(spec)
+        _KindMatch(kind, match.start(), match.end(), decisive=decisive)
+        for kind, regex, decisive in _kind_regexes(spec)
         for match in regex.finditer(s)
     ]
     collected = phrase_regex((*COLLECTED_PHRASES, *spec.collected))
@@ -400,11 +429,15 @@ def _kind_matches(s: str, spec: CarrierSpec) -> list[_KindMatch]:
         _KindMatch(MailKind.DELIVERED, match.start(), match.end(), collected=True)
         for match in collected.finditer(s)
     ]
-    found.sort(key=lambda m: (m.start, m.start - m.end))
+    found.sort(key=lambda m: (m.start, m.start - m.end, not m.decisive))
     kept: list[_KindMatch] = []
     far_end, far_start = -1, -1
     for match in found[:500]:
-        if far_end > match.end or (far_end == match.end and far_start < match.start):
+        inside = far_end > match.end or (
+            far_end == match.end and far_start < match.start
+        )
+        # A longer phrase hides the phrases inside it, but not a headline.
+        if inside and not match.decisive:
             continue
         kept.append(match)
         if match.end > far_end:
@@ -416,6 +449,9 @@ def _kind_matches(s: str, spec: CarrierSpec) -> list[_KindMatch]:
     result: list[_KindMatch] = []
     for match in kept:
         if not _match_ok(s, match, exclusions.get(match.kind, [])):
+            continue
+        if match.decisive:
+            result.append(match)
             continue
         clause_start, clause_end = _clause(s, match.start, match.end)
         if match.collected and phrase_regex(SENDER_SIDE_WORDS).search(
@@ -506,6 +542,11 @@ def _decide_kind(doc: _Doc, spec: CarrierSpec) -> tuple[_Decision, list[_KindMat
         line = doc.line_index(match.start) if source != "subject" else None
         return _Decision(match.kind, source, line)
 
+    if headlines := [m for m in subject_matches if m.decisive]:
+        first = min(headlines, key=lambda m: (m.start, _RANK[m.kind]))
+        return _with_line(doc, _Decision(first.kind, "subject"), body), body
+    if headlines := [m for m in body if m.decisive]:
+        return decided(_best(headlines), "status"), body
     subject_kind: MailKind | None = None
     if subject_matches:
         first = min(subject_matches, key=lambda m: (m.start, _RANK[m.kind]))
@@ -825,7 +866,7 @@ def _deadline(doc: _Doc) -> date | None:
 
 def _eta(doc: _Doc, kind: MailKind, matches: list[_KindMatch]) -> Eta | None:
     """Return the expected delivery (or, for pickups, the collection) days."""
-    if kind in (MailKind.DELIVERED, MailKind.RETURN):
+    if kind in (MailKind.DELIVERED, MailKind.RETURN, MailKind.CANCELLED):
         return None
     if kind is MailKind.READY_FOR_PICKUP:
         return Eta(doc.today, _deadline(doc) or doc.today)
@@ -1221,18 +1262,26 @@ _MERCHANT_PHRASE_RE = re.compile(
     rf"(?<![a-z])(?:"
     rf"(?:(?:a{_G})?(?:sua|tua){_G})?encomenda{_NUMBER_SLOT}{_G}(?:de|da|do)"
     rf"|(?:o{_G})?(?:seu|teu){_G}(?:envio|pedido){_NUMBER_SLOT}{_G}(?:de|da|do)"
+    rf"|(?:o{_G})?(?:seu|teu){_G}pedido{_G}a"
     rf"|(?:tu|su){_G}(?:pedido|paquete|envio|compra){_NUMBER_SLOT}{_G}(?:de|en)"
     rf"|your{_G}(?:parcel|package|order|shipment|delivery){_G}from"
     rf"|(?:ihr|ihre|dein|deine){_G}(?:paket|sendung|bestellung|lieferung){_G}(?:von|bei)"
-    rf"|(?:votre|ton){_G}(?:colis|commande){_G}(?:de{_G}|d')"
+    rf"|(?:votre|ton){_G}(?:colis|commande){_G}"
+    rf"(?:de{_G}|d'|(?:passee{_G})?chez{_G}|aupres{_G}de{_G})"
     rf"|(?:il{_G}tuo|il{_G}suo){_G}(?:pacco|ordine){_G}(?:di|da)"
     rf"|(?:je|uw){_G}(?:pakket|bestelling|zending){_G}(?:van|bij)"
     rf"){_SHOP_SLOT}(?:{_G})?"
 )
-_MERCHANT_WORD_RE = re.compile(
-    r"(?:[^\S\n]+|(?<=[^\S\n])|(?<=')|^)"
+_SHOP_WORD = (
     r"(?:[A-Z0-9\u00c0-\u00de][\w'&.+\-]*|&|(?:de|del|la|y|e|und|and|of)"
     r"(?=[^\S\n]+[A-Z0-9\u00c0-\u00de]))"
+)
+_MERCHANT_WORD_RE = re.compile(rf"(?:[^\S\n]+|(?<=[^\S\n])|(?<=')|^){_SHOP_WORD}")
+# "Your Casa Exemplo order was delivered".
+_YOUR_SHOP_ORDER_RE = re.compile(
+    rf"(?<![A-Za-z])(?:[Yy]our|YOUR)[^\S\n]+"
+    rf"(?P<shop>{_SHOP_WORD}(?:[^\S\n]+{_SHOP_WORD}){{0,4}}?)"
+    r"[^\S\n]+(?:order|Order|ORDER)(?![A-Za-z])"
 )
 _MERCHANT_STOP = frozenset(
     {*NOT_MERCHANT_WORDS, *WEEKDAYS, *MONTHS, *TODAY, *TOMORROW, *CARRIER_WORDS}
@@ -1265,16 +1314,23 @@ def _merchant_after(text: str, start: int, end: int) -> str:
         if not word or word.end() == pos:
             break
         pos, words = word.end(), words + 1
+        # "… de Casa Exemplo. Entre em contacto": the sentence ends there.
+        if text[pos - 1] == "." and text[pos : pos + 1].isspace():
+            break
     return text[start:pos]
 
 
 def _merchant_phrase(
     doc: _Doc, spec: CarrierSpec, text: str, folded: str
 ) -> str | None:
+    found: list[tuple[int, str]] = []
     for phrase in _MERCHANT_PHRASE_RE.finditer(folded):
         end = folded.find("\n", phrase.end())
         end = len(folded) if end < 0 else end
         value = _merchant_after(text, phrase.end(), min(end, phrase.end() + 80))
+        found.append((phrase.start(), value))
+    found += [(m.start(), m.group("shop")) for m in _YOUR_SHOP_ORDER_RE.finditer(text)]
+    for _, value in sorted(found):
         if value := _valid_merchant(value, spec):
             return value
     return None
@@ -1285,8 +1341,8 @@ def _labelled_merchant(
 ) -> str | None:
     """Return the shop named after a label at the start of a line.
 
-    A ``strict`` label needs a colon or a line of its own: "Pedido de" is
-    also how a sentence starts.
+    A ``strict`` label needs a colon, a line of its own or nothing but the
+    shop after it: "Pedido de" is also how a sentence starts.
     """
     regex = _line_label_regex(labels)
     for index, start, end in doc.lines():
@@ -1300,7 +1356,11 @@ def _labelled_merchant(
                 continue
             value_start, value_end = doc.line(following)
         elif strict and ":" not in label.group(0):
-            continue
+            # "Pedido de Casa Exemplo", not "Pedido de devolução em curso".
+            rest = doc.text[value_start:value_end].strip(" .!;,")
+            shop = _merchant_after(doc.text, value_start, value_end)
+            if shop.strip(" .!;,") != rest:
+                continue
         if value := _valid_merchant(doc.text[value_start:value_end][:60], spec):
             return value
     return None
