@@ -40,6 +40,7 @@ def has_identifier(result: ParseResult) -> bool:
     return bool(result.order_numbers) or any(
         shipment.tracking_number
         or shipment.amazon_shipment_id
+        or shipment.reference
         or shipment.order_numbers
         for shipment in result.shipments
     )
@@ -105,6 +106,7 @@ def result_contributions(
             carrier=shipment.carrier,
             tracking_number=shipment.tracking_number,
             amazon_shipment_id=shipment.amazon_shipment_id,
+            reference=shipment.reference,
             merchant=result.merchant,
             order_numbers=shipment.order_numbers or result.order_numbers,
             items=tuple(items[:MAX_ITEMS]),
@@ -176,12 +178,14 @@ def suggestion_from_result(result: ParseResult | None) -> Suggestion | None:
         amazon_shipment_id=next(
             (s.amazon_shipment_id for s in shipments if s.amazon_shipment_id), None
         ),
+        reference=next((s.reference for s in shipments if s.reference), None),
     )
     if (
         kind is MailKind.UNKNOWN
         and not suggestion.tracking_numbers
         and not suggestion.order_numbers
         and not suggestion.amazon_shipment_id
+        and not suggestion.reference
     ):
         return None
     return suggestion
@@ -190,12 +194,16 @@ def suggestion_from_result(result: ParseResult | None) -> Suggestion | None:
 def suggestion_kind(suggestion: Suggestion) -> MailKind:
     """Return the kind to record for an accepted suggestion.
 
-    When the kind is unknown, a tracking number means the parcel was shipped
-    and an order number alone means it was ordered.
+    When the kind is unknown, a tracking number or shipment reference means
+    the parcel was shipped and an order number alone means it was ordered.
     """
     if suggestion.kind not in _NOT_PARCEL:
         return suggestion.kind
-    if suggestion.tracking_numbers or suggestion.amazon_shipment_id:
+    if (
+        suggestion.tracking_numbers
+        or suggestion.amazon_shipment_id
+        or suggestion.reference
+    ):
         return MailKind.SHIPPED
     return MailKind.ORDER
 
@@ -227,6 +235,7 @@ def suggestion_result(suggestion: Suggestion, source: Source) -> ParseResult:
             pickup_point=suggestion.pickup_point if single else None,
             pickup_code=suggestion.pickup_code if single else None,
             amazon_shipment_id=suggestion.amazon_shipment_id if single else None,
+            reference=suggestion.reference if single else None,
         )
         for number in numbers
     ]

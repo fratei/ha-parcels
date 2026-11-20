@@ -816,6 +816,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
         : parcel.order_numbers.length
           ? row(STRINGS.orders, parcel.order_numbers.join(", "))
           : nothing}
+      ${parcel.references.length ? row(STRINGS.references, parcel.references.join(", ")) : nothing}
       ${parcel.items.length
         ? row(
             STRINGS.items,

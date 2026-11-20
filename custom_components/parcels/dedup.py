@@ -9,7 +9,9 @@ this an incremental union-find where each parcel is one set. The keys are:
 * the tracking number alone for international postal (S10) numbers, because
   the carrier changes at the border;
 * the Amazon shipment ID. Paack's order ID for an Amazon parcel is that
-  shipment ID, written the same way, then "_" and the package number;
+  shipment ID, written the same way, then "_" and the package number. Paack's
+  e-mails that give only that shipment ID, as the order number, join its
+  Amazon parcel too;
 * the origin ID. It holds the hash of the e-mail's Message-ID, so the same
   e-mail found in two mailboxes is applied once.
 
@@ -17,6 +19,12 @@ Weaker links are used only when no key matches, and they never merge two
 existing parcels:
 
 * the same tracking number when one side doesn't know the carrier;
+* a shipment reference that isn't a tracking number: the part of Paack's
+  order ID before "_", or a shop's own shipment number. An e-mail with only
+  the reference joins the parcel that has it. When several do, it joins the
+  one without a tracking number, or the only open one (flagged); otherwise
+  it gets a parcel of its own. A shipment's e-mail with a tracking number
+  absorbs the parcel of its reference unless another tracked parcel has it;
 * an order: a shipment absorbs the parcel without a tracking number that an
   order e-mail of the same order created. When the order has several, the
   one with the shipment's items;
@@ -33,6 +41,8 @@ arrive in any order and a shop's e-mail rarely names the carrier's number:
   "delivered" e-mail without items and the order's only other parcel;
 * a shop's single parcel without a tracking number joins the tracked
   shipments that the same sender domain announces within a few days;
+* a parcel known only by a shipment reference joins the only tracked parcel
+  with that reference. With several, the user gets merge suggestions;
 * a parcel without a tracking number joins the tracked parcel of the same
   merchant delivered on its date, when they are the only two that fit. When
   more fit, the user gets merge suggestions instead.
@@ -83,6 +93,7 @@ from .parsers.senders import (
     ships_with_many,
 )
 from .parsers.tracking import (
+    PAACK_STEM_RE,
     detect_carrier,
     is_s10,
     normalize_tracking_number,
@@ -96,6 +107,7 @@ REASON_SAME_NUMBER = "same_number"
 REASON_SAME_MERCHANT_DAY = "same_merchant_day"
 REASON_SAME_MERCHANT_DOMAIN = "same_merchant_domain"
 REASON_SAME_ORDER = "same_order"
+REASON_SAME_REFERENCE = "same_reference"
 
 # How far back reconcile() looks, and how soon after a shop's order e-mails
 # its tracked shipments must follow to absorb the order's parcel.
@@ -273,10 +285,58 @@ def find_parcels_by_number(data: ParcelsData, number: str) -> list[Parcel]:
 
 
 def _paack_stem(origin: Origin) -> str | None:
-    """Return the shipment a Paack order ID names, as written."""
+    """Return the shipment a Paack e-mail names, as written.
+
+    That's the part of its order ID before "_", or the reference it gives
+    alone as the order number.
+    """
     if carrier_family(origin.carrier) != "paack":
         return None
-    return paack_stem(origin.tracking_number)
+    if stem := paack_stem(origin.tracking_number):
+        return stem
+    reference = origin.reference
+    return reference if reference and PAACK_STEM_RE.fullmatch(reference) else None
+
+
+ReferenceKey = tuple[str, str]
+
+
+def origin_reference_keys(
+    origin: Origin, fallback_merchant: str | None = None
+) -> set[ReferenceKey]:
+    """Return the shipment references of an origin, each with its scope.
+
+    Paack's references are Paack's; a shop's are the shop's, so an origin
+    without a known merchant has none.
+    """
+    if stem := _paack_stem(origin):
+        return {("paack", stem)}
+    if not origin.reference:
+        return set()
+    scope = merchant_key(origin.merchant or fallback_merchant)
+    return {(scope, origin.reference)} if scope else set()
+
+
+def parcel_reference_keys(parcel: Parcel) -> set[ReferenceKey]:
+    """Return the shipment references a parcel is known by."""
+    state = parcel.state
+    keys: set[ReferenceKey] = set()
+    for origin in parcel.origins.values():
+        keys |= origin_reference_keys(origin, state.merchant)
+    if carrier_family(state.carrier) == "paack" and (
+        stem := paack_stem(state.tracking_number)
+    ):
+        keys.add(("paack", stem))
+    return keys
+
+
+def _references_differ(first: set[ReferenceKey], second: set[ReferenceKey]) -> bool:
+    """Return True when both sides have references in a scope and none match."""
+    for scope in {key[0] for key in first} & {key[0] for key in second}:
+        mine = {ref for key_scope, ref in first if key_scope == scope}
+        if mine.isdisjoint(ref for key_scope, ref in second if key_scope == scope):
+            return True
+    return False
 
 
 def _names_shipment(paack: Origin, amazon: Origin) -> bool:
@@ -317,9 +377,9 @@ def paack_amazon_counts(data: ParcelsData) -> dict[str, dict[str, int]]:
     """Count Paack's e-mails by whether their order ID names an Amazon shipment.
 
     Each e-mail counts once: "matched" when the part of its order ID before
-    "_" is the shipment ID of an Amazon e-mail, "unmatched" when no Amazon
-    shipment fits, "without_id" when no order ID was read. The counts hold
-    no ID or shop name.
+    "_" (or the order number it gives alone) is the shipment ID of an Amazon
+    e-mail, "unmatched" when no Amazon shipment fits, "without_id" when no
+    order ID was read. The counts hold no ID or shop name.
     """
     shipments = {
         origin.amazon_shipment_id
@@ -559,7 +619,8 @@ def _order_only_target(
     parcels: dict[str, Parcel] = {}
     for key in origin_order_keys(origin):
         for parcel in order_parcels(data, key, include_archived=False):
-            parcels[parcel.id] = parcel
+            if not _conflicts(parcel, origin):
+                parcels[parcel.id] = parcel
     if not parcels:
         return None
     cancelled = any(event.status is ParcelStatus.CANCELLED for event in events)
@@ -608,7 +669,85 @@ def _conflicts(parcel: Parcel, origin: Origin) -> bool:
         return True
     origin_orders = origin_order_keys(origin)
     parcel_orders = parcel_order_keys(parcel)
-    return bool(origin_orders and parcel_orders and not origin_orders & parcel_orders)
+    if origin_orders and parcel_orders and not origin_orders & parcel_orders:
+        return True
+    references = origin_reference_keys(origin)
+    return bool(references) and _references_differ(
+        references, parcel_reference_keys(parcel)
+    )
+
+
+def _reference_holders(data: ParcelsData, origin: Origin) -> list[Parcel]:
+    """Return the parcels known by a shipment reference of an origin."""
+    if not (keys := origin_reference_keys(origin)):
+        return []
+    return [
+        parcel
+        for parcel in data.parcels.values()
+        if not keys.isdisjoint(parcel_reference_keys(parcel))
+    ]
+
+
+def _tracked(parcel: Parcel) -> bool:
+    state = parcel.state
+    return bool(state.tracking_number or state.amazon_shipment_ids)
+
+
+def _reference_absorbable(
+    data: ParcelsData, origin: Origin, exclude: set[str]
+) -> set[str]:
+    """Return the parcel without a number that a shipment's reference names.
+
+    An e-mail with only the reference created it. When another tracked
+    parcel has the reference too, it's unclear which one that e-mail was
+    about, and the user decides (see :func:`reconcile`).
+    """
+    found: list[Parcel] = []
+    for parcel in _reference_holders(data, origin):
+        if parcel.id in exclude:
+            continue
+        if _tracked(parcel):
+            return set()
+        if parcel.archived is None and not _conflicts(parcel, origin):
+            found.append(parcel)
+    return {found[0].id} if len(found) == 1 else set()
+
+
+def _reference_target(
+    data: ParcelsData, origin: Origin
+) -> tuple[str | None, str | None, bool]:
+    """Return the parcel that news with a shipment reference and no number is about.
+
+    That's the only parcel with the reference. Of several, the only one
+    without a tracking number (the e-mails with only the reference stay
+    together), else the only open one, flagged so the user can undo it.
+    Returns the parcel, the reason when it's a guess, and whether several
+    parcels fit so that no other guess may pick one.
+    """
+    holders = [
+        parcel
+        for parcel in _reference_holders(data, origin)
+        if not _conflicts(parcel, origin)
+    ]
+    if not holders:
+        return None, None, False
+    if len(holders) == 1:
+        return holders[0].id, None, False
+    if (
+        len(untracked := [p for p in holders if p.archived is None and not _tracked(p)])
+        == 1
+    ):
+        return untracked[0].id, None, False
+    if (
+        len(
+            waiting := [
+                p for p in holders if p.archived is None and not p.state.terminal
+            ]
+        )
+        == 1
+    ):
+        return waiting[0].id, REASON_SAME_REFERENCE, False
+    return None, None, True
 
 
 def _heuristic_target(data: ParcelsData, origin: Origin, eta: Eta | None) -> str | None:
@@ -650,6 +789,8 @@ def _normalise(origin: Origin) -> None:
         origin.tracking_number = normalize_tracking_number(origin.tracking_number)
     if origin.amazon_shipment_id:
         origin.amazon_shipment_id = origin.amazon_shipment_id.strip()
+    if origin.reference:
+        origin.reference = origin.reference.strip() or None
 
 
 def _record_orders(
@@ -739,6 +880,7 @@ def apply_contribution(
 
     targets = set(strong)
     reason: str | None = None
+    ambiguous = False
     if not targets and weak:
         targets = {_most_recent(data, weak)}
     if (
@@ -752,14 +894,22 @@ def apply_contribution(
     if number or origin.amazon_shipment_id:
         absorbed, absorb_reason = _absorbable(data, origin, targets)
         targets |= absorbed
+        targets |= _reference_absorbable(data, origin, targets)
         if not targets and (same := _same_order_target(data, origin, events)):
             targets = {same}
             absorb_reason = REASON_SAME_ORDER
         reason = reason or absorb_reason
-    elif not targets and (order_target := _order_only_target(data, origin, events)):
-        targets = {order_target}
+    elif not targets:
+        target, reason, ambiguous = _reference_target(data, origin)
+        if target is not None:
+            targets = {target}
+        elif not ambiguous and (
+            order_target := _order_only_target(data, origin, events)
+        ):
+            targets = {order_target}
     if (
         not targets
+        and not ambiguous
         and not contribution.attach_only
         and (heuristic := _heuristic_target(data, origin, _contribution_eta(events)))
     ):
@@ -1452,7 +1602,11 @@ def _parcels_conflict(first: Parcel, second: Parcel) -> bool:
     ):
         return True
     orders_one, orders_two = parcel_order_keys(first), parcel_order_keys(second)
-    return bool(orders_one and orders_two and not orders_one & orders_two)
+    if orders_one and orders_two and not orders_one & orders_two:
+        return True
+    return _references_differ(
+        parcel_reference_keys(first), parcel_reference_keys(second)
+    )
 
 
 def _keys_compatible(first: str, second: str) -> bool:
@@ -1868,6 +2022,56 @@ def _pair_by_day(
                 )
 
 
+def _pair_by_reference(
+    data: ParcelsData,
+    pool: list[Parcel],
+    apart: Callable[[Parcel, Parcel], bool],
+    now: datetime,
+    result: Reconciled,
+) -> None:
+    """Pair parcels known only by a shipment reference with tracked ones.
+
+    Paack's e-mails may give only the part of its order ID before "_",
+    which every package of the shipment shares. Such a parcel joins the
+    only tracked parcel with that reference; with several, the user gets
+    a suggestion for each.
+    """
+    holders: dict[ReferenceKey, list[Parcel]] = defaultdict(list)
+    for parcel in data.parcels.values():
+        if parcel.state.tracking_number and parcel.state.status not in (
+            ParcelStatus.CANCELLED,
+            ParcelStatus.RETURNED,
+        ):
+            for key in parcel_reference_keys(parcel):
+                holders[key].append(parcel)
+    for parcel in pool:
+        if (
+            parcel.id in result.removed
+            or parcel.archived is not None
+            or _tracked(parcel)
+        ):
+            continue
+        found: dict[str, Parcel] = {}
+        for key in parcel_reference_keys(parcel):
+            for other in holders.get(key, ()):
+                if (
+                    other.id not in result.removed
+                    and not _parcels_conflict(parcel, other)
+                    and not apart(parcel, other)
+                ):
+                    found[other.id] = other
+        if len(found) == 1:
+            [target] = found.values()
+            if _may_auto_merge(target, parcel):
+                _auto_merge(data, target, parcel, REASON_SAME_REFERENCE, now, result)
+                continue
+        result.suggestions.extend(
+            _suggestion(target, [parcel], None, REASON_SAME_REFERENCE)
+            for target in sorted(found.values(), key=lambda p: (p.created, p.id))
+            if target.archived is None
+        )
+
+
 def reconcile(
     data: ParcelsData, now: datetime, *, since: datetime | None = None
 ) -> Reconciled:
@@ -1895,6 +2099,7 @@ def reconcile(
 
     _merge_by_order(data, start, apart, now, result)
     _absorb_by_domain(data, _reconcile_pool(data, start), apart, now, result)
+    _pair_by_reference(data, _reconcile_pool(data, start), apart, now, result)
     _pair_by_day(data, _reconcile_pool(data, start), apart, now, result)
     result.changed -= result.removed
     return result

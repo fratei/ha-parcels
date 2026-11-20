@@ -1358,6 +1358,7 @@ class ParcelsEngine:
             or suggestion.tracking_numbers
             or suggestion.order_numbers
             or suggestion.amazon_shipment_id
+            or suggestion.reference
         ):
             raise validation_error("nothing_to_add")
         if suggestion.carrier and suggestion.carrier not in CARRIER_NAMES:

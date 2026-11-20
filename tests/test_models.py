@@ -461,6 +461,7 @@ def _full_data() -> ParcelsData:
         tracking_numbers=("RR123456785PT",),
         eta_start=date(2026, 11, 4),
         window_start=time(9),
+        reference="Wx4Hn8Tz3",
     )
     return ParcelsData(
         parcels={parcel.id: parcel},
@@ -518,6 +519,24 @@ def test_round_trip() -> None:
     assert loaded.review["r1"].fill
     assert loaded.review["r1"].errors == ("tracking_invalid", "eta_not_in_text")
     assert loaded.trusted_domains() == ("example.com",)
+
+
+def test_references() -> None:
+    """A parcel lists its shipment references, with the stem of Paack's ID."""
+    parcel = _parcel(
+        _event(S.SHIPPED, at()),
+        origins=(
+            _origin(carrier="paack", tracking_number="Wx4Hn8Tz3_1"),
+            _origin("o2", carrier="paack", reference="Wx4Hn8Tz3"),
+            _origin(
+                "o3", time=at(hours=1), merchant="Casa Exemplo", reference="1234567890"
+            ),
+            _origin("o4", time=at(hours=2), carrier="gls", tracking_number="AB12_3"),
+        ),
+    )
+    assert parcel.state.references == ("Wx4Hn8Tz3", "1234567890")
+    for origin in parcel.origins.values():
+        assert Origin.from_dict(json.loads(json.dumps(origin.as_dict()))) == origin
 
 
 def test_review_item_keeps_only_check_codes() -> None:

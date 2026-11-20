@@ -13,12 +13,15 @@ from __future__ import annotations
 import pytest
 
 from custom_components.parcels.const import CONFIDENCE_APPLY, MailKind
+from custom_components.parcels.convert import is_confident
 from custom_components.parcels.parsers.base import Eta
 
 from .test_carriers_common import eta
 from .test_carriers_es import PAACK_ID, _paack
 
 SHOP = "Casa Exemplo"
+# The order ID's first part: some e-mails give only this as the order number.
+STEM = PAACK_ID.partition("_")[0]
 # Paack's shop and order-number labels. Each label and its value share a row
 # of the details table, so they share a line of the text.
 LABELS = {
@@ -844,6 +847,33 @@ def test_paack_status(scenario: str, language: str) -> None:
         assert result.confidence >= CONFIDENCE_APPLY
         [shipment] = result.shipments
         assert (shipment.tracking_number, shipment.eta) == (PAACK_ID, expected)
+
+
+@pytest.mark.parametrize("language", LANGUAGES)
+@pytest.mark.parametrize(
+    "scenario", ["information_received", "out_for_delivery", "delivered"]
+)
+def test_paack_stem_is_reference(scenario: str, language: str) -> None:
+    """An e-mail whose order number is only the stem of the order ID gives it
+    as Paack's reference, never as the shop's order number, and is applied
+    without the AI.
+    """
+    kind, _, texts = SCENARIOS[scenario]
+    result = _paack(_mail(language, *texts[language], number=STEM))
+    assert result is not None
+    assert (result.kind, result.merchant, result.order_numbers) == (kind, SHOP, ())
+    [shipment] = result.shipments
+    assert (shipment.carrier, shipment.tracking_number) == ("paack", None)
+    assert (shipment.reference, shipment.order_numbers) == (STEM, ())
+    assert is_confident(result)
+
+
+@pytest.mark.parametrize("value", ["Wx4Hn8Tz3_1", "Wx4Hn8Tz3X", "12345678"])
+def test_paack_reference_is_only_a_stem(value: str) -> None:
+    """Only nine letters and digits on their own are a stem."""
+    result = _paack(_mail("en", *SCENARIOS["delivered"][2]["en"], number=value))
+    assert result is not None
+    assert [s.reference for s in result.shipments] == [None]
 
 
 @pytest.mark.parametrize("language", LANGUAGES)

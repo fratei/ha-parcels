@@ -129,6 +129,7 @@ describe("normalizeParcel", () => {
       pickup_code: "123456",
       has_code: true,
       order_numbers: ["ORDER-1"],
+      references: ["Ab3Cd5Ef7"],
       items: ["Blue mug"],
       private: true,
       owners: ["user-1"],
@@ -255,7 +256,10 @@ describe("normalizeReviewItem", () => {
       pickup_point: null,
       pickup_code: null,
       items: [],
+      reference: null,
     });
+    const paack = normalizeReviewItem({ id: "r8", suggestion: { kind: "delivered", reference: "Ab3Cd5Ef7" } });
+    assert.equal(paack?.suggestion?.reference, "Ab3Cd5Ef7");
     const plain = normalizeReviewItem({ id: "r2", authenticated: true, source: "manual", suggestion: "x" });
     assert.ok(plain);
     assert.equal(plain.authenticated, true);

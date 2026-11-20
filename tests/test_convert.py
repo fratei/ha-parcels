@@ -60,13 +60,22 @@ def _result(
         (_result(MailKind.SHIPPED, ParsedShipment(tracking_number=NUMBER)), True),
         (_result(MailKind.SHIPPED, ParsedShipment(amazon_shipment_id="Mx8Rb")), True),
         (_result(MailKind.ORDER, ParsedShipment(order_numbers=("1001",))), True),
+        (_result(MailKind.DELIVERED, ParsedShipment(reference="Wx4Hn8Tz3")), True),
         (_result(MailKind.SHIPPED, ParsedShipment(carrier="ctt", eta=ETA)), False),
         (_result(MailKind.SHIPPED), False),
     ],
-    ids=["order", "number", "amazon_shipment", "shipment_order", "carrier", "none"],
+    ids=[
+        "order",
+        "number",
+        "amazon_shipment",
+        "shipment_order",
+        "reference",
+        "carrier",
+        "none",
+    ],
 )
 def test_has_identifier(result: ParseResult, expected: bool) -> None:
-    """Only order numbers, shipment IDs and tracking numbers identify a parcel."""
+    """Order numbers, shipment IDs, tracking numbers and references identify."""
     assert has_identifier(result) is expected
 
 
@@ -320,6 +329,31 @@ def test_suggestion_round_trip() -> None:
     assert result.source == "ai"
     assert is_confident(result)
     assert suggestion_from_result(result) == suggestion
+
+
+def test_reference_suggestion_round_trip() -> None:
+    """A suggestion with only a shipment reference applies, and reads back."""
+    suggestion = Suggestion(
+        kind=MailKind.DELIVERED,
+        merchant="Amazon",
+        carrier="paack",
+        reference="Wx4Hn8Tz3",
+    )
+
+    result = suggestion_result(suggestion, Source.AI)
+
+    assert is_confident(result)
+    assert suggestion_from_result(result) == suggestion
+    [contribution] = result_contributions(
+        result, message_hash="h", time=SENT, source=Source.AI
+    )
+    assert contribution.origin.reference == "Wx4Hn8Tz3"
+    assert contribution.origin.tracking_number is None
+    unknown = Suggestion(kind=MailKind.UNKNOWN, reference="Wx4Hn8Tz3")
+    assert suggestion_result(unknown, Source.MANUAL).kind is MailKind.SHIPPED
+    assert suggestion_from_result(
+        _result(MailKind.UNKNOWN, ParsedShipment(reference="Wx4Hn8Tz3"))
+    ) == Suggestion(kind=MailKind.UNKNOWN, reference="Wx4Hn8Tz3")
 
 
 def test_suggestion_with_two_numbers() -> None:

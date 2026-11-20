@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import Final
 
 from ...const import MailKind
+from ..tracking import PAACK_STEM_RE
 from ._common import CarrierSpec
 
 # Failed attempts. The headers also say the delivery will be rescheduled or
@@ -220,4 +221,6 @@ SPEC: Final = CarrierSpec(
     decisive=tuple(
         (kind, phrase) for kind, phrases in _DECISIVE.items() for phrase in phrases
     ),
+    # Some e-mails give only the order ID's first part as the order number.
+    reference=PAACK_STEM_RE,
 )

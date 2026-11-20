@@ -38,6 +38,7 @@ from ..tracking import (
     PAACK_ID_RE,
     detect_carrier,
     find_tracking_numbers,
+    id_shaped,
     normalize_tracking_number,
     numbers_from_url,
     tracking_url,
@@ -231,6 +232,9 @@ class CarrierSpec:
     when the e-mail names no shop. ``decisive`` phrases are the carrier's
     status headlines: they decide the kind wherever they stand, over the
     other wording of the e-mail, unless they're negated or hypothetical.
+    ``reference`` matches the carrier's own shipment reference when an
+    order label gives it: it's the shipment's reference, never the shop's
+    order number.
     """
 
     carrier: str
@@ -249,6 +253,7 @@ class CarrierSpec:
     merchant_labels: tuple[str, ...] = ()
     default_merchant: str | None = None
     decisive: tuple[tuple[MailKind, str], ...] = ()
+    reference: re.Pattern[str] | None = None
 
 
 @dataclass(slots=True)
@@ -1408,6 +1413,37 @@ def _order_numbers(doc: _Doc, numbers: set[str]) -> tuple[str, ...]:
     return tuple(found)
 
 
+def _references(doc: _Doc, spec: CarrierSpec) -> tuple[str, ...]:
+    """Return the carrier's shipment references given after an order label.
+
+    The label must name a number ("order number", not "order"), or a colon,
+    "#" or a number word must come first, and the value must look like an
+    ID, not a word: a digit, or a capital past its first letter.
+    """
+    if spec.reference is None:
+        return ()
+    found: list[str] = []
+    for label in phrase_regex(ORDER_LABELS).finditer(doc.folded):
+        match = _ORDER_VALUE_RE.match(doc.folded, label.end())
+        if not match:
+            continue
+        value = doc.text[match.start("v") : match.end("v")]
+        named = (
+            len(label.group().split()) > 1
+            or label.group().endswith("nummer")
+            or bool(doc.folded[label.end() : match.start("v")].strip())
+        )
+        if (
+            named
+            and spec.reference.fullmatch(value)
+            and id_shaped(value)
+            and doc.text[match.end("v") : match.end("v") + 1] != "_"
+            and value not in found
+        ):
+            found.append(value)
+    return tuple(found)
+
+
 # --- Result ---------------------------------------------------------------------------
 
 
@@ -1417,9 +1453,10 @@ def _confidence(
     numbers: list[_Number],
     has_details: bool,
     has_date: bool,
+    has_reference: bool = False,
 ) -> float | None:
     clear = decision.source in ("subject", "status")
-    if numbers and any(n.source != "link" for n in numbers):
+    if has_reference or any(n.source != "link" for n in numbers):
         return CONFIDENCE_SUBJECT if clear else CONFIDENCE_BODY
     if numbers:
         return CONFIDENCE_LINK if kind not in WEAK_KINDS else CONFIDENCE_LINK_WEAK
@@ -1462,11 +1499,19 @@ def parse_with_spec(
     plain = _without_codes(doc, locker)
     numbers = _numbers(plain, message, spec, carrier)
     number_set = {n.number for n in numbers}
-    orders = _order_numbers(plain, number_set)
-    pickup_code = _code(doc, [*number_set, *orders], locker)
-    only_code = decision.kind is None and bool(pickup_code and (numbers or orders))
+    references = _references(plain, spec)
+    orders = tuple(o for o in _order_numbers(plain, number_set) if o not in references)
+    reference = references[0] if references else None
+    pickup_code = _code(doc, [*number_set, *orders, *references], locker)
+    only_code = decision.kind is None and bool(
+        pickup_code and (numbers or orders or reference)
+    )
     marketing = phrase_regex(MARKETING_WORDS).search(whole) is not None
-    if marketing and not only_code and (not numbers or decision.kind is None):
+    if (
+        marketing
+        and not only_code
+        and (not (numbers or reference) or decision.kind is None)
+    ):
         return None
     notes: list[str] = []
     kind = decision.kind
@@ -1496,6 +1541,7 @@ def parse_with_spec(
             numbers,
             has_details=bool(merchant or pickup_code),
             has_date=bool(eta or event_time),
+            has_reference=reference is not None,
         )
     if confidence is None:
         return None
@@ -1519,6 +1565,7 @@ def parse_with_spec(
             pickup_code=pickup_code,
             order_numbers=orders,
             tracking_url=tracking_url(number.carrier, number.number),
+            reference=reference,
         )
         for number in numbers
     ] or [
@@ -1530,6 +1577,7 @@ def parse_with_spec(
             pickup_point=pickup_point,
             pickup_code=pickup_code,
             order_numbers=orders,
+            reference=reference,
         )
     ]
     return ParseResult(

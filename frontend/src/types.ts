@@ -73,6 +73,8 @@ export interface Parcel {
   /** The parcel has a PIN or pickup code. */
   has_code: boolean;
   order_numbers: string[];
+  /** The carrier's or shop's references for the shipment, such as Paack's order number. */
+  references: string[];
   items: string[];
   private: boolean;
   owners: string[];
@@ -103,6 +105,8 @@ export interface Suggestion {
   pickup_point: string | null;
   pickup_code: string | null;
   items: string[];
+  /** The carrier's or shop's reference for the shipment, such as Paack's order number. */
+  reference: string | null;
 }
 
 export interface SenderChecks {

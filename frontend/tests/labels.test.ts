@@ -8,6 +8,7 @@ import {
   inferredNotice,
   etaSourceLabel,
   kindLabel,
+  mergeReasonLabel,
   parcelAppName,
   parcelSubtitle,
   parcelTitle,
@@ -154,6 +155,7 @@ describe("labels", () => {
     assert.equal(reasonLabel(""), "");
     assert.equal(reasonLabel(null), "");
     assert.equal(reasonLabel("__proto__"), "__proto__");
+    assert.equal(mergeReasonLabel("same_reference"), "same shipment reference");
     assert.equal(humanize("low-confidence"), "Low confidence");
   });
 

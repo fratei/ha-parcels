@@ -94,8 +94,10 @@ from ..parsers.lang import (
 from ..parsers.senders import KNOWN_SENDERS, lookup, organizational_domain
 from ..parsers.tracking import (
     PAACK_ID_RE,
+    PAACK_STEM_RE,
     detect_carrier,
     find_tracking_numbers,
+    id_shaped,
     named_carriers,
     normalize_tracking_number,
     tracking_url,
@@ -824,6 +826,9 @@ class _Checker:
         self.detector_text = f"{subject}\n{_URL_TEXT_RE.sub(' ', text)}"
         self.sender_hint = sender_carrier(message)
         self.name_carrier = self.sender_name_carrier()
+        self.paack_mail = "paack" in (self.sender_hint, self.name_carrier)
+        # Paack's references for the shipment (see ``paack_reference``).
+        self.references: list[str] = []
         self.scan_text = (
             carrier_scan_text(self.detector_text)
             if self.sender_hint or self.name_carrier
@@ -923,12 +928,14 @@ class _Checker:
             pickup_code = self.code_from_text(
                 kind, [*(number for number, _ in numbers), *kept_orders]
             )
+        reference = self.references[0] if self.references else None
         items = self.items_without_numbers(
             items,
             {
                 *(number for number, _ in numbers),
                 *kept_orders,
                 *([pickup_code] if pickup_code else []),
+                *([reference] if reference else []),
             },
         )
         eta = self.checked_eta(kind)
@@ -941,11 +948,23 @@ class _Checker:
             self.notes.append(NOTE_ADDED_BY_DETECTOR)
         order_numbers = tuple(kept_orders)
         shipments = self.shipments(
-            kind, carrier, numbers, eta, pickup_point, pickup_code, order_numbers, items
+            kind,
+            carrier,
+            numbers,
+            eta,
+            pickup_point,
+            pickup_code,
+            order_numbers,
+            items,
+            reference,
         )
         grounded = kind is MailKind.NOT_PARCEL or (
             kind is not MailKind.UNKNOWN
-            and (bool(numbers) or (kind is MailKind.ORDER and bool(order_numbers)))
+            and (
+                bool(numbers)
+                or reference is not None
+                or (kind is MailKind.ORDER and bool(order_numbers))
+            )
         )
         confidence = CONFIDENCE_HIGH if grounded and not self.errors else CONFIDENCE_LOW
         result = ParseResult(
@@ -1262,7 +1281,7 @@ class _Checker:
             for piece in _LIST_SPLIT_RE.split(value):
                 piece = _ORDER_PREFIX_RE.sub("", piece.rpartition(":")[2].strip())
                 piece = piece.lstrip("#").strip()
-                if fold(piece) in _NULL_WORDS:
+                if fold(piece) in _NULL_WORDS or self.paack_reference(piece):
                     continue
                 compact = _compact(piece)
                 if PAACK_ID_RE.fullmatch(piece):
@@ -1318,6 +1337,25 @@ class _Checker:
             return printed
         self.error("order_not_in_email")
         return None
+
+    def paack_reference(self, value: str) -> bool:
+        """Keep a model's value that is Paack's reference for the shipment.
+
+        Paack's e-mails call the first part of its order ID ("Wx4Hn8Tz3" in
+        "Wx4Hn8Tz3_1") the order number. In Paack's own e-mail, a value of
+        that shape that the e-mail writes on its own, and that looks like an
+        ID, is that reference, in the e-mail's spelling: never the shop's
+        order number, nor a tracking number. Returns whether it was one.
+        """
+        if not self.paack_mail or not PAACK_STEM_RE.fullmatch(value):
+            return False
+        written = _tracking_pattern(value).search(self.number_text)
+        reference = _compact(written.group(0)) if written else ""
+        if not PAACK_STEM_RE.fullmatch(reference) or not id_shaped(reference):
+            return False
+        if reference not in self.references:
+            self.references.append(reference)
+        return True
 
     def printed_paack_id(self, value: str) -> str | None:
         """Return a Paack order ID as the e-mail writes it, or None.
@@ -1563,7 +1601,7 @@ class _Checker:
                 continue
             for piece in _LIST_SPLIT_RE.split(value):
                 piece = piece.rpartition(":")[2].strip().lstrip("#").strip()
-                if fold(piece) in _NULL_WORDS:
+                if fold(piece) in _NULL_WORDS or self.paack_reference(piece):
                     continue
                 number = normalize_tracking_number(piece)
                 if not (_NUMBER_RE.match(number) or PAACK_ID_RE.fullmatch(number)):
@@ -1796,6 +1834,7 @@ class _Checker:
         pickup_code: str | None,
         order_numbers: tuple[str, ...],
         items: tuple[str, ...],
+        reference: str | None,
     ) -> list[ParsedShipment]:
         if kind is MailKind.NOT_PARCEL:
             return []
@@ -1810,6 +1849,7 @@ class _Checker:
                 order_numbers=order_numbers,
                 items=items,
                 tracking_url=tracking_url(number_carrier, number),
+                reference=reference,
             )
             for number, number_carrier in numbers
         ]
@@ -1823,6 +1863,7 @@ class _Checker:
                     pickup_code=pickup_code,
                     order_numbers=order_numbers,
                     items=items,
+                    reference=reference,
                 )
             )
         return shipments

@@ -126,6 +126,7 @@ export interface SuggestionForm {
   pickup_point: string;
   pickup_code: string;
   items: string;
+  reference: string;
 }
 
 export const DEFAULT_KIND = "shipped";
@@ -144,6 +145,7 @@ export function suggestionToForm(suggestion: Suggestion | null): SuggestionForm 
     pickup_point: suggestion?.pickup_point ?? "",
     pickup_code: suggestion?.pickup_code ?? "",
     items: (suggestion?.items ?? []).join("\n"),
+    reference: suggestion?.reference ?? "",
   };
 }
 
@@ -162,6 +164,7 @@ export function formToSuggestion(form: SuggestionForm): Suggestion {
     pickup_point: textOrNull(form.pickup_point),
     pickup_code: textOrNull(form.pickup_code),
     items: splitLines(form.items),
+    reference: textOrNull(form.reference),
   };
 }
 

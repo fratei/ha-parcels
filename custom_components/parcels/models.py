@@ -38,7 +38,12 @@ from .parsers.base import Eta
 from .parsers.carriers import brand_carriers
 from .parsers.items import unique_items
 from .parsers.senders import KNOWN_SENDERS, lookup, organizational_domain
-from .parsers.tracking import detect_carrier, normalize_tracking_number, tracking_url
+from .parsers.tracking import (
+    detect_carrier,
+    normalize_tracking_number,
+    paack_stem,
+    tracking_url,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -346,6 +351,9 @@ class Origin:
     carrier: str | None = None
     tracking_number: str | None = None
     amazon_shipment_id: str | None = None
+    # A shipment number that isn't a tracking number: the part of Paack's
+    # order ID before "_", or a shop's own shipment number.
+    reference: str | None = None
     merchant: str | None = None
     order_numbers: tuple[str, ...] = ()
     items: tuple[str, ...] = ()
@@ -369,6 +377,7 @@ class Origin:
                 "carrier": self.carrier,
                 "tracking_number": self.tracking_number,
                 "amazon_shipment_id": self.amazon_shipment_id,
+                "reference": self.reference,
                 "merchant": self.merchant,
                 "order_numbers": list(self.order_numbers),
                 "items": list(self.items),
@@ -398,6 +407,7 @@ class Origin:
             carrier=data.get("carrier"),
             tracking_number=data.get("tracking_number"),
             amazon_shipment_id=data.get("amazon_shipment_id"),
+            reference=data.get("reference") or None,
             merchant=data.get("merchant"),
             order_numbers=_tuple(data.get("order_numbers")),
             items=_tuple(data.get("items")),
@@ -572,6 +582,8 @@ class ParcelState:
     name: str | None = None
     # Which source gave the expected date: the newest event that did.
     eta_source: Source | None = None
+    # Shipment numbers that aren't tracking numbers, see Origin.reference.
+    references: tuple[str, ...] = ()
 
     @property
     def carrier_name(self) -> str | None:
@@ -829,6 +841,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
     items = unique_items(item for o in shipped or listed for item in o.items)
     order_numbers: list[str] = []
     shipment_ids: set[str] = set()
+    references: list[str] = []
     owners: set[str] = set()
     for origin in origins:
         for order in origin.order_numbers:
@@ -836,6 +849,9 @@ def derive_state(parcel: Parcel) -> ParcelState:
                 order_numbers.append(order)
         if origin.amazon_shipment_id:
             shipment_ids.add(origin.amazon_shipment_id)
+        for reference in (origin_paack_stem(origin), origin.reference):
+            if reference and reference not in references:
+                references.append(reference)
         owners.update(origin.owners)
 
     url: str | None = None
@@ -951,7 +967,15 @@ def derive_state(parcel: Parcel) -> ParcelState:
         ai_filled=ai_filled,
         name=next((o.name for o in reversed(origins) if o.name), None),
         eta_source=eta_source,
+        references=tuple(references),
     )
+
+
+def origin_paack_stem(origin: Origin) -> str | None:
+    """Return the shipment that Paack's order ID of an origin names, as written."""
+    if origin.carrier != "paack":
+        return None
+    return paack_stem(origin.tracking_number)
 
 
 def _is_https(url: str | None) -> bool:
@@ -1057,6 +1081,7 @@ class Suggestion:
     pickup_code: str | None = None
     items: tuple[str, ...] = ()
     amazon_shipment_id: str | None = None
+    reference: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the suggestion in the WebSocket format."""
@@ -1074,6 +1099,7 @@ class Suggestion:
             "pickup_code": self.pickup_code,
             "items": list(self.items),
             "amazon_shipment_id": self.amazon_shipment_id,
+            "reference": self.reference,
         }
 
     @classmethod
@@ -1102,6 +1128,7 @@ class Suggestion:
             pickup_code=data.get("pickup_code") or None,
             items=_tuple(data.get("items")),
             amazon_shipment_id=data.get("amazon_shipment_id") or None,
+            reference=data.get("reference") or None,
         )
 
 

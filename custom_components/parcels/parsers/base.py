@@ -151,6 +151,8 @@ class ParsedShipment:
     pickup_point: str | None = None
     pickup_code: str | None = None
     amazon_shipment_id: str | None = None
+    # A shipment number that isn't a tracking number, see Origin.reference.
+    reference: str | None = None
     order_numbers: tuple[str, ...] = ()
     items: tuple[str, ...] = ()
     tracking_url: str | None = None

@@ -172,6 +172,7 @@ export const STRINGS = {
   fieldTrackingNumber: "Tracking number",
   fieldTrackingNumbers: "Tracking numbers",
   fieldOrderNumbers: "Order numbers",
+  fieldReference: "Shipment reference",
   fieldEtaStart: "Expected from",
   fieldEtaEnd: "Expected until",
   fieldWindowStart: "Time window from",
@@ -200,6 +201,7 @@ export const STRINGS = {
   merchant: "Merchant",
   parcelAppName: "Name in the Parcel app",
   orders: "Orders",
+  references: "Shipment reference",
   items: "Items",
   expected: "Expected",
   timeWindow: "Time window",
@@ -375,6 +377,7 @@ export const MERGE_REASON_LABELS: Readonly<Record<string, string>> = {
   same_merchant_day: "same shop, delivered on the expected day",
   same_merchant_domain: "the shop's tracked shipment followed its order",
   same_order: "same order",
+  same_reference: "same shipment reference",
 };
 
 /** Fills `{name}` placeholders; unknown placeholders are left as they are. */

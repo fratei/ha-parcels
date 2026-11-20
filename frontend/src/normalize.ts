@@ -123,6 +123,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     pickup_code: str(raw.pickup_code),
     has_code: raw.has_code === true,
     order_numbers: strs(raw.order_numbers),
+    references: strs(raw.references),
     items: strs(raw.items),
     private: raw.private === true,
     owners: strs(raw.owners),
@@ -155,6 +156,7 @@ export function normalizeSuggestion(raw: unknown): Suggestion | null {
     pickup_point: str(raw.pickup_point),
     pickup_code: str(raw.pickup_code),
     items: strs(raw.items),
+    reference: str(raw.reference),
   };
 }
 

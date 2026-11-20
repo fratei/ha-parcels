@@ -24,6 +24,7 @@ export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
     pickup_code: null,
     has_code: false,
     order_numbers: [],
+    references: [],
     items: [],
     private: false,
     owners: [],

@@ -101,6 +101,7 @@ HIDDEN = {
     "pickup_code": None,
     "has_code": False,
     "order_numbers": [],
+    "references": [],
     "items": [],
     "source": "parser",
     "ai": False,
@@ -830,6 +831,35 @@ async def test_review_accept(
     )
     assert state.pickup_point == "Locker 12"
     assert review[UPS] not in engine.data.review
+
+
+async def test_review_accept_reference(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    sam_ws: MockHAClientWebSocket,
+    review: dict[str, str],
+) -> None:
+    """An e-mail with only Paack's shipment reference can be added.
+
+    The page shows the reference, except to someone who may not see it.
+    """
+    reference = "Wx4Hn8Tz3"
+    accepted = await result(
+        ws,
+        "parcels/review/accept",
+        review_id=review[UPS],
+        overrides={"kind": "delivered", "carrier": "paack", "reference": reference},
+    )
+
+    (parcel_id,) = accepted["parcel_ids"]
+    state = engine.data.parcels[parcel_id].state
+    assert (state.tracking_number, state.references) == (None, (reference,))
+    shown = (await result(ws, "parcels/get", parcel_id=parcel_id))["parcel"]
+    assert (shown["status"], shown["references"]) == ("delivered", [reference])
+    await call(hass, "update", {"parcel_id": parcel_id, "private": True})
+    seen = {p["id"]: p for p in (await result(sam_ws, "parcels/list"))["parcels"]}
+    assert seen[parcel_id]["references"] == []
 
 
 async def test_review_accept_cancels_nothing(

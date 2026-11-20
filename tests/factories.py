@@ -36,6 +36,7 @@ def contribution(
     private: bool = False,
     label: str = "",
     items: Iterable[str] = (),
+    reference: str | None = None,
 ) -> Contribution:
     """Build what one e-mail says about one parcel."""
     message = origin_id.removeprefix("msg:").split("#")[0]
@@ -47,6 +48,7 @@ def contribution(
         carrier=carrier,
         tracking_number=number,
         amazon_shipment_id=shipment_id,
+        reference=reference,
         merchant=merchant,
         order_numbers=tuple(orders),
         items=tuple(items),

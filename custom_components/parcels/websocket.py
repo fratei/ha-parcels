@@ -40,6 +40,7 @@ OVERRIDES_SCHEMA = p.Schema(
         p.Optional("pickup_code"): clearable(_TEXT),
         p.Optional("items"): _LIST,
         p.Optional("amazon_shipment_id"): clearable(_TEXT),
+        p.Optional("reference"): clearable(_TEXT),
     }
 )
 

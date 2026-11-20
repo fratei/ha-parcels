@@ -10,6 +10,8 @@ from custom_components.parcels.const import MailKind, ParcelStatus
 from custom_components.parcels.dedup import (
     REASON_SAME_MERCHANT_ETA,
     REASON_SAME_NUMBER,
+    REASON_SAME_REFERENCE,
+    Contribution,
     DedupError,
     add_owner,
     apply_contribution,
@@ -434,14 +436,174 @@ def test_paack_amazon_counts() -> None:
                 ("msg:p5#0", Source.PARSER, f"{SHIPMENT[:-1]}X_1", "Casa Exemplo"),
             )
         ),
+        # Only the shipment, as Paack's "order number".
+        contribution(
+            "msg:p6#0",
+            label="paack.co",
+            kind=MailKind.DELIVERED,
+            carrier="paack",
+            reference=SHIPMENT,
+            merchant="Amazon",
+        ),
     ]
     for index, item in enumerate(sent):
         apply_contribution(data, item, at(hours=index))
 
     assert paack_amazon_counts(data) == {
-        "naming_amazon": {"matched": 1, "unmatched": 1, "without_id": 1},
+        "naming_amazon": {"matched": 2, "unmatched": 1, "without_id": 1},
         "not_naming_amazon": {"matched": 1, "unmatched": 1, "without_id": 0},
     }
+
+
+def _paack(
+    origin_id: str,
+    *,
+    hours: float = 0,
+    kind: MailKind = MailKind.IN_TRANSIT,
+    number: str | None = None,
+    reference: str | None = None,
+) -> Contribution:
+    """Paack's e-mail about a parcel from Amazon."""
+    return contribution(
+        origin_id,
+        kind=kind,
+        time=at(hours=hours),
+        carrier="paack",
+        number=number,
+        reference=reference,
+        merchant="Amazon",
+        label="paack.co",
+    )
+
+
+@pytest.mark.parametrize("stem_first", [False, True])
+def test_paack_stem_joins_its_package(stem_first: bool) -> None:
+    """An e-mail with only the part of Paack's ID before "_" joins its package."""
+    data = ParcelsData()
+    package = _paack("msg:p1#0", number=PAACK_ID)
+    stem = _paack("msg:p2#0", hours=1, kind=MailKind.DELIVERED, reference=SHIPMENT)
+    first, second = (stem, package) if stem_first else (package, stem)
+    apply_contribution(data, first, at(hours=2))
+    joined = apply_contribution(data, second, at(hours=3))
+
+    [parcel] = data.parcels.values()
+    assert joined.auto_merged is None
+    assert parcel.auto_merged is None
+    assert parcel.state.tracking_number == PAACK_ID
+    assert parcel.state.status is S.DELIVERED
+    assert parcel.state.references == (SHIPMENT,)
+
+
+def test_paack_stem_of_two_packages_stays_apart() -> None:
+    """With two open packages of the shipment, the stem doesn't tell which."""
+    data = ParcelsData()
+    one = apply_contribution(data, _paack("msg:p1#0", number=PAACK_ID), T0)
+    two = apply_contribution(
+        data, _paack("msg:p2#0", hours=1, number=f"{SHIPMENT}_2"), at(hours=1)
+    )
+    stem = apply_contribution(
+        data,
+        _paack("msg:p3#0", hours=2, kind=MailKind.OUT_FOR_DELIVERY, reference=SHIPMENT),
+        at(hours=2),
+    )
+    assert stem.created
+    again = apply_contribution(
+        data,
+        _paack("msg:p4#0", hours=3, kind=MailKind.DELIVERED, reference=SHIPMENT),
+        at(hours=3),
+    )
+    assert again.parcel_id == stem.parcel_id
+    assert again.auto_merged is None
+    assert len(data.parcels) == 3
+    for package in (one, two):
+        assert data.parcels[package.parcel_id].state.status is S.IN_TRANSIT
+
+    # A third package of the shipment doesn't take the stem's e-mails either.
+    three = apply_contribution(
+        data, _paack("msg:p5#0", hours=4, number=f"{SHIPMENT}_3"), at(hours=4)
+    )
+    assert three.created
+    assert data.parcels[stem.parcel_id].state.tracking_number is None
+
+
+def test_paack_stem_prefers_the_open_package() -> None:
+    """Of two packages, one delivered, a stem's news is about the open one."""
+    data = ParcelsData()
+    done = apply_contribution(
+        data, _paack("msg:p1#0", kind=MailKind.DELIVERED, number=PAACK_ID), T0
+    )
+    open_ = apply_contribution(
+        data, _paack("msg:p2#0", hours=1, number=f"{SHIPMENT}_2"), at(hours=1)
+    )
+    stem = apply_contribution(
+        data,
+        _paack("msg:p3#0", hours=2, kind=MailKind.OUT_FOR_DELIVERY, reference=SHIPMENT),
+        at(hours=2),
+    )
+    assert stem.parcel_id == open_.parcel_id
+    assert stem.auto_merged == REASON_SAME_REFERENCE
+    assert data.parcels[open_.parcel_id].state.status is S.OUT_FOR_DELIVERY
+    assert data.parcels[done.parcel_id].state.status is S.DELIVERED
+    undo_auto_merge(data, open_.parcel_id, at(hours=3))
+    assert len(data.parcels) == 3
+
+
+def test_paack_stem_joins_its_amazon_shipment() -> None:
+    """The stem is Amazon's shipment ID, so it joins Amazon's parcel."""
+    data = ParcelsData()
+    amazon = apply_contribution(
+        data,
+        contribution(
+            "msg:a#0",
+            merchant="Amazon.es",
+            orders=[AMAZON_ORDER],
+            shipment_id=SHIPMENT,
+            eta=_eta(5),
+        ),
+        T0,
+    )
+    stem = apply_contribution(
+        data,
+        _paack("msg:p#0", hours=1, kind=MailKind.DELIVERED, reference=SHIPMENT),
+        at(hours=1),
+    )
+    assert stem.parcel_id == amazon.parcel_id
+    assert stem.auto_merged is None
+    [parcel] = data.parcels.values()
+    assert parcel.state.status is S.DELIVERED
+    assert parcel.state.order_numbers == (AMAZON_ORDER,)
+
+
+@pytest.mark.parametrize("orders", [(), ("1001",)])
+def test_shipment_references_of_a_shop(orders: tuple[str, ...]) -> None:
+    """A shop's shipment reference joins its e-mails and keeps others apart."""
+    data = ParcelsData()
+
+    def shop(origin_id: str, reference: str, hours: float, kind: MailKind) -> str:
+        applied = apply_contribution(
+            data,
+            contribution(
+                origin_id,
+                kind=kind,
+                time=at(hours=hours),
+                merchant="Casa Exemplo",
+                orders=orders,
+                reference=reference,
+                eta=_eta(5),
+            ),
+            at(hours=hours),
+        )
+        assert applied.parcel_id
+        assert applied.auto_merged is None
+        return applied.parcel_id
+
+    first = shop("msg:l1#0", "1111111111", 0, MailKind.SHIPPED)
+    second = shop("msg:l2#0", "2222222222", 1, MailKind.OUT_FOR_DELIVERY)
+    assert second != first
+    assert shop("msg:l3#0", "1111111111", 2, MailKind.DELIVERED) == first
+    assert data.parcels[first].state.references == ("1111111111",)
+    assert data.parcels[first].state.status is S.DELIVERED
+    assert data.parcels[second].state.status is S.OUT_FOR_DELIVERY
 
 
 def test_same_merchant_and_dates_is_flagged() -> None:

@@ -819,6 +819,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       [STRINGS.fieldCarrier, carrierLabel({ carrier: suggestion.carrier, carrier_name: null })],
       [STRINGS.fieldTrackingNumbers, suggestion.tracking_numbers.join(", ") || null],
       [STRINGS.fieldOrderNumbers, suggestion.order_numbers.join(", ") || null],
+      [STRINGS.fieldReference, suggestion.reference],
       [
         suggestion.kind === "customer_return" ? STRINGS.pickup : STRINGS.expected,
         eta ? formatDateRange(eta.start, eta.end, locale, EXPECTED_FORMAT) : null,
@@ -998,6 +999,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
           ${text("order_numbers", STRINGS.fieldOrderNumbers, "text", "edit-hint-orders")}
           <p class="hint" id="edit-hint-orders">${STRINGS.hintList}</p>
         </div>
+        ${text("reference", STRINGS.fieldReference)}
         ${text("eta_start", STRINGS.fieldEtaStart, "date")}
         ${text("eta_end", STRINGS.fieldEtaEnd, "date")}
         ${text("window_start", STRINGS.fieldWindowStart, "time")}

@@ -18,6 +18,7 @@ from custom_components.parcels.dedup import (
     REASON_SAME_MERCHANT_DOMAIN,
     REASON_SAME_MERCHANT_ETA,
     REASON_SAME_ORDER,
+    REASON_SAME_REFERENCE,
     Applied,
     Contribution,
     DedupError,
@@ -28,6 +29,7 @@ from custom_components.parcels.dedup import (
     merge_parcels,
     order_parcels,
     reconcile,
+    remove_message,
     repair_store,
     undo_auto_merge,
     undo_inferred_delivery,
@@ -1225,3 +1227,67 @@ def test_repair_pairs_old_deliveries_with_their_orders() -> None:
     assert parcel.auto_merged is not None
     assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_DAY
     assert repair_store(data, _nov(22, 9)) == set()
+
+
+# Made up: the part of Paack's order IDs before "_", shared by the packages.
+PAACK_STEM = "Rb5Lq2Vm7"
+
+
+def _paack(
+    origin_id: str,
+    when: datetime,
+    *,
+    number: str | None = None,
+    reference: str | None = None,
+    kind: MailKind = MailKind.IN_TRANSIT,
+) -> Contribution:
+    """Paack's e-mail about a parcel from Amazon."""
+    return contribution(
+        origin_id,
+        kind=kind,
+        time=when,
+        carrier="paack",
+        number=number,
+        reference=reference,
+        merchant="Amazon",
+        label="paack.co",
+    )
+
+
+def test_paack_stem_is_suggested_for_each_package() -> None:
+    """A stem two packages share is suggested for both; one left takes it."""
+    data = ParcelsData()
+    one = _apply(data, _paack("msg:p1#0", _nov(9, 8), number=f"{PAACK_STEM}_1"))
+    two = _apply(data, _paack("msg:p2#0", _nov(9, 9), number=f"{PAACK_STEM}_2"))
+    stem = _apply(
+        data,
+        _paack(
+            "msg:p3#0",
+            _nov(9, 10),
+            reference=PAACK_STEM,
+            kind=MailKind.OUT_FOR_DELIVERY,
+        ),
+    )
+    assert len({one, two, stem}) == 3
+
+    result = reconcile(data, _nov(9, 12))
+
+    assert not result.removed
+    assert sorted(
+        (s.parcel_id, s.candidates, s.reason) for s in result.suggestions
+    ) == sorted(
+        [
+            (one, (stem,), REASON_SAME_REFERENCE),
+            (two, (stem,), REASON_SAME_REFERENCE),
+        ]
+    )
+
+    remove_message(data, "p2", _nov(9, 13))
+    result = reconcile(data, _nov(9, 13))
+
+    assert result.removed == {stem}
+    assert result.suggestions == []
+    parcel = data.parcels[one]
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_REFERENCE
+    assert parcel.state.status is ParcelStatus.OUT_FOR_DELIVERY

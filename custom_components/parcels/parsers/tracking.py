@@ -47,6 +47,8 @@ _GENERIC_RE = re.compile(r"[0-9A-Z]{8,35}")
 # Paack's order ID: the shop's reference (nine letters and digits, case
 # significant), "_" and the package number.
 PAACK_ID_RE = re.compile(r"[0-9A-Za-z]{9}_\d{1,2}")
+# That reference alone, which Paack's e-mails call the order number.
+PAACK_STEM_RE = re.compile(r"[0-9A-Za-z]{9}")
 _S10_WEIGHTS = (8, 6, 4, 2, 3, 5, 9, 7)
 _FEDEX_WEIGHTS = (3, 1, 7)
 
@@ -99,6 +101,17 @@ def normalize_tracking_number(value: str) -> str:
     if PAACK_ID_RE.fullmatch(number):
         return number
     return number.upper()
+
+
+def id_shaped(value: str) -> bool:
+    """Return whether ``value`` looks like an ID, not a word.
+
+    It has a digit, or a capital past its first character ("Wx4Hn8Tz3",
+    "QrTbWnPzK"), unlike "Entregado" or "recebidos".
+    """
+    return any(char.isdigit() for char in value) or any(
+        char.isupper() for char in value[1:]
+    )
 
 
 def paack_stem(number: str | None) -> str | None:

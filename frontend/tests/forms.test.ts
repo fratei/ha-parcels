@@ -121,6 +121,7 @@ describe("suggestion form", () => {
     pickup_point: null,
     pickup_code: null,
     items: ["Blue mug, large", "Tea towel"],
+    reference: "Ab3Cd5Ef7",
   };
 
   test("is prefilled from the suggestion", () => {
@@ -137,6 +138,7 @@ describe("suggestion form", () => {
       pickup_point: "",
       pickup_code: "",
       items: "Blue mug, large\nTea towel",
+      reference: "Ab3Cd5Ef7",
     });
   });
 
@@ -162,6 +164,7 @@ describe("suggestion form", () => {
       pickup_point: null,
       pickup_code: null,
       items: [],
+      reference: null,
     });
   });
 

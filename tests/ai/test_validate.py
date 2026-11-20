@@ -1934,3 +1934,65 @@ def test_paack_order_id_is_never_cut(tracking: list[str], orders: list[str]) -> 
 
     assert result.order_numbers == ()
     assert [shipment.tracking_number for shipment in result.shipments] == [PAACK_ID]
+
+
+PAACK_STEM = PAACK_ID[:9]
+PAACK_STEM_TEXT = f"Entregue!\nNúmero de pedido {PAACK_STEM}\nObrigado."
+
+
+@pytest.mark.parametrize("field", ["order_numbers", "tracking_numbers"])
+@pytest.mark.parametrize(
+    "answered", [PAACK_STEM, PAACK_STEM.upper(), f"#{PAACK_STEM.lower()}"]
+)
+def test_paack_stem_is_the_shipment_reference(field: str, answered: str) -> None:
+    """Paack's e-mails call the first part of its ID the order number.
+
+    Written on its own, it's Paack's reference for the shipment, in the
+    e-mail's spelling, and never the shop's order number.
+    """
+    validation = validate(
+        answer(kind="delivered", carrier="Paack", **{field: [answered]}),
+        PAACK_STEM_TEXT,
+        **PAACK_SENDER,
+    )
+
+    assert validation.errors == ()
+    result = validation.result
+    assert result is not None
+    assert (result.order_numbers, result.confidence) == ((), CONFIDENCE_HIGH)
+    (shipment,) = result.shipments
+    assert (shipment.carrier, shipment.tracking_number, shipment.reference) == (
+        "paack",
+        None,
+        PAACK_STEM,
+    )
+
+
+def test_paack_stem_and_id_together() -> None:
+    """With the whole ID also written, the ID is the number."""
+    result = checked(
+        answer(kind="in_transit", carrier="Paack", order_numbers=[PAACK_STEM]),
+        f"{PAACK_STEM_TEXT}\nCódigo de seguimento: {PAACK_ID}",
+        **PAACK_SENDER,
+    )
+
+    assert result.order_numbers == ()
+    (shipment,) = result.shipments
+    assert (shipment.tracking_number, shipment.reference) == (PAACK_ID, PAACK_STEM)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (f"Pedido {PAACK_STEM} enviado.", {"sender": "loja@loja-exemplo.example"}),
+        (f"A sua encomenda {PAACK_ID} está a caminho.", PAACK_SENDER),
+    ],
+)
+def test_paack_stem_only_in_paack_mail(text: str, message: dict[str, str]) -> None:
+    """A shop's order number of that shape, or a part of an ID, isn't one."""
+    result = validate(
+        answer(kind="in_transit", order_numbers=[PAACK_STEM]), text, **message
+    ).result
+
+    assert result is not None
+    assert all(shipment.reference is None for shipment in result.shipments)
