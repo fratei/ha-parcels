@@ -607,10 +607,16 @@ def _parcel_content(parcel: Parcel, ctx: _Context) -> _Content:
     carrier = _clean(state.carrier_name)
     if carrier and carrier.casefold() != title.casefold():
         parts.append(carrier)
-    if ctx.options.item_names and not parcel.private and state.items:
-        item = _clean(state.items[0], 30)
-        more = len(state.items) - 1
-        parts.append(f"{item} +{more} more" if more else item)
+    if ctx.options.item_names and not parcel.private:
+        if state.items:
+            item = _clean(state.items[0], 30)
+            more = len(state.items) - 1
+            parts.append(f"{item} +{more} more" if more else item)
+        elif (name := _clean(state.name, 30)) and name.casefold() not in {
+            shown.casefold() for shown in (title, *parts)
+        }:
+            # What the user calls it in the Parcel app, unless it's the shop.
+            parts.append(name)
     end = _chronometer_end(state, ctx)
     return _Content(
         title=title,

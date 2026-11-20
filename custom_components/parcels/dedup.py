@@ -968,26 +968,35 @@ def remove_parcel_origins(
             for oid, origin in parcel.origins.items()
             if origin.message == message_hash or oid.startswith(prefix)
         }
-        if not removed:
-            continue
-        affected.add(parcel.id)
-        for oid in removed:
-            del parcel.origins[oid]
-        parcel.events = [e for e in parcel.events if e.origin not in removed]
-        if (flag := parcel.auto_merged) is not None:
-            if flag.origin in removed:
-                parcel.auto_merged = None
-            elif set(flag.origins) & removed:
-                parcel.auto_merged = replace(
-                    flag,
-                    origins=tuple(oid for oid in flag.origins if oid not in removed),
-                )
-        if parcel.origins:
-            parcel.touch(now)
-            _record_orders(data, parcel, now)
-        else:
-            del data.parcels[parcel.id]
+        if removed:
+            affected.add(parcel.id)
+            remove_origins(data, parcel, removed, now)
     return affected
+
+
+def remove_origins(
+    data: ParcelsData, parcel: Parcel, removed: set[str], now: datetime
+) -> None:
+    """Remove some origins of a parcel and their events.
+
+    A parcel left without origins is deleted.
+    """
+    for oid in removed:
+        parcel.origins.pop(oid, None)
+    parcel.events = [e for e in parcel.events if e.origin not in removed]
+    if (flag := parcel.auto_merged) is not None:
+        if flag.origin in removed:
+            parcel.auto_merged = None
+        elif set(flag.origins) & removed:
+            parcel.auto_merged = replace(
+                flag,
+                origins=tuple(oid for oid in flag.origins if oid not in removed),
+            )
+    if parcel.origins:
+        parcel.touch(now)
+        _record_orders(data, parcel, now)
+    else:
+        data.parcels.pop(parcel.id, None)
 
 
 def add_owner(
@@ -1389,7 +1398,7 @@ def _news_times(parcel: Parcel) -> list[datetime]:
 
 
 def first_news(parcel: Parcel) -> datetime | None:
-    """Return when Parcels first heard of a parcel from a mailbox or 17TRACK."""
+    """Return when a mailbox, 17TRACK or Parcel first told about a parcel."""
     return min(_news_times(parcel), default=None)
 
 

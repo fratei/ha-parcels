@@ -35,8 +35,10 @@ import {
 import { shipmentPackages } from "./groups.ts";
 import {
   carrierLabel,
+  etaSourceLabel,
   inferredNotice,
   mergeReasonLabel,
+  parcelAppName,
   parcelTitle,
   sourceLabel,
   statusLabel,
@@ -731,13 +733,18 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const since = parcel.status_time
       ? ` · ${fmt(STRINGS.sinceDate, { date: formatDateTime(parcel.status_time, locale) })}`
       : "";
+    const etaSource = etaSourceLabel(parcel);
+    const name = parcelAppName(parcel);
     return html`<dl class="facts">
       ${row(STRINGS.status, `${statusLabel(parcel.status)}${since}`)}
       ${parcel.delivered_at
         ? row(STRINGS.delivered, formatDateTime(parcel.delivered_at, locale))
         : nothing}
       ${eta
-        ? row(STRINGS.expected, formatDateRange(eta.start, eta.end, locale, EXPECTED_FORMAT))
+        ? row(
+            STRINGS.expected,
+            `${formatDateRange(eta.start, eta.end, locale, EXPECTED_FORMAT)}${etaSource ? ` · ${etaSource}` : ""}`,
+          )
         : nothing}
       ${window ? row(STRINGS.timeWindow, window) : nothing}
       ${returns.length
@@ -791,6 +798,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
           )
         : nothing}
       ${parcel.merchant ? row(STRINGS.merchant, parcel.merchant) : nothing}
+      ${name ? row(STRINGS.parcelAppName, name) : nothing}
       ${orders.length
         ? row(
             STRINGS.orders,

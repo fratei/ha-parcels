@@ -14,6 +14,9 @@ from .const import (
     CONF_EXCLUDED_DEVICES,
     CONF_NOTIFY_PERSONS,
     CONF_OWNER,
+    CONF_PARCEL_APP_KEY,
+    CONF_PARCEL_APP_OWNER,
+    CONF_PARCEL_APP_POSTCODE,
     CONF_TEST_DEVICE,
     ENTRY_TYPE_MAILBOX,
 )
@@ -29,6 +32,9 @@ TO_REDACT = {
     CONF_NOTIFY_PERSONS,
     CONF_EXCLUDED_DEVICES,
     CONF_TEST_DEVICE,
+    CONF_PARCEL_APP_KEY,
+    CONF_PARCEL_APP_OWNER,
+    CONF_PARCEL_APP_POSTCODE,
 }
 
 
@@ -53,6 +59,8 @@ async def async_get_config_entry_diagnostics(
         result["notifications"] = notifier.diagnostics() if notifier else None
         tracker = getattr(runtime, "tracker", None)
         result["seventeentrack"] = tracker.diagnostics() if tracker else None
+        sync = getattr(runtime, "parcelapp", None)
+        result["parcelapp"] = sync.diagnostics() if sync else None
     elif isinstance(runtime, MailboxRuntime):
         coordinator = runtime.coordinator
         result["mailbox"] = {

@@ -55,6 +55,7 @@ class Source(StrEnum):
     AI = "ai"
     MANUAL = "manual"
     SEVENTEENTRACK = "seventeentrack"
+    PARCELAPP = "parcelapp"
 
 
 # Lower wins when origins disagree.
@@ -62,8 +63,38 @@ SOURCE_PRIORITY: dict[Source, int] = {
     Source.MANUAL: 0,
     Source.PARSER: 1,
     Source.SEVENTEENTRACK: 2,
+    Source.PARCELAPP: 2,
     Source.AI: 3,
 }
+
+# Starts the ID of the origin that holds the Parcel app's news about a number.
+# Releases before 0.1.6 skip a whole parcel with a source they don't know, so
+# the Parcel app's origins and events are stored as 17TRACK's and told apart
+# by this prefix when read back.
+PARCELAPP_PREFIX = "pa:"
+
+
+def _stored_source(source: Source) -> str:
+    return Source.SEVENTEENTRACK.value if source is Source.PARCELAPP else source.value
+
+
+def _loaded_source(value: Any, origin_id: Any) -> Source:
+    source = _source(value)
+    if (
+        source is Source.SEVENTEENTRACK
+        and isinstance(origin_id, str)
+        and origin_id.startswith(PARCELAPP_PREFIX)
+    ):
+        return Source.PARCELAPP
+    return source
+
+
+def _source(value: Any) -> Source:
+    """Read a stored source; one from a newer release reads as a parser's."""
+    try:
+        return Source(value or Source.PARSER)
+    except ValueError:
+        return Source.PARSER
 
 
 class MessageState(StrEnum):
@@ -266,6 +297,11 @@ _KNOWN_MERCHANT_NAMES: dict[str, str] = {
 }
 
 
+def known_merchant_name(text: str | None) -> str | None:
+    """Return the known merchant free text starts with: ``Amazon.es order``."""
+    return _KNOWN_MERCHANT_NAMES.get(merchant_key(text)) if text else None
+
+
 def merchant_display(name: str | None) -> str | None:
     """Return the name to show for a merchant: ``Amazon.es`` -> ``Amazon``."""
     if not name:
@@ -319,13 +355,15 @@ class Origin:
     message: str | None = None
     owners: tuple[str, ...] = ()
     confirmed: bool = False
+    # What the user calls the parcel in the Parcel app.
+    name: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the origin."""
         return _compact(
             {
                 "id": self.id,
-                "source": self.source.value,
+                "source": _stored_source(self.source),
                 "time": dt_to_str(self.time),
                 "label": self.label,
                 "carrier": self.carrier,
@@ -340,6 +378,7 @@ class Origin:
                 "message": self.message,
                 "owners": list(self.owners),
                 "confirmed": self.confirmed,
+                "name": self.name,
             }
         ) | {
             # Keep explicit clears of manual origins.
@@ -353,7 +392,7 @@ class Origin:
         """Parse a serialised origin."""
         return cls(
             id=str(data["id"]),
-            source=Source(data.get("source", Source.PARSER)),
+            source=_loaded_source(data.get("source"), data["id"]),
             time=dt_from_str(data.get("time")) or dt_util.utcnow(),
             label=str(data.get("label", "")),
             carrier=data.get("carrier"),
@@ -368,6 +407,7 @@ class Origin:
             message=data.get("message"),
             owners=_tuple(data.get("owners")),
             confirmed=bool(data.get("confirmed", False)),
+            name=data.get("name") or None,
         )
 
 
@@ -411,7 +451,7 @@ class ParcelEvent:
             {
                 "id": self.id,
                 "time": dt_to_str(self.time),
-                "source": self.source.value,
+                "source": _stored_source(self.source),
                 "origin": self.origin,
                 "status": self.status.value if self.status else None,
                 "kind": self.kind.value if self.kind else None,
@@ -429,7 +469,7 @@ class ParcelEvent:
         return cls(
             id=str(data.get("id") or secrets.token_hex(6)),
             time=dt_from_str(data.get("time")) or dt_util.utcnow(),
-            source=Source(data.get("source", Source.PARSER)),
+            source=_loaded_source(data.get("source"), data.get("origin")),
             origin=data.get("origin"),
             status=ParcelStatus(data["status"]) if data.get("status") else None,
             kind=MailKind(data["kind"]) if data.get("kind") else None,
@@ -528,6 +568,10 @@ class ParcelState:
     inferred_reason: InferredReason | None = None
     # Some details were filled in by the local AI and aren't confirmed yet.
     ai_filled: bool = False
+    # What the user calls the parcel in the Parcel app.
+    name: str | None = None
+    # Which source gave the expected date: the newest event that did.
+    eta_source: Source | None = None
 
     @property
     def carrier_name(self) -> str | None:
@@ -815,6 +859,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
     delivered_at: datetime | None = None
     eta: Eta | None = None
     eta_time: datetime | None = None
+    eta_source: Source | None = None
     timeline: list[TimelineEntry] = []
     for event in sorted(parcel.events, key=_event_sort_key):
         accepted, new_status = _accepts(status, event)
@@ -843,6 +888,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
             eta_time is None or event.time >= eta_time
         ):
             eta, eta_time = (None if event.clears_eta else event_eta), event.time
+            eta_source = None if event.clears_eta else event.source
         timeline.append(
             TimelineEntry(
                 time=event.time,
@@ -903,6 +949,8 @@ def derive_state(parcel: Parcel) -> ParcelState:
         inferred=inferred,
         inferred_reason=inferred_by if inferred else None,
         ai_filled=ai_filled,
+        name=next((o.name for o in reversed(origins) if o.name), None),
+        eta_source=eta_source,
     )
 
 
@@ -1117,7 +1165,7 @@ class ReviewItem:
             owner=data.get("owner"),
             reason=str(data.get("reason", "")),
             authenticated=bool(data.get("authenticated", False)),
-            source=Source(data.get("source", Source.PARSER)),
+            source=_source(data.get("source")),
             suggestion=Suggestion.from_dict(suggestion)
             if isinstance(suggestion, Mapping)
             else None,
@@ -1227,13 +1275,6 @@ PICKUP_RANK: dict[PickupRule, int] = {
     PickupRule.NEXT_WORKING_DAY: 1,
     PickupRule.EMAIL: 2,
 }
-
-
-def _source(value: Any) -> Source:
-    try:
-        return Source(value or Source.PARSER)
-    except ValueError:
-        return Source.PARSER
 
 
 @dataclass(slots=True)
@@ -1451,6 +1492,7 @@ SECTIONS: tuple[str, ...] = (
     "engine",
     "ai",
     "seventeentrack",
+    "parcelapp",
     "cursors",
 )
 
@@ -1484,6 +1526,7 @@ class ParcelsData:
     engine: dict[str, Any] = field(default_factory=dict)
     ai: dict[str, Any] = field(default_factory=dict)
     seventeentrack: dict[str, Any] = field(default_factory=dict)
+    parcelapp: dict[str, Any] = field(default_factory=dict)
     cursors: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -1499,6 +1542,7 @@ class ParcelsData:
             "engine": self.engine,
             "ai": self.ai,
             "seventeentrack": self.seventeentrack,
+            "parcelapp": self.parcelapp,
             "cursors": self.cursors,
         }
 
@@ -1531,6 +1575,7 @@ class ParcelsData:
             engine=section("engine"),
             ai=section("ai"),
             seventeentrack=section("seventeentrack"),
+            parcelapp=section("parcelapp"),
             cursors=section("cursors"),
         )
 

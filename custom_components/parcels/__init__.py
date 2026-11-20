@@ -40,6 +40,7 @@ from .coordinator import MailboxCoordinator
 from .engine import MailboxRuntime, ParcelsEngine, get_engine
 from .mail.oauth import async_create_entry_client
 from .notifier import Notifier
+from .parcelapp.sync import ParcelAppSync
 from .services import async_setup_services
 from .seventeentrack import SeventeenTrackSync
 from .store import ParcelsStore
@@ -115,8 +116,10 @@ async def _async_setup_hub(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await engine.async_start()
     notifier = Notifier(hass, entry, engine)
     tracker = SeventeenTrackSync(engine)
+    parcelapp = ParcelAppSync(engine)
     engine.notifier = notifier
     engine.tracker = tracker
+    engine.parcelapp = parcelapp
     entry.runtime_data = engine
     try:
         await hass.config_entries.async_forward_entry_setups(entry, HUB_PLATFORMS)
@@ -126,6 +129,7 @@ async def _async_setup_hub(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await engine.async_stop()
         raise
     tracker.async_start()
+    parcelapp.async_start()
     entry.async_on_unload(entry.add_update_listener(_async_hub_updated))
     # Mailboxes that gave up waiting for the hub don't wait for their retry.
     for other in hass.config_entries.async_entries(DOMAIN):
@@ -140,6 +144,8 @@ async def _async_hub_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     engine.ai.wake()
     if engine.tracker is not None:
         engine.tracker.reconfigure()
+    if engine.parcelapp is not None:
+        engine.parcelapp.reconfigure()
     if engine.notifier is not None:
         engine.notifier.async_parcels_changed()
     async_dispatcher_send(hass, SIGNAL_DATA_UPDATED)
@@ -151,6 +157,8 @@ async def _async_unload_hub(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
     if engine.tracker is not None:
         await engine.tracker.async_stop()
+    if engine.parcelapp is not None:
+        await engine.parcelapp.async_stop()
     if engine.notifier is not None:
         await engine.notifier.async_stop()
     await engine.async_stop()

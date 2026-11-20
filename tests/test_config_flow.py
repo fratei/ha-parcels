@@ -579,6 +579,220 @@ async def test_hub_options_refuse_ai_task(
     assert error in STRINGS["options"]["error"]
 
 
+PARCEL_KEY = "synthetic-parcel-key-0001"
+PARCEL_DELIVERIES = "https://api.parcel.app/external/deliveries/"
+PARCEL_INPUT: dict[str, Any] = {
+    "parcel_app_key": PARCEL_KEY,
+    "parcel_app_owner": "person.alex",
+    "parcel_app_import": True,
+    "parcel_app_add": True,
+    "parcel_app_everyone": False,
+    "parcel_app_daily": 5,
+    "parcel_app_postcode": "1000-001",
+}
+
+
+async def test_hub_options_parcel_app(
+    hass: HomeAssistant,
+    hub_entry: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """A Parcel app key is checked once and kept with its settings."""
+    hass.config.country = "PT"
+    aioclient_mock.get(PARCEL_DELIVERIES, json={"success": True, "deliveries": []})
+
+    result = await hass.config_entries.options.async_init(hub_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        HUB_INPUT
+        | PARCEL_INPUT
+        | {"parcel_app_key": f" {PARCEL_KEY} ", "parcel_app_postcode": "1000001"},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert hub_entry.options == HUB_INPUT | PARCEL_INPUT
+    assert aioclient_mock.call_count == 1
+    assert aioclient_mock.mock_calls[0][3]["api-key"] == PARCEL_KEY
+
+    # The same key isn't checked again. With adding off, the form hides the
+    # settings for adding, and they're kept for when it's turned back on.
+    result = await hass.config_entries.options.async_init(hub_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        HUB_INPUT
+        | {
+            "parcel_app_key": PARCEL_KEY,
+            "parcel_app_import": False,
+            "parcel_app_add": False,
+            "parcel_app_everyone": True,
+            "parcel_app_daily": 20,
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert hub_entry.options == {
+        **HUB_INPUT,
+        **{k: v for k, v in PARCEL_INPUT.items() if k != "parcel_app_owner"},
+        "parcel_app_import": False,
+        "parcel_app_add": False,
+    }
+    assert aioclient_mock.call_count == 1
+
+    # Clearing the key drops every Parcel app setting.
+    result = await hass.config_entries.options.async_init(hub_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], HUB_INPUT | {"parcel_app_key": "  "}
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert hub_entry.options == HUB_INPUT
+    assert aioclient_mock.call_count == 1
+
+
+async def test_hub_options_parcel_app_form(
+    hass: HomeAssistant, hub_entry: MockConfigEntry
+) -> None:
+    """The form shows the Parcel app settings once a key is typed."""
+    result = await hass.config_entries.options.async_init(hub_entry.entry_id)
+    schema = result["data_schema"].schema
+    visible = {
+        key.schema: getattr(key, "visible", None)
+        for key in schema
+        if key.schema.startswith("parcel_app_")
+    }
+
+    key_typed = {"field": "parcel_app_key", "operator": "exists"}
+    adding = [key_typed, {"field": "parcel_app_add", "value": True}]
+    assert visible == {
+        "parcel_app_key": None,
+        "parcel_app_owner": key_typed,
+        "parcel_app_import": key_typed,
+        "parcel_app_add": key_typed,
+        "parcel_app_everyone": adding,
+        "parcel_app_daily": adding,
+        "parcel_app_postcode": adding,
+    }
+    for field in visible:
+        assert field in STRINGS["options"]["step"]["hub"]["data"]
+        assert field in STRINGS["options"]["step"]["hub"]["data_description"]
+
+
+@pytest.mark.parametrize(
+    ("changes", "answer", "errors"),
+    [
+        (
+            {"parcel_app_key": "short"},
+            None,
+            {"parcel_app_key": "parcel_app_key_invalid"},
+        ),
+        (
+            {"parcel_app_postcode": "1000-01"},
+            None,
+            {"parcel_app_postcode": "parcel_app_postcode_invalid"},
+        ),
+        (
+            {},
+            {"json": {"success": False, "error_message": "Invalid API key"}},
+            {"parcel_app_key": "parcel_app_key_refused"},
+        ),
+        (
+            {},
+            {"status": HTTPStatus.UNAUTHORIZED},
+            {"parcel_app_key": "parcel_app_key_refused"},
+        ),
+    ],
+)
+async def test_hub_options_parcel_app_errors(
+    hass: HomeAssistant,
+    hub_entry: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+    changes: dict[str, Any],
+    answer: dict[str, Any] | None,
+    errors: dict[str, str],
+) -> None:
+    """A malformed or refused key and a malformed postcode are refused."""
+    hass.config.country = "PT"
+    aioclient_mock.get(
+        PARCEL_DELIVERIES,
+        **(answer or {"json": {"success": True, "deliveries": []}}),
+    )
+
+    result = await hass.config_entries.options.async_init(hub_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], HUB_INPUT | PARCEL_INPUT | changes
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == errors
+    assert set(errors.values()) <= set(STRINGS["options"]["error"])
+    assert hub_entry.options == HUB_DEFAULTS
+    # Only a well-formed key is sent, and only to check it.
+    assert aioclient_mock.call_count == (1 if answer else 0)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"status": HTTPStatus.TOO_MANY_REQUESTS},
+        {"status": HTTPStatus.INTERNAL_SERVER_ERROR},
+        {"exc": TimeoutError()},
+    ],
+)
+async def test_hub_options_parcel_app_unreachable(
+    hass: HomeAssistant,
+    hub_entry: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+    answer: dict[str, Any],
+) -> None:
+    """A key is kept when Parcel can't be asked: the sync checks it later."""
+    aioclient_mock.get(PARCEL_DELIVERIES, **answer)
+
+    result = await hass.config_entries.options.async_init(hub_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], HUB_INPUT | PARCEL_INPUT
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert hub_entry.options == HUB_INPUT | PARCEL_INPUT
+
+
+async def test_hub_options_parcel_app_owner(
+    hass: HomeAssistant,
+    hub_entry: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """The key's user is asked for once mailboxes have owners."""
+    aioclient_mock.get(PARCEL_DELIVERIES, json={"success": True, "deliveries": []})
+    without_owner = {k: v for k, v in PARCEL_INPUT.items() if k != "parcel_app_owner"}
+
+    result = await hass.config_entries.options.async_init(hub_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], HUB_INPUT | without_owner
+    )
+    await hass.async_block_till_done()
+
+    # Without owners, every mailbox is the key user's.
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert hub_entry.options == HUB_INPUT | without_owner
+
+    mailbox = add_mailbox(hass, "google")
+    hass.config_entries.async_update_entry(
+        mailbox, options={**mailbox.options, "owner": "person.sam"}
+    )
+    result = await hass.config_entries.options.async_init(hub_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], HUB_INPUT | without_owner
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"parcel_app_owner": "parcel_app_owner_required"}
+    assert "parcel_app_owner_required" in STRINGS["options"]["error"]
+
+
 async def test_microsoft_mailbox_options(hass: HomeAssistant) -> None:
     """Microsoft mailboxes choose their folders."""
     entry = add_mailbox(hass, "microsoft")

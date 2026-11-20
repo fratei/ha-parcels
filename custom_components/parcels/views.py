@@ -271,6 +271,8 @@ def parcel_json(
         "archived": parcel.archived is not None,
         "origins": splittable_origins(parcel),
         "shipment_group": shipment,
+        "name": state.name,
+        "eta_source": state.eta_source.value if state.eta_source else None,
         "restricted": restricted,
     }
     if restricted:
@@ -293,6 +295,8 @@ def parcel_json(
             inferred_reason=None,
             origins=[],
             shipment_group=None,
+            name=None,
+            eta_source=None,
         )
     return result
 

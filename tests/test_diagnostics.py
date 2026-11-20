@@ -169,6 +169,29 @@ async def test_hub(
     assert diagnostics["seventeentrack"]["tracked"] == 0
 
 
+async def test_parcel_app_options_redacted(hass: HomeAssistant) -> None:
+    """The Parcel app key, postcode and person never reach the file."""
+    key = "synthetic-parcel-key-0001"
+    hub = add_hub(
+        hass,
+        parcel_app_key=key,
+        parcel_app_owner=OWNER,
+        parcel_app_add=True,
+        parcel_app_postcode="1000-001",
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, hub)
+
+    options = diagnostics["entry"]["options"]
+    assert options["parcel_app_key"] == REDACTED
+    assert options["parcel_app_owner"] == REDACTED
+    assert options["parcel_app_postcode"] == REDACTED
+    assert options["parcel_app_add"] is True
+    text = json.dumps(diagnostics)
+    for secret in (key, OWNER, "1000-001"):
+        assert secret not in text
+
+
 async def test_sender_checks(
     hass: HomeAssistant,
     hass_client: ClientSessionGenerator,

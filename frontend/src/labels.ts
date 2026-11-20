@@ -48,18 +48,23 @@ export function carrierLabel(parcel: Pick<Parcel, "carrier" | "carrier_name">): 
   return Object.hasOwn(CARRIER_NAMES, id) ? carrierName(id) : humanize(id);
 }
 
+type Titled = Pick<
+  Parcel,
+  "restricted" | "merchant" | "name" | "carrier" | "carrier_name" | "tracking_number"
+>;
+
 /**
  * The name shown for a parcel: "Private parcel" when restricted, else the
- * merchant, the carrier, the tracking number, or "Parcel".
+ * merchant, its name in the Parcel app, the carrier, the tracking number, or
+ * "Parcel".
  */
-export function parcelTitle(
-  parcel: Pick<Parcel, "restricted" | "merchant" | "carrier" | "carrier_name" | "tracking_number">,
-): string {
+export function parcelTitle(parcel: Titled): string {
   if (parcel.restricted) {
     return STRINGS.privateParcel;
   }
   return (
     clean(parcel.merchant) ??
+    clean(parcel.name) ??
     carrierLabel(parcel) ??
     clean(parcel.tracking_number) ??
     STRINGS.unnamedParcel
@@ -67,11 +72,20 @@ export function parcelTitle(
 }
 
 /** The carrier shown under the title, or null when the title already is the carrier. */
-export function parcelSubtitle(
-  parcel: Pick<Parcel, "restricted" | "merchant" | "carrier" | "carrier_name" | "tracking_number">,
-): string | null {
+export function parcelSubtitle(parcel: Titled): string | null {
   const carrier = carrierLabel(parcel);
   return carrier && carrier !== parcelTitle(parcel) ? carrier : null;
+}
+
+/** The parcel's name in the Parcel app, or null when hidden or already the title. */
+export function parcelAppName(parcel: Titled): string | null {
+  const name = clean(parcel.name);
+  return name && !parcel.restricted && name !== parcelTitle(parcel) ? name : null;
+}
+
+/** Where the expected date comes from, shown when it's the Parcel app; else null. */
+export function etaSourceLabel(parcel: Pick<Parcel, "eta_source">): string | null {
+  return parcel.eta_source === "parcelapp" ? sourceLabel(parcel.eta_source) : null;
 }
 
 export function statusLabel(status: unknown): string {

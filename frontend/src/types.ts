@@ -18,7 +18,7 @@ export const PARCEL_STATUSES = [
 
 export type ParcelStatus = (typeof PARCEL_STATUSES)[number];
 
-export type ParcelSource = "parser" | "ai" | "manual" | "seventeentrack";
+export type ParcelSource = "parser" | "ai" | "manual" | "seventeentrack" | "parcelapp";
 
 /**
  * A timeline entry's source. Inferred deliveries: "inferred" when worked out
@@ -41,6 +41,8 @@ export interface AutoMerged {
 export interface Parcel {
   id: string;
   merchant: string | null;
+  /** What the user calls the parcel in the Parcel app; null when restricted. */
+  name: string | null;
   carrier: string | null;
   carrier_name: string | null;
   tracking_number: string | null;
@@ -51,6 +53,8 @@ export interface Parcel {
   eta_end: string | null;
   window_start: string | null;
   window_end: string | null;
+  /** Where the expected date comes from; null without one or when restricted. */
+  eta_source: ParcelSource | null;
   delivered_at: string | null;
   /** Delivered only by inference, until the user keeps or undoes it. */
   inferred: boolean;

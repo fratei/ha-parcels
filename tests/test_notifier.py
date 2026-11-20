@@ -278,6 +278,7 @@ class Env:
         private: bool = False,
         pickup_point: str | None = None,
         when: datetime | None = None,
+        name: str | None = None,
     ) -> Parcel:
         """Add a parcel whose only event is its current status."""
         number = next(self._numbers)
@@ -292,6 +293,7 @@ class Env:
             items=items,
             owners=owners,
             pickup_point=pickup_point,
+            name=name,
         )
         parcel = Parcel(
             id=f"p_{number:012x}",
@@ -837,6 +839,40 @@ async def test_private_parcels_and_item_names(env: Env, hass: HomeAssistant) -> 
         "",
         f"[Open Parcels]({PATH})",
     )
+
+
+@pytest.mark.parametrize(
+    ("item_names", "named", "plain"),
+    [
+        (
+            True,
+            f"Expected today{SEP}CTT{SEP}Winter coat",
+            f"Expected today{SEP}DPD{SEP}Blue scarf",
+        ),
+        (False, f"Expected today{SEP}CTT", f"Expected today{SEP}DPD"),
+    ],
+)
+async def test_parcel_app_names_go_with_item_names(
+    env: Env, item_names: bool, named: str, plain: str
+) -> None:
+    """A parcel's Parcel app name shows when it has no items, like item names.
+
+    It's left out when it repeats the title, and for private parcels.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_ITEM_NAMES: item_names, CONF_COLLAPSE_THRESHOLD: 9})
+    coat = env.parcel(eta=on(), merchant="Zalando", carrier="ctt", name="Winter coat")
+    scarf = env.parcel(eta=on(), items=("Blue scarf",), name="Scarf, gift wrap")
+    same = env.parcel(eta=on(), merchant="Etsy", carrier="gls", name=" etsy ")
+    gift = env.parcel(eta=on(), owners=(ALEX,), private=True, name="Board game")
+    await env.start()
+    await env.goto(at(8))
+    assert summary(phone.take()) == [
+        (tag_of(coat), named),
+        (tag_of(scarf), plain),
+        (tag_of(same), f"Expected today{SEP}GLS"),
+        (tag_of(gift), f"Expected today{SEP}DPD"),
+    ]
 
 
 async def test_switches(env: Env, hass: HomeAssistant) -> None:

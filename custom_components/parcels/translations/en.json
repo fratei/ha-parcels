@@ -49,6 +49,13 @@
           "excluded_devices": "Excluded devices",
           "item_names_on_lock_screen": "Show item names on the lock screen",
           "notify_persons": "People to notify",
+          "parcel_app_add": "Add new parcels to Parcel",
+          "parcel_app_daily": "Parcels added per day",
+          "parcel_app_everyone": "Add everyone's parcels",
+          "parcel_app_import": "Show deliveries only in Parcel",
+          "parcel_app_key": "Parcel app API key",
+          "parcel_app_owner": "Parcel app user",
+          "parcel_app_postcode": "Delivery postcode",
           "purge_days": "Delete delivered parcels after",
           "seventeentrack": "Live status from 17TRACK",
           "start_time": "Start time",
@@ -64,6 +71,13 @@
           "excluded_devices": "Companion app devices that never get Live Activities, such as a shared tablet.",
           "item_names_on_lock_screen": "Live Activities are visible on the lock screen. When off, they show merchant, carrier, status and time window only.",
           "notify_persons": "The companion app devices of these people get Live Activities.",
+          "parcel_app_add": "Sends the tracking number, the carrier, the shop's name and Home Assistant's language, never item names or e-mails. Private parcels are never sent.",
+          "parcel_app_daily": "Parcel accepts at most 20 new deliveries a day, refused ones included.",
+          "parcel_app_everyone": "Also add the parcels from other people's mailboxes. When off, only the Parcel app user's parcels are added.",
+          "parcel_app_import": "Deliveries in Parcel that no e-mail mentions show here too. When off, Parcel only updates parcels found in e-mails.",
+          "parcel_app_key": "Reads your deliveries from the Parcel app and adds new tracking numbers to it. Needs Parcel Premium; make the key at web.parcelapp.net. Leave empty to stop using Parcel.",
+          "parcel_app_owner": "The person whose Parcel account the key belongs to. Deliveries from Parcel become their parcels.",
+          "parcel_app_postcode": "Sent only for carriers that Parcel can't follow without it, such as Paack. In Portugal, NNNN-NNN.",
           "purge_days": "Days after delivery. Must be more than the archive period.",
           "seventeentrack": "Sends tracking numbers, never item names or e-mails, to the 17TRACK integration.",
           "start_time": "Live Activities for parcels expected today start at this time.",
@@ -100,6 +114,10 @@
       "ai_unresolvable": "The address of this Ollama server couldn't be checked. Use an Ollama server on the Home Assistant host.",
       "cutoff_before_start": "The cut-off time must be later than the start time.",
       "no_folders": "Choose at least one folder.",
+      "parcel_app_key_invalid": "This doesn't look like a Parcel API key. Copy it from web.parcelapp.net.",
+      "parcel_app_key_refused": "Parcel refused this key. Check it at web.parcelapp.net, and that the Parcel account has Premium.",
+      "parcel_app_owner_required": "Your mailboxes have owners: choose whose Parcel account this is.",
+      "parcel_app_postcode_invalid": "Enter a valid postcode, such as 1000-001 in Portugal.",
       "purge_before_archive": "Use more days than the archive period.",
       "test_device_required": "Choose a test device, or turn off test mode."
     }
@@ -323,6 +341,10 @@
     "ai_task_refused": {
       "title": "The chosen AI task isn't local",
       "description": "Parcels only sends e-mails to an AI task entity of the Ollama integration whose model runs on this Home Assistant. The chosen AI task entity failed this check (reason: {reason}), so no e-mail was sent to it and the AI is paused.\n\nChoose a local Ollama AI task entity in the Parcels options, or set the AI mode to off."
+    },
+    "parcel_app_key_refused": {
+      "title": "The Parcel app refused the API key",
+      "description": "Parcel refused the API key in the Parcels options, so Parcels can't read or add deliveries. The key may have been replaced, or the Parcel account may no longer have Premium.\n\nCheck the key at web.parcelapp.net and enter it again in the Parcels options, or clear it to stop using Parcel. Parcels tries the key again every 6 hours, and this issue goes away when it works."
     }
   },
   "services": {
@@ -476,7 +498,7 @@
     },
     "refresh": {
       "name": "Refresh",
-      "description": "Checks all mailboxes, and 17TRACK when it's on, now."
+      "description": "Checks all mailboxes, and 17TRACK and the Parcel app when they're on, now. The Parcel app is read at most every 10 minutes."
     },
     "reprocess": {
       "name": "Read e-mails again",

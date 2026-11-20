@@ -33,6 +33,9 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
     TimeSelector,
 )
 import probatio
@@ -54,6 +57,13 @@ from .const import (
     CONF_LOOKBACK_DAYS,
     CONF_NOTIFY_PERSONS,
     CONF_OWNER,
+    CONF_PARCEL_APP_ADD,
+    CONF_PARCEL_APP_DAILY,
+    CONF_PARCEL_APP_EVERYONE,
+    CONF_PARCEL_APP_IMPORT,
+    CONF_PARCEL_APP_KEY,
+    CONF_PARCEL_APP_OWNER,
+    CONF_PARCEL_APP_POSTCODE,
     CONF_PROVIDER,
     CONF_PURGE_DAYS,
     CONF_SEVENTEENTRACK,
@@ -68,6 +78,10 @@ from .const import (
     DEFAULT_ITEM_NAMES,
     DEFAULT_LOOKBACK_DAYS,
     DEFAULT_MICROSOFT_FOLDERS,
+    DEFAULT_PARCEL_APP_ADD,
+    DEFAULT_PARCEL_APP_DAILY,
+    DEFAULT_PARCEL_APP_EVERYONE,
+    DEFAULT_PARCEL_APP_IMPORT,
     DEFAULT_PURGE_DAYS,
     DEFAULT_SEVENTEENTRACK,
     DEFAULT_START_TIME,
@@ -75,6 +89,7 @@ from .const import (
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_MAILBOX,
     HUB_UNIQUE_ID,
+    MAX_PARCEL_APP_DAILY,
     MICROSOFT_FOLDERS,
     NAME,
     PROVIDER_GOOGLE,
@@ -83,6 +98,13 @@ from .const import (
 )
 from .mail.errors import MailApiDisabled, MailAuthError, MailError, MailNoMailbox
 from .mail.oauth import create_client
+from .parcelapp.api import (
+    ErrorKind,
+    ParcelAppError,
+    async_get_deliveries,
+    normalize_postcode,
+    valid_key,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -159,6 +181,15 @@ def _persons(*, multiple: bool) -> EntitySelector:
     )
 
 
+# The Parcel app settings show once a key is typed, those for adding only
+# while adding is on.
+_PARCEL_APP_KEY_TYPED = {"field": CONF_PARCEL_APP_KEY, "operator": "exists"}
+_PARCEL_APP_ADDING = [
+    _PARCEL_APP_KEY_TYPED,
+    {"field": CONF_PARCEL_APP_ADD, "value": True},
+]
+
+
 HUB_SCHEMA = probatio.Schema(
     {
         probatio.Optional(CONF_NOTIFY_PERSONS): _persons(multiple=True),
@@ -178,6 +209,39 @@ HUB_SCHEMA = probatio.Schema(
         probatio.Required(
             CONF_SEVENTEENTRACK, default=DEFAULT_SEVENTEENTRACK
         ): BooleanSelector(),
+        probatio.Optional(CONF_PARCEL_APP_KEY): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.PASSWORD)
+        ),
+        data_entry_flow.Optional(
+            CONF_PARCEL_APP_OWNER, visible=_PARCEL_APP_KEY_TYPED
+        ): _persons(multiple=False),
+        data_entry_flow.Required(
+            CONF_PARCEL_APP_IMPORT,
+            default=DEFAULT_PARCEL_APP_IMPORT,
+            visible=_PARCEL_APP_KEY_TYPED,
+        ): BooleanSelector(),
+        data_entry_flow.Required(
+            CONF_PARCEL_APP_ADD,
+            default=DEFAULT_PARCEL_APP_ADD,
+            visible=_PARCEL_APP_KEY_TYPED,
+        ): BooleanSelector(),
+        data_entry_flow.Required(
+            CONF_PARCEL_APP_EVERYONE,
+            default=DEFAULT_PARCEL_APP_EVERYONE,
+            visible=_PARCEL_APP_ADDING,
+        ): BooleanSelector(),
+        data_entry_flow.Required(
+            CONF_PARCEL_APP_DAILY,
+            default=DEFAULT_PARCEL_APP_DAILY,
+            visible=_PARCEL_APP_ADDING,
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=1, max=MAX_PARCEL_APP_DAILY, step=1, mode=NumberSelectorMode.BOX
+            )
+        ),
+        data_entry_flow.Optional(
+            CONF_PARCEL_APP_POSTCODE, visible=_PARCEL_APP_ADDING
+        ): TextSelector(),
         probatio.Required(CONF_TEST_MODE, default=False): BooleanSelector(),
         data_entry_flow.Optional(
             CONF_TEST_DEVICE, visible={"field": CONF_TEST_MODE, "value": True}
@@ -439,9 +503,40 @@ class HubOptionsFlow(OptionsFlow):
             options[CONF_TEST_DEVICE] = test_device
         if ai_task := user_input.get(CONF_AI_TASK):
             options[CONF_AI_TASK] = ai_task
+        options.update(self._parcel_app_options(user_input))
         return options
 
-    async def _async_validate(self, options: Mapping[str, Any]) -> dict[str, str]:
+    def _parcel_app_options(self, user_input: Mapping[str, Any]) -> dict[str, Any]:
+        """Return the Parcel app options to store: none without a key."""
+        key = str(user_input.get(CONF_PARCEL_APP_KEY) or "").strip()
+        if not key:
+            return {}
+        options: dict[str, Any] = {
+            CONF_PARCEL_APP_KEY: key,
+            CONF_PARCEL_APP_IMPORT: bool(
+                user_input.get(CONF_PARCEL_APP_IMPORT, DEFAULT_PARCEL_APP_IMPORT)
+            ),
+            CONF_PARCEL_APP_ADD: bool(
+                user_input.get(CONF_PARCEL_APP_ADD, DEFAULT_PARCEL_APP_ADD)
+            ),
+        }
+        if owner := user_input.get(CONF_PARCEL_APP_OWNER):
+            options[CONF_PARCEL_APP_OWNER] = owner
+        # The settings for adding are hidden while it's off: keep them.
+        adding = (
+            user_input if options[CONF_PARCEL_APP_ADD] else self.config_entry.options
+        )
+        options[CONF_PARCEL_APP_EVERYONE] = bool(
+            adding.get(CONF_PARCEL_APP_EVERYONE, DEFAULT_PARCEL_APP_EVERYONE)
+        )
+        options[CONF_PARCEL_APP_DAILY] = int(
+            adding.get(CONF_PARCEL_APP_DAILY, DEFAULT_PARCEL_APP_DAILY)
+        )
+        if postcode := str(adding.get(CONF_PARCEL_APP_POSTCODE) or "").strip():
+            options[CONF_PARCEL_APP_POSTCODE] = postcode
+        return options
+
+    async def _async_validate(self, options: dict[str, Any]) -> dict[str, str]:
         """Return the form errors of the hub options."""
         errors: dict[str, str] = {}
         if options[CONF_TEST_MODE] and not options.get(CONF_TEST_DEVICE):
@@ -456,7 +551,44 @@ class HubOptionsFlow(OptionsFlow):
             check = await safety.async_check_ai_task(self.hass, ai_task)
             if not check.ok:
                 errors[CONF_AI_TASK] = _ai_error(check.reason)
+        if CONF_PARCEL_APP_KEY in options:
+            await self._async_validate_parcel_app(options, errors)
         return errors
+
+    async def _async_validate_parcel_app(
+        self, options: dict[str, Any], errors: dict[str, str]
+    ) -> None:
+        """Check the Parcel app options, and a new key with one request."""
+        key = options[CONF_PARCEL_APP_KEY]
+        if not valid_key(key):
+            errors[CONF_PARCEL_APP_KEY] = "parcel_app_key_invalid"
+        if options[CONF_PARCEL_APP_ADD] and (
+            postcode := options.get(CONF_PARCEL_APP_POSTCODE)
+        ):
+            if normalized := normalize_postcode(postcode, self.hass.config.country):
+                options[CONF_PARCEL_APP_POSTCODE] = normalized
+            else:
+                errors[CONF_PARCEL_APP_POSTCODE] = "parcel_app_postcode_invalid"
+        if not options.get(CONF_PARCEL_APP_OWNER) and self._mailboxes_have_owners():
+            errors[CONF_PARCEL_APP_OWNER] = "parcel_app_owner_required"
+        if errors or key == self.config_entry.options.get(CONF_PARCEL_APP_KEY):
+            return
+        try:
+            await async_get_deliveries(self.hass, key, active_only=True)
+        except ParcelAppError as err:
+            if err.kind is ErrorKind.KEY:
+                errors[CONF_PARCEL_APP_KEY] = "parcel_app_key_refused"
+            else:
+                # The sync checks the key again once Parcel answers.
+                _LOGGER.debug("Couldn't check the Parcel app key: %s", err.code)
+
+    def _mailboxes_have_owners(self) -> bool:
+        """Return whether any mailbox entry has an owner."""
+        return any(
+            entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MAILBOX
+            and entry.options.get(CONF_OWNER)
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+        )
 
 
 class MailboxOptionsFlow(OptionsFlowWithReload):

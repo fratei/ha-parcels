@@ -149,6 +149,7 @@ if TYPE_CHECKING:
     from .coordinator import MailboxCoordinator
     from .mail import MailClient, MessageMeta
     from .notifier import Notifier
+    from .parcelapp.sync import ParcelAppSync
     from .seventeentrack import SeventeenTrackSync
 
 _LOGGER = logging.getLogger(__name__)
@@ -327,6 +328,7 @@ class ParcelsEngine:
         self.store = ParcelsStore(hass)
         self.notifier: Notifier | None = None
         self.tracker: SeventeenTrackSync | None = None
+        self.parcelapp: ParcelAppSync | None = None
         self.ai = AIWorker(self)
         self.workdays = WorkingDays(hass)
         self.mailboxes: dict[str, MailboxRuntime] = {}
@@ -694,12 +696,17 @@ class ParcelsEngine:
             self.async_schedule_save()
 
     async def async_refresh(self) -> None:
-        """Check every mailbox, and 17TRACK, now."""
+        """Check every mailbox, 17TRACK and the Parcel app now.
+
+        The Parcel app is read only when its last read is ten minutes old.
+        """
         for mailbox in list(self.mailboxes.values()):
             if mailbox.coordinator is not None:
                 await mailbox.coordinator.async_request_refresh()
         if self.tracker is not None:
             await self.tracker.async_refresh()
+        if self.parcelapp is not None:
+            await self.parcelapp.async_refresh()
 
     # -- E-mail intake ----------------------------------------------------
 

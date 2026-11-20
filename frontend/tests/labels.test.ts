@@ -6,7 +6,9 @@ import {
   carrierLabel,
   humanize,
   inferredNotice,
+  etaSourceLabel,
   kindLabel,
+  parcelAppName,
   parcelSubtitle,
   parcelTitle,
   reasonLabel,
@@ -95,6 +97,32 @@ describe("labels", () => {
     assert.equal(parcelTitle(makeParcel()), "Parcel");
   });
 
+  test("the Parcel app name comes after the merchant and before the carrier", () => {
+    assert.equal(parcelTitle(makeParcel({ merchant: "Example Shop", name: "Blue mug" })), "Example Shop");
+    assert.equal(parcelTitle(makeParcel({ name: " Blue mug ", carrier: "dhl" })), "Blue mug");
+    assert.equal(parcelTitle(makeParcel({ name: "  ", carrier: "dhl" })), "DHL");
+    assert.equal(parcelTitle(makeParcel({ restricted: true, name: "Blue mug" })), "Private parcel");
+    assert.equal(parcelSubtitle(makeParcel({ name: "Blue mug", carrier: "ups" })), "UPS");
+  });
+
+  test("the Parcel app name is shown apart only when the title isn't it", () => {
+    assert.equal(parcelAppName(makeParcel({ merchant: "Example Shop", name: " Blue mug " })), "Blue mug");
+    assert.equal(parcelAppName(makeParcel({ name: "Blue mug", carrier: "dhl" })), null);
+    assert.equal(parcelAppName(makeParcel({ merchant: "Example Shop", name: "Example Shop" })), null);
+    assert.equal(parcelAppName(makeParcel({ merchant: "Example Shop", name: "  " })), null);
+    assert.equal(
+      parcelAppName(makeParcel({ restricted: true, merchant: "Example Shop", name: "Blue mug" })),
+      null,
+    );
+  });
+
+  test("an expected date from the Parcel app says so", () => {
+    assert.equal(etaSourceLabel(makeParcel({ eta_source: "parcelapp" })), "Parcel app");
+    for (const source of ["parser", "ai", "manual", "seventeentrack", null] as const) {
+      assert.equal(etaSourceLabel(makeParcel({ eta_source: source })), null, String(source));
+    }
+  });
+
   test("restricted parcels are always a private parcel", () => {
     const parcel = makeParcel({ restricted: true, merchant: "Example Shop", carrier: "dhl" });
     assert.equal(parcelTitle(parcel), "Private parcel");
@@ -115,6 +143,7 @@ describe("labels", () => {
     assert.equal(statusLabel("held_somewhere"), "Held somewhere");
     assert.equal(kindLabel("not_parcel"), "Not about a parcel");
     assert.equal(sourceLabel("seventeentrack"), "17TRACK");
+    assert.equal(sourceLabel("parcelapp"), "Parcel app");
     assert.equal(sourceLabel("quiet"), "No news for three weeks");
     assert.equal(reasonLabel("unknown_sender"), "Unknown sender");
     assert.equal(reasonLabel("ai_timeout"), "The local AI took too long on this e-mail");

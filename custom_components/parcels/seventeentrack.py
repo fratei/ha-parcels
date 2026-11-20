@@ -132,30 +132,38 @@ def map_status(status: Any, info: str | None) -> ParcelStatus | None:
     mapped = _STATUSES.get(slugify(str(status or "")))
     if mapped is None:
         return None
-    if mapped in _REFINED and info:
+    return refine_status(mapped, info)
+
+
+def refine_status(status: ParcelStatus, info: str | None) -> ParcelStatus:
+    """Return the more precise status a tracker's carrier text tells, if any."""
+    if status in _REFINED and info:
         text = fold_text(info)
         for kind, refined in _INFO_RULES:
             if phrase_regex(KIND_PHRASES[kind]).search(text):
                 return refined
-    return mapped
+    return status
 
 
-def _current_number(parcel: Parcel) -> str | None:
+def current_number(parcel: Parcel) -> str | None:
+    """Return a parcel's tracking number, normalised, or None."""
     number = parcel.state.tracking_number
     return normalize_tracking_number(number) if number else None
 
 
-def _amazon(number: str, carrier: str | None) -> bool:
+def is_amazon(number: str, carrier: str | None) -> bool:
+    """Return True for Amazon Logistics' numbers, which trackers can't follow."""
     return carrier == "amazon" or detect_carrier(number) == "amazon"
 
 
-def _add_order(parcel: Parcel) -> tuple[date, datetime]:
+def add_order(parcel: Parcel) -> tuple[date, datetime]:
     """Sort key that adds late parcels first, then by date, undated ones last."""
     eta = parcel.state.eta
     return (eta.start if eta is not None else date.max), parcel.created
 
 
-def _clip(text: Any) -> str | None:
+def clip_text(text: Any) -> str | None:
+    """Return text on one line, cut to ``MAX_INFO_CHARS``, or None."""
     value = " ".join(str(text or "").split())
     if not value:
         return None
@@ -396,9 +404,9 @@ class SeventeenTrackSync:
             if parcel.archived is not None or parcel.private:
                 continue
             state = parcel.state
-            if state.terminal or (number := _current_number(parcel)) is None:
+            if state.terminal or (number := current_number(parcel)) is None:
                 continue
-            if len(number) < MIN_NUMBER_CHARS or _amazon(number, state.carrier):
+            if len(number) < MIN_NUMBER_CHARS or is_amazon(number, state.carrier):
                 continue
             wanted.setdefault(number, parcel)
         return wanted
@@ -433,7 +441,7 @@ class SeventeenTrackSync:
         records = self._packages
         failed = self._failed
         adds = 0
-        wanted = sorted(self._wanted().items(), key=lambda item: _add_order(item[1]))
+        wanted = sorted(self._wanted().items(), key=lambda item: add_order(item[1]))
         for number, parcel in wanted:
             if number in records:
                 continue
@@ -497,11 +505,11 @@ class SeventeenTrackSync:
         parcels = self.engine.data.parcels
         parcel = parcels.get(record.get("parcel") or "")
         if parcel is not None and (
-            oid in parcel.origins or _current_number(parcel) == number
+            oid in parcel.origins or current_number(parcel) == number
         ):
             return parcel
         for parcel in parcels.values():
-            if oid in parcel.origins or _current_number(parcel) == number:
+            if oid in parcel.origins or current_number(parcel) == number:
                 record["parcel"] = parcel.id
                 return parcel
         return None
@@ -517,11 +525,13 @@ class SeventeenTrackSync:
             parcel = self._parcel_for(number, record)
             if parcel is None or parcel.archived is not None:
                 continue
-            if _current_number(parcel) != number:
+            if current_number(parcel) != number:
                 continue
             raw_status = slugify(str(package.get("status") or ""))
             record["status"] = raw_status
-            info = _clip(package.get("info_text")) or _clip(package.get("location"))
+            info = clip_text(package.get("info_text")) or clip_text(
+                package.get("location")
+            )
             status = map_status(raw_status, info)
             if status is None:
                 continue
@@ -599,7 +609,7 @@ class SeventeenTrackSync:
         records = self._packages
         for number, record in list(records.items()):
             parcel = self._parcel_for(number, record)
-            stale = parcel is None or _current_number(parcel) != number
+            stale = parcel is None or current_number(parcel) != number
             if parcel is not None and stale and _drop_origin(parcel, number, now):
                 changed = True
             if record.get("archived"):

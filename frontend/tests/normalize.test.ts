@@ -111,6 +111,7 @@ describe("normalizeParcel", () => {
   test("keeps a full parcel as it is", () => {
     const parcel = makeParcel({
       merchant: "Example Shop",
+      name: "Blue mug",
       carrier: "dhl",
       carrier_name: "DHL",
       tracking_number: "TEST0001",
@@ -121,6 +122,7 @@ describe("normalizeParcel", () => {
       eta_end: "2026-07-15",
       window_start: "13:00",
       window_end: "15:00",
+      eta_source: "parcelapp",
       inferred: true,
       inferred_reason: "return",
       pickup_point: "Example Locker 12",
@@ -156,6 +158,8 @@ describe("normalizeParcel", () => {
       has_code: "yes",
       shipment_group: 7,
       inferred_reason: "pigeon",
+      name: 7,
+      eta_source: "pigeon",
     });
     assert.ok(parcel);
     assert.equal(parcel.status, "teleported");
@@ -168,6 +172,10 @@ describe("normalizeParcel", () => {
     assert.equal(parcel.has_code, false);
     assert.equal(parcel.shipment_group, null);
     assert.equal(parcel.inferred_reason, null);
+    assert.equal(parcel.name, null);
+    assert.equal(parcel.eta_source, "parser");
+    assert.equal(normalizeParcel({ id: "p1", eta_source: 3 })?.eta_source, null);
+    assert.equal(normalizeParcel({ id: "p1", eta_source: "" })?.eta_source, null);
     assert.equal(normalizeParcel([]), null);
     assert.equal(normalizeParcel("p1"), null);
   });
@@ -310,6 +318,7 @@ describe("normalizeDetails", () => {
         { time: "2026-07-15T09:00:00Z", status: "delivered", source: "inferred_return", label: "" },
         { time: "2026-07-16T08:00:00Z", status: "delivered", source: "pigeon", label: "" },
         { time: "2026-07-17T08:00:00Z", status: "delivered", source: "quiet", label: "" },
+        { time: "2026-07-18T08:00:00Z", status: "in_transit", source: "parcelapp", label: "Sorted" },
       ],
       orders: [{ id: "o1", number: "ORDER-1", parcel_ids: ["p1"] }],
       origins: [{ id: "m1", label: "E-mail from Example Shop", source: "parser", time: null }, { label: "No id" }],
@@ -322,6 +331,7 @@ describe("normalizeDetails", () => {
       { time: "2026-07-15T09:00:00Z", status: "delivered", source: "inferred_return", label: "" },
       { time: "2026-07-16T08:00:00Z", status: "delivered", source: "parser", label: "" },
       { time: "2026-07-17T08:00:00Z", status: "delivered", source: "quiet", label: "" },
+      { time: "2026-07-18T08:00:00Z", status: "in_transit", source: "parcelapp", label: "Sorted" },
     ]);
     assert.deepEqual(details.orders, [
       { id: "o1", merchant: null, number: "ORDER-1", placed_at: null, parcel_ids: ["p1"] },

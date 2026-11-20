@@ -1,0 +1,3068 @@
+"""Tests for the Parcel app source.
+
+Parcel's API is mocked with answers shaped like its documentation
+(parcelapp.net/help/api-view-deliveries.html and api-add-delivery.html).
+Every key, number, shop and postcode is made up.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable, Coroutine, Iterable
+import copy
+from datetime import UTC, date, datetime, time, timedelta
+from http import HTTPStatus
+import json
+import logging
+from typing import Any
+
+import aiohttp
+from freezegun.api import FrozenDateTimeFactory
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.util import dt as dt_util
+import pytest
+from pytest_homeassistant.common import async_fire_time_changed
+from pytest_homeassistant.test_util.aiohttp import (
+    AiohttpClientMocker,
+    AiohttpClientMockResponse,
+)
+from yarl import URL
+
+from custom_components.parcels.const import (
+    CONF_COLLAPSE_THRESHOLD,
+    CONF_PARCEL_APP_ADD,
+    CONF_PARCEL_APP_DAILY,
+    CONF_PARCEL_APP_EVERYONE,
+    CONF_PARCEL_APP_IMPORT,
+    CONF_PARCEL_APP_KEY,
+    CONF_PARCEL_APP_OWNER,
+    CONF_PARCEL_APP_POSTCODE,
+    DOMAIN,
+    ISSUE_PARCEL_APP_KEY,
+    MailKind,
+    ParcelStatus,
+)
+from custom_components.parcels.dedup import Contribution, apply_contribution
+from custom_components.parcels.engine import ParcelsEngine, get_engine
+from custom_components.parcels.models import (
+    PARCELAPP_PREFIX,
+    Origin,
+    Parcel,
+    ParcelEvent,
+    Source,
+    dt_to_str,
+)
+from custom_components.parcels.parcelapp.api import ADD_URL, DELIVERIES_URL
+from custom_components.parcels.parcelapp.sync import (
+    BUSY_INTERVAL,
+    ERROR_BACKOFF,
+    FALLBACK_DESCRIPTION,
+    INTERVAL,
+    KEY_BACKOFF,
+    LEARN_DAYS,
+    LEARN_MAX,
+    MAX_BACKOFF,
+    MAX_DESCRIPTION,
+    MAX_HISTORY,
+    MIN_INTERVAL,
+    ORIGIN_LABEL,
+    RATE_BACKOFF,
+    RECONFIGURE_DELAY,
+    RECORD_DAYS,
+    START_DELAY,
+    TASK_NAME,
+    ParcelAppSync,
+    delivery_key,
+    order_number,
+    status_code,
+)
+from custom_components.parcels.parsers.base import Eta
+from custom_components.parcels.seventeentrack import origin_id as tracked_origin
+from custom_components.parcels.store import SAVE_DELAY, apply_retention
+
+from .common import OTHER_OWNER, OWNER, add_hub, add_mailbox, async_setup_parcels
+from .factories import contribution
+
+NOW = "2026-11-17 10:00:00+00:00"
+TODAY = date(2026, 11, 17)
+LISBON = "Europe/Lisbon"
+KEY = "synthetic-parcel-key-0001"
+NEW_KEY = "synthetic-parcel-key-0002"
+SECOND = timedelta(seconds=1)
+NUMBER = "1Z9W8R371125836041"
+OTHER_UPS = "1Z9W8R371125870003"
+THIRD_UPS = "1Z9W8R371125900006"
+FOURTH_UPS = "1Z9W8R371125911110"
+BAD_UPS = "1Z9W8R371125836042"
+TBA = "TBA123456789012"
+PAACK = "Qm7Rt2Kp9_2"
+GLS = "61234567890"
+DPD = "09445440512345"
+CTT_EXPRESS = "1234567890123"
+ORDER = "405-1234567-1234567"
+ORDER_KEY = "40512345671234567"
+SHOP = "Example Shop"
+PLACE = "Example City"
+OPTIONS = {CONF_PARCEL_APP_KEY: KEY, CONF_PARCEL_APP_OWNER: OWNER}
+
+
+class FakeParcelApp:
+    """Parcel's API, with the user's deliveries in memory.
+
+    ``deliveries`` is what a read returns. Set ``read_status`` (and
+    ``read_headers``) or ``read_error`` to make the reads fail, and
+    ``add_status`` and ``add_answer``, or ``add_error``, to answer the adds.
+    ``on_add`` runs first with each add's payload, and may change them. A
+    delivery that is added joins ``deliveries`` without news, as on Parcel's
+    server.
+    """
+
+    def __init__(self, aioclient_mock: AiohttpClientMocker) -> None:
+        """Start with an empty list."""
+        self.mock = aioclient_mock
+        self.deliveries: list[dict[str, Any]] = []
+        self.read_status = HTTPStatus.OK
+        self.read_headers: dict[str, str] = {}
+        self.read_error: Exception | None = None
+        self.add_status = HTTPStatus.OK
+        self.add_answer: dict[str, Any] = {"success": True}
+        self.add_error: Exception | None = None
+        self.on_add: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+        self.reads: list[dict[str, str]] = []
+        self.adds: list[dict[str, Any]] = []
+        aioclient_mock.get(DELIVERIES_URL, side_effect=self._read)
+        aioclient_mock.post(ADD_URL, side_effect=self._add)
+
+    def keys(self) -> list[str | None]:
+        """Return the api-key header of every request, in order."""
+        return [(headers or {}).get("api-key") for *_, headers in self.mock.mock_calls]
+
+    async def _read(
+        self, method: str, url: URL, data: Any
+    ) -> AiohttpClientMockResponse:
+        self.reads.append(dict(url.query))
+        if self.read_error is not None:
+            return AiohttpClientMockResponse(method, url, exc=self.read_error)
+        if self.read_status != HTTPStatus.OK:
+            return AiohttpClientMockResponse(
+                method,
+                url,
+                status=self.read_status,
+                json={"success": False, "error_message": "Synthetic failure."},
+                headers=self.read_headers,
+            )
+        return AiohttpClientMockResponse(
+            method,
+            url,
+            json={"success": True, "deliveries": copy.deepcopy(self.deliveries)},
+        )
+
+    def numbers(self) -> list[str]:
+        """Return the numbers sent to be added, in order."""
+        return [add["tracking_number"] for add in self.adds]
+
+    async def _add(self, method: str, url: URL, data: Any) -> AiohttpClientMockResponse:
+        self.adds.append(dict(data))
+        if self.on_add is not None:
+            await self.on_add(dict(data))
+        if self.add_error is not None:
+            return AiohttpClientMockResponse(method, url, exc=self.add_error)
+        if self.add_status == HTTPStatus.OK and self.add_answer.get("success"):
+            self.deliveries.append(
+                {
+                    "carrier_code": data["carrier_code"],
+                    "description": data["description"],
+                    "status_code": 8,
+                    "tracking_number": data["tracking_number"],
+                    "events": [],
+                }
+            )
+        return AiohttpClientMockResponse(
+            method, url, status=self.add_status, json=self.add_answer
+        )
+
+
+@pytest.fixture(autouse=True)
+async def lisbon(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Run the tests on 17 November 2026 at 10:00, in Lisbon."""
+    freezer.move_to(NOW)
+    await hass.config.async_set_time_zone(LISBON)
+
+
+@pytest.fixture
+def parcel_app(aioclient_mock: AiohttpClientMocker) -> FakeParcelApp:
+    """Return Parcel's mocked API."""
+    return FakeParcelApp(aioclient_mock)
+
+
+@pytest.fixture
+def options() -> dict[str, Any]:
+    """Return the hub options of a test: the Parcel app on, for OWNER."""
+    return dict(OPTIONS)
+
+
+@pytest.fixture
+async def engine(
+    hass: HomeAssistant, parcel_app: FakeParcelApp, options: dict[str, Any]
+) -> ParcelsEngine:
+    """Load the hub with the test's options."""
+    add_hub(hass, **options)
+    return await async_setup_parcels(hass)
+
+
+def capture(
+    engine: ParcelsEngine, monkeypatch: pytest.MonkeyPatch
+) -> list[asyncio.Task[Any]]:
+    """Collect the Parcel app refreshes that the engine's timers start."""
+    tasks: list[asyncio.Task[Any]] = []
+    create = engine.async_create_task
+
+    def keep(coro: Coroutine[Any, Any, Any], name: str) -> asyncio.Task[Any]:
+        """Start the task as usual and keep it when it's a Parcel app read."""
+        task = create(coro, name)
+        if name == TASK_NAME:
+            tasks.append(task)
+        return task
+
+    monkeypatch.setattr(engine, "async_create_task", keep)
+    return tasks
+
+
+@pytest.fixture
+def refreshes(
+    engine: ParcelsEngine, monkeypatch: pytest.MonkeyPatch
+) -> list[asyncio.Task[Any]]:
+    """Collect the refreshes that the timer starts."""
+    return capture(engine, monkeypatch)
+
+
+def sync_of(engine: ParcelsEngine) -> ParcelAppSync:
+    """Return the engine's Parcel app sync."""
+    assert engine.parcelapp is not None
+    return engine.parcelapp
+
+
+async def advance(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    refreshes: list[asyncio.Task[Any]],
+    delay: timedelta,
+) -> int:
+    """Move the clock, run what became due and return how many refreshes ran."""
+    freezer.tick(delay)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    count = len(refreshes)
+    await asyncio.gather(*refreshes)
+    refreshes.clear()
+    return count
+
+
+async def reads_after(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+    delay: timedelta,
+) -> int:
+    """Move the clock in two steps and return when the next read came.
+
+    Returns 0 when the read came exactly at ``delay``, -1 when it came
+    earlier and 1 when it hadn't come by then.
+    """
+    before = len(parcel_app.reads)
+    await advance(hass, freezer, refreshes, delay - SECOND)
+    if len(parcel_app.reads) > before:
+        return -1
+    await advance(hass, freezer, refreshes, SECOND)
+    return 0 if len(parcel_app.reads) > before else 1
+
+
+async def set_options(
+    hass: HomeAssistant, engine: ParcelsEngine, **changes: Any
+) -> None:
+    """Change some hub options, as the options flow does."""
+    entry = engine.entry
+    hass.config_entries.async_update_entry(entry, options={**entry.options, **changes})
+    await hass.async_block_till_done()
+
+
+def key_issue(hass: HomeAssistant) -> ir.IssueEntry | None:
+    """Return the repair about a refused key, if raised."""
+    return ir.async_get(hass).async_get_issue(DOMAIN, ISSUE_PARCEL_APP_KEY)
+
+
+def own_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """Return the warnings Parcels logged."""
+    return [
+        record
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+        and record.name.startswith("custom_components.parcels")
+    ]
+
+
+def delivery(
+    number: str = NUMBER,
+    *,
+    code: str | None = "ups",
+    status: Any = 2,
+    events: Iterable[tuple[str, str]] = (("In transit", "2026-11-16 18:30:00"),),
+    description: str | None = SHOP,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Return a delivery as Parcel lists it: events are (text, date)."""
+    return {
+        "carrier_code": code,
+        "description": description,
+        "status_code": status,
+        "tracking_number": number,
+        "events": [
+            {"event": text, "date": when, "location": PLACE, "additional": ""}
+            for text, when in events
+        ],
+        **extra,
+    }
+
+
+async def read(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    parcel_app: FakeParcelApp,
+    after: timedelta = MIN_INTERVAL,
+) -> None:
+    """Read the deliveries once, ``after`` the last read if there was one."""
+    before = len(parcel_app.reads)
+    if before:
+        freezer.tick(after)
+    await hass.services.async_call(DOMAIN, "refresh", {}, blocking=True)
+    await hass.async_block_till_done()
+    assert len(parcel_app.reads) == before + 1
+
+
+def add_parcel(
+    engine: ParcelsEngine,
+    name: str,
+    number: str | None = NUMBER,
+    *,
+    carrier: str | None = "ups",
+    kind: MailKind = MailKind.SHIPPED,
+    eta: Eta | None = None,
+    merchant: str | None = None,
+    orders: Iterable[str] = (),
+    age: timedelta = timedelta(days=2),
+    status: ParcelStatus | None = None,
+    owner: str | None = OWNER,
+    private: bool = False,
+    items: Iterable[str] = (),
+) -> Parcel:
+    """Add a parcel from an e-mail of ``owner``, received ``age`` ago."""
+    now = dt_util.utcnow()
+    applied = apply_contribution(
+        engine.data,
+        contribution(
+            f"msg:{name}#0",
+            kind=kind,
+            time=now - age,
+            carrier=carrier,
+            number=number,
+            merchant=merchant,
+            orders=orders,
+            eta=eta,
+            owner=owner,
+            status=status,
+            private=private,
+            items=items,
+        ),
+        now,
+    )
+    engine.async_changed()
+    assert applied.parcel_id is not None
+    return engine.data.parcels[applied.parcel_id]
+
+
+def holder(engine: ParcelsEngine, key: str = NUMBER) -> Parcel | None:
+    """Return the parcel that holds a delivery."""
+    oid = PARCELAPP_PREFIX + key
+    return next(
+        (parcel for parcel in engine.data.parcels.values() if oid in parcel.origins),
+        None,
+    )
+
+
+def record(engine: ParcelsEngine, key: str = NUMBER) -> dict[str, Any]:
+    """Return what Parcels keeps of a delivery."""
+    return engine.data.parcelapp["records"][key]
+
+
+def own_events(parcel: Parcel, key: str = NUMBER) -> list[ParcelEvent]:
+    """Return the events a delivery gave its parcel, in time order."""
+    oid = PARCELAPP_PREFIX + key
+    return sorted(
+        (event for event in parcel.events if event.origin == oid),
+        key=lambda event: event.time,
+    )
+
+
+def counts(engine: ParcelsEngine) -> tuple[int, int, int, int]:
+    """Return the last read's deliveries, matched, imported and unmatched."""
+    found = engine.data.parcelapp["counts"]
+    return (
+        found["deliveries"],
+        found["matched"],
+        found["imported"],
+        found["unmatched"],
+    )
+
+
+def at(day: int, hour: int, minute: int = 0) -> datetime:
+    """Return a time of November 2026, in UTC (Lisbon's time in November)."""
+    return datetime(2026, 11, day, hour, minute, tzinfo=UTC)
+
+
+# -- Scheduling ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("options", [{}, {CONF_PARCEL_APP_KEY: ""}])
+async def test_off_without_a_key(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Without a key nothing is read."""
+    assert not sync_of(engine).enabled
+
+    assert await advance(hass, freezer, refreshes, timedelta(hours=2)) == 0
+    await hass.services.async_call(DOMAIN, "refresh", {}, blocking=True)
+
+    assert parcel_app.reads == []
+    assert engine.data.parcelapp == {}
+
+
+async def test_first_read_a_minute_after_start(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+) -> None:
+    """The first read comes a minute after the start, with the key header."""
+    assert sync_of(engine).enabled
+
+    assert await reads_after(hass, freezer, refreshes, parcel_app, START_DELAY) == 0
+
+    assert parcel_app.reads == [{"filter_mode": "recent"}]
+    assert parcel_app.keys() == [KEY]
+    assert engine.data.parcelapp["last_poll"] == dt_to_str(dt_util.utcnow())
+    assert sync_of(engine).last_refresh == dt_util.utcnow()
+    # Then every quarter of an hour.
+    assert await reads_after(hass, freezer, refreshes, parcel_app, INTERVAL) == 0
+    assert await reads_after(hass, freezer, refreshes, parcel_app, INTERVAL) == 0
+    assert len(parcel_app.reads) == 3
+
+
+async def test_restart_waits_ten_minutes_after_the_last_read(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reload doesn't read again before ten minutes have passed."""
+    await advance(hass, freezer, refreshes, START_DELAY)
+    assert len(parcel_app.reads) == 1
+    freezer.tick(timedelta(minutes=3))
+
+    assert await hass.config_entries.async_reload(engine.entry.entry_id)
+    await hass.async_block_till_done()
+    reloaded = get_engine(hass)
+    assert reloaded is not None
+    assert reloaded is not engine
+    tasks = capture(reloaded, monkeypatch)
+
+    assert (
+        await reads_after(
+            hass, freezer, tasks, parcel_app, MIN_INTERVAL - timedelta(minutes=3)
+        )
+        == 0
+    )
+    assert len(parcel_app.reads) == 2
+
+
+async def test_refresh_service_respects_the_minimum(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Refresh reads at once unless the last read was under ten minutes ago."""
+    await hass.services.async_call(DOMAIN, "refresh", {}, blocking=True)
+    assert len(parcel_app.reads) == 1
+
+    freezer.tick(timedelta(minutes=2))
+    await hass.services.async_call(DOMAIN, "refresh", {}, blocking=True)
+    assert len(parcel_app.reads) == 1
+    # The read it asked for comes as soon as it's allowed.
+    assert (
+        await reads_after(
+            hass,
+            freezer,
+            refreshes,
+            parcel_app,
+            MIN_INTERVAL - timedelta(minutes=2),
+        )
+        == 0
+    )
+    freezer.tick(MIN_INTERVAL)
+    await hass.services.async_call(DOMAIN, "refresh", {}, blocking=True)
+    assert len(parcel_app.reads) == 3
+    assert await reads_after(hass, freezer, refreshes, parcel_app, INTERVAL) == 0
+
+
+async def test_nothing_after_unload(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Unloading the hub stops the reads."""
+    await advance(hass, freezer, refreshes, START_DELAY)
+    assert await hass.config_entries.async_unload(engine.entry.entry_id)
+
+    await advance(hass, freezer, refreshes, timedelta(hours=1))
+
+    assert len(parcel_app.reads) == 1
+
+
+# -- Errors --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("headers", "wait"),
+    [
+        ({}, RATE_BACKOFF),
+        ({"Retry-After": "1200"}, timedelta(minutes=20)),
+        ({"Retry-After": "30"}, MIN_INTERVAL),
+        ({"Retry-After": "172800"}, MAX_BACKOFF),
+    ],
+)
+async def test_rate_limit_waits(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+    headers: dict[str, str],
+    wait: timedelta,
+) -> None:
+    """Too many requests: wait as long as Parcel asks, within limits."""
+    parcel_app.read_status = HTTPStatus.TOO_MANY_REQUESTS
+    parcel_app.read_headers = headers
+    await advance(hass, freezer, refreshes, START_DELAY)
+    sync = sync_of(engine)
+    assert sync.last_error == "rate_429"
+    assert engine.data.parcelapp.get("errors", 0) == 0
+
+    parcel_app.read_status = HTTPStatus.OK
+    assert await reads_after(hass, freezer, refreshes, parcel_app, wait) == 0
+    assert sync.last_error is None
+    assert "backoff_until" not in engine.data.parcelapp
+
+
+async def test_errors_back_off_until_a_good_read(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Failures wait longer each time; one warning per kind of failure."""
+    parcel_app.read_status = HTTPStatus.BAD_GATEWAY
+    caplog.set_level(logging.DEBUG, "custom_components.parcels")
+    await advance(hass, freezer, refreshes, START_DELAY)
+    for wait in (*ERROR_BACKOFF, ERROR_BACKOFF[-1]):
+        assert await reads_after(hass, freezer, refreshes, parcel_app, wait) == 0
+    sync = sync_of(engine)
+    assert engine.data.parcelapp["errors"] == len(ERROR_BACKOFF) + 2
+    assert sync.last_error == "server_502"
+    warnings = own_warnings(caplog)
+    assert len(warnings) == 1
+    assert "server_502" in warnings[0].getMessage()
+    assert KEY not in caplog.text
+
+    parcel_app.read_status = HTTPStatus.OK
+    assert (
+        await reads_after(hass, freezer, refreshes, parcel_app, ERROR_BACKOFF[-1]) == 0
+    )
+    assert engine.data.parcelapp.get("errors", 0) == 0
+    assert sync.last_error is None
+    # A new failure starts the series again, and is reported again.
+    parcel_app.read_error = aiohttp.ClientError()
+    assert await reads_after(hass, freezer, refreshes, parcel_app, INTERVAL) == 0
+    assert sync.last_error == "network"
+    assert (
+        await reads_after(hass, freezer, refreshes, parcel_app, ERROR_BACKOFF[0]) == 0
+    )
+    assert engine.data.parcelapp["errors"] == 2
+    warnings = own_warnings(caplog)
+    assert len(warnings) == 2
+
+
+@pytest.mark.parametrize("status", [HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN])
+async def test_refused_key_raises_a_repair(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+    status: HTTPStatus,
+) -> None:
+    """A refused key is tried again every six hours, with a repair meanwhile."""
+    parcel_app.read_status = status
+    await advance(hass, freezer, refreshes, START_DELAY)
+    assert key_issue(hass) is not None
+    assert sync_of(engine).last_error == f"key_{status.value}"
+
+    assert await reads_after(hass, freezer, refreshes, parcel_app, KEY_BACKOFF) == 0
+    assert key_issue(hass) is not None
+
+    parcel_app.read_status = HTTPStatus.OK
+    assert await reads_after(hass, freezer, refreshes, parcel_app, KEY_BACKOFF) == 0
+    assert key_issue(hass) is None
+    assert "key_refused" not in engine.data.parcelapp
+
+
+async def test_refused_key_repair_comes_back_after_a_restart(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The repair is raised again at the start while the same key is set."""
+    parcel_app.read_status = HTTPStatus.UNAUTHORIZED
+    await advance(hass, freezer, refreshes, START_DELAY)
+    ir.async_delete_issue(hass, DOMAIN, ISSUE_PARCEL_APP_KEY)
+
+    assert await hass.config_entries.async_reload(engine.entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert key_issue(hass) is not None
+    reloaded = get_engine(hass)
+    assert reloaded is not None
+    tasks = capture(reloaded, monkeypatch)
+    # Still six hours after the refusal.
+    assert await reads_after(hass, freezer, tasks, parcel_app, KEY_BACKOFF) == 0
+    assert len(parcel_app.reads) == 2
+
+
+async def test_new_key_is_tried_at_once(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Changing a refused key removes the repair and reads soon."""
+    parcel_app.read_status = HTTPStatus.UNAUTHORIZED
+    await advance(hass, freezer, refreshes, START_DELAY)
+    freezer.tick(MIN_INTERVAL)
+
+    parcel_app.read_status = HTTPStatus.OK
+    await set_options(hass, engine, **{CONF_PARCEL_APP_KEY: NEW_KEY})
+    assert key_issue(hass) is None
+
+    assert (
+        await reads_after(hass, freezer, refreshes, parcel_app, RECONFIGURE_DELAY) == 0
+    )
+    assert parcel_app.keys() == [KEY, NEW_KEY]
+
+
+async def test_only_parcel_options_reschedule(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Other options keep the timer; the Parcel app's read as soon as allowed."""
+    await advance(hass, freezer, refreshes, START_DELAY)
+    freezer.tick(timedelta(minutes=1))
+    await set_options(hass, engine, **{CONF_COLLAPSE_THRESHOLD: 5})
+    assert (
+        await reads_after(
+            hass, freezer, refreshes, parcel_app, INTERVAL - timedelta(minutes=1)
+        )
+        == 0
+    )
+
+    freezer.tick(timedelta(minutes=1))
+    await set_options(hass, engine, **{CONF_PARCEL_APP_DAILY: 5})
+    assert (
+        await reads_after(
+            hass, freezer, refreshes, parcel_app, MIN_INTERVAL - timedelta(minutes=1)
+        )
+        == 0
+    )
+
+
+async def test_cleared_key_stops_and_forgets(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Clearing the key stops the reads and drops what the source kept."""
+    await advance(hass, freezer, refreshes, START_DELAY)
+    assert engine.data.parcelapp
+
+    await set_options(hass, engine, **{CONF_PARCEL_APP_KEY: ""})
+    assert engine.data.parcelapp == {}
+    await advance(hass, freezer, refreshes, timedelta(hours=1))
+    assert len(parcel_app.reads) == 1
+
+    await set_options(hass, engine, **{CONF_PARCEL_APP_KEY: KEY})
+    assert (
+        await reads_after(hass, freezer, refreshes, parcel_app, RECONFIGURE_DELAY) == 0
+    )
+
+
+# -- Reading -------------------------------------------------------------------
+
+
+async def test_delivery_joins_its_parcel(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery with a parcel's number adds its news and name to that parcel."""
+    parcel = add_parcel(engine, "a")
+    parcel_app.deliveries = [delivery()]
+
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine)
+    assert joined is not None
+    assert joined.id == parcel.id
+    assert len(engine.data.parcels) == 1
+    origin = joined.origins[PARCELAPP_PREFIX + NUMBER]
+    assert origin.source is Source.PARCELAPP
+    assert origin.label == ORIGIN_LABEL
+    assert origin.name == SHOP
+    assert origin.merchant is None
+    assert origin.owners == ()
+    assert origin.tracking_number == NUMBER
+    assert origin.carrier == "ups"
+    assert origin.time == at(16, 18, 30)
+    state = joined.state
+    assert state.status is ParcelStatus.IN_TRANSIT
+    assert state.name == SHOP
+    assert [
+        (entry.time, entry.status, entry.label, entry.source)
+        for entry in state.timeline
+        if entry.origin == origin.id
+    ] == [
+        (
+            at(16, 18, 30),
+            ParcelStatus.IN_TRANSIT,
+            "In transit, Example City",
+            Source.PARCELAPP,
+        )
+    ]
+    assert counts(engine) == (1, 1, 0, 0)
+    assert record(engine)["held"] is True
+
+
+async def test_history_keeps_the_ten_newest_events(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Ten distinct events are kept, newest first; only the newest has a status."""
+    hours = [7, 2, 11, 0, 5, 9, 3, 10, 1, 8, 4, 6]
+    events = [(f"Scan {hour}", f"2026-11-16 {hour:02d}:00:00") for hour in hours]
+    events.insert(3, ("Scan 5", "2026-11-16 05:00:00"))
+    add_parcel(engine, "a")
+    parcel_app.deliveries = [delivery(events=events)]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    kept = own_events(parcel)
+    assert [(event.time, event.label) for event in kept] == [
+        (at(16, hour), f"Scan {hour}, Example City") for hour in range(2, 12)
+    ]
+    assert [event.status for event in kept] == [None] * 9 + [ParcelStatus.IN_TRANSIT]
+    history = record(engine)["history"]
+    assert len(history) == MAX_HISTORY == 10
+    assert history[0] == {
+        "info": "Scan 11, Example City",
+        "at": "2026-11-16T11:00:00+00:00",
+        "time": "2026-11-16T11:00:00+00:00",
+        "status": "in_transit",
+    }
+
+
+async def test_history_keeps_the_order_without_every_date(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Unless every event is dated, the list's order stands; undated ones are now.
+
+    Events without text or date, and entries that aren't events, are skipped.
+    """
+    item = delivery(
+        events=(
+            ("Departed", "garbage"),
+            ("Arrived", "2026-11-15 08:00:00"),
+            ("Sorted", "2026-11-16 08:00:00"),
+        )
+    )
+    item["events"] += [{"event": " ", "date": "garbage", "location": ""}, "junk"]
+    add_parcel(engine, "a")
+    parcel_app.deliveries = [item]
+
+    await read(hass, freezer, parcel_app)
+
+    assert [
+        (entry["info"], entry["at"], entry["time"], entry["status"])
+        for entry in record(engine)["history"]
+    ] == [
+        ("Departed, Example City", None, dt_to_str(at(17, 10)), "in_transit"),
+        (
+            "Arrived, Example City",
+            "2026-11-15T08:00:00+00:00",
+            "2026-11-15T08:00:00+00:00",
+            None,
+        ),
+        (
+            "Sorted, Example City",
+            "2026-11-16T08:00:00+00:00",
+            "2026-11-16T08:00:00+00:00",
+            None,
+        ),
+    ]
+
+
+async def test_delivery_without_events_gives_its_status(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery without events still tells its status, as of the read."""
+    add_parcel(engine, "a")
+    parcel_app.deliveries = [delivery(status=4, events=())]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    assert [
+        (event.time, event.status, event.label) for event in own_events(parcel)
+    ] == [(at(17, 10), ParcelStatus.OUT_FOR_DELIVERY, None)]
+    assert parcel.state.status is ParcelStatus.OUT_FOR_DELIVERY
+
+
+async def test_reading_again_keeps_what_was_read(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """An unchanged delivery changes nothing; known events keep time and status."""
+    add_parcel(engine, "a")
+    parcel_app.deliveries = [delivery()]
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    updated = parcel.updated
+
+    await read(hass, freezer, parcel_app)
+
+    assert holder(engine) is parcel
+    assert parcel.updated == updated
+
+    parcel_app.deliveries = [
+        delivery(
+            status=4,
+            events=(
+                ("Out for delivery", "2026-11-17 09:30:00"),
+                ("In transit", "2026-11-16 18:30:00"),
+            ),
+        )
+    ]
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.updated > updated
+    assert [(event.time, event.status) for event in own_events(parcel)] == [
+        (at(16, 18, 30), ParcelStatus.IN_TRANSIT),
+        (at(17, 9, 30), ParcelStatus.OUT_FOR_DELIVERY),
+    ]
+    assert parcel.state.status is ParcelStatus.OUT_FOR_DELIVERY
+
+
+async def test_undated_event_keeps_its_first_time(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """An undated event is dated when first read, and stays so."""
+    add_parcel(engine, "a")
+    parcel_app.deliveries = [delivery(events=(("Update", "garbage"),))]
+    await read(hass, freezer, parcel_app)
+
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    assert [(event.time, event.status) for event in own_events(parcel)] == [
+        (at(17, 10), ParcelStatus.IN_TRANSIT)
+    ]
+
+    parcel_app.deliveries = [delivery(status=4, events=(("Update", "garbage"),))]
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    assert [(event.time, event.status) for event in own_events(parcel)] == [
+        (at(17, 10), ParcelStatus.OUT_FOR_DELIVERY)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("code", "event_status", "status"),
+    [
+        (2, ParcelStatus.IN_TRANSIT, ParcelStatus.IN_TRANSIT),
+        (1, None, ParcelStatus.SHIPPED),
+        (5, None, ParcelStatus.SHIPPED),
+        (None, None, ParcelStatus.SHIPPED),
+        (True, None, ParcelStatus.SHIPPED),
+        ("0", ParcelStatus.DELIVERED, ParcelStatus.DELIVERED),
+        (" 4 ", ParcelStatus.OUT_FOR_DELIVERY, ParcelStatus.OUT_FOR_DELIVERY),
+        (3, ParcelStatus.READY_FOR_PICKUP, ParcelStatus.READY_FOR_PICKUP),
+        (6, ParcelStatus.ATTEMPTED, ParcelStatus.ATTEMPTED),
+        (7, ParcelStatus.EXCEPTION, ParcelStatus.EXCEPTION),
+        (8, ParcelStatus.SHIPPED, ParcelStatus.SHIPPED),
+    ],
+)
+async def test_status_codes(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    code: Any,
+    event_status: ParcelStatus | None,
+    status: ParcelStatus,
+) -> None:
+    """Parcel's status codes become statuses; frozen and not found say nothing."""
+    add_parcel(engine, "a")
+    parcel_app.deliveries = [
+        delivery(status=code, events=(("Update", "2026-11-16 18:30:00"),))
+    ]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    assert [event.status for event in own_events(parcel)] == [event_status]
+    assert parcel.state.status is status
+
+
+def day(number: int) -> date:
+    """Return a day of November 2026."""
+    return date(2026, 11, number)
+
+
+def expected_eta(parcel: Parcel, key: str = NUMBER) -> list[tuple[datetime, Eta]]:
+    """Return the dates a delivery gave its parcel, with when they were heard."""
+    return [
+        (event.time, event.eta)
+        for event in own_events(parcel, key)
+        if event.eta is not None
+    ]
+
+
+async def test_expected_date_fills_a_missing_one(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Parcel's expected days fill a missing date, as heard when first read.
+
+    The date goes when Parcel no longer gives one.
+    """
+    add_parcel(engine, "a")
+    parcel_app.deliveries = [
+        delivery(
+            date_expected="2026-11-19 00:00:00",
+            date_expected_end="2026-11-20 00:00:00",
+        )
+    ]
+    await read(hass, freezer, parcel_app)
+
+    expected = Eta(day(19), day(20))
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.state.eta == expected
+    assert expected_eta(parcel) == [(at(17, 10), expected)]
+    assert record(engine)["eta"] == {
+        "value": {
+            "start": "2026-11-19",
+            "end": "2026-11-20",
+            "window_start": None,
+            "window_end": None,
+        },
+        "seen": "2026-11-17T10:00:00+00:00",
+    }
+
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    assert expected_eta(parcel) == [(at(17, 10), expected)]
+
+    parcel_app.deliveries = [delivery()]
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.state.eta is None
+    assert expected_eta(parcel) == []
+    assert "eta" not in record(engine)
+
+
+async def test_email_window_stays_against_a_date(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """The same day without a window doesn't take an e-mail's window away."""
+    window = Eta(day(19), day(19), time(14), time(16))
+    add_parcel(engine, "a", eta=window)
+    parcel_app.deliveries = [delivery(date_expected="2026-11-19 00:00:00")]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.state.eta == window
+    assert expected_eta(parcel) == []
+    assert record(engine)["eta"]["seen"] == dt_to_str(at(17, 10))
+
+
+async def test_parcel_window_fills_an_email_date(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Parcel's window fills the day an e-mail gave, even after it's repeated."""
+    add_parcel(engine, "a", eta=Eta(day(19), day(19)))
+    parcel_app.deliveries = [
+        delivery(
+            date_expected="2026-11-19 14:00:00",
+            date_expected_end="2026-11-19 16:00:00",
+        )
+    ]
+    await read(hass, freezer, parcel_app)
+    window = Eta(day(19), day(19), time(14), time(16))
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.state.eta == window
+
+    freezer.tick(timedelta(minutes=1))
+    add_parcel(engine, "b", eta=Eta(day(19), day(19)), age=timedelta(0))
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.state.eta == Eta(day(19), day(19))
+
+    await read(hass, freezer, parcel_app, after=MIN_INTERVAL - timedelta(minutes=1))
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.state.eta == window
+    assert expected_eta(parcel) == [(at(17, 10, 10), window)]
+
+
+async def test_newer_news_wins_the_date(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Of the e-mails' and Parcel's dates, the newer news wins, either way."""
+    add_parcel(engine, "a", eta=Eta(day(19), day(19)))
+    parcel_app.deliveries = [delivery(date_expected="2026-11-20 00:00:00")]
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.state.eta == Eta(day(20), day(20))
+
+    freezer.tick(timedelta(minutes=1))
+    add_parcel(engine, "b", eta=Eta(day(21), day(21)), age=timedelta(0))
+    await read(hass, freezer, parcel_app, after=MIN_INTERVAL - timedelta(minutes=1))
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.state.eta == Eta(day(21), day(21))
+    assert expected_eta(parcel) == [(at(17, 10), Eta(day(20), day(20)))]
+
+    parcel_app.deliveries = [delivery(date_expected="2026-11-22 00:00:00")]
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.state.eta == Eta(day(22), day(22))
+    assert expected_eta(parcel) == [(at(17, 10, 20), Eta(day(22), day(22)))]
+
+
+@pytest.mark.parametrize(
+    ("deliveries", "email_kind", "interval"),
+    [
+        ([delivery(status=4)], None, BUSY_INTERVAL),
+        ([delivery(date_expected="2026-11-17 00:00:00")], None, BUSY_INTERVAL),
+        ([delivery(date_expected="2026-11-18 00:00:00")], None, INTERVAL),
+        ([delivery(status=0, date_expected="2026-11-17 00:00:00")], None, INTERVAL),
+        ([], MailKind.OUT_FOR_DELIVERY, INTERVAL),
+        ([delivery(GLS, code="gls")], MailKind.OUT_FOR_DELIVERY, INTERVAL),
+    ],
+)
+async def test_reads_more_often_on_delivery_day(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    refreshes: list[asyncio.Task[Any]],
+    parcel_app: FakeParcelApp,
+    deliveries: list[dict[str, Any]],
+    email_kind: MailKind | None,
+    interval: timedelta,
+) -> None:
+    """Every ten minutes while a parcel Parcel follows may arrive today."""
+    add_parcel(
+        engine,
+        "a",
+        OTHER_UPS if email_kind else NUMBER,
+        kind=email_kind or MailKind.SHIPPED,
+    )
+    parcel_app.deliveries = copy.deepcopy(deliveries)
+    await advance(hass, freezer, refreshes, START_DELAY)
+    assert len(parcel_app.reads) == 1
+
+    assert await reads_after(hass, freezer, refreshes, parcel_app, interval) == 0
+
+
+@pytest.mark.parametrize(
+    ("number", "code", "description", "merchant", "name", "carrier"),
+    [
+        (NUMBER, "ups", SHOP, None, SHOP, "ups"),
+        (NUMBER, "ups", "Amazon.es order", "Amazon", "Amazon.es order", "ups"),
+        (TBA, "amzles", "Headphones", "Amazon", "Headphones", "amazon"),
+        (GLS, None, SHOP, None, SHOP, None),
+        (NUMBER, "ups", None, None, None, "ups"),
+        (NUMBER, "ups", "Parcels", None, None, "ups"),
+        (NUMBER, "ups", "x" * 150, None, "x" * 100, "ups"),
+        (NUMBER, "ups", "a" * 99 + " " + "b" * 50, None, "a" * 99, "ups"),
+    ],
+)
+async def test_delivery_only_in_parcel_becomes_a_parcel(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    number: str,
+    code: str | None,
+    description: str | None,
+    merchant: str | None,
+    name: str | None,
+    carrier: str | None,
+) -> None:
+    """A delivery no parcel has becomes one, named after its description.
+
+    Its merchant is only one Parcels knows the description starts with.
+    """
+    parcel_app.deliveries = [delivery(number, code=code, description=description)]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine, number)
+    assert parcel is not None
+    assert list(parcel.origins) == [PARCELAPP_PREFIX + number]
+    origin = parcel.origins[PARCELAPP_PREFIX + number]
+    assert (origin.merchant, origin.name, origin.carrier) == (merchant, name, carrier)
+    assert origin.tracking_number == number
+    assert origin.owners == (OWNER,)
+    assert parcel.state.name == name
+    assert parcel.state.status is ParcelStatus.IN_TRANSIT
+    assert counts(engine) == (1, 0, 1, 0)
+    assert record(engine, number)["import"] is True
+
+
+@pytest.mark.parametrize("options", [{CONF_PARCEL_APP_KEY: KEY}])
+async def test_imported_parcel_without_an_owner(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Without the key's person, imported parcels belong to no one."""
+    parcel_app.deliveries = [delivery()]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.origins[PARCELAPP_PREFIX + NUMBER].owners == ()
+
+
+async def test_turning_imports_off_removes_them(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Without imports, deliveries only in Parcel go; the news on others stays."""
+    parcel = add_parcel(engine, "a")
+    parcel_app.deliveries = [delivery(), delivery(GLS, code="gls")]
+    await read(hass, freezer, parcel_app)
+    assert counts(engine) == (2, 1, 1, 0)
+    assert len(engine.data.parcels) == 2
+
+    await set_options(hass, engine, **{CONF_PARCEL_APP_IMPORT: False})
+    await read(hass, freezer, parcel_app)
+
+    assert holder(engine, GLS) is None
+    assert list(engine.data.parcels) == [parcel.id]
+    kept = holder(engine)
+    assert kept is not None
+    assert kept.id == parcel.id
+    assert counts(engine) == (2, 1, 0, 1)
+    assert record(engine, GLS)["held"] is False
+    assert "fp" not in record(engine, GLS)
+
+    await set_options(hass, engine, **{CONF_PARCEL_APP_IMPORT: True})
+    await read(hass, freezer, parcel_app)
+    assert holder(engine, GLS) is not None
+    assert counts(engine) == (2, 1, 1, 0)
+
+
+async def test_cleared_key_keeps_news_on_email_parcels(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Clearing the key removes imported parcels, not news on e-mail parcels."""
+    parcel = add_parcel(engine, "a")
+    parcel_app.deliveries = [delivery(), delivery(GLS, code="gls")]
+    await read(hass, freezer, parcel_app)
+
+    await set_options(hass, engine, **{CONF_PARCEL_APP_KEY: ""})
+
+    assert holder(engine, GLS) is None
+    assert list(engine.data.parcels) == [parcel.id]
+    kept = holder(engine)
+    assert kept is not None
+    assert kept.state.name == SHOP
+    assert engine.data.parcelapp == {}
+
+
+# -- Deliveries that leave the list --------------------------------------------
+
+
+async def test_import_goes_after_two_reads_without_it(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A parcel only Parcel knows goes once two reads miss its delivery."""
+    parcel_app.deliveries = [delivery()]
+    await read(hass, freezer, parcel_app)
+    assert holder(engine) is not None
+
+    parcel_app.deliveries = []
+    await read(hass, freezer, parcel_app)
+    assert holder(engine) is not None
+    assert record(engine)["missing"] == 1
+
+    await read(hass, freezer, parcel_app)
+    assert engine.data.parcels == {}
+    assert record(engine)["missing"] == 2
+    assert record(engine)["held"] is False
+    assert "fp" not in record(engine)
+    assert counts(engine) == (0, 0, 0, 0)
+
+
+async def test_delivery_back_in_the_list_counts_again(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery back before the second read starts the count again."""
+    parcel_app.deliveries = [delivery()]
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    parcel_app.deliveries = []
+    await read(hass, freezer, parcel_app)
+    parcel_app.deliveries = [delivery()]
+    await read(hass, freezer, parcel_app)
+    assert record(engine)["missing"] == 0
+
+    parcel_app.deliveries = []
+    await read(hass, freezer, parcel_app)
+
+    kept = holder(engine)
+    assert kept is not None
+    assert kept.id == parcel.id
+    assert record(engine)["missing"] == 1
+
+
+@pytest.mark.parametrize("case", ["delivered", "archived", "email"])
+async def test_parcel_stays_when_its_delivery_leaves(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    case: str,
+) -> None:
+    """Only open parcels made of deliveries go with them.
+
+    A delivered or archived one stays, as does one from e-mails, with its news.
+    """
+    if case == "email":
+        add_parcel(engine, "a")
+    parcel_app.deliveries = [delivery(status=0 if case == "delivered" else 2)]
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    if case == "archived":
+        engine.archive(parcel.id)
+    origins = set(parcel.origins)
+
+    parcel_app.deliveries = []
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+
+    kept = holder(engine)
+    assert kept is not None
+    assert kept.id == parcel.id
+    assert set(kept.origins) == origins
+    assert record(engine)["missing"] == 2
+    assert record(engine)["held"] is True
+
+
+async def test_email_about_an_import_keeps_it(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """An e-mail with an imported parcel's number joins it, which then stays."""
+    parcel_app.deliveries = [delivery()]
+    await read(hass, freezer, parcel_app)
+    imported = holder(engine)
+    assert imported is not None
+
+    parcel = add_parcel(engine, "a")
+    assert parcel.id == imported.id
+    await read(hass, freezer, parcel_app)
+    assert counts(engine) == (1, 1, 0, 0)
+
+    parcel_app.deliveries = []
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+
+    kept = holder(engine)
+    assert kept is not None
+    assert set(kept.origins) == {PARCELAPP_PREFIX + NUMBER, "msg:a#0"}
+
+
+async def test_forgotten_delivery_takes_its_import(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery forgotten after a month out of the list takes its import."""
+    parcel_app.deliveries = [delivery(date_expected="2026-12-31 00:00:00")]
+    await read(hass, freezer, parcel_app)
+    parcel_app.deliveries = []
+    await read(hass, freezer, parcel_app, after=RECORD_DAYS - timedelta(hours=1))
+    assert holder(engine) is not None
+    assert record(engine)["missing"] == 1
+
+    await read(hass, freezer, parcel_app, after=timedelta(hours=1, minutes=1))
+
+    assert NUMBER not in engine.data.parcelapp["records"]
+    assert engine.data.parcels == {}
+
+
+def amazon(number: str = ORDER, **extra: Any) -> dict[str, Any]:
+    """Return a delivery with Amazon Spain's code, by default an order's."""
+    return delivery(number, code="amzles", description="Amazon.es order", **extra)
+
+
+def amazon_order(
+    engine: ParcelsEngine,
+    name: str,
+    number: str = ORDER,
+    *,
+    eta: Eta | None = None,
+    age: timedelta = timedelta(days=2),
+) -> Parcel:
+    """Add the parcel of an Amazon order e-mail, without a tracking number."""
+    return add_parcel(
+        engine,
+        name,
+        None,
+        carrier=None,
+        kind=MailKind.ORDER,
+        merchant="Amazon",
+        orders=(number,),
+        eta=eta,
+        age=age,
+    )
+
+
+async def test_delivery_leaving_keeps_the_other_delivery(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """When one of two deliveries of a parcel leaves, the other keeps it."""
+    order = amazon(date_expected="2026-11-19 00:00:00")
+    parcel_app.deliveries = [order, amazon(TBA, date_expected="2026-11-19 00:00:00")]
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine, ORDER_KEY)
+    assert parcel is not None
+    assert set(parcel.origins) == {
+        PARCELAPP_PREFIX + ORDER_KEY,
+        PARCELAPP_PREFIX + TBA,
+    }
+    assert counts(engine) == (2, 0, 2, 0)
+
+    parcel_app.deliveries = [order]
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+
+    kept = holder(engine, ORDER_KEY)
+    assert kept is not None
+    assert kept.id == parcel.id
+    assert list(kept.origins) == [PARCELAPP_PREFIX + ORDER_KEY]
+    assert kept.auto_merged is None
+    assert record(engine, TBA)["held"] is False
+    assert record(engine, ORDER_KEY)["held"] is True
+
+    await read(hass, freezer, parcel_app)
+    assert holder(engine, ORDER_KEY) is not None
+    assert counts(engine) == (1, 0, 1, 0)
+
+
+# -- Amazon orders -------------------------------------------------------------
+
+
+async def test_order_delivery_joins_its_order(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery Parcel follows by order number joins that order's parcel."""
+    parcel = amazon_order(engine, "a")
+    parcel_app.deliveries = [amazon()]
+
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, ORDER_KEY)
+    assert joined is not None
+    assert joined.id == parcel.id
+    origin = joined.origins[PARCELAPP_PREFIX + ORDER_KEY]
+    assert origin.tracking_number is None
+    assert origin.order_numbers == (ORDER,)
+    assert origin.merchant is None
+    assert origin.owners == ()
+    assert joined.state.status is ParcelStatus.IN_TRANSIT
+    assert counts(engine) == (1, 1, 0, 0)
+
+
+async def test_order_with_two_parcels_is_left(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """With two open parcels of the order, which one Parcel means is unclear."""
+    add_parcel(engine, "a", merchant="Amazon", orders=(ORDER,))
+    add_parcel(engine, "b", OTHER_UPS, merchant="Amazon", orders=(ORDER,))
+    assert len(engine.data.parcels) == 2
+    parcel_app.deliveries = [amazon()]
+
+    await read(hass, freezer, parcel_app)
+
+    assert holder(engine, ORDER_KEY) is None
+    assert len(engine.data.parcels) == 2
+    assert counts(engine) == (1, 0, 0, 1)
+
+
+async def test_order_of_an_archived_parcel_is_left(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """An order whose parcel is archived counts as matched and changes nothing."""
+    parcel = amazon_order(engine, "a")
+    engine.archive(parcel.id)
+    parcel_app.deliveries = [amazon()]
+
+    await read(hass, freezer, parcel_app)
+
+    assert holder(engine, ORDER_KEY) is None
+    assert list(engine.data.parcels) == [parcel.id]
+    assert counts(engine) == (1, 1, 0, 0)
+
+
+async def test_order_without_a_parcel_becomes_one(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """An order no parcel has becomes an Amazon parcel; its e-mail joins it."""
+    parcel_app.deliveries = [amazon()]
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine, ORDER_KEY)
+    assert parcel is not None
+    origin = parcel.origins[PARCELAPP_PREFIX + ORDER_KEY]
+    assert (
+        origin.merchant,
+        origin.carrier,
+        origin.tracking_number,
+        origin.order_numbers,
+        origin.owners,
+    ) == ("Amazon", "amazon", None, (ORDER,), (OWNER,))
+    assert parcel.state.merchant == "Amazon"
+    assert counts(engine) == (1, 0, 1, 0)
+
+    joined = amazon_order(engine, "a")
+    assert joined.id == parcel.id
+    await read(hass, freezer, parcel_app)
+    assert counts(engine) == (1, 1, 0, 0)
+
+
+async def test_amazon_delivery_joins_the_parcel_due_that_day(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery of Amazon's joins the only Amazon parcel due then; undo holds."""
+    parcel = amazon_order(engine, "a", eta=Eta(day(19), day(19)))
+    parcel_app.deliveries = [amazon(TBA, date_expected="2026-11-19 00:00:00")]
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, TBA)
+    assert joined is not None
+    assert joined.id == parcel.id
+    assert joined.auto_merged is not None
+    assert joined.auto_merged.reason == "same_merchant_eta"
+    assert joined.auto_merged.origin == PARCELAPP_PREFIX + TBA
+    assert counts(engine) == (1, 1, 0, 0)
+
+    restored = engine.undo_merge(parcel.id)
+    await read(hass, freezer, parcel_app)
+
+    apart = holder(engine, TBA)
+    assert apart is not None
+    assert apart.id == restored
+    assert list(apart.origins) == [PARCELAPP_PREFIX + TBA]
+    assert list(engine.data.parcels[parcel.id].origins) == ["msg:a#0"]
+    assert counts(engine) == (1, 0, 1, 0)
+
+
+async def test_amazon_email_pairs_with_the_delivery_out_that_day(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """An Amazon parcel due the day a delivery goes out pairs with it.
+
+    The delivery had no date when the e-mail came, so they stayed apart until
+    it went out for delivery. Undo keeps them apart.
+    """
+    parcel_app.deliveries = [amazon(TBA)]
+    await read(hass, freezer, parcel_app)
+    imported = holder(engine, TBA)
+    assert imported is not None
+    parcel = amazon_order(engine, "a", eta=Eta(TODAY, TODAY))
+    assert parcel.id != imported.id
+
+    parcel_app.deliveries = [
+        amazon(TBA, status=4, events=(("Out for delivery", "2026-11-17 09:30:00"),))
+    ]
+    await read(hass, freezer, parcel_app)
+
+    merged = holder(engine, TBA)
+    assert merged is not None
+    assert merged.id == imported.id
+    assert set(merged.origins) == {PARCELAPP_PREFIX + TBA, "msg:a#0"}
+    assert merged.auto_merged is not None
+    assert merged.auto_merged.reason == "same_merchant_day"
+    assert merged.auto_merged.all_origins == {"msg:a#0"}
+    assert counts(engine) == (1, 0, 1, 0)
+    await read(hass, freezer, parcel_app)
+    assert counts(engine) == (1, 1, 0, 0)
+
+    restored = engine.undo_merge(merged.id)
+    await read(hass, freezer, parcel_app)
+
+    assert restored is not None
+    assert list(engine.data.parcels[restored].origins) == ["msg:a#0"]
+    apart = holder(engine, TBA)
+    assert apart is not None
+    assert list(apart.origins) == [PARCELAPP_PREFIX + TBA]
+    assert len(engine.data.parcels) == 2
+    assert engine.suggestions == []
+    assert counts(engine) == (1, 0, 1, 0)
+
+
+async def test_amazon_delivery_with_two_parcels_due_is_a_suggestion(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """With two Amazon parcels due the day a delivery is out, the user picks."""
+    first = amazon_order(engine, "a", eta=Eta(TODAY, TODAY))
+    second = amazon_order(
+        engine, "b", "405-7654321-7654321", eta=Eta(TODAY, TODAY), age=timedelta(1)
+    )
+    assert first.id != second.id
+    parcel_app.deliveries = [
+        amazon(TBA, status=4, events=(("Out for delivery", "2026-11-17 09:30:00"),))
+    ]
+
+    await read(hass, freezer, parcel_app)
+
+    imported = holder(engine, TBA)
+    assert imported is not None
+    assert list(imported.origins) == [PARCELAPP_PREFIX + TBA]
+    assert counts(engine) == (1, 0, 1, 0)
+    [suggestion] = engine.suggestions
+    assert suggestion.parcel_id == imported.id
+    assert suggestion.candidates == (first.id, second.id)
+    assert suggestion.reason == "same_merchant_day"
+    assert suggestion.day == TODAY
+
+
+@pytest.mark.parametrize(
+    ("email", "outcome"), [(True, (1, 1, 0, 0)), (False, (1, 0, 1, 0))]
+)
+async def test_archived_parcel_takes_no_news(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    email: bool,
+    outcome: tuple[int, int, int, int],
+) -> None:
+    """An archived parcel keeps what it had; its delivery still counts."""
+    if email:
+        add_parcel(engine, "a")
+    parcel_app.deliveries = [delivery()]
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    engine.archive(parcel.id)
+    updated = engine.data.parcels[parcel.id].updated
+
+    parcel_app.deliveries = [
+        delivery(status=4, events=(("Out for delivery", "2026-11-17 09:30:00"),))
+    ]
+    await read(hass, freezer, parcel_app)
+
+    kept = holder(engine)
+    assert kept is not None
+    assert kept.updated == updated
+    assert [event.status for event in own_events(kept)] == [ParcelStatus.IN_TRANSIT]
+    assert counts(engine) == outcome
+
+
+# -- Corrections ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("options", [{**OPTIONS, CONF_PARCEL_APP_ADD: False}])
+@pytest.mark.parametrize("number", [OTHER_UPS, ""])
+async def test_corrected_number_closes_the_delivery(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    number: str,
+) -> None:
+    """When the user gives a parcel another number, or none, its delivery goes.
+
+    It doesn't come back, nor become a parcel of its own.
+    """
+    parcel = add_parcel(engine, "a")
+    parcel_app.deliveries = [delivery()]
+    await read(hass, freezer, parcel_app)
+    assert holder(engine) is not None
+
+    engine.update(parcel.id, {"tracking_number": number})
+    parcel_app.deliveries = [
+        delivery(status=4, events=(("Out for delivery", "2026-11-17 09:30:00"),))
+    ]
+    await read(hass, freezer, parcel_app)
+
+    edited = engine.data.parcels[parcel.id]
+    assert PARCELAPP_PREFIX + NUMBER not in edited.origins
+    assert own_events(edited) == []
+    assert record(engine)["closed"] is True
+    assert record(engine)["held"] is False
+    assert counts(engine) == (1, 0, 0, 1)
+
+    await read(hass, freezer, parcel_app)
+
+    assert holder(engine) is None
+    assert list(engine.data.parcels) == [parcel.id]
+    assert counts(engine) == (1, 0, 0, 1)
+
+
+async def test_corrected_number_is_added(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """The number the user corrects a parcel to is added, then joins it."""
+    parcel = add_parcel(engine, "a")
+    parcel_app.deliveries = [delivery()]
+    await read(hass, freezer, parcel_app)
+    assert parcel_app.adds == []
+
+    engine.update(parcel.id, {"tracking_number": OTHER_UPS})
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [OTHER_UPS]
+
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, OTHER_UPS)
+    assert joined is not None
+    assert joined.id == parcel.id
+    assert holder(engine) is None
+    assert counts(engine) == (2, 1, 0, 1)
+    assert parcel_app.numbers() == [OTHER_UPS]
+
+
+async def test_number_corrected_before_it_is_listed(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery under a number the user replaced stays out."""
+    parcel = add_parcel(engine, "a")
+    engine.update(parcel.id, {"tracking_number": OTHER_UPS})
+    parcel_app.deliveries = [delivery()]
+
+    await read(hass, freezer, parcel_app)
+
+    assert holder(engine) is None
+    assert list(engine.data.parcels) == [parcel.id]
+    assert record(engine)["closed"] is True
+    assert counts(engine) == (1, 0, 0, 1)
+
+
+async def test_purged_parcel_does_not_come_back(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery whose parcel was archived and purged stays out."""
+    parcel_app.deliveries = [
+        delivery(status=0, events=(("Delivered", "2026-11-17 09:00:00"),))
+    ]
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    engine.archive(parcel.id)
+    apply_retention(
+        engine.data, dt_util.utcnow() + timedelta(days=2), archive_days=0, purge_days=1
+    )
+    engine.async_changed()
+    assert engine.data.parcels == {}
+
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+
+    assert engine.data.parcels == {}
+    assert record(engine)["closed"] is True
+    assert counts(engine) == (1, 0, 0, 1)
+
+
+# -- Learning carrier codes ----------------------------------------------------
+
+
+async def test_learns_the_code_parcel_gives_a_carrier(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery the user added teaches the code of the carrier e-mails named."""
+    add_parcel(engine, "a", GLS, carrier="gls")
+    parcel_app.deliveries = [delivery(GLS, code="glsx")]
+    await read(hass, freezer, parcel_app)
+    first = dt_to_str(dt_util.utcnow())
+
+    assert engine.data.parcelapp["learned"] == {
+        GLS: {"carrier": "gls", "code": "glsx", "time": first}
+    }
+    assert sync_of(engine).learned_by_carrier() == {"gls": "glsx"}
+
+    await read(hass, freezer, parcel_app)
+    assert engine.data.parcelapp["learned"][GLS]["time"] == first
+
+    parcel_app.deliveries = [delivery(GLS, code="glsy")]
+    await read(hass, freezer, parcel_app)
+    assert engine.data.parcelapp["learned"] == {
+        GLS: {"carrier": "gls", "code": "glsy", "time": dt_to_str(dt_util.utcnow())}
+    }
+
+
+def tracked_news(
+    engine: ParcelsEngine,
+    status: ParcelStatus,
+    time: datetime,
+    *,
+    number: str = NUMBER,
+    carrier: str = "ups",
+) -> None:
+    """Add 17TRACK's news about a number, as the 17TRACK sync does."""
+    origin = Origin(
+        id=tracked_origin(number),
+        source=Source.SEVENTEENTRACK,
+        time=time,
+        label="17TRACK",
+        carrier=carrier,
+        tracking_number=number,
+    )
+    event = ParcelEvent(time=time, source=Source.SEVENTEENTRACK, status=status)
+    apply_contribution(
+        engine.data,
+        Contribution(origin=origin, events=[event]),
+        dt_util.utcnow(),
+    )
+    engine.async_changed()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "own",
+        "not_found",
+        "no_events",
+        "no_code",
+        "no_email",
+        "no_carrier",
+        "other",
+        "unknown_carrier",
+        "other_family",
+        "order",
+    ],
+)
+async def test_learns_only_what_is_sure(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    case: str,
+) -> None:
+    """Only deliveries the user added, on parcels e-mails named the carrier of.
+
+    Deliveries Parcels added, ones Parcel hasn't found, Amazon orders and
+    codes of another carrier teach nothing.
+    """
+    carrier = {"no_carrier": None, "other": "other", "unknown_carrier": "acme"}
+    extra: dict[str, Any] = {
+        "not_found": {"status": 5},
+        "no_events": {"events": ()},
+        "no_code": {"code": None},
+        "other_family": {"code": "ups"},
+        # A code naming no carrier, so the carrier check alone decides.
+        **{name: {"code": "qqx"} for name in carrier},
+    }.get(case, {})
+    key = GLS
+    if case == "order":
+        key = ORDER_KEY
+        parcel = add_parcel(
+            engine,
+            "a",
+            None,
+            carrier="amazon",
+            kind=MailKind.ORDER,
+            merchant="Amazon",
+            orders=(ORDER,),
+        )
+        assert parcel.state.carrier == "amazon"
+        parcel_app.deliveries = [amazon()]
+    else:
+        if case == "no_email":
+            tracked_news(
+                engine, ParcelStatus.IN_TRANSIT, at(16, 9), number=GLS, carrier="gls"
+            )
+        else:
+            parcel = add_parcel(engine, "a", GLS, carrier=carrier.get(case, "gls"))
+            assert parcel.state.carrier == carrier.get(case, "gls")
+        if case == "own":
+            engine.data.parcelapp["records"] = {
+                GLS: {"own": True, "added": dt_to_str(dt_util.utcnow())}
+            }
+        parcel_app.deliveries = [delivery(GLS, **{"code": "glsx", **extra})]
+
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, key)
+    assert joined is not None
+    assert len(joined.origins) == 2
+    assert engine.data.parcelapp["learned"] == {}
+
+
+async def test_learned_codes_are_kept_a_year(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Codes learned over a year ago go, as do broken entries."""
+    now = dt_util.utcnow()
+    learned: dict[str, Any] = {
+        name: {"carrier": "gls", "code": "glsx", "time": dt_to_str(now - age)}
+        for name, age in (
+            ("NEW", timedelta(0)),
+            ("EDGE", LEARN_DAYS),
+            ("OLD", LEARN_DAYS + SECOND),
+        )
+    }
+    learned["BROKEN"] = "glsx"
+    learned["UNDATED"] = {"carrier": "gls", "code": "glsx"}
+    engine.data.parcelapp["learned"] = learned
+    parcel_app.deliveries = []
+
+    await read(hass, freezer, parcel_app)
+
+    assert set(engine.data.parcelapp["learned"]) == {"NEW", "EDGE"}
+
+
+async def test_learned_codes_keep_the_newest(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Only the newest learned codes are kept."""
+    now = dt_util.utcnow()
+    engine.data.parcelapp["learned"] = {
+        f"K{index:03}": {
+            "carrier": "gls",
+            "code": "glsx",
+            "time": dt_to_str(now - timedelta(hours=index)),
+        }
+        for index in range(LEARN_MAX + 1)
+    }
+    parcel_app.deliveries = []
+
+    await read(hass, freezer, parcel_app)
+
+    kept = engine.data.parcelapp["learned"]
+    assert len(kept) == LEARN_MAX
+    assert f"K{LEARN_MAX:03}" not in kept
+
+
+async def test_learned_code_by_carrier(engine: ParcelsEngine) -> None:
+    """Each carrier's most common code is used, the latest when tied."""
+    sync = sync_of(engine)
+    assert sync.learned_by_carrier() == {}
+
+    def entry(carrier: Any, code: Any, hour: int) -> dict[str, Any]:
+        return {"carrier": carrier, "code": code, "time": dt_to_str(at(16, hour))}
+
+    engine.data.parcelapp["learned"] = {
+        "A": entry("gls", "glsx", 1),
+        "B": entry("gls", "glsx", 2),
+        "C": entry("gls", "glsy", 3),
+        "D": entry("dpd", "dpda", 2),
+        "E": entry("dpd", "dpdb", 3),
+        "F": entry("dpd", "dpda", 1) | {"time": None},
+        "G": "broken",
+        "H": entry(1, "upsx", 1),
+        "I": entry("ups", None, 1),
+    }
+
+    assert sync.learned_by_carrier() == {"gls": "glsx", "dpd": "dpda"}
+
+    del engine.data.parcelapp["learned"]["F"]
+    assert sync.learned_by_carrier() == {"gls": "glsx", "dpd": "dpdb"}
+
+    engine.data.parcelapp["learned"] = ["broken"]
+    assert sync.learned_by_carrier() == {}
+
+
+# -- Other sources and numbers -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("when", "status"),
+    [
+        ("2026-11-17 08:00:00", ParcelStatus.OUT_FOR_DELIVERY),
+        ("2026-11-17 09:30:00", ParcelStatus.ATTEMPTED),
+    ],
+)
+async def test_newest_news_wins_against_17track(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    when: str,
+    status: ParcelStatus,
+) -> None:
+    """When Parcel and 17TRACK both have news, the newest decides."""
+    add_parcel(engine, "a")
+    tracked_news(engine, ParcelStatus.OUT_FOR_DELIVERY, at(17, 9))
+    parcel_app.deliveries = [delivery(status=6, events=(("Delivery attempted", when),))]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    assert tracked_origin(NUMBER) in parcel.origins
+    assert parcel.state.status is status
+
+
+@pytest.mark.parametrize(
+    ("number", "carrier", "listed", "key", "joined"),
+    [
+        (PAACK, "paack", PAACK, PAACK, True),
+        (PAACK, "paack", PAACK.lower(), PAACK.lower(), False),
+        (NUMBER, "ups", NUMBER.lower(), NUMBER, True),
+    ],
+)
+async def test_numbers_match_as_parcels_keeps_them(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    number: str,
+    carrier: str,
+    listed: str,
+    key: str,
+    joined: bool,
+) -> None:
+    """Paack's IDs match only as written; other numbers in any case."""
+    parcel = add_parcel(engine, "a", number, carrier=carrier)
+    parcel_app.deliveries = [delivery(listed, code=carrier)]
+
+    await read(hass, freezer, parcel_app)
+
+    found = holder(engine, key)
+    assert found is not None
+    assert (found.id == parcel.id) is joined
+    assert counts(engine) == ((1, 1, 0, 0) if joined else (1, 0, 1, 0))
+
+
+@pytest.mark.parametrize("known", [True, False])
+async def test_two_deliveries_with_one_number_are_left(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    known: bool,
+) -> None:
+    """Which of two deliveries with one number to believe is unclear.
+
+    Neither changes the parcel, but the number is still listed.
+    """
+    if known:
+        parcel_app.deliveries = [delivery()]
+        await read(hass, freezer, parcel_app)
+        parcel_app.deliveries = []
+        await read(hass, freezer, parcel_app)
+        assert record(engine)["missing"] == 1
+    parcel = holder(engine)
+    events = own_events(parcel) if parcel is not None else []
+
+    parcel_app.deliveries = [
+        delivery(),
+        delivery(status=4, events=(("Out for delivery", "2026-11-17 09:30:00"),)),
+    ]
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+
+    assert counts(engine) == (2, 0, 0, 1)
+    if not known:
+        assert engine.data.parcels == {}
+        assert NUMBER not in engine.data.parcelapp["records"]
+        return
+    kept = holder(engine)
+    assert kept is not None
+    assert parcel is not None
+    assert kept.id == parcel.id
+    assert own_events(kept) == events
+    assert record(engine)["missing"] == 0
+
+    parcel_app.deliveries = []
+    await read(hass, freezer, parcel_app)
+    assert holder(engine) is not None
+
+
+# -- Adding --------------------------------------------------------------------
+
+REFUSAL = {"success": False, "error_message": "Unknown tracking number"}
+OTHER_GLS = "60000000001"
+
+
+def two_parcels(
+    engine: ParcelsEngine, freezer: FrozenDateTimeFactory
+) -> tuple[Parcel, Parcel]:
+    """Add two undated parcels of OWNER, NUMBER's first."""
+    first = add_parcel(engine, "a")
+    freezer.tick(SECOND)
+    return first, add_parcel(engine, "b", OTHER_UPS)
+
+
+async def test_adds_a_new_parcel(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A parcel goes to the user's list under its merchant's name, never items.
+
+    Without a push to his devices. Its delivery then joins it, under no name
+    of its own, and teaches nothing about how Parcel names the carrier.
+    """
+    hass.config.language = "en"
+    parcel = add_parcel(engine, "a", merchant=SHOP, items=("Synthetic Widget",))
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.adds == [
+        {
+            "tracking_number": NUMBER,
+            "carrier_code": "ups",
+            "description": SHOP,
+            "language": "en",
+            "send_push_confirmation": False,
+        }
+    ]
+    assert parcel_app.keys() == [KEY, KEY]
+    stamp = dt_to_str(at(17, 10))
+    assert record(engine) == {
+        "tried": stamp,
+        "added": stamp,
+        "own": True,
+        "sent": SHOP,
+    }
+    assert engine.data.parcelapp["adds"] == {
+        "day": "2026-11-17",
+        "sent": 1,
+        "added": 1,
+    }
+
+    await read(hass, freezer, parcel_app)
+
+    assert len(parcel_app.adds) == 1
+    joined = holder(engine)
+    assert joined is not None
+    assert joined.id == parcel.id
+    assert joined.origins[PARCELAPP_PREFIX + NUMBER].name is None
+    assert engine.data.parcelapp.get("learned", {}) == {}
+    assert counts(engine) == (1, 1, 0, 0)
+
+
+@pytest.mark.parametrize(
+    ("options", "read_status"),
+    [
+        ({**OPTIONS, CONF_PARCEL_APP_ADD: False}, HTTPStatus.OK),
+        ({**OPTIONS, CONF_PARCEL_APP_DAILY: 0}, HTTPStatus.OK),
+        (OPTIONS, HTTPStatus.INTERNAL_SERVER_ERROR),
+    ],
+)
+async def test_adds_nothing(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    read_status: HTTPStatus,
+) -> None:
+    """Nothing is added with adding off, a limit of 0, or after a failed read."""
+    add_parcel(engine, "a")
+    parcel_app.read_status = read_status
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.adds == []
+    assert NUMBER not in engine.data.parcelapp.get("records", {})
+    assert "adds" not in engine.data.parcelapp
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"private": True},
+        {"kind": MailKind.DELIVERED},
+        {"owner": OTHER_OWNER},
+        {"number": None},
+        {"number": GLS, "carrier": None},
+        {"number": GLS, "carrier": "gls"},
+        {"number": BAD_UPS},
+        {"number": PAACK, "carrier": "paack"},
+        {"kind": MailKind.ORDER, "age": timedelta(days=22)},
+    ],
+)
+async def test_parcels_not_added(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    kwargs: dict[str, Any],
+) -> None:
+    """Private, finished, someone else's and quiet parcels aren't added.
+
+    Nor those without a number of a known format, nor those whose carrier
+    Parcel has no sure code for, or only one that needs a postcode not given.
+    """
+    add_parcel(engine, "a", **kwargs)
+    freezer.tick(SECOND)
+    add_parcel(engine, "control", OTHER_UPS)
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [OTHER_UPS]
+
+
+@pytest.mark.parametrize(
+    "case", ["archived", "origin", "unusable", "twice", "paack", "order"]
+)
+async def test_parcels_in_the_list_not_added(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    case: str,
+) -> None:
+    """Parcels in the user's list aren't added, by number or Amazon order.
+
+    In any case, even listed twice. Nor are archived parcels, those with a
+    delivery already, or those whose learned code needs more than a postcode.
+    """
+    now = dt_util.utcnow()
+    if case == "archived":
+        engine.archive(add_parcel(engine, "a").id)
+    elif case == "origin":
+        apply_contribution(
+            engine.data,
+            contribution(
+                PARCELAPP_PREFIX + NUMBER,
+                time=now - timedelta(days=2),
+                source=Source.PARCELAPP,
+                carrier="ups",
+                number=NUMBER,
+                owner=OWNER,
+            ),
+            now,
+        )
+        engine.async_changed()
+    elif case == "unusable":
+        engine.data.parcelapp["learned"] = {
+            OTHER_GLS: {"carrier": "gls", "code": "eshopw", "time": dt_to_str(now)}
+        }
+        add_parcel(engine, "a", GLS, carrier="gls")
+    elif case == "twice":
+        add_parcel(engine, "a")
+        parcel_app.deliveries = [delivery(), delivery()]
+    elif case == "paack":
+        hass.config.country = "PT"
+        await set_options(hass, engine, **{CONF_PARCEL_APP_POSTCODE: "1000-001"})
+        add_parcel(engine, "a", PAACK, carrier="paack")
+        parcel_app.deliveries = [delivery(PAACK.lower(), code="paack")]
+    else:
+        for name, number in (("a", NUMBER), ("b", THIRD_UPS)):
+            add_parcel(engine, name, number, merchant="Amazon", orders=(ORDER,))
+        parcel_app.deliveries = [amazon()]
+    freezer.tick(SECOND)
+    add_parcel(engine, "control", OTHER_UPS)
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [OTHER_UPS]
+
+
+@pytest.mark.parametrize(
+    "kept",
+    [
+        {"seen": dt_to_str(at(16, 10)), "missing": 1},
+        {"tried": dt_to_str(at(16, 10)), "added": dt_to_str(at(16, 10)), "own": True},
+        {"tried": dt_to_str(at(16, 10)), "refused": "ups"},
+        {"tried": dt_to_str(at(17, 9))},
+    ],
+)
+async def test_numbers_known_not_added(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    kept: dict[str, Any],
+) -> None:
+    """A number once in the user's list, or added, isn't sent again.
+
+    Nor one Parcel refused under the same code, nor one tried today.
+    """
+    engine.data.parcelapp["records"] = {NUMBER: dict(kept)}
+    two_parcels(engine, freezer)
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [OTHER_UPS]
+
+
+@pytest.mark.parametrize(
+    ("zone", "added"),
+    [(LISBON, True), ("Europe/Madrid", False), ("Pacific/Pago_Pago", False)],
+)
+async def test_tried_once_a_day_in_home_assistant_s_time_zone(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    zone: str,
+    added: bool,
+) -> None:
+    """A number is tried once a day, by Home Assistant's day."""
+    await hass.config.async_set_time_zone(zone)
+    engine.data.parcelapp["records"] = {NUMBER: {"tried": dt_to_str(at(16, 23, 30))}}
+    add_parcel(engine, "a")
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == ([NUMBER] if added else [])
+
+
+@pytest.mark.parametrize("case", ["yesterday", "refused", "learned"])
+async def test_numbers_tried_again(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    case: str,
+) -> None:
+    """A number tried on another day is sent again, even refused under another code.
+
+    A code learned from the user's own deliveries names the carrier.
+    """
+    yesterday = dt_to_str(at(16, 10))
+    number, carrier, code = NUMBER, "ups", "ups"
+    if case == "yesterday":
+        engine.data.parcelapp["records"] = {NUMBER: {"tried": yesterday}}
+    elif case == "refused":
+        engine.data.parcelapp["records"] = {
+            NUMBER: {"tried": yesterday, "refused": "upsx"}
+        }
+    else:
+        number, carrier, code = GLS, "gls", "glsx"
+        engine.data.parcelapp["learned"] = {
+            OTHER_GLS: {"carrier": "gls", "code": "glsx", "time": yesterday}
+        }
+    add_parcel(engine, "a", number, carrier=carrier)
+
+    await read(hass, freezer, parcel_app)
+
+    sent = [(add["tracking_number"], add["carrier_code"]) for add in parcel_app.adds]
+    assert sent == [(number, code)]
+    assert "refused" not in record(engine, number)
+    assert record(engine, number)["added"] == dt_to_str(at(17, 10))
+
+
+@pytest.mark.parametrize("options", [{**OPTIONS, CONF_PARCEL_APP_DAILY: 2}])
+async def test_adds_the_soonest_due_first(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Late parcels go first, then by date, undated ones last.
+
+    Up to the daily limit; the rest wait for the next day.
+    """
+    for name, number, due in (
+        ("late", NUMBER, day(15)),
+        ("undated", OTHER_UPS, None),
+        ("later", THIRD_UPS, day(20)),
+        ("tomorrow", FOURTH_UPS, day(18)),
+    ):
+        add_parcel(engine, name, number, eta=None if due is None else Eta(due, due))
+        freezer.tick(SECOND)
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [NUMBER, FOURTH_UPS]
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [NUMBER, FOURTH_UPS]
+
+    freezer.move_to(at(18, 10))
+    await read(hass, freezer, parcel_app, after=timedelta(0))
+
+    assert parcel_app.numbers() == [NUMBER, FOURTH_UPS, THIRD_UPS, OTHER_UPS]
+
+
+@pytest.mark.parametrize("options", [{**OPTIONS, CONF_PARCEL_APP_DAILY: 2}])
+async def test_refused_add_counts_toward_the_limit(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Parcel counts every request, so a refused one counts too."""
+    two_parcels(engine, freezer)
+    freezer.tick(SECOND)
+    add_parcel(engine, "c", THIRD_UPS)
+
+    async def refuse_first(payload: dict[str, Any]) -> None:
+        parcel_app.add_answer = (
+            REFUSAL if len(parcel_app.adds) == 1 else {"success": True}
+        )
+
+    parcel_app.on_add = refuse_first
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [NUMBER, OTHER_UPS]
+    assert engine.data.parcelapp["adds"] == {
+        "day": "2026-11-17",
+        "sent": 2,
+        "added": 1,
+        "error": "refused",
+    }
+
+
+@pytest.mark.parametrize("options", [{**OPTIONS, CONF_PARCEL_APP_DAILY: 1}])
+@pytest.mark.parametrize(("zone", "added"), [(LISBON, False), ("Europe/Madrid", True)])
+async def test_daily_limit_starts_again_at_local_midnight(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    zone: str,
+    added: bool,
+) -> None:
+    """The daily limit counts Home Assistant's day."""
+    await hass.config.async_set_time_zone(zone)
+    two_parcels(engine, freezer)
+    await read(hass, freezer, parcel_app)
+    assert parcel_app.numbers() == [NUMBER]
+
+    freezer.move_to(at(17, 22, 50))
+    await read(hass, freezer, parcel_app, after=timedelta(0))
+    assert parcel_app.numbers() == [NUMBER]
+
+    freezer.move_to(at(17, 23, 10))
+    await read(hass, freezer, parcel_app, after=timedelta(0))
+    assert parcel_app.numbers() == ([NUMBER, OTHER_UPS] if added else [NUMBER])
+
+
+@pytest.mark.parametrize(
+    ("status", "message", "code"),
+    [
+        (HTTPStatus.TOO_MANY_REQUESTS, "Too many requests", "rate_429"),
+        (HTTPStatus.OK, "Daily limit reached", "rate"),
+        (HTTPStatus.OK, "Invalid API key", "key"),
+        (HTTPStatus.UNAUTHORIZED, "Unauthorized", "key_401"),
+    ],
+)
+async def test_limit_or_refused_key_stops_adding_for_the_day(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    caplog: pytest.LogCaptureFixture,
+    status: HTTPStatus,
+    message: str,
+    code: str,
+) -> None:
+    """Parcel's limit, or a refused key, stops adding until the next day.
+
+    With one warning, which names no number, and no repair: reading tells
+    whether the key works.
+    """
+    caplog.set_level(logging.DEBUG)
+    two_parcels(engine, freezer)
+    parcel_app.add_status = status
+    parcel_app.add_answer = {"success": False, "error_message": message}
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [NUMBER]
+    adds = engine.data.parcelapp["adds"]
+    assert adds["stopped"] is True
+    assert adds["error"] == code
+    assert key_issue(hass) is None
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [NUMBER]
+
+    parcel_app.add_status = HTTPStatus.OK
+    parcel_app.add_answer = {"success": True}
+    freezer.move_to(at(18, 10))
+    await read(hass, freezer, parcel_app, after=timedelta(0))
+
+    assert parcel_app.numbers() == [NUMBER, NUMBER, OTHER_UPS]
+    assert [warning.getMessage() for warning in own_warnings(caplog)] == [
+        f"Adding a delivery to the Parcel app failed ({code}); trying again tomorrow"
+    ]
+    assert not any(
+        number in entry.getMessage()
+        for entry in caplog.records
+        for number in (NUMBER, OTHER_UPS)
+    )
+
+
+async def test_new_key_adds_again(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A new key adds again the same day; a number tried today waits."""
+    two_parcels(engine, freezer)
+    parcel_app.add_status = HTTPStatus.UNAUTHORIZED
+    await read(hass, freezer, parcel_app)
+    assert parcel_app.numbers() == [NUMBER]
+
+    parcel_app.add_status = HTTPStatus.OK
+    await set_options(hass, engine, **{CONF_PARCEL_APP_KEY: NEW_KEY})
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [NUMBER, OTHER_UPS]
+    assert parcel_app.keys()[-1] == NEW_KEY
+
+    freezer.move_to(at(18, 10))
+    await read(hass, freezer, parcel_app, after=timedelta(0))
+
+    assert parcel_app.numbers() == [NUMBER, OTHER_UPS, NUMBER]
+
+
+@pytest.mark.parametrize(
+    ("status", "answer", "error", "code"),
+    [
+        (
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            {"success": False, "error_message": "Synthetic failure."},
+            None,
+            "server_500",
+        ),
+        (HTTPStatus.OK, {"success": True}, aiohttp.ClientError(), "network"),
+        (HTTPStatus.NOT_FOUND, {"detail": "Not found."}, None, "http_404"),
+        (HTTPStatus.OK, {"ok": 1}, None, "invalid"),
+    ],
+)
+async def test_other_failures_wait_for_the_next_read(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    caplog: pytest.LogCaptureFixture,
+    status: HTTPStatus,
+    answer: dict[str, Any],
+    error: Exception | None,
+    code: str,
+) -> None:
+    """Another failure ends adding until the next read, with one warning.
+
+    The number that failed waits for the next day. Once an add goes through,
+    the next failure warns again.
+    """
+    two_parcels(engine, freezer)
+    parcel_app.add_status = status
+    parcel_app.add_answer = answer
+    parcel_app.add_error = error
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [NUMBER]
+    adds = engine.data.parcelapp["adds"]
+    assert adds["error"] == code
+    assert "stopped" not in adds
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [NUMBER, OTHER_UPS]
+    assert [warning.getMessage() for warning in own_warnings(caplog)] == [
+        f"Adding a delivery to the Parcel app failed ({code}); trying again later"
+    ]
+
+    parcel_app.add_status = HTTPStatus.OK
+    parcel_app.add_answer = {"success": True}
+    parcel_app.add_error = None
+    freezer.move_to(at(18, 10))
+    await read(hass, freezer, parcel_app, after=timedelta(0))
+
+    assert parcel_app.numbers() == [NUMBER, OTHER_UPS, NUMBER, OTHER_UPS]
+    assert engine.data.parcelapp["adds"] == {
+        "day": "2026-11-18",
+        "sent": 2,
+        "added": 2,
+    }
+
+    add_parcel(engine, "c", THIRD_UPS)
+    parcel_app.add_status = status
+    parcel_app.add_answer = answer
+    parcel_app.add_error = error
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers()[-1] == THIRD_UPS
+    assert [warning.getMessage() for warning in own_warnings(caplog)] == 2 * [
+        f"Adding a delivery to the Parcel app failed ({code}); trying again later"
+    ]
+
+
+async def test_refused_number_is_left(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A number Parcel refuses is left, without a warning, and the next is sent.
+
+    It isn't sent again under the same code.
+    """
+    two_parcels(engine, freezer)
+
+    async def refuse(payload: dict[str, Any]) -> None:
+        parcel_app.add_answer = (
+            REFUSAL if payload["tracking_number"] == NUMBER else {"success": True}
+        )
+
+    parcel_app.on_add = refuse
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [NUMBER, OTHER_UPS]
+    assert record(engine)["refused"] == "ups"
+    assert "added" not in record(engine)
+    assert "added" in record(engine, OTHER_UPS)
+    assert own_warnings(caplog) == []
+
+    freezer.move_to(at(18, 10))
+    await read(hass, freezer, parcel_app, after=timedelta(0))
+
+    assert parcel_app.numbers() == [NUMBER, OTHER_UPS]
+
+
+@pytest.mark.parametrize(
+    ("merchant", "description"),
+    [
+        ("A" * (MAX_DESCRIPTION - 1) + " " + "B" * 20, "A" * (MAX_DESCRIPTION - 1)),
+        ("Example\n  Shop ", SHOP),
+        (None, FALLBACK_DESCRIPTION),
+    ],
+)
+async def test_description_is_the_merchant(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    merchant: str | None,
+    description: str,
+) -> None:
+    """The merchant's name goes on one line, cut to size; without one, "Parcels".
+
+    The delivery doesn't name the parcel then.
+    """
+    add_parcel(engine, "a", merchant=merchant)
+
+    await read(hass, freezer, parcel_app)
+
+    assert [add["description"] for add in parcel_app.adds] == [description]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.origins[PARCELAPP_PREFIX + NUMBER].name is None
+
+
+@pytest.mark.parametrize(
+    ("language", "sent"),
+    [("pt-BR", "pt"), ("zh-Hant", "zh"), ("EN", "en"), ("fil", None)],
+)
+async def test_language_is_home_assistant_s(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    language: str,
+    sent: str | None,
+) -> None:
+    """Parcel gets Home Assistant's language as two letters, or none."""
+    hass.config.language = language
+    add_parcel(engine, "a")
+
+    await read(hass, freezer, parcel_app)
+
+    assert [add.get("language", None) for add in parcel_app.adds] == [sent]
+    assert ("language" in parcel_app.adds[0]) is (sent is not None)
+
+
+@pytest.mark.parametrize("options", [{**OPTIONS, CONF_PARCEL_APP_POSTCODE: "1000001"}])
+async def test_postcode_goes_only_where_parcel_needs_it(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """The postcode goes with Paack's IDs, in its usual form, but not with UPS.
+
+    A Paack ID in another case is in the list already.
+    """
+    hass.config.country = "PT"
+    add_parcel(engine, "a", PAACK, carrier="paack")
+    freezer.tick(SECOND)
+    add_parcel(engine, "b")
+    freezer.tick(SECOND)
+    add_parcel(engine, "c", PAACK.lower(), carrier="paack")
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.adds == [
+        {
+            "tracking_number": PAACK,
+            "carrier_code": "paack",
+            "description": FALLBACK_DESCRIPTION,
+            "language": "en",
+            "send_push_confirmation": False,
+            "postcode": "1000-001",
+        },
+        {
+            "tracking_number": NUMBER,
+            "carrier_code": "ups",
+            "description": FALLBACK_DESCRIPTION,
+            "language": "en",
+            "send_push_confirmation": False,
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("country", "code"), [("PT", "ctt"), ("ES", "tourline"), (None, "tourline")]
+)
+async def test_carrier_code_follows_home_assistant_s_country(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    country: str | None,
+    code: str,
+) -> None:
+    """CTT Express goes as "ctt" in Portugal, where ctt.pt tracks it.
+
+    Elsewhere it's Parcel's "tourline", CTT Express in Spain.
+    """
+    hass.config.country = country
+    add_parcel(engine, "a", CTT_EXPRESS, carrier="ctt_expresso")
+
+    await read(hass, freezer, parcel_app)
+
+    sent = [(add["tracking_number"], add["carrier_code"]) for add in parcel_app.adds]
+    assert sent == [(CTT_EXPRESS, code)]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {CONF_PARCEL_APP_KEY: ""},
+        {CONF_PARCEL_APP_KEY: NEW_KEY},
+        {CONF_PARCEL_APP_ADD: False},
+    ],
+)
+async def test_options_changed_while_adding(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    change: dict[str, Any],
+) -> None:
+    """Adding stops when the key changes, or adding is turned off, meanwhile."""
+    two_parcels(engine, freezer)
+
+    async def update(payload: dict[str, Any]) -> None:
+        hass.config_entries.async_update_entry(
+            engine.entry, options={**engine.entry.options, **change}
+        )
+        await asyncio.sleep(0)
+
+    parcel_app.on_add = update
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [NUMBER]
+
+
+@pytest.mark.parametrize(
+    ("options", "mailboxes", "added"),
+    [
+        (OPTIONS, (), [NUMBER]),
+        ({CONF_PARCEL_APP_KEY: KEY}, (), [THIRD_UPS]),
+        ({CONF_PARCEL_APP_KEY: KEY}, (None,), [THIRD_UPS]),
+        ({CONF_PARCEL_APP_KEY: KEY}, (None, OTHER_OWNER), []),
+        (
+            {**OPTIONS, CONF_PARCEL_APP_EVERYONE: True},
+            (),
+            sorted([NUMBER, OTHER_UPS, THIRD_UPS]),
+        ),
+    ],
+)
+async def test_adds_the_parcels_of_the_key_s_owner(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    mailboxes: tuple[str | None, ...],
+    added: list[str],
+) -> None:
+    """Only the parcels of the person whose key it is, unless he chose everyone's.
+
+    Without a person chosen, only parcels of no one, while no mailbox has an
+    owner. Never private parcels.
+    """
+    for index, owner in enumerate(mailboxes):
+        add_mailbox(hass, address=f"box{index}@example.com", owner=owner)
+    add_parcel(engine, "mine")
+    add_parcel(engine, "theirs", OTHER_UPS, owner=OTHER_OWNER)
+    add_parcel(engine, "nobody", THIRD_UPS, owner=None)
+    add_parcel(engine, "private", FOURTH_UPS, private=True)
+
+    await read(hass, freezer, parcel_app)
+
+    assert sorted(parcel_app.numbers()) == added
+
+
+async def test_what_adding_did_is_saved(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    hass_storage: dict[str, Any],
+) -> None:
+    """An add is saved, even when the data was written while it was sent."""
+    add_parcel(engine, "a")
+
+    async def save(payload: dict[str, Any]) -> None:
+        await engine.store.async_save()
+
+    parcel_app.on_add = save
+    await read(hass, freezer, parcel_app)
+    freezer.tick(timedelta(seconds=SAVE_DELAY + 1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    saved = hass_storage["parcels"]["data"]["parcelapp"]
+    assert saved["records"][NUMBER]["added"] == dt_to_str(at(17, 10))
+    assert saved["adds"]["added"] == 1
+
+
+async def test_number_tried_is_kept_a_month(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A number tried but never listed is forgotten a month after."""
+    tried = dt_to_str(dt_util.utcnow() - RECORD_DAYS + timedelta(hours=1))
+    engine.data.parcelapp["records"] = {NUMBER: {"tried": tried}}
+
+    await read(hass, freezer, parcel_app)
+
+    assert record(engine) == {"tried": tried}
+
+    await read(hass, freezer, parcel_app, after=timedelta(hours=2))
+
+    assert NUMBER not in engine.data.parcelapp["records"]
+
+
+# -- Diagnostics ---------------------------------------------------------------
+
+POSTCODE = "1000-001"
+
+
+@pytest.mark.parametrize("options", [{**OPTIONS, CONF_PARCEL_APP_POSTCODE: POSTCODE}])
+async def test_diagnostics_count_without_numbers(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """The diagnostics count the deliveries, today's adds and the codes in use.
+
+    Without a number, the key or the postcode. Yesterday's adds don't count,
+    by the day in Home Assistant's time zone.
+    """
+    await hass.config.async_set_time_zone("Europe/Madrid")
+    hass.config.country = "PT"
+    sync = sync_of(engine)
+    no_adds = {"sent": 0, "added": 0, "stopped": False, "error": None}
+    before = sync.diagnostics()
+    assert before["deliveries"] == {
+        "listed": 0,
+        "matched": 0,
+        "imported": 0,
+        "unmatched": 0,
+    }
+    assert before["added_today"] == no_adds
+    assert before["carriers"]["learned"] == {}
+    assert before["carriers"]["codes"]["ctt_expresso"] == "ctt"
+    assert "gls" not in before["carriers"]["codes"]
+
+    add_parcel(engine, "a")
+    add_parcel(engine, "b", GLS, carrier="gls")
+    add_parcel(engine, "e", OTHER_GLS, carrier="gls")
+    freezer.tick(SECOND)
+    add_parcel(engine, "c", OTHER_UPS)
+    freezer.tick(SECOND)
+    add_parcel(engine, "d", THIRD_UPS)
+    parcel_app.deliveries = [
+        delivery(),
+        delivery(GLS, code="glsx"),
+        delivery(OTHER_GLS, code=None),
+        delivery(DPD, code="dpd"),
+        delivery(PAACK, code="paack"),
+        delivery(CTT_EXPRESS, code="ctt"),
+        delivery(CTT_EXPRESS, code="ctt"),
+    ]
+
+    async def limit_the_second(payload: dict[str, Any]) -> None:
+        if len(parcel_app.adds) > 1:
+            parcel_app.add_status = HTTPStatus.TOO_MANY_REQUESTS
+
+    parcel_app.on_add = limit_the_second
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app.numbers() == [OTHER_UPS, THIRD_UPS]
+    diagnostics = sync.diagnostics()
+    assert diagnostics["deliveries"] == {
+        "listed": 7,
+        "matched": 3,
+        "imported": 2,
+        "unmatched": 1,
+    }
+    assert diagnostics["added_today"] == {
+        "sent": 2,
+        "added": 1,
+        "stopped": True,
+        "error": "rate_429",
+    }
+    assert diagnostics["carriers"]["learned"] == {"gls": "glsx", "ups": "ups"}
+    assert diagnostics["carriers"]["codes"]["gls"] == "glsx"
+    text = json.dumps(diagnostics)
+    numbers = (NUMBER, GLS, OTHER_GLS, OTHER_UPS, THIRD_UPS, DPD, PAACK, CTT_EXPRESS)
+    for secret in (*numbers, KEY):
+        assert secret not in text
+    assert POSTCODE not in text
+    assert SHOP not in text
+
+    # 23:50 and 00:10 in Madrid.
+    freezer.move_to(at(17, 22, 50))
+    assert sync.diagnostics()["added_today"]["sent"] == 2
+    freezer.move_to(at(17, 23, 10))
+    assert sync.diagnostics()["added_today"] == no_adds
+    assert engine.data.parcelapp["adds"]["day"] == "2026-11-17"
+
+
+# -- Helpers -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (0, 0),
+        (7, 7),
+        ("4", 4),
+        (" 4 ", 4),
+        (True, None),
+        (None, None),
+        (2.0, None),
+        ("", None),
+        ("x", None),
+        ("-1", None),
+        ("²", None),
+        ("٣", None),
+    ],
+)
+def test_status_code(value: Any, expected: int | None) -> None:
+    """Status codes are whole numbers, or digits; anything else is none."""
+    assert status_code(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (f" {NUMBER.lower()} ", NUMBER),
+        (12345678, "12345678"),
+        (PAACK, PAACK),
+        (PAACK.lower(), PAACK.lower()),
+        (ORDER, ORDER_KEY),
+        ("12345", "12345"),
+        ("1234", None),
+        ("X" * 40, "X" * 40),
+        ("X" * 41, None),
+        ("Ünïcode123", None),
+        (True, None),
+        (False, None),
+        (None, None),
+        (12.5, None),
+    ],
+)
+def test_delivery_key(value: Any, expected: str | None) -> None:
+    """Numbers are kept as Parcels keeps them; others are left out."""
+    assert delivery_key(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "key", "code", "expected"),
+    [
+        (ORDER, ORDER_KEY, None, ORDER),
+        (f" {ORDER} ", ORDER_KEY, "ups", ORDER),
+        (ORDER_KEY, ORDER_KEY, "amzles", ORDER),
+        (ORDER_KEY, ORDER_KEY, "ups", None),
+        (ORDER_KEY, ORDER_KEY, None, None),
+        (TBA, TBA, "amzles", None),
+        ("TBA12345678901234", "TBA12345678901234", "amzles", None),
+        ("4051234567123456", "4051234567123456", "amzles", None),
+    ],
+)
+def test_order_number(
+    raw: Any, key: str, code: str | None, expected: str | None
+) -> None:
+    """Amazon orders are told by their 3-7-7 form, or Amazon's code."""
+    assert order_number(raw, key, code) == expected

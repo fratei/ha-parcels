@@ -26,7 +26,7 @@ MIDDAY: Final = time(12)
 
 
 def last_news(parcel: Parcel) -> datetime:
-    """Return when an e-mail or 17TRACK last told something about a parcel.
+    """Return when an e-mail, 17TRACK or Parcel last told about a parcel.
 
     The user's edits and inferred events don't count. A parcel added by hand
     counts from when it was added.
@@ -72,10 +72,10 @@ def _probable_delivery(parcel: Parcel) -> datetime:
 def infer_quiet_deliveries(data: ParcelsData, now: datetime) -> set[str]:
     """Close tracked parcels on their way that had no news for three weeks.
 
-    Carriers' e-mails and 17TRACK miss some deliveries, so such a parcel was
-    most likely delivered. The delivery is shown as inferred until the user
-    keeps or undoes it, and news about the parcel takes it back. Parcels
-    without a carrier tracking number are left to
+    Carriers' e-mails, 17TRACK and Parcel miss some deliveries, so such a
+    parcel was most likely delivered. The delivery is shown as inferred until
+    the user keeps or undoes it, and news about the parcel takes it back.
+    Parcels without a carrier tracking number are left to
     :func:`.dedup.infer_deliveries`. Returns the IDs of the changed parcels.
     """
     changed: set[str] = set()

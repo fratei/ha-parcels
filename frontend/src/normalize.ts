@@ -76,7 +76,13 @@ function inferredReason(value: unknown): InferredReason | null {
 }
 
 function source(value: unknown): ParcelSource {
-  return value === "ai" || value === "manual" || value === "seventeentrack" ? value : "parser";
+  return value === "ai" || value === "manual" || value === "seventeentrack" || value === "parcelapp"
+    ? value
+    : "parser";
+}
+
+function etaSource(value: unknown): ParcelSource | null {
+  return typeof value === "string" && value ? source(value) : null;
 }
 
 function autoMerged(value: unknown): AutoMerged | null {
@@ -97,6 +103,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
   return {
     id: parcelId,
     merchant: str(raw.merchant),
+    name: str(raw.name),
     carrier: str(raw.carrier),
     carrier_name: str(raw.carrier_name),
     tracking_number: str(raw.tracking_number),
@@ -108,6 +115,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     eta_end: str(raw.eta_end),
     window_start: str(raw.window_start),
     window_end: str(raw.window_end),
+    eta_source: etaSource(raw.eta_source),
     delivered_at: str(raw.delivered_at),
     inferred: raw.inferred === true,
     inferred_reason: inferredReason(raw.inferred_reason),

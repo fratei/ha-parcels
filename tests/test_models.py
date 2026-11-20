@@ -25,6 +25,7 @@ from custom_components.parcels.models import (
     SenderPrefs,
     Source,
     Suggestion,
+    known_merchant_name,
     merchant_display,
     merchant_key,
     order_key,
@@ -138,6 +139,38 @@ def test_latest_estimate_wins_and_can_be_cleared() -> None:
     parcel.events.append(_event(None, at(days=2), clears_eta=True))
     parcel.touch(at(days=2))
     assert parcel.state.eta is None
+
+
+def test_the_date_keeps_its_source() -> None:
+    """The expected date says which source gave it: the newest that did."""
+    early = Eta(start=date(2026, 11, 5), end=date(2026, 11, 5))
+    late = Eta(start=date(2026, 11, 6), end=date(2026, 11, 6))
+    parcel = _parcel(
+        _event(None, at(days=1), eta=late, source=Source.PARCELAPP),
+        _event(S.IN_TRANSIT, at(), eta=early),
+    )
+    assert (parcel.state.eta, parcel.state.eta_source) == (late, Source.PARCELAPP)
+
+    parcel.events.append(_event(None, at(days=2), eta=early))
+    parcel.touch(at(days=2))
+    assert (parcel.state.eta, parcel.state.eta_source) == (early, Source.PARSER)
+
+    # News without a date keeps the date and its source.
+    parcel.events.append(_event(S.IN_TRANSIT, at(days=3), source=Source.PARCELAPP))
+    parcel.touch(at(days=3))
+    assert (parcel.state.eta, parcel.state.eta_source) == (early, Source.PARSER)
+
+    # Out for delivery without a date means today, as that source says.
+    parcel.events.append(
+        _event(S.OUT_FOR_DELIVERY, at(days=4), source=Source.PARCELAPP)
+    )
+    parcel.touch(at(days=4))
+    today = Eta(start=date(2026, 11, 6), end=date(2026, 11, 6))
+    assert (parcel.state.eta, parcel.state.eta_source) == (today, Source.PARCELAPP)
+
+    parcel.events.append(_event(None, at(days=5), clears_eta=True))
+    parcel.touch(at(days=5))
+    assert (parcel.state.eta, parcel.state.eta_source) == (None, None)
 
 
 def test_manual_origin_overrides_and_clears() -> None:
@@ -390,6 +423,16 @@ def test_merchant_display() -> None:
     assert merchant_display(None) is None
 
 
+def test_known_merchant_name() -> None:
+    """Free text names a merchant only when it starts with a known one."""
+    assert known_merchant_name("Amazon.es order") == "Amazon"
+    assert known_merchant_name("AMAZON EU SARL") == "Amazon"
+    assert known_merchant_name("Headphones from Amazon") is None
+    assert known_merchant_name("Example Shop") is None
+    assert known_merchant_name("") is None
+    assert known_merchant_name(None) is None
+
+
 def _full_data() -> ParcelsData:
     parcel = _parcel(
         _event(S.SHIPPED, at(), kind=MailKind.SHIPPED),
@@ -456,6 +499,7 @@ def _full_data() -> ParcelsData:
         },
         senders={"example.com": SenderPrefs("example.com", trusted=True)},
         engine={"notifier": {"x": 1}},
+        parcelapp={"poll": {"last": "2026-11-02T09:00:00+00:00"}},
         cursors={"entry": {"delta": "token"}},
     )
 
@@ -485,6 +529,69 @@ def test_unreadable_entries_are_skipped(caplog: pytest.LogCaptureFixture) -> Non
     assert loaded.orders == {}
     assert "unreadable stored parcel" in caplog.text
     assert ParcelsData.from_dict(None) == ParcelsData()
+
+
+# The sources 0.1.5 can read: it skips a whole parcel with any other.
+SOURCES_0_1_5 = {"parser", "ai", "manual", "seventeentrack"}
+
+
+def test_parcel_app_news_is_stored_so_older_releases_read_it() -> None:
+    """The Parcel app's records are stored as 17TRACK's and read back as its own.
+
+    A parcel with the Parcel app's news must survive going back to 0.1.5.
+    """
+    parcel = _parcel(
+        _event(S.SHIPPED, at()),
+        _event(S.IN_TRANSIT, at(hours=2), source=Source.PARCELAPP, origin="pa:1"),
+        _event(S.IN_TRANSIT, at(hours=3), source=Source.SEVENTEENTRACK, origin="17t:2"),
+        origins=(
+            _origin(),
+            _origin("pa:1", source=Source.PARCELAPP, time=at(hours=2), name="Lamp"),
+            _origin("17t:2", source=Source.SEVENTEENTRACK, time=at(hours=3)),
+        ),
+    )
+    stored = json.loads(json.dumps(parcel.as_dict()))
+    assert {origin["source"] for origin in stored["origins"]} <= SOURCES_0_1_5
+    assert {event["source"] for event in stored["events"]} <= SOURCES_0_1_5
+    loaded = Parcel.from_dict(stored)
+    assert loaded.origins["pa:1"].source is Source.PARCELAPP
+    assert loaded.origins["17t:2"].source is Source.SEVENTEENTRACK
+    assert [event.source for event in loaded.events] == [
+        Source.PARSER,
+        Source.PARCELAPP,
+        Source.SEVENTEENTRACK,
+    ]
+    assert loaded.as_dict() == parcel.as_dict()
+    assert loaded.state == parcel.state
+
+
+def test_a_source_from_a_newer_release_reads_as_a_parser() -> None:
+    """A record isn't lost because a newer release stored an unknown source."""
+    stored = _full_data().as_dict()
+    stored["parcels"][0]["origins"][0]["source"] = "newer"
+    stored["parcels"][0]["events"][0]["source"] = "newer"
+    stored["review"][0]["source"] = "newer"
+    loaded = ParcelsData.from_dict(stored)
+    parcel = loaded.parcels["p_test"]
+    assert parcel.origins["o1"].source is Source.PARSER
+    assert parcel.events[0].source is Source.PARSER
+    assert loaded.review["r1"].source is Source.PARSER
+
+
+def test_name_from_the_latest_origin_that_has_one() -> None:
+    """A delivery only in the Parcel app is named after its description."""
+    parcel = _parcel(
+        origins=(
+            _origin("pa:1", source=Source.PARCELAPP, name="Old name"),
+            _origin("pa:2", source=Source.PARCELAPP, time=at(hours=1), name="Lamp"),
+            _origin("o1", time=at(hours=2)),
+        )
+    )
+    assert parcel.state.name == "Lamp"
+    assert parcel.state.source is Source.PARSER
+    assert _parcel().state.name is None
+    only = _parcel(origins=(_origin("pa:1", source=Source.PARCELAPP, name="Lamp"),))
+    assert only.state.source is Source.PARCELAPP
 
 
 def test_sender_preferences() -> None:

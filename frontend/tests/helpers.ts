@@ -5,6 +5,7 @@ export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
   return {
     id: "p1",
     merchant: null,
+    name: null,
     carrier: null,
     carrier_name: null,
     tracking_number: null,
@@ -15,6 +16,7 @@ export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
     eta_end: null,
     window_start: null,
     window_end: null,
+    eta_source: null,
     delivered_at: null,
     inferred: false,
     inferred_reason: null,

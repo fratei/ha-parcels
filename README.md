@@ -8,8 +8,9 @@ Activities and in a persistent notification in Home Assistant.
 
 Everything runs in Home Assistant. Parcels has no server of its own: it talks
 to Microsoft or Google with an app you register yourself, and, only if you
-turn them on, to 17TRACK through Home Assistant's 17TRACK integration and to a
-local AI model on your Home Assistant host.
+turn them on, to 17TRACK through Home Assistant's 17TRACK integration, to a
+local AI model on your Home Assistant host, and to the Parcel app at
+api.parcel.app, which Parcels contacts itself with your API key.
 
 - [What it does](#what-it-does)
 - [Privacy and safety](#privacy-and-safety)
@@ -20,6 +21,7 @@ local AI model on your Home Assistant host.
 - [The Parcels page](#the-parcels-page)
 - [Delivery day](#delivery-day)
 - [17TRACK](#17track)
+- [Parcel app](#parcel-app)
 - [Local AI](#local-ai)
 - [Entities, actions and events](#entities-actions-and-events)
 - [Troubleshooting](#troubleshooting)
@@ -57,12 +59,13 @@ local AI model on your Home Assistant host.
   otherwise, the parcel is marked as probably delivered, unless that delivery
   belongs to another order or another carrier. You can undo that.
   One with no news a week after its expected day is archived.
-- **Parcels that went quiet**: carriers' e-mails and 17TRACK miss some
-  deliveries. A parcel with a tracking number that's on its way, with no news
-  from e-mails or 17TRACK for three weeks, counted from its last expected day
-  when that's later, is marked as probably delivered, on its last expected
-  day or the day of its last news, whichever is later. You can undo that or
-  keep it, and news about the parcel takes it back.
+- **Parcels that went quiet**: carriers' e-mails, 17TRACK and the Parcel app
+  miss some deliveries. A parcel with a tracking number that's on its way,
+  with no news from e-mails, 17TRACK or the Parcel app for three weeks,
+  counted from its last expected day when that's later, is marked as
+  probably delivered, on its last expected day or the day of its last news,
+  whichever is later. You can undo that or keep it, and news about the
+  parcel takes it back.
 - **Shipments of several packages**: packages sent together that arrive on the
   same day share one box, which says how many packages it holds. The details
   list every package with its tracking number. Packages that arrive on
@@ -114,10 +117,14 @@ local AI model on your Home Assistant host.
   Parcels wasn't sure about.
 - **On delivery day**: Live Activities on iPhones, a notification on iPads and
   Android phones, and a persistent notification in Home Assistant.
-- **Optional integrations**, both off until you set them up:
+- **Optional integrations**, all three off until you set them up:
   - [17TRACK](#17track), through Home Assistant's 17TRACK integration: the
     carrier's status between e-mails, such as in transit, out for delivery or
     delivered. It adds no delivery dates.
+  - The [Parcel app](#parcel-app), with a Premium account: the status, events
+    and expected dates of the deliveries in your Parcel list. Deliveries that
+    are only in Parcel show in Parcels too, and Parcels adds its new parcels
+    to your Parcel list.
   - A [local AI](#local-ai) model on your Home Assistant host: it reads the
     e-mails no parser understands and fills in what a parser missed.
 
@@ -153,9 +160,10 @@ local AI model on your Home Assistant host.
   AI task of the Ollama integration whose model runs on the Home Assistant
   host, and refuses cloud models and remote hosts.
 - **Lock screen.** Live Activities and notifications show the shop, carrier,
-  status and time window, never item names unless you turn that on. A parcel
-  marked private notifies only its owner and is only counted in the shared
-  persistent notification.
+  status and time window, never item names unless you turn that on. With item
+  names on, a parcel without items shows its name in the Parcel app instead.
+  A parcel marked private notifies only its owner and is only counted in the
+  shared persistent notification.
 - **Delivery PINs** are shown only on the Parcels page, to the people who can
   see the parcel: on its box until it's delivered, returned or cancelled, in
   its details, and to administrators in the e-mails waiting for review. They
@@ -167,6 +175,18 @@ local AI model on your Home Assistant host.
   it hasn't arrived.
 - **17TRACK** gets tracking numbers only, under a generic name, never item
   names, shops or the numbers of private parcels.
+- **The Parcel app** is off until you enter an API key. Parcels then contacts
+  api.parcel.app itself and sends the key only there. It reads the deliveries
+  in your Parcel list and keeps their tracking number, carrier, name, status,
+  events (their text and place) and expected dates, never the postcode or
+  e-mail address Parcel may hold for a delivery. It adds parcels with their
+  tracking number, Parcel's code for the carrier, the shop's name (or
+  "Parcels") and Home Assistant's language, plus the postcode you entered,
+  only for carriers that require one. It never sends item names, e-mails or
+  private parcels, and sends only the Parcel app user's parcels unless **Add
+  everyone's parcels** is on. The key and the postcode are kept in Home
+  Assistant's configuration, like the mailbox tokens, are never logged, and
+  are redacted in diagnostics.
 - **Revoking access.** Delete the mailbox entry in Home Assistant, then remove
   the app in your
   [Microsoft account](https://account.live.com/consent/Manage) or
@@ -191,6 +211,7 @@ encryption key somewhere safe.
 - For 17TRACK: a free [17track.net](https://www.17track.net/) account whose
   password has 16 characters or fewer, and Home Assistant's 17TRACK
   integration.
+- For the Parcel app: a [Parcel](https://parcelapp.net/) Premium account.
 
 ## Install
 
@@ -307,7 +328,7 @@ See [The Parcels page](#the-parcels-page). Then, to get delivery day on your
 phones, choose the people to notify in the hub's options and follow
 [Delivery day](#delivery-day).
 
-### 7. Optional: 17TRACK and the local AI
+### 7. Optional: 17TRACK, the Parcel app and the local AI
 
 - **17TRACK**, for the carrier's status between e-mails: create a free account
   at [17track.net](https://www.17track.net/) and add Home Assistant's
@@ -315,6 +336,10 @@ phones, choose the people to notify in the hub's options and follow
   Parcels options, so Parcels starts using it within 30 minutes, or at once
   when you run the `parcels.refresh` action. See [17TRACK](#17track) for what
   it sends and the limits of a free account.
+- **The Parcel app**, if you use [Parcel](https://parcelapp.net/) with
+  Premium: make an API key at [web.parcelapp.net](https://web.parcelapp.net/),
+  enter it as **Parcel app API key** in the Parcels options and choose the
+  **Parcel app user**. See [Parcel app](#parcel-app).
 - **Local AI**, for e-mails no parser understands: install the Ollama app and
   pick its AI task in the Parcels options. See [Local AI](#local-ai).
 
@@ -334,6 +359,13 @@ entry.
 | Combine Live Activities above | 3 | With more parcels than this on one day, they share one Live Activity. |
 | Show item names on the lock screen | off | When off, the lock screen shows shop, carrier, status and time window only. |
 | Live status from 17TRACK | on | Has effect only when the 17TRACK integration is set up. See [17TRACK](#17track). |
+| Parcel app API key | none | Turns on the [Parcel app](#parcel-app) source; needs Parcel Premium. The Parcel app options below show once a key is entered. Clear it to stop using Parcel. |
+| Parcel app user | none | Whose Parcel account the key belongs to. Deliveries only in Parcel become their parcels. Required when your mailboxes have owners. |
+| Show deliveries only in Parcel | on | Deliveries in Parcel that no e-mail mentions show in Parcels too. When off, Parcel only updates parcels found in e-mails. |
+| Add new parcels to Parcel | on | Adds the tracking numbers of new parcels to your Parcel list. |
+| Add everyone's parcels | off | Also adds the parcels of other people's mailboxes. Shown while adding is on. |
+| Parcels added per day | 10 | 1 to 20. Parcel accepts 20 new deliveries a day, refused ones included. Shown while adding is on. |
+| Delivery postcode | none | Sent only for carriers that Parcel can't follow without it, such as Paack. With Home Assistant's country set to Portugal, use NNNN-NNN. Shown while adding is on. |
 | Test mode and Test device | off | Send Live Activities to the test device only. |
 | Archive delivered parcels after | 14 days | Archived parcels stay visible in past weeks. Return pickups are archived this long after their day. |
 | Delete delivered parcels after | 90 days | Must be more than the archive period. |
@@ -357,7 +389,8 @@ add a resource.
 - **Parcels week** (`custom:parcels-week-card`): a Monday-to-Sunday calendar
   with the week's deliveries. Each box has three lines: the shop; the carrier
   with the time window, package count and PIN; and the items, such as
-  "3 items · Lamp, Bin, Mat". Date ranges are drawn as bars and colored by
+  "3 items · Lamp, Bin, Mat". A parcel from the Parcel app with no shop shows
+  its name in Parcel instead. Date ranges are drawn as bars and colored by
   status, delivered parcels show ✓ on their delivery day, and parcels found
   by the AI carry an "AI" badge until you confirm them. Packages of one
   shipment that arrive on the same day share a box with a package count.
@@ -373,17 +406,19 @@ add a resource.
   the carrier, the parcel its items came in and its e-mails; administrators
   can remove it there. A parcel's details list its returns.
   Select a parcel for its timeline, carrier and carrier link, tracking
-  number, the shipment's other packages, pickup point, PIN or pickup code and
-  parcel ID, and to mark it delivered, edit it, make it private, merge, split
-  or archive it. Merges and deliveries that Parcels guessed are marked there,
-  to keep or undo. **Merge** lists the likely matches first (same order or
-  shop, still open, close dates), each with its items, order number, carrier,
-  tracking number, status and date; older parcels are behind **Show older**
-  and the search. For administrators, when a carrier's e-mails don't say
-  which of a shop's parcels it's delivering, the box says "Possibly: …" with
-  the candidates' items, and the details list them, to merge or rule out with
-  one tap. The card also adds parcels by tracking number. Options: `title`
-  (an empty string hides it) and `show_archived` (default `true`).
+  number, the shipment's other packages, pickup point, PIN or pickup code,
+  name in the Parcel app and parcel ID, and to mark it delivered, edit it,
+  make it private, merge, split or archive it. Its expected date ends in
+  "· Parcel app" when it comes from the Parcel app. Merges and deliveries
+  that Parcels guessed are marked there, to keep or undo. **Merge** lists the
+  likely matches first (same order or shop, still open, close dates), each
+  with its items, order number, carrier, tracking number, status and date;
+  older parcels are behind **Show older** and the search. For
+  administrators, when a carrier's e-mails don't say which of a shop's
+  parcels it's delivering, the box says "Possibly: …" with the candidates'
+  items, and the details list them, to merge or rule out with one tap. The
+  card also adds parcels by tracking number. Options: `title` (an empty
+  string hides it) and `show_archived` (default `true`).
 - **Parcels without a date** (`custom:parcels-list-card`): active parcels that
   don't have a delivery date yet. Option: `title`.
 - **Parcels review** (`custom:parcels-review-card`): **Needs review** lists the
@@ -597,6 +632,103 @@ many numbers 17TRACK can't find, by carrier (`not_found_by_carrier`).
 17TRACK also sells a tracking API for developers, with its own free
 allowance. That's a different product, and Parcels doesn't use it.
 
+## Parcel app
+
+Optional, for [Parcel](https://parcelapp.net/) users with Premium. Parcel
+follows the carriers' tracking of the deliveries in your Parcel list; Parcels
+reads that list through Parcel's API and adds new parcels to it. Once you
+enter an API key, Parcels itself contacts api.parcel.app.
+
+- **What it adds**: the status and events of your deliveries, and their
+  expected date or time window, which fills in what the e-mails didn't give.
+  When an e-mail and Parcel disagree, the newer news wins. In a parcel's
+  details, a date from Parcel ends in "· Parcel app", and the delivery's name
+  in Parcel is shown.
+- **What it reads**: the deliveries in your Parcel list. Parcels keeps their
+  tracking number, carrier, name, status, events (their text and place) and
+  expected dates, never the postcode or e-mail address Parcel may hold for a
+  delivery.
+- **What it sends**: for each parcel it adds, the tracking number, Parcel's
+  code for the carrier, the shop's name as the delivery's name ("Parcels"
+  when there's none), Home Assistant's language, and the postcode you
+  entered, only for carriers that require one. Never item names, e-mails or
+  private parcels, and Parcel sends no push notification about them.
+
+To set it up:
+
+1. Make an API key at [web.parcelapp.net](https://web.parcelapp.net/). Parcel's
+   API is for Premium accounts.
+2. Enter it as **Parcel app API key** in the Parcels options and choose the
+   **Parcel app user**, the person whose Parcel account it is. Parcels checks
+   a new key with one read of your list.
+
+**Deliveries only in Parcel**, such as the ones you add in the app, show as
+parcels of the Parcel app user, named after the shop when Parcels can tell
+it, such as Amazon, and otherwise after their name in Parcel. When an e-mail
+with the same tracking number arrives, it joins that parcel. A delivery under
+an Amazon order number joins that order's parcel, and is left out when the
+order has several parcels, since Parcels can't tell which one Parcel follows.
+Like e-mails, a delivery from a shop that Parcels can tell, such as Amazon,
+can also join a parcel of that shop without a tracking number, by the
+guesses described in [What it does](#what-it-does): marked, with **Undo**,
+or asked in **Needs review** when several parcels could match. If a delivery
+leaves your Parcel list before it's delivered, its parcel goes after two
+reads without it, with any changes you made to it. Turn off **Show
+deliveries only in Parcel** and these parcels go at the next read.
+
+**Reading.** Parcels reads your list every 15 minutes, every 10 while a
+parcel that Parcel follows is out for delivery or due that day, and never
+twice within 10 minutes, restarts and the `parcels.refresh` action included.
+Parcel allows 20 reads an hour, which other tools using your key may share,
+and answers from its cache: a read doesn't make Parcel check the carrier
+([Parcel's API](https://parcelapp.net/help/api-view-deliveries.html)).
+
+**Adding.** After each read, Parcels adds the tracking numbers of its open
+parcels to your list, the parcels due soonest first, with at most **Parcels
+added per day** (10 by default) requests a day, refused ones included. It
+skips parcels whose tracking or Amazon order number is already in your list.
+Parcel accepts 20 new deliveries a day, refused ones included, refuses
+numbers in a format it doesn't know, and shows "No data available" for a new
+delivery until its server first updates it
+([Parcel's API](https://parcelapp.net/help/api-add-delivery.html)). Parcels
+sends a number at most once a day, and not again once it was added or seen
+in your list, nor again under the same code once Parcel refused it. It stops
+adding for the day when Parcel's limit is reached or the key is refused, and
+until the next read after other errors. It adds only parcels:
+
+- of the **Parcel app user**, or everyone's with **Add everyone's parcels**
+  on. Without a Parcel app user, parcels without an owner, and none once a
+  mailbox has an owner;
+- with a tracking number and a carrier whose code in Parcel is known (see
+  below);
+- for carriers that Parcel follows only with the recipient's postcode, such
+  as Paack, when **Delivery postcode** is set;
+- that aren't private, archived or without news for three weeks.
+
+**Carrier codes.** Parcel names carriers with its own codes
+([list](https://api.parcel.app/external/supported_carriers.json), updated
+daily). Parcels knows the codes of carriers such as CTT, CTT Expresso,
+Correos Express, SEUR, MRW, Nacex, Paack, UPS and FedEx. GLS, DPD, InPost,
+DHL and Amazon have several codes in Parcel, so Parcels learns which one your
+parcels get from the deliveries you add to Parcel yourself, once Parcel
+finds them and an e-mail names their carrier. Until then, it doesn't add
+those carriers' parcels. The hub's diagnostics show the codes in use.
+
+**Errors.** After a failed read, Parcels waits 15 minutes, then 30, 60 and
+120. When Parcel's limit is reached, it waits an hour, or as long as Parcel
+asks. When Parcel refuses the key, a repair says so, and Parcels tries the
+key again every 6 hours. It never logs or keeps Parcel's error messages,
+only the kind of error.
+
+**With 17TRACK.** Both can be on. They update the same parcels, and the
+newest news wins. 17TRACK also gets the numbers of the parcels that came
+from Parcel, like those of other parcels.
+
+**Turning it off.** Clear the API key in the Parcels options. The parcels
+made only of deliveries from Parcel go, and the news Parcel brought to
+parcels from e-mails stays. The deliveries Parcels added stay in your Parcel
+list. To read without adding, turn off **Add new parcels to Parcel**.
+
 ## Local AI
 
 Some e-mails don't match any parser: a new shop, an unusual carrier e-mail.
@@ -729,7 +861,7 @@ carrier, status and dates. Each mailbox has a **Last sync** sensor and a
 | `parcels.split` | Moves e-mails or entries of a parcel to a new parcel. |
 | `parcels.undo_merge` | Splits a parcel that Parcels merged automatically. |
 | `parcels.undo_delivery` | Takes back a delivery that Parcels inferred, from another parcel of the same shop, from a return of its items or from three weeks without news, and doesn't infer it again. |
-| `parcels.refresh` | Checks all mailboxes, and 17TRACK when it's on, now. |
+| `parcels.refresh` | Checks all mailboxes, and 17TRACK and the Parcel app when they're on, now. The Parcel app is read at most every 10 minutes. |
 | `parcels.reprocess` | Reads a parcel's or review item's e-mails again with the current parsers, optionally with the AI. Administrators only. |
 | `parcels.trust_sender` | Trusts a sender's domain, so its e-mails are read as shipping e-mails. Administrators only. |
 | `parcels.ignore_sender` | Stops reading a sender's e-mails. Administrators only. |
@@ -810,6 +942,20 @@ actions:
 - **A Paack parcel shows apart from its Amazon parcel.** Select one and merge
   them. The hub's diagnostics count Paack's e-mails whose order ID matched an
   Amazon shipment, and those that didn't (`paack_amazon`), without any ID.
+- **A delivery from Parcel shows apart from its parcel, or doesn't update
+  it.** Select both and merge them, or select **Undo** on a pairing Parcels
+  made. Parcels leaves a delivery out when your Parcel list has two
+  deliveries with its tracking number, when its Amazon order has several
+  parcels, and once you've typed another tracking number on its parcel.
+- **A parcel isn't added to Parcel.** See which parcels Parcels adds in
+  [Parcel app](#parcel-app). A carrier with several codes in Parcel, such as
+  GLS or DPD, is added only once Parcels has learned its code from a delivery
+  you added to Parcel yourself. The hub's diagnostics show today's adds and
+  the codes in use (`parcelapp`).
+- **Repair: "The Parcel app refused the API key".** The key may have been
+  replaced, or the Parcel account may no longer have Premium. Enter the key
+  from web.parcelapp.net again in the Parcels options, or clear it. Parcels
+  tries the key again every 6 hours.
 - **Repair: "Shipping e-mails from … aren't understood".** A known sender
   changed its e-mails. The e-mails wait in review; check for an update of
   Parcels.
@@ -829,7 +975,9 @@ actions:
   refunds ignored (`refunds_dropped`), the check after updating to 0.1.5
   (`returns_check`) and Paack's matches (`paack_amazon`); its 17TRACK part
   counts the numbers 17TRACK can't find, by carrier
-  (`not_found_by_carrier`).
+  (`not_found_by_carrier`); its Parcel app part (`parcelapp`) counts the
+  deliveries read, matched, shown on their own and left out, and today's
+  adds, and lists the carrier codes in use, without tracking numbers.
 
 ## Development
 

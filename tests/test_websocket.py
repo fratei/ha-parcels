@@ -34,10 +34,16 @@ from custom_components.parcels.const import (
     ParcelStatus,
 )
 from custom_components.parcels.convert import fill_contribution
-from custom_components.parcels.dedup import REASON_SAME_MERCHANT_DAY, apply_contribution
+from custom_components.parcels.dedup import (
+    REASON_SAME_MERCHANT_DAY,
+    Contribution,
+    apply_contribution,
+)
 from custom_components.parcels.engine import ParcelsEngine
 from custom_components.parcels.models import (
+    PARCELAPP_PREFIX,
     MessageState,
+    Origin,
     ParcelEvent,
     Source,
     Suggestion,
@@ -104,6 +110,8 @@ HIDDEN = {
     "inferred_reason": None,
     "origins": [],
     "shipment_group": None,
+    "name": None,
+    "eta_source": None,
     "restricted": True,
 }
 
@@ -475,6 +483,45 @@ async def test_ai_filled(
 
     listed = {p["id"]: p for p in (await result(ws, "parcels/list"))["parcels"]}
     assert not listed[applied.parcel_id]["ai_filled"]
+
+
+async def test_parcel_app_name_and_date(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    sam_ws: MockHAClientWebSocket,
+) -> None:
+    """A parcel shows its Parcel app name and where its date came from.
+
+    Someone who may not see the parcel still sees when it comes, but neither.
+    """
+    (parcel_id,) = engine.data.parcels
+    now = dt_util.utcnow()
+    origin = Origin(
+        id=PARCELAPP_PREFIX + CTT_NUMBER,
+        source=Source.PARCELAPP,
+        time=now,
+        carrier="ctt",
+        tracking_number=CTT_NUMBER,
+        name="Desk lamp",
+    )
+    expected = Eta(start=date(2026, 11, 19), end=date(2026, 11, 19))
+    delivery = Contribution(
+        origin=origin,
+        events=[ParcelEvent(time=now, source=Source.PARCELAPP, eta=expected)],
+    )
+    assert apply_contribution(engine.data, delivery, now).parcel_id == parcel_id
+
+    listed = {p["id"]: p for p in (await result(ws, "parcels/list"))["parcels"]}
+    shown = listed[parcel_id]
+    assert (shown["name"], shown["eta_source"]) == ("Desk lamp", "parcelapp")
+    assert shown["eta_start"] == "2026-11-19"
+
+    await call(hass, "update", {"parcel_id": parcel_id, "private": True})
+    seen = {p["id"]: p for p in (await result(sam_ws, "parcels/list"))["parcels"]}
+    assert seen[parcel_id]["restricted"]
+    assert (seen[parcel_id]["name"], seen[parcel_id]["eta_source"]) == (None, None)
+    assert seen[parcel_id]["eta_start"] == "2026-11-19"
 
 
 async def test_check_again(
