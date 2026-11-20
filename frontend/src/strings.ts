@@ -145,6 +145,7 @@ export const STRINGS = {
   trustKeptOne: "1 still needs review",
   trustKeptMany: "{count} still need review",
   senderChecks: "Sender check details",
+  failedChecks: "Checks the AI answer failed",
   checkHeaders: "Authentication headers",
   checkServers: "Servers, in order",
   checkNoServer: "(no name)",

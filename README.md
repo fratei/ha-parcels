@@ -805,7 +805,10 @@ as the parsers' readings are: an item sent back to the shop becomes a return,
 a parcel going back to its sender stays one, and a refund is dropped, as is a
 refund e-mail that the answer says with confidence isn't about a parcel.
 Paack's order IDs are kept as the e-mail writes them.
-[docs/ai-benchmark.md](docs/ai-benchmark.md) lists the checks.
+[docs/ai-benchmark.md](docs/ai-benchmark.md) lists the checks. An answer
+that fails one waits in **Needs review**, where **Checks the AI answer
+failed** names the checks it failed, such as `tracking_not_in_email`, without
+any values.
 
 Limits: 5 minutes per e-mail, one retry, 50 e-mails a day, and only the last
 14 days during a mailbox's first sync. An e-mail whose retry fails as well

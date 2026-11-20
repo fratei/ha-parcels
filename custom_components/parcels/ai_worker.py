@@ -67,6 +67,7 @@ from .models import (
     MessageState,
     ReviewItem,
     Source,
+    check_codes,
     dt_from_str,
     dt_to_str,
     new_id,
@@ -699,7 +700,12 @@ class AIWorker:
             self._clear_issues()
             self._count("rejected")
             if self._current(entry):
-                self._to_review(entry, dt_util.utcnow(), reason=REASON_AI_REJECTED)
+                self._to_review(
+                    entry,
+                    dt_util.utcnow(),
+                    reason=REASON_AI_REJECTED,
+                    errors=check_codes(err.errors),
+                )
             return
         except AIError as err:
             self._last_error = type(err).__name__
@@ -801,7 +807,9 @@ class AIWorker:
             else:
                 # The AI said "not a parcel" but the e-mail has tracking numbers.
                 self._count("rejected")
-                self._to_review(entry, now, reason=REASON_AI_REJECTED)
+                self._to_review(
+                    entry, now, reason=REASON_AI_REJECTED, errors=check_codes(errors)
+                )
             return
         if engine.ai_mode is AIMode.AUTO and trusted and is_confident(result):
             self._remove(entry)
@@ -825,6 +833,7 @@ class AIWorker:
             reason=REASON_AI_REJECTED if errors else REASON_AI_SUGGESTION,
             source=Source.AI,
             suggestion=engine.suggestion_for(result, message, now),
+            errors=check_codes(errors),
         )
 
     def _fill(

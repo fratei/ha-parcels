@@ -1127,10 +1127,12 @@ class ReviewItem:
     # Details the local AI found that a parser missed in an e-mail it read;
     # accepting adds them to the parcel of that e-mail.
     fill: bool = False
+    # The checks a rejected AI answer failed, as codes without values.
+    errors: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the item."""
-        return {
+        data = {
             "id": self.id,
             "created": dt_to_str(self.created),
             "message": self.message,
@@ -1147,6 +1149,9 @@ class ReviewItem:
             "checks": self.checks,
             "fill": self.fill,
         }
+        if self.errors:
+            data["errors"] = list(self.errors)
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ReviewItem:
@@ -1171,7 +1176,24 @@ class ReviewItem:
             else None,
             checks=dict(checks) if isinstance(checks, Mapping) else None,
             fill=bool(data.get("fill", False)),
+            errors=check_codes(data.get("errors")),
         )
+
+
+_CHECK_CODE = re.compile(r"[a-z0-9_]{1,40}")
+
+
+def check_codes(value: Any) -> tuple[str, ...]:
+    """Return the failed-check codes in a value; anything else is dropped."""
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(
+        dict.fromkeys(
+            code
+            for code in value
+            if isinstance(code, str) and _CHECK_CODE.fullmatch(code)
+        )
+    )
 
 
 @dataclass(slots=True)

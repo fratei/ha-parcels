@@ -300,6 +300,16 @@ describe("normalizeReviewItem", () => {
     assert.equal(plain.fill, false);
     assert.equal(plain.checks, null);
   });
+
+  test("keeps only the codes of the checks an AI answer failed", () => {
+    const item = normalizeReviewItem({
+      id: "r6",
+      errors: ["tracking_is_order", "Tracking IS order", 3, "x".repeat(41), "tracking_is_order", "eta_not_in_text"],
+    });
+    assert.ok(item);
+    assert.deepEqual(item.errors, ["tracking_is_order", "eta_not_in_text"]);
+    assert.deepEqual(normalizeReviewItem({ id: "r7", errors: "tracking_is_order" })?.errors, []);
+  });
 });
 
 describe("normalizeDetails", () => {

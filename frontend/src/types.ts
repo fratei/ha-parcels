@@ -134,6 +134,8 @@ export interface ReviewItem {
   checks: SenderChecks | null;
   /** The local AI fills in details the parser missed, for a parcel the e-mail already updated. */
   fill: boolean;
+  /** The checks a rejected AI answer failed, as codes without values. */
+  errors: string[];
   source: "parser" | "ai";
   suggestion: Suggestion | null;
 }

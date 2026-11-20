@@ -326,6 +326,7 @@ async def test_not_parcel_answer_with_a_tracking_number_is_rejected(
     (item,) = engine.data.review.values()
     assert item.reason == REASON_AI_REJECTED
     assert item.source is Source.PARSER
+    assert item.errors == ("not_parcel_has_tracking",)
     assert not engine.data.filtered
     assert engine.ai.today()["rejected"] == 1
 
@@ -530,6 +531,8 @@ async def test_answer_failing_checks_is_offered_as_rejected(
     assert item.suggestion is not None
     assert item.suggestion.kind is MailKind.IN_TRANSIT
     assert "RR123456785PT" not in item.suggestion.tracking_numbers
+    # Which checks failed, without the values.
+    assert item.errors == ("tracking_not_in_email",)
     assert not engine.data.parcels
     assert engine.ai.today()["rejected"] == 1
     assert engine.ai.today()["suggested"] == 0
@@ -547,6 +550,7 @@ async def test_unusable_answer_is_rejected(
     (item,) = engine.data.review.values()
     assert item.reason == REASON_AI_REJECTED
     assert item.source is Source.PARSER
+    assert item.errors == ("not_a_mapping",)
     assert engine.ai.today()["calls"] == 1
     assert engine.ai.today()["rejected"] == 1
     assert engine.ai.diagnostics()["last_error"] == "bad_output"

@@ -490,6 +490,7 @@ def _full_data() -> ParcelsData:
                 Source.AI,
                 suggestion,
                 fill=True,
+                errors=("tracking_invalid", "eta_not_in_text"),
             )
         },
         filtered={
@@ -515,7 +516,17 @@ def test_round_trip() -> None:
     assert parcel.origins["man:p_test"].merchant == ""
     assert loaded.review["r1"].suggestion == data.review["r1"].suggestion
     assert loaded.review["r1"].fill
+    assert loaded.review["r1"].errors == ("tracking_invalid", "eta_not_in_text")
     assert loaded.trusted_domains() == ("example.com",)
+
+
+def test_review_item_keeps_only_check_codes() -> None:
+    """A stored item's failed checks are codes: anything else is dropped."""
+    stored = _full_data().review["r1"].as_dict()
+    stored["errors"] = ["order_is_part", "RR123456785PT", 7, "x" * 41, "order_is_part"]
+    assert ReviewItem.from_dict(stored).errors == ("order_is_part",)
+    del stored["errors"]
+    assert ReviewItem.from_dict(stored).errors == ()
 
 
 def test_unreadable_entries_are_skipped(caplog: pytest.LogCaptureFixture) -> None:

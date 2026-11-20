@@ -1110,6 +1110,26 @@ async def test_review_lists_fills(
     assert not listed[item.id]["fill"]
 
 
+async def test_review_lists_failed_checks(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket, review: dict[str, str]
+) -> None:
+    """A rejected AI answer lists the checks it failed, as codes."""
+    data = engine.data
+    item = data.review[review[SHOP]]
+    data.review["r_rejected"] = replace(
+        item,
+        id="r_rejected",
+        reason="ai_rejected",
+        source=Source.AI,
+        errors=("tracking_is_order", "eta_not_in_text"),
+    )
+
+    listed = {r["id"]: r for r in (await result(ws, "parcels/list"))["review"]}
+
+    assert listed["r_rejected"]["errors"] == ["tracking_is_order", "eta_not_in_text"]
+    assert listed[item.id]["errors"] == []
+
+
 async def test_review_free_mail_sender(
     engine: ParcelsEngine, ws: MockHAClientWebSocket, review: dict[str, str]
 ) -> None:

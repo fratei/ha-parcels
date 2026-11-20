@@ -179,9 +179,21 @@ export function normalizeReviewItem(raw: unknown): ReviewItem | null {
     trusted_sender: raw.trusted_sender === true,
     checks: senderChecks(raw.checks),
     fill: raw.fill === true,
+    errors: checkCodes(raw.errors),
     source: raw.source === "ai" ? "ai" : "parser",
     suggestion: normalizeSuggestion(raw.suggestion),
   };
+}
+
+const CHECK_CODE = /^[a-z0-9_]{1,40}$/;
+
+/** The codes of the checks an AI answer failed; anything else is dropped. */
+function checkCodes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const codes = raw.filter((code): code is string => typeof code === "string" && CHECK_CODE.test(code));
+  return [...new Set(codes)];
 }
 
 /** How the sender checks went; null when the item has none. */

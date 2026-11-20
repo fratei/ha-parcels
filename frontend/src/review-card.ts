@@ -254,6 +254,10 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         cursor: pointer;
         color: var(--secondary-text-color, #727272);
       }
+      .checks .codes {
+        margin: 0;
+        padding-inline-start: 20px;
+      }
       .candidates {
         display: flex;
         flex-direction: column;
@@ -777,6 +781,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
             </span>
           </div>`}
       ${item.checks ? this._renderChecks(item.checks) : nothing}
+      ${item.errors.length ? this._renderFailedChecks(item.errors) : nothing}
       ${editing ? this._renderEditForm(item, busy) : this._renderSuggestion(item.suggestion)}
       ${this._renderError(item.id)} ${editing ? nothing : this._renderReviewActions(item, busy)}
     </article>`;
@@ -789,6 +794,16 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       <dl class="facts">
         ${senderCheckRows(checks).map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}
       </dl>
+    </details>`;
+  }
+
+  /** The checks a rejected AI answer failed, as the validator's codes. */
+  private _renderFailedChecks(errors: string[]): TemplateResult {
+    return html`<details class="checks">
+      <summary>${STRINGS.failedChecks}</summary>
+      <ul class="codes">
+        ${errors.map((code) => html`<li><code>${code}</code></li>`)}
+      </ul>
     </details>`;
   }
 

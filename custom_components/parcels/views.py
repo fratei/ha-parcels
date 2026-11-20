@@ -389,6 +389,7 @@ def review_json(
         and organizational_domain(item.sender_domain) in trusted,
         "checks": item.checks,
         "fill": item.fill,
+        "errors": list(item.errors),
         "source": "ai" if item.source.value == "ai" else "parser",
         "suggestion": item.suggestion.as_dict() if item.suggestion else None,
     }
