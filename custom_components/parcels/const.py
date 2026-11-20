@@ -8,7 +8,7 @@ from typing import Final
 
 DOMAIN: Final = "parcels"
 NAME: Final = "Parcels"
-VERSION: Final = "0.1.5"
+VERSION: Final = "0.1.6"
 
 STORAGE_KEY: Final = "parcels"
 STORAGE_VERSION: Final = 1
@@ -51,6 +51,14 @@ CONF_PURGE_DAYS: Final = "purge_days"
 CONF_AI_TASK: Final = "ai_task_entity"
 CONF_AI_MODE: Final = "ai_mode"
 CONF_DASHBOARD_PATH: Final = "dashboard_path"
+# The Parcel app (parcelapp.net): off while there's no API key.
+CONF_PARCEL_APP_KEY: Final = "parcel_app_key"
+CONF_PARCEL_APP_OWNER: Final = "parcel_app_owner"
+CONF_PARCEL_APP_ADD: Final = "parcel_app_add"
+CONF_PARCEL_APP_EVERYONE: Final = "parcel_app_everyone"
+CONF_PARCEL_APP_DAILY: Final = "parcel_app_daily"
+CONF_PARCEL_APP_POSTCODE: Final = "parcel_app_postcode"
+CONF_PARCEL_APP_IMPORT: Final = "parcel_app_import"
 
 DEFAULT_START_TIME: Final = "08:00:00"
 DEFAULT_CUTOFF_TIME: Final = "22:00:00"
@@ -60,6 +68,12 @@ DEFAULT_PURGE_DAYS: Final = 90
 DEFAULT_DASHBOARD_PATH: Final = "/dashboard-parcels/week"
 DEFAULT_SEVENTEENTRACK: Final = True
 DEFAULT_ITEM_NAMES: Final = False
+DEFAULT_PARCEL_APP_ADD: Final = True
+DEFAULT_PARCEL_APP_EVERYONE: Final = False
+DEFAULT_PARCEL_APP_IMPORT: Final = True
+# Parcel accepts 20 additions a day, failures included.
+DEFAULT_PARCEL_APP_DAILY: Final = 10
+MAX_PARCEL_APP_DAILY: Final = 20
 MESSAGE_HASH_RETENTION: Final = timedelta(days=120)
 FILTERED_RETENTION: Final = timedelta(days=14)
 REVIEW_RETENTION: Final = timedelta(days=30)
@@ -287,6 +301,7 @@ FRONTEND_SCRIPT: Final = "parcels-cards.js"
 ISSUE_AI_UNAVAILABLE: Final = "ai_unavailable"
 ISSUE_AI_REFUSED: Final = "ai_task_refused"
 ISSUE_PARSER_OUTDATED: Final = "parser_outdated_{}"
+ISSUE_PARCEL_APP_KEY: Final = "parcel_app_key_refused"
 
 # Why an e-mail is under "Needs review". Sender checks add their own reasons
 # (not_aligned, no_auth_header, untrusted_authserv, multiple_auth_results).
