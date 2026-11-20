@@ -945,6 +945,10 @@ actions:
 - **A Paack parcel shows apart from its Amazon parcel.** Select one and merge
   them. The hub's diagnostics count Paack's e-mails whose order ID matched an
   Amazon shipment, and those that didn't (`paack_amazon`), without any ID.
+  They also count the last 30 days' Amazon e-mails by site and by whether
+  they gave a shipment ID, with each ID's length and kinds of characters
+  only (`amazon_shipment_ids`, such as `len9:Aa0` for nine capitals, small
+  letters and digits).
 - **A delivery from Parcel shows apart from its parcel, or doesn't update
   it.** Select both and merge them, or select **Undo** on a pairing Parcels
   made. Parcels leaves a delivery out when your Parcel list has two
@@ -976,7 +980,8 @@ actions:
   senders other than known or trusted ones counted as "other"
   (`recent_emails`), where working days come from (`working_days`), the
   refunds ignored (`refunds_dropped`), the check after updating to 0.1.5
-  (`returns_check`) and Paack's matches (`paack_amazon`); its 17TRACK part
+  (`returns_check`), Paack's matches (`paack_amazon`) and the shapes of
+  Amazon's shipment IDs (`amazon_shipment_ids`); its 17TRACK part
   counts the numbers 17TRACK can't find, by carrier
   (`not_found_by_carrier`); its Parcel app part (`parcelapp`) counts the
   deliveries read, matched, shown on their own and left out, and today's

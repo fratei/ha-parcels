@@ -84,6 +84,7 @@ from .dedup import (
     MergeSuggestion,
     accept_suggestion,
     add_owner,
+    amazon_shipment_id_counts,
     apply_contribution,
     archive_parcel,
     dismiss_suggestion,
@@ -2227,6 +2228,7 @@ class ParcelsEngine:
             "recent_emails": self._recent_emails(dt_util.utcnow()),
             "working_days": self.workdays.source,
             "paack_amazon": paack_amazon_counts(data),
+            "amazon_shipment_ids": amazon_shipment_id_counts(data, dt_util.utcnow()),
             "repair": data.engine.get(REPAIR_KEY),
             "reconcile_waiting": len(self._syncing | self._more),
             # How the sender checks went for the newest e-mails under review:

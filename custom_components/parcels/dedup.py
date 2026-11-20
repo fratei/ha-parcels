@@ -115,6 +115,12 @@ RECONCILE_WINDOW = timedelta(days=30)
 DOMAIN_ABSORB_WINDOW = timedelta(days=7)
 # A delivery this many days around a parcel's dates counts for inference.
 INFER_MARGIN = timedelta(days=1)
+# How far back the diagnostics count Amazon's shipment IDs, and the kinds of
+# Amazon e-mails that never link a shipment.
+RECENT_AMAZON = timedelta(days=30)
+_ORDER_STAGE = frozenset(
+    {MailKind.ORDER, MailKind.CANCELLED, MailKind.RETURN, MailKind.CUSTOMER_RETURN}
+)
 # A shop's parcel up to this many days late, or due this many days later,
 # could still be the package a carrier delivers: shops deliver early too.
 LATE_DAYS = timedelta(days=14)
@@ -403,6 +409,54 @@ def paack_amazon_counts(data: ParcelsData) -> dict[str, dict[str, int]]:
         amazon = any(merchant_key(origin.merchant) == "amazon" for origin in origins)
         counts["naming_amazon" if amazon else "not_naming_amazon"][result] += 1
     return counts
+
+
+def _id_shape(value: str) -> str:
+    """Describe an ID by its length and character classes, e.g. "len9:Aa0"."""
+    classes = (
+        ("A", str.isupper),
+        ("a", str.islower),
+        ("0", str.isdigit),
+        ("-", lambda char: not char.isalnum()),
+    )
+    marks = "".join(mark for mark, test in classes if any(test(char) for char in value))
+    return f"len{len(value)}:{marks}"
+
+
+def amazon_shipment_id_counts(
+    data: ParcelsData, now: datetime
+) -> dict[str, dict[str, Any]]:
+    """Count Amazon's e-mails of the last 30 days by whether they gave a shipment ID.
+
+    Per Amazon site, each shipment of an e-mail counts once: "orders" for
+    orders, cancellations and returns, which never link a shipment, else
+    "with_id" or "without_id". "shapes" counts the IDs by length and
+    character classes. The counts hold no ID.
+    """
+    since = now - RECENT_AMAZON
+    kinds: defaultdict[str, set[MailKind]] = defaultdict(set)
+    for parcel in data.parcels.values():
+        for event in parcel.events:
+            if event.origin and event.kind:
+                kinds[event.origin].add(event.kind)
+    counts: dict[str, dict[str, Any]] = {}
+    for origin in _all_origins(data):
+        info = lookup(origin.label)
+        if info is None or info.parser != "amazon" or origin.time < since:
+            continue
+        site = counts.setdefault(
+            organizational_domain(origin.label),
+            {"orders": 0, "with_id": 0, "without_id": 0, "shapes": {}},
+        )
+        if shipment := origin.amazon_shipment_id:
+            site["with_id"] += 1
+            shape = _id_shape(shipment)
+            site["shapes"][shape] = site["shapes"].get(shape, 0) + 1
+        elif kinds[origin.id] and kinds[origin.id] <= _ORDER_STAGE:
+            site["orders"] += 1
+        else:
+            site["without_id"] += 1
+    return dict(sorted(counts.items()))
 
 
 def _most_recent(data: ParcelsData, parcel_ids: Iterable[str]) -> str:

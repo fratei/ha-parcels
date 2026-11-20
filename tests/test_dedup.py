@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, time
+import json
 
 import pytest
 
@@ -14,6 +15,7 @@ from custom_components.parcels.dedup import (
     Contribution,
     DedupError,
     add_owner,
+    amazon_shipment_id_counts,
     apply_contribution,
     archive_parcel,
     find_parcels_by_number,
@@ -453,6 +455,68 @@ def test_paack_amazon_counts() -> None:
         "naming_amazon": {"matched": 2, "unmatched": 1, "without_id": 1},
         "not_naming_amazon": {"matched": 1, "unmatched": 1, "without_id": 0},
     }
+
+
+def test_amazon_shipment_id_counts() -> None:
+    """Amazon's e-mails of the last 30 days are counted per site by whether
+    they gave a shipment ID, with the IDs' shapes and never their values.
+
+    Order e-mails never link a shipment, so they're counted apart.
+    """
+    data = ParcelsData()
+    amazon = {"label": "amazon.es", "merchant": "Amazon.es"}
+    sent = [
+        contribution(
+            "msg:a1#0", kind=MailKind.ORDER, orders=("402-1234567-1234567",), **amazon
+        ),
+        contribution("msg:a2#0", shipment_id=SHIPMENT, **amazon),
+        contribution(
+            "msg:a3#0", kind=MailKind.DELIVERED, shipment_id="Kp7Ws2Xd9", **amazon
+        ),
+        contribution("msg:a4#0", kind=MailKind.OUT_FOR_DELIVERY, **amazon),
+        contribution(
+            "msg:a5#0",
+            label="marketplace.amazon.de",
+            merchant="Amazon.de",
+            shipment_id="DX4512345678",
+        ),
+        # Older than 30 days.
+        contribution("msg:a6#0", time=at(days=-31), shipment_id="old0shape", **amazon),
+        # Paack's e-mail about an Amazon parcel isn't Amazon's.
+        contribution(
+            "msg:p1#0",
+            label="paack.co",
+            merchant="Amazon",
+            carrier="paack",
+            number=PAACK_ID,
+        ),
+        contribution(
+            "msg:s1#0",
+            label="casa-exemplo.pt",
+            merchant="Casa Exemplo",
+            number="1Z999AA10123456784",
+        ),
+    ]
+    for index, item in enumerate(sent):
+        apply_contribution(data, item, at(hours=index))
+
+    counts = amazon_shipment_id_counts(data, at(days=1))
+
+    assert counts == {
+        "amazon.de": {
+            "orders": 0,
+            "with_id": 1,
+            "without_id": 0,
+            "shapes": {"len12:A0": 1},
+        },
+        "amazon.es": {
+            "orders": 1,
+            "with_id": 2,
+            "without_id": 1,
+            "shapes": {"len9:Aa0": 2},
+        },
+    }
+    assert SHIPMENT not in json.dumps(counts)
 
 
 def _paack(

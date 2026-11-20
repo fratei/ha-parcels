@@ -269,6 +269,15 @@ async def test_paack_amazon(
         "naming_amazon": {"matched": 1, "unmatched": 0, "without_id": 0},
         "not_naming_amazon": {"matched": 0, "unmatched": 0, "without_id": 0},
     }
+    # Amazon's e-mail gave a shipment ID: only its shape shows.
+    assert engine_data["amazon_shipment_ids"] == {
+        "amazon.es": {
+            "orders": 0,
+            "with_id": 1,
+            "without_id": 0,
+            "shapes": {"len9:Aa0": 1},
+        }
+    }
     # Paack's e-mail joined the Amazon parcel.
     assert engine_data["parcels"] == {"out_for_delivery": 1}
     assert AMAZON_SHIPMENT not in json.dumps(diagnostics)
