@@ -1,12 +1,15 @@
 """Dates in Parcel's answers.
 
-Parcel gives an event's date as text without a time zone, either ISO
-("2026-11-14 15:21:00") or as the app shows it ("Saturday, 14 November
-3:21 pm"), often without the year. Both are read in Home Assistant's time
-zone. The expected delivery comes as local dates ("2026-11-19 00:00:00"), or
-as epoch timestamps when the carrier gives its time zone.
+Parcel gives an event's date as text without a time zone: ISO ("2026-11-14
+15:21:00"), as the app shows it ("Saturday, 14 November 3:21 pm"), often
+without the year, or as carriers write it, day first ("14/11/2026 15:21").
+All are read in Home Assistant's time zone. The expected delivery comes as
+local dates ("2026-11-19 00:00:00"), or as epoch timestamps when the carrier
+gives its time zone.
 
-Anything that doesn't read cleanly gives None, never a guess.
+Anything that doesn't read cleanly gives None, never a guess, and so does a
+date after tomorrow: an event can't have happened yet. date_shape describes
+an unreadable date for diagnostics without its text.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 import math
 import re
+import string
 from typing import Any
 
 from ..parsers.base import Eta
@@ -23,9 +27,28 @@ from ..parsers.lang import MONTHS, WEEKDAY_ABBREVIATIONS, WEEKDAYS, fold
 MAX_LENGTH = 100
 MIN_YEAR = 2000
 MAX_YEAR = 2100
+SHAPE_LENGTH = 60
 
+_SHAPE_INPUT = 200
 _MIDNIGHT = time(0, 0)
 _ISO_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+# Day first, with a four-digit year: "16/11/2026", "16-11-2026", "16.11.2026".
+_NUMERIC_RE = re.compile(r"(?<!\d)(\d{1,2})([/.-])(\d{1,2})\2(\d{4})(?!\d)")
+_MONTH_NAMES = (
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+)
+_SHAPE_RE = re.compile(r"([0-9]+)|([^\W\d_]+)|(\s+)|(.)")
 _MERIDIEM_RE = re.compile(r"(\d)\s*([ap])\.?\s?m\.?(?=[\s,;]|$)")
 _SEPARATOR_RE = re.compile(r"[,.;]")
 _TIME_RE = re.compile(r"(\d{1,2})(?:[:h](\d{2})(?::(\d{2}))?|h)")
@@ -67,21 +90,142 @@ _FILLER = frozenset(
     )
 )
 
+# Kept in the shapes of unreadable dates, with the month, weekday and filler
+# words: relative days, am/pm, ordinal suffixes and ISO's "t" and "z".
+_SHAPE_WORDS = (
+    "today",
+    "yesterday",
+    "hoje",
+    "ontem",
+    "hoy",
+    "ayer",
+    "heute",
+    "gestern",
+    "aujourd",
+    "hui",
+    "hier",
+    "oggi",
+    "ieri",
+    "vandaag",
+    "gisteren",
+    "am",
+    "pm",
+    "p",
+    "m",
+    "t",
+    "z",
+    "st",
+    "nd",
+    "rd",
+    "th",
+    "er",
+    "e",
+    "o",
+)
+_DATE_WORDS = frozenset(
+    word
+    for key in (*MONTHS, *WEEKDAYS, *WEEKDAY_ABBREVIATIONS, *_FILLER, *_SHAPE_WORDS)
+    for word in re.findall(r"[a-z]+", key)
+)
+
 
 def parse_event_date(value: object, now: datetime, tz: tzinfo) -> datetime | None:
-    """Return an event's date in UTC, never later than now."""
+    """Return an event's date in UTC, never later than now.
+
+    Up to tomorrow a date is a carrier's clock ahead of ours and becomes now;
+    a later one is wrong and gives None.
+    """
+    parsed = _event_date(value, now, tz)
+    if parsed is None or _future(parsed, now, tz):
+        return None
+    return min(parsed, now.astimezone(UTC))
+
+
+def is_future_date(value: object, now: datetime, tz: tzinfo) -> bool:
+    """Return whether an event's date reads as a day after tomorrow."""
+    parsed = _event_date(value, now, tz)
+    return parsed is not None and _future(parsed, now, tz)
+
+
+def date_shape(value: object) -> str:
+    """Describe an unreadable date without its text, for diagnostics.
+
+    Digits become 9, date words stay, any other run of words becomes one x,
+    and other characters stay when they're ASCII punctuation, else "?".
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int | float):
+        return "number"
+    if not isinstance(value, str):
+        return "object"
+    pieces: list[str] = []
+    for match in _SHAPE_RE.finditer(fold(value[:_SHAPE_INPUT])):
+        digits, word, space, other = match.groups()
+        if digits:
+            piece = "9" * len(digits)
+        elif word:
+            piece = word if word in _DATE_WORDS else "x"
+        elif space:
+            piece = " "
+        else:
+            piece = other if other in string.punctuation else "?"
+        if piece == "x" and pieces[-2:] == ["x", " "]:
+            pieces.pop()
+            continue
+        pieces.append(piece)
+    shape = "".join(pieces).strip()
+    if not shape:
+        return "empty"
+    if len(shape) > SHAPE_LENGTH or len(value) > _SHAPE_INPUT:
+        return shape[:SHAPE_LENGTH] + "..."
+    return shape
+
+
+def _event_date(value: object, now: datetime, tz: tzinfo) -> datetime | None:
+    """Return an event's date in UTC, as written."""
     if not isinstance(value, str) or len(value) > MAX_LENGTH:
         return None
     text = value.strip()
     if _ISO_RE.match(text):
         parsed = _iso(text)
+    elif (spelled := _spell_numeric(text)) is not None:
+        parsed = _text_date(spelled, _tomorrow(now, tz), tz)
     else:
-        parsed = _text_date(text, now.astimezone(tz).date() + timedelta(days=1), tz)
+        return None
     if parsed is None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=tz)
-    return min(parsed.astimezone(UTC), now.astimezone(UTC))
+    return parsed.astimezone(UTC)
+
+
+def _tomorrow(now: datetime, tz: tzinfo) -> date:
+    return now.astimezone(tz).date() + timedelta(days=1)
+
+
+def _future(parsed: datetime, now: datetime, tz: tzinfo) -> bool:
+    return parsed.astimezone(tz).date() > _tomorrow(now, tz)
+
+
+def _spell_numeric(text: str) -> str | None:
+    """Spell out a day-first numeric date ("16/11/2026" -> "16 november 2026").
+
+    The rest of the text is read as usual; two numeric dates give None.
+    """
+    matches = list(_NUMERIC_RE.finditer(text))
+    if not matches:
+        return text
+    if len(matches) > 1:
+        return None
+    match = matches[0]
+    day, _, month, year = match.groups()
+    if not 1 <= int(month) <= 12:
+        return None
+    words = f" {int(day)} {_MONTH_NAMES[int(month) - 1]} {year} "
+    return text[: match.start()] + words + text[match.end() :]
 
 
 def parse_expected(delivery: Mapping[str, Any], tz: tzinfo) -> Eta | None:

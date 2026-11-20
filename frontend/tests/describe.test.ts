@@ -289,6 +289,20 @@ describe("merge candidates", () => {
     assert.equal(candidateLines(delivered, GB).when, `Delivered · ${formatDateRange("2026-07-13", "2026-07-13", GB)}`);
   });
 
+  test("a delivery whose source gave no date says so, not the day it's kept on", () => {
+    const kept = makeParcel({
+      ...kettle,
+      status: "delivered",
+      status_time: "2026-07-12T23:00:00.000010Z",
+      status_undated: true,
+      delivered_at: "2026-07-12T23:00:00.000010Z",
+      delivered_undated: true,
+    });
+    assert.equal(candidateLines(kept, GB).when, "Delivered · date not known");
+    const dayless = makeParcel({ ...kettle, status: "delivered", status_undated: true, delivered_undated: true });
+    assert.equal(candidateLines(dayless, GB).when, "Delivered · date not known");
+  });
+
   test("say what isn't known yet", () => {
     const bare = makeParcel({ tracking_number: "TEST0002", status: "ordered" });
     assert.deepEqual(candidateLines(bare, GB), {

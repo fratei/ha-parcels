@@ -127,6 +127,67 @@ def test_out_for_delivery_without_date_means_today() -> None:
     assert parcel.state.eta == Eta(start=date(2026, 11, 3), end=date(2026, 11, 3))
 
 
+@pytest.mark.usefixtures("lisbon")
+def test_out_for_delivery_of_a_day_not_known_isnt_today() -> None:
+    """Undated, "out for delivery" sets the day only when that day is known."""
+    seen_that_day = _event(S.OUT_FOR_DELIVERY, at(), undated=True, by=at(hours=5))
+    assert _parcel(seen_that_day).state.eta == Eta(
+        start=date(2026, 11, 2), end=date(2026, 11, 2)
+    )
+    for event in (
+        _event(S.OUT_FOR_DELIVERY, at(days=-2), undated=True, by=at()),
+        _event(S.OUT_FOR_DELIVERY, at(), undated=True, dayless=True, by=at()),
+    ):
+        assert _parcel(event).state.eta is None
+
+
+@pytest.mark.usefixtures("lisbon")
+def test_a_dated_report_dates_an_undated_status() -> None:
+    """A delivery of a day not known takes the time of a report of its day.
+
+    The report must be from no later than the day the delivery was seen by:
+    a later one is about the same delivery, but isn't when it happened.
+    """
+    shipped = _event(S.SHIPPED, at(days=-3))
+    undated = _event(S.DELIVERED, at(days=-2), undated=True, by=at(hours=8))
+    state = _parcel(shipped, undated).state
+    assert (state.status, state.status_time, state.status_undated) == (
+        S.DELIVERED,
+        at(days=-2),
+        True,
+    )
+    assert (state.delivered_at, state.delivered_undated) == (at(days=-2), True)
+    assert [entry.undated for entry in state.timeline] == [False, True]
+
+    state = _parcel(shipped, undated, _event(S.DELIVERED, at(days=1))).state
+    assert (state.status_time, state.status_undated) == (at(days=-2), True)
+    assert (state.delivered_at, state.delivered_undated) == (at(days=-2), True)
+
+    state = _parcel(shipped, undated, _event(S.DELIVERED, at(hours=-2))).state
+    assert (state.status_time, state.status_undated) == (at(hours=-2), False)
+    assert (state.delivered_at, state.delivered_undated) == (at(hours=-2), False)
+
+
+def test_a_status_of_no_known_day_has_no_time() -> None:
+    """A delivery that nothing dates is delivered, on no day."""
+    state = _parcel(
+        _event(S.SHIPPED, at()),
+        _event(S.DELIVERED, at(days=1), undated=True, dayless=True, by=at(days=1)),
+    ).state
+    assert state.status is S.DELIVERED
+    assert (state.status_time, state.status_undated) == (None, True)
+    assert (state.delivered_at, state.delivered_undated) == (None, True)
+
+
+def test_what_is_not_known_of_a_date_is_stored() -> None:
+    """An event's missing date survives storage."""
+    for event in (
+        _event(S.IN_TRANSIT, at(), undated=True, by=at(hours=5)),
+        _event(S.DELIVERED, at(days=1), undated=True, dayless=True, by=at(days=1)),
+    ):
+        assert ParcelEvent.from_dict(json.loads(json.dumps(event.as_dict()))) == event
+
+
 def test_latest_estimate_wins_and_can_be_cleared() -> None:
     """A newer estimate replaces an older one, also when it arrives first."""
     early = Eta(start=date(2026, 11, 5), end=date(2026, 11, 6))

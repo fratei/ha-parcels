@@ -49,6 +49,12 @@ export interface Parcel {
   tracking_url: string | null;
   status: ParcelStatus;
   status_time: string | null;
+  /**
+   * The status came from a source that gave no date that could be read:
+   * `status_time` only keeps the parcel on the last day known, and is null
+   * when no day is.
+   */
+  status_undated: boolean;
   eta_start: string | null;
   eta_end: string | null;
   window_start: string | null;
@@ -56,6 +62,8 @@ export interface Parcel {
   /** Where the expected date comes from; null without one or when restricted. */
   eta_source: ParcelSource | null;
   delivered_at: string | null;
+  /** Like `status_undated`, for `delivered_at`. */
+  delivered_undated: boolean;
   /** Delivered only by inference, until the user keeps or undoes it. */
   inferred: boolean;
   /**
@@ -246,6 +254,8 @@ export interface TimelineEntry {
   status: ParcelStatus;
   source: TimelineSource;
   label: string;
+  /** The source gave no date that could be read: `time` only orders the entry. */
+  undated: boolean;
 }
 
 export interface OrderInfo {

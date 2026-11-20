@@ -567,7 +567,7 @@ def _status_texts(state: ParcelState, today: date) -> tuple[str, str]:
     if status is S.OUT_FOR_DELIVERY:
         text, critical = "Out for delivery", short or "Today"
     elif status is S.DELIVERED:
-        delivered = state.delivered_at or state.status_time
+        delivered = _delivered_time(state)
         at = _local_hm(delivered) if delivered is not None else None
         text = f"Delivered {CHECK} {at}" if at else f"Delivered {CHECK}"
         critical = f"{CHECK} {at}" if at else CHECK
@@ -791,6 +791,13 @@ _GROUPS: dict[ParcelStatus, int] = {
 }
 
 
+def _delivered_time(state: ParcelState) -> datetime | None:
+    """Return when a parcel was delivered, or None when the time isn't known."""
+    if state.delivered_undated:
+        return None
+    return state.delivered_at or state.status_time
+
+
 def _shown_on(state: ParcelState, day: date) -> bool:
     """Return True when the persistent notification of a day lists a parcel."""
     status = state.status
@@ -815,7 +822,7 @@ def _persistent_status(state: ParcelState, day: date, today: date) -> str:
     if status is S.OUT_FOR_DELIVERY:
         text = "Out for delivery"
     elif status is S.DELIVERED:
-        delivered = state.delivered_at or state.status_time
+        delivered = _delivered_time(state)
         text = (
             f"Delivered {_local_hm(delivered)} {CHECK}"
             if delivered is not None
@@ -846,9 +853,10 @@ def _persistent_order(state: ParcelState) -> tuple[int, int, str]:
     moment: time | None = None
     if status in EN_ROUTE and state.eta is not None:
         moment = state.eta.window_start or state.eta.window_end
-    elif status is S.DELIVERED and (at := state.delivered_at or state.status_time):
-        moment = dt_util.as_local(at).time()
-    elif state.status_time is not None:
+    elif status is S.DELIVERED:
+        if (at := _delivered_time(state)) is not None:
+            moment = dt_util.as_local(at).time()
+    elif state.status_time is not None and not state.status_undated:
         moment = dt_util.as_local(state.status_time).time()
     minutes = moment.hour * 60 + moment.minute if moment is not None else 24 * 60
     return _GROUPS.get(status, 3), minutes, _title(state).casefold()

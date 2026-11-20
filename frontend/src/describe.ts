@@ -309,8 +309,9 @@ export function candidateLines(parcel: Parcel, locale: LocaleOptions): Candidate
     days = eta ? formatDateRange(eta.start, eta.end, locale) : null;
   } else {
     const timeZone = locale.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const undated = parcel.delivered_at ? parcel.delivered_undated : parcel.status_undated;
     const day = localDateOf(parcel.delivered_at ?? parcel.status_time, timeZone);
-    days = day ? formatDateRange(day, day, locale) : null;
+    days = undated ? STRINGS.dateNotKnownInline : day ? formatDateRange(day, day, locale) : null;
   }
   const carrier = [carrierLabel(parcel) ?? STRINGS.carrierNotKnown];
   const number = numberTail(parcel.tracking_number);

@@ -254,6 +254,10 @@ def parcel_json(
         "window_start": time_to_str(eta.window_start) if eta else None,
         "window_end": time_to_str(eta.window_end) if eta else None,
         "delivered_at": dt_to_str(state.delivered_at),
+        # Without a date from its source: the time is the last known day's,
+        # or None when no day is known.
+        "status_undated": state.status_undated,
+        "delivered_undated": state.delivered_undated,
         "inferred": state.inferred,
         "inferred_reason": state.inferred_reason,
         "pickup_point": state.pickup_point,
@@ -545,6 +549,7 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
             ),
             "source": _timeline_source(entry),
             "label": "" if entry.inferred else entry.label or "",
+            "undated": entry.undated,
         }
         for entry in state.timeline
         if entry.accepted

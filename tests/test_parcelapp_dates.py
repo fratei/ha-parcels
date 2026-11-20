@@ -8,7 +8,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from custom_components.parcels.parcelapp.dates import parse_event_date, parse_expected
+from custom_components.parcels.parcelapp.dates import (
+    date_shape,
+    is_future_date,
+    parse_event_date,
+    parse_expected,
+)
 from custom_components.parcels.parsers.base import Eta
 
 LISBON = ZoneInfo("Europe/Lisbon")
@@ -72,6 +77,106 @@ def test_event_years(value: str, expected: datetime) -> None:
 def test_event_dates_never_in_the_future() -> None:
     """A carrier's clock ahead of ours doesn't date an event after now."""
     assert parse_event_date("2026-11-17 18:00:00", NOW, LISBON) == NOW
+    assert parse_event_date("18/11/2026 09:00", NOW, LISBON) == NOW
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-11-19 10:00:00",
+        "2026-11-19",
+        "19/11/2026",
+        "Thursday, 19 November 2026",
+        "2027-01-05T08:00:00Z",
+    ],
+)
+def test_future_event_dates_give_no_date(value: str) -> None:
+    """A date after tomorrow is wrong: it isn't moved to now."""
+    assert parse_event_date(value, NOW, LISBON) is None
+    assert is_future_date(value, NOW, LISBON)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, 42, "", "soon", "2026-11-18 23:00:00", "16/11/2026", "19 November"],
+)
+def test_not_future_dates(value: Any) -> None:
+    """Unreadable dates, and dates up to tomorrow, aren't in the future."""
+    assert not is_future_date(value, NOW, LISBON)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("16/11/2026", _utc(2026, 11, 16, 0, 0)),
+        ("16/11/2026 14:05", _utc(2026, 11, 16, 14, 5)),
+        ("16-11-2026 14:05:30", _utc(2026, 11, 16, 14, 5, 30)),
+        ("16.11.2026 14:05", _utc(2026, 11, 16, 14, 5)),
+        ("16.11.2026, 14:05", _utc(2026, 11, 16, 14, 5)),
+        ("16/11/2026 às 14h05", _utc(2026, 11, 16, 14, 5)),
+        ("16/11/2026 2:05 pm", _utc(2026, 11, 16, 14, 5)),
+        ("14:05 16/11/2026", _utc(2026, 11, 16, 14, 5)),
+        ("Segunda-feira, 16/11/2026 14:05", _utc(2026, 11, 16, 14, 5)),
+        ("16.11.2026 um 14:05 Uhr", _utc(2026, 11, 16, 14, 5)),
+        # Lisbon is UTC+1 in July.
+        ("6/7/2026 9:05", _utc(2026, 7, 6, 8, 5)),
+        ("06.07.2026", _utc(2026, 7, 5, 23, 0)),
+    ],
+)
+def test_numeric_day_first_dates(value: str, expected: datetime) -> None:
+    """Carriers' numeric dates are day first, with a four-digit year."""
+    assert parse_event_date(value, NOW, LISBON) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "16/11/26",
+        "16/11-2026",
+        "2026/11/16",
+        "32/11/2026",
+        "16/13/2026",
+        "11/16/2026",
+        "31/02/2026",
+        "16/11/2026 25:00",
+        "16/11/2026 14:05 extra",
+        "16/11/2026 17/11/2026",
+        "Tuesday, 16/11/2026",
+        "116/11/2026",
+        "16/11/20261",
+    ],
+)
+def test_unreadable_numeric_dates(value: str) -> None:
+    """Month-first, two-digit years and contradictions give no date."""
+    assert parse_event_date(value, NOW, LISBON) is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, "null"),
+        (True, "bool"),
+        (1784448000, "number"),
+        (1.5, "number"),
+        ({"date": "x"}, "object"),
+        (["x"], "object"),
+        ("", "empty"),
+        ("   ", "empty"),
+        ("Entregue em 20/11/2026 às 14h05", "x 99/99/9999 as 99h99"),
+        ("Today, 2:05 PM", "today, 9:99 pm"),
+        ("ontem 14:05", "ontem 99:99"),
+        ("Sexta-feira, 20 de Novembro", "sexta-feira, 99 de novembro"),
+        ("20.11.2026 um 14:05 Uhr", "99.99.9999 um 99:99 uhr"),
+        ("Delivered to Alex Example at the door", "x at the x"),
+        ("2026-11-20T14:05:00Z", "9999-99-99t99:99:99z"),
+        ("20 Nov → 14:05", "99 nov ? 99:99"),
+        ("1" * 80, "9" * 60 + "..."),
+        ("x" * 300, "x..."),
+    ],
+)
+def test_date_shapes(value: Any, expected: str) -> None:
+    """Shapes keep digits as 9 and date words, and no other text."""
+    assert date_shape(value) == expected
 
 
 @pytest.mark.parametrize(

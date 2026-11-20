@@ -189,6 +189,9 @@ export const STRINGS = {
   details: "Parcel details",
   status: "Status",
   sinceDate: "since {date}",
+  /** For a status or delivery whose source gave no date that could be read. */
+  dateNotKnown: "Date not known",
+  dateNotKnownInline: "date not known",
   carrier: "Delivered by",
   notKnownYet: "Not known yet",
   trackOnline: "Track on the carrier's site",

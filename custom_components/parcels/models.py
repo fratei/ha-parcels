@@ -453,6 +453,13 @@ class ParcelEvent:
     # "delivered"), from a return of the parcel's order (``label`` is then
     # "return"), or from three weeks without news (no kind).
     inferred: bool = False
+    # The source gave no date it could read: ``time`` only places the event
+    # after the last thing known to have come before it, on that day. With
+    # ``dayless``, nothing did: the day isn't known either. It had happened
+    # ``by`` then, when it was first seen.
+    undated: bool = False
+    dayless: bool = False
+    by: datetime | None = None
     id: str = field(default_factory=lambda: secrets.token_hex(6))
 
     def as_dict(self) -> dict[str, Any]:
@@ -470,6 +477,9 @@ class ParcelEvent:
                 "label": self.label,
                 "force": self.force,
                 "inferred": self.inferred,
+                "undated": self.undated,
+                "dayless": self.dayless,
+                "by": dt_to_str(self.by),
             }
         )
 
@@ -488,6 +498,9 @@ class ParcelEvent:
             label=data.get("label"),
             force=bool(data.get("force", False)),
             inferred=bool(data.get("inferred", False)),
+            undated=bool(data.get("undated", False)),
+            dayless=bool(data.get("dayless", False)),
+            by=dt_from_str(data.get("by")),
         )
 
 
@@ -546,6 +559,8 @@ class TimelineEntry:
     accepted: bool
     eta: Eta | None
     inferred: bool = False
+    # When it happened isn't known, see ParcelEvent.undated.
+    undated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -584,6 +599,10 @@ class ParcelState:
     eta_source: Source | None = None
     # Shipment numbers that aren't tracking numbers, see Origin.reference.
     references: tuple[str, ...] = ()
+    # The status, or the delivery, came without a date: its time is only the
+    # last known day (see ParcelEvent.undated), or None when no day is known.
+    status_undated: bool = False
+    delivered_undated: bool = False
 
     @property
     def carrier_name(self) -> str | None:
@@ -750,6 +769,20 @@ def _event_sort_key(event: ParcelEvent) -> tuple[datetime, int, str]:
     return (event.time, rank, event.id)
 
 
+def day_known(event: ParcelEvent) -> bool:
+    """Return whether an event's day is known.
+
+    An undated event's is when the times it's placed between share a day.
+    """
+    if not event.undated:
+        return True
+    return (
+        not event.dayless
+        and event.by is not None
+        and local_date(event.by) == local_date(event.time)
+    )
+
+
 def _accepts(
     current: ParcelStatus | None, event: ParcelEvent
 ) -> tuple[bool, ParcelStatus | None]:
@@ -870,9 +903,14 @@ def derive_state(parcel: Parcel) -> ParcelState:
     # Status: fold the events in time order through the allowed transitions.
     status: ParcelStatus | None = None
     status_time: datetime | None = None
+    # When an undated status had happened by.
+    status_by: datetime | None = None
+    status_undated = False
     status_inferred = False
     inferred_by: InferredReason | None = None
     delivered_at: datetime | None = None
+    delivered_found = False
+    delivered_undated = False
     eta: Eta | None = None
     eta_time: datetime | None = None
     eta_source: Source | None = None
@@ -880,22 +918,44 @@ def derive_state(parcel: Parcel) -> ParcelState:
     for event in sorted(parcel.events, key=_event_sort_key):
         accepted, new_status = _accepts(status, event)
         if accepted and new_status is not status:
-            status, status_time = new_status, event.time
+            status = new_status
+            status_time = None if event.dayless else event.time
+            status_undated = event.undated
+            status_by = event.by if event.undated else None
             status_inferred = event.inferred
             inferred_by = (
                 inference_reason(event.kind, event.label) if event.inferred else None
             )
-            if new_status is ParcelStatus.DELIVERED and delivered_at is None:
-                delivered_at = event.time
+            if new_status is ParcelStatus.DELIVERED and not delivered_found:
+                delivered_found = True
+                delivered_at = status_time
+                delivered_undated = event.undated
         elif accepted and not event.inferred:
             # A real e-mail confirming an inferred status makes it a fact.
             status_inferred = False
+            if (
+                status_undated
+                and not event.undated
+                and status_by is not None
+                and local_date(event.time) <= local_date(status_by)
+            ):
+                # A dated report of an undated status, from no later than the
+                # day it had happened by: the best time known.
+                replaced = status_time
+                status_time, status_undated = event.time, False
+                if (
+                    status is ParcelStatus.DELIVERED
+                    and delivered_undated
+                    and delivered_at == replaced
+                ):
+                    delivered_at, delivered_undated = event.time, False
         event_eta = event.eta
         if (
             event_eta is None
             and accepted
             and event.status is ParcelStatus.OUT_FOR_DELIVERY
             and not event.clears_eta
+            and day_known(event)
         ):
             # Out for delivery means today, even when the e-mail gives no date.
             today = local_date(event.time)
@@ -916,6 +976,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
                 accepted=accepted,
                 eta=event.eta,
                 inferred=event.inferred,
+                undated=event.undated,
             )
         )
     if status is None:
@@ -968,6 +1029,8 @@ def derive_state(parcel: Parcel) -> ParcelState:
         name=next((o.name for o in reversed(origins) if o.name), None),
         eta_source=eta_source,
         references=tuple(references),
+        status_undated=status_undated,
+        delivered_undated=delivered_undated,
     )
 
 

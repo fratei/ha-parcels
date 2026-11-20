@@ -22,6 +22,7 @@ carrier; it updates the deliveries on its own.
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import Iterator, Mapping
 from datetime import datetime, timedelta, tzinfo
 import hashlib
@@ -70,14 +71,17 @@ from ..models import (
     Origin,
     Parcel,
     ParcelEvent,
+    ParcelsData,
     ParcelState,
     Source,
     dt_from_str,
     dt_to_str,
+    eta_from_dict,
     eta_to_dict,
     known_merchant_name,
     order_key,
 )
+from ..parsers.base import Eta
 from ..parsers.tracking import normalize_tracking_number, validate_tracking_number
 from ..quiet import is_quiet
 from ..seventeentrack import add_order, clip_text, refine_status
@@ -97,7 +101,7 @@ from .carriers import (
     parcel_codes,
     parcels_carrier,
 )
-from .dates import parse_event_date, parse_expected
+from .dates import date_shape, is_future_date, parse_event_date, parse_expected
 
 if TYPE_CHECKING:
     from ..engine import ParcelsEngine
@@ -125,6 +129,12 @@ KEY_BACKOFF: Final = timedelta(hours=6)
 TASK_NAME: Final = "parcels parcel app refresh"
 # Events of a delivery kept, newest first.
 MAX_HISTORY: Final = 10
+# The diagnostics show this many shapes of event dates Parcels couldn't read.
+MAX_DATE_SHAPES: Final = 10
+# Set once, as the store loads, when the stored history was checked: 0.1.6
+# gave an event without a date the time of the read that found it. Then it
+# holds how many deliveries and parcels the check changed.
+DATES_REPAIR_KEY: Final = "parcel_app_dates"
 # Good reads without a delivery before the parcel made of it goes.
 MISSING_READS: Final = 2
 # A delivery not seen for this long is forgotten.
@@ -303,6 +313,184 @@ def _digest(origin: Origin, events: list[ParcelEvent]) -> str:
     }
     text = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _known_times(
+    base: Parcel | None,
+    base_state: ParcelState | None,
+    expected: Eta | None,
+    tz: tzinfo,
+) -> list[datetime]:
+    """Return the times a parcel's other news dates, to place undated events.
+
+    The dated statuses of its other sources, and the start of its expected
+    days in Home Assistant's time zone: Parcel's, else the parcel's.
+    """
+    times = [
+        event.time
+        for event in (base.events if base is not None else ())
+        if event.status is not None and not event.inferred and not event.undated
+    ]
+    eta = expected or (base_state.eta if base_state is not None else None)
+    if eta is not None:
+        times.extend(
+            dt_util.as_utc(datetime(day.year, day.month, day.day, tzinfo=tz))
+            for day in (eta.start, eta.end)
+        )
+    return times
+
+
+def _history_events(
+    history: list[dict[str, Any]], known: list[datetime], now: datetime
+) -> list[ParcelEvent]:
+    """Return a delivery's stored events, newest first, as its parcel's events.
+
+    An event without a date never takes the time it was read at, which can
+    be days after it happened. It goes just after the latest time known to
+    come before it: an older dated event, or a time of ``known``, no later
+    than when it was first seen with its status, nor than a newer event.
+    With none, its day isn't known either.
+    """
+    times = [dt_from_str(entry.get("at")) for entry in history]
+    events: list[ParcelEvent] = []
+    bound: datetime | None = None
+    for index, entry in enumerate(history):
+        when = times[index]
+        undated = dayless = False
+        limit: datetime | None = None
+        if when is not None:
+            bound = when if bound is None else min(bound, when)
+        else:
+            seen = dt_from_str(entry.get("seen")) or now
+            limit = seen if bound is None else min(bound, seen)
+            bound = limit
+            before = [
+                value
+                for value in (*known, *times[index + 1 :])
+                if value is not None and value <= limit
+            ]
+            undated = True
+            if before:
+                # Newer events go after older ones, on the same day.
+                when = max(before) + timedelta(microseconds=MAX_HISTORY - index)
+            else:
+                when = limit - timedelta(microseconds=index)
+                dayless = True
+        status = _stored_status(entry.get("status"))
+        info = entry.get("info")
+        label = info if isinstance(info, str) and info else None
+        if status is not None or label is not None:
+            events.append(
+                ParcelEvent(
+                    time=when,
+                    source=Source.PARCELAPP,
+                    status=status,
+                    label=label,
+                    undated=undated,
+                    dayless=dayless,
+                    by=limit,
+                )
+            )
+    return events
+
+
+def _date_stats(
+    deliveries: list[dict[str, Any]], now: datetime, tz: tzinfo
+) -> dict[str, Any]:
+    """Count the event dates of a read Parcels couldn't use, and their shapes.
+
+    A shape keeps only the date words and the layout, see ``date_shape``.
+    """
+    unparsed = future = 0
+    shapes: Counter[str] = Counter()
+    for delivery in deliveries:
+        if not isinstance(delivery, dict) or not isinstance(
+            events := delivery.get("events"), list
+        ):
+            continue
+        for item in events:
+            if not isinstance(item, Mapping):
+                continue
+            value = item.get("date")
+            if parse_event_date(value, now, tz) is not None:
+                continue
+            if is_future_date(value, now, tz):
+                future += 1
+                continue
+            unparsed += 1
+            shapes[date_shape(value) if "date" in item else "missing"] += 1
+    common = sorted(shapes.items(), key=lambda pair: (-pair[1], pair[0]))
+    return {
+        "unparsed": unparsed,
+        "future": future,
+        "shapes": dict(common[:MAX_DATE_SHAPES]),
+    }
+
+
+def repair_parcel_dates(data: ParcelsData, now: datetime, tz: tzinfo) -> int:
+    """Take away the read times 0.1.6 gave Parcel's events without a date.
+
+    Such an event keeps that time only as when it was first seen, and the
+    events of its delivery are placed again, as ``_history_events`` does.
+    Returns how many parcels changed.
+    """
+    records = data.parcelapp.get("records")
+    if not isinstance(records, dict):
+        return 0
+    changed = 0
+    for key, record in records.items():
+        if not isinstance(record, dict) or not isinstance(
+            stored := record.get("history"), list
+        ):
+            continue
+        history: list[dict[str, Any]] = []
+        undated = False
+        for item in stored:
+            if not isinstance(item, dict):
+                continue
+            entry = {name: value for name, value in item.items() if name != "time"}
+            if item.get("at") is None and "time" in item:
+                undated = True
+                entry.setdefault("seen", item["time"])
+            history.append(entry)
+        record["history"] = history
+        if not undated:
+            continue
+        record.pop("fp", None)
+        oid = PARCELAPP_PREFIX + str(key)
+        holder = next(
+            (parcel for parcel in data.parcels.values() if oid in parcel.origins),
+            None,
+        )
+        if holder is None:
+            continue
+        base = _without(holder, oid)
+        eta = record.get("eta")
+        expected = eta_from_dict(eta.get("value")) if isinstance(eta, dict) else None
+        events = _history_events(
+            history,
+            _known_times(base, base.state if base is not None else None, expected, tz),
+            now,
+        )
+        for event in events:
+            event.origin = oid
+        # Its expected date is dated when Parcel first gave it: it stays.
+        kept = [
+            event
+            for event in holder.events
+            if event.origin == oid and (event.eta is not None or event.clears_eta)
+        ]
+        holder.events = [
+            *(event for event in holder.events if event.origin != oid),
+            *events,
+            *kept,
+        ]
+        origin = holder.origins[oid]
+        since = dt_from_str(record.get("since")) or origin.time
+        origin.time = min([event.time for event in (*events, *kept)] + [since])
+        holder.touch(now)
+        changed += 1
+    return changed
 
 
 class ParcelAppSync:
@@ -691,6 +879,7 @@ class ParcelAppSync:
         changed |= self._missing(listed, now)
         self._learn(found, orders, now)
         self._state["counts"] = counts
+        self._state["dates"] = _date_stats(deliveries, now, tz)
         return changed, listed
 
     def _read_delivery(
@@ -786,8 +975,12 @@ class ParcelAppSync:
         holder = self._holder(oid)
         base = _without(holder or anchor, oid)
         base_state = base.state if base is not None else None
-        events = self._history(record, delivery, now, tz)
-        if (eta := self._eta(record, delivery, base, base_state, now, tz)) is not None:
+        expected = parse_expected(delivery, tz)
+        history = self._history(record, delivery, now, tz)
+        events = _history_events(
+            history, _known_times(base, base_state, expected, tz), now
+        )
+        if (eta := self._eta(record, expected, base, base_state, now)) is not None:
             events.append(eta)
         code = record.get("code")
         imported = bool(record.get("import"))
@@ -844,11 +1037,13 @@ class ParcelAppSync:
         delivery: dict[str, Any],
         now: datetime,
         tz: tzinfo,
-    ) -> list[ParcelEvent]:
-        """Return a delivery's events as events of its parcel.
+    ) -> list[dict[str, Any]]:
+        """Store a delivery's events, newest first, and return them.
 
-        An event keeps the time and status it had when first read. The newest
-        takes the delivery's status: Parcel gives one for the whole delivery.
+        An event keeps the status it had when first read. The newest takes
+        the delivery's status: Parcel gives one for the whole delivery. An
+        event without a date keeps when it was first seen with its status:
+        it happened by then.
         """
         read: list[tuple[str | None, datetime | None]] = []
         for item in delivery.get("events") or ():
@@ -876,38 +1071,34 @@ class ParcelAppSync:
         code = status_code(delivery.get("status_code"))
         mapped = STATUSES.get(code) if code is not None else None
         history: list[dict[str, Any]] = []
-        events: list[ParcelEvent] = []
         for index, (info, at) in enumerate(entries):
             old = kept.get((info, dt_to_str(at))) or {}
-            time = dt_from_str(old.get("time")) or at or now
-            status = _stored_status(old.get("status"))
+            stored = _stored_status(old.get("status"))
+            status = stored
             if index == 0 and mapped is not None:
                 status = refine_status(mapped, info)
-            history.append(
-                {
-                    "info": info,
-                    "at": dt_to_str(at),
-                    "time": dt_to_str(time),
-                    "status": status.value if status else None,
-                }
-            )
-            if status is not None or info is not None:
-                events.append(
-                    ParcelEvent(
-                        time=time, source=Source.PARCELAPP, status=status, label=info
-                    )
+            item: dict[str, Any] = {
+                "info": info,
+                "at": dt_to_str(at),
+                "status": status.value if status else None,
+            }
+            if at is None:
+                # 0.1.6 kept when it was first read as "time".
+                seen = dt_from_str(old.get("seen") or old.get("time"))
+                item["seen"] = dt_to_str(
+                    now if seen is None or status is not stored else seen
                 )
+            history.append(item)
         record["history"] = history
-        return events
+        return history
 
     @staticmethod
     def _eta(
         record: dict[str, Any],
-        delivery: dict[str, Any],
+        value: Eta | None,
         base: Parcel | None,
         base_state: ParcelState | None,
         now: datetime,
-        tz: tzinfo,
     ) -> ParcelEvent | None:
         """Return the delivery's expected date as an event, if it tells one.
 
@@ -915,7 +1106,6 @@ class ParcelAppSync:
         doesn't take away the time window an e-mail gave for the same days,
         and its own window fills one the e-mails didn't give.
         """
-        value = parse_expected(delivery, tz)
         if value is None:
             record.pop("eta", None)
             return None
@@ -1266,6 +1456,9 @@ class ParcelAppSync:
         if not isinstance(adds, dict) or adds.get("day") != today:
             adds = {}
         learned = self.learned_by_carrier()
+        dates = state.get("dates")
+        dates = dates if isinstance(dates, dict) else {}
+        shapes = dates.get("shapes")
         return {
             "enabled": self.enabled,
             "last_refresh": dt_to_str(self.last_refresh),
@@ -1288,5 +1481,11 @@ class ParcelAppSync:
             "carriers": {
                 "learned": learned,
                 "codes": parcel_codes(self.hass.config.country, learned),
+            },
+            # Of the last read, without the dates: see ``_date_stats``.
+            "event_dates": {
+                "unparsed": _count(dates.get("unparsed")),
+                "future": _count(dates.get("future")),
+                "shapes": shapes if isinstance(shapes, dict) else {},
             },
         }

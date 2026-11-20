@@ -322,12 +322,19 @@ class Env:
         *,
         eta: Eta | None = None,
         when: datetime | None = None,
+        undated: bool = False,
     ) -> None:
         """Add an event to a parcel and tell the notifier."""
         moment = when or dt_util.utcnow()
         parcel.events.append(
             ParcelEvent(
-                time=moment, source=Source.PARSER, status=status, eta=eta, force=True
+                time=moment,
+                source=Source.PARSER,
+                status=status,
+                eta=eta,
+                force=True,
+                undated=undated,
+                by=moment if undated else None,
             )
         )
         parcel.touch(moment)
@@ -706,6 +713,43 @@ async def test_delivered(env: Env) -> None:
     env.changed()
     await env.settle()
     assert phone.take() == []
+
+
+@pytest.mark.parametrize("undated", [False, True])
+async def test_delivered_at_a_time_not_known(
+    env: Env, hass: HomeAssistant, undated: bool
+) -> None:
+    """A delivery whose time a source didn't give shows no time."""
+    env.hub()
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on(), merchant="Shop store", carrier="gls")
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+
+    await env.goto(at(10, 42))
+    env.change(parcel, S.DELIVERED, undated=undated)
+    await env.settle()
+    at_time = "" if undated else " 10:42"
+    assert phone.take() == [
+        activity(
+            tag_of(parcel),
+            "Shop store",
+            f"Delivered {CHECK}{at_time}{SEP}GLS",
+            f"{CHECK}{at_time}",
+            4,
+            DONE,
+            0.2,
+        )
+    ]
+    delivered = f"Delivered {CHECK}" if undated else f"Delivered 10:42 {CHECK}"
+    assert persistent(hass) == lines(
+        "**1 parcel today**",
+        "",
+        f"- Shop store{SEP}GLS{SEP}{delivered}",
+        "",
+        f"[Open Parcels]({PATH})",
+    )
 
 
 async def test_restart_before_apple_ends_it(env: Env) -> None:

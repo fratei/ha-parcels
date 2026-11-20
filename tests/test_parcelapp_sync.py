@@ -15,10 +15,11 @@ from http import HTTPStatus
 import json
 import logging
 from typing import Any
+from unittest.mock import patch
 
 import aiohttp
 from freezegun.api import FrozenDateTimeFactory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 import pytest
@@ -39,17 +40,26 @@ from custom_components.parcels.const import (
     CONF_PARCEL_APP_OWNER,
     CONF_PARCEL_APP_POSTCODE,
     DOMAIN,
+    EVENT_DELIVERED,
+    EVENT_PARCEL_ADDED,
+    EVENT_STATUS_CHANGED,
     ISSUE_PARCEL_APP_KEY,
     MailKind,
     ParcelStatus,
 )
-from custom_components.parcels.dedup import Contribution, apply_contribution
+from custom_components.parcels.dedup import (
+    REPAIR_KEY,
+    REPAIR_VERSION,
+    Contribution,
+    apply_contribution,
+)
 from custom_components.parcels.engine import ParcelsEngine, get_engine
 from custom_components.parcels.models import (
     PARCELAPP_PREFIX,
     Origin,
     Parcel,
     ParcelEvent,
+    ParcelsData,
     Source,
     dt_to_str,
 )
@@ -90,6 +100,7 @@ LISBON = "Europe/Lisbon"
 KEY = "synthetic-parcel-key-0001"
 NEW_KEY = "synthetic-parcel-key-0002"
 SECOND = timedelta(seconds=1)
+MICROSECOND = timedelta(microseconds=1)
 NUMBER = "1Z9W8R371125836041"
 OTHER_UPS = "1Z9W8R371125870003"
 THIRD_UPS = "1Z9W8R371125900006"
@@ -419,6 +430,20 @@ def counts(engine: ParcelsEngine) -> tuple[int, int, int, int]:
 def at(day: int, hour: int, minute: int = 0) -> datetime:
     """Return a time of November 2026, in UTC (Lisbon's time in November)."""
     return datetime(2026, 11, day, hour, minute, tzinfo=UTC)
+
+
+def capture_news(hass: HomeAssistant) -> list[tuple[str, str | None]]:
+    """Collect the news Parcels fires from now on: its type and status."""
+    fired: list[tuple[str, str | None]] = []
+
+    @callback
+    def keep(event: Event) -> None:
+        """Keep one piece of news."""
+        fired.append((event.event_type, event.data.get("status")))
+
+    for event_type in (EVENT_PARCEL_ADDED, EVENT_STATUS_CHANGED, EVENT_DELIVERED):
+        hass.bus.async_listen(event_type, keep)
+    return fired
 
 
 # -- Scheduling ----------------------------------------------------------------
@@ -810,7 +835,6 @@ async def test_history_keeps_the_ten_newest_events(
     assert history[0] == {
         "info": "Scan 11, Example City",
         "at": "2026-11-16T11:00:00+00:00",
-        "time": "2026-11-16T11:00:00+00:00",
         "status": "in_transit",
     }
 
@@ -821,9 +845,11 @@ async def test_history_keeps_the_order_without_every_date(
     engine: ParcelsEngine,
     parcel_app: FakeParcelApp,
 ) -> None:
-    """Unless every event is dated, the list's order stands; undated ones are now.
+    """Unless every event is dated, the list's order stands.
 
-    Events without text or date, and entries that aren't events, are skipped.
+    An undated event goes just after the newest of the older ones, and keeps
+    when it was first seen. Events without text or date, and entries that
+    aren't events, are skipped.
     """
     item = delivery(
         events=(
@@ -839,22 +865,22 @@ async def test_history_keeps_the_order_without_every_date(
     await read(hass, freezer, parcel_app)
 
     assert [
-        (entry["info"], entry["at"], entry["time"], entry["status"])
+        (entry["info"], entry["at"], entry.get("seen"), entry["status"])
         for entry in record(engine)["history"]
     ] == [
         ("Departed, Example City", None, dt_to_str(at(17, 10)), "in_transit"),
-        (
-            "Arrived, Example City",
-            "2026-11-15T08:00:00+00:00",
-            "2026-11-15T08:00:00+00:00",
-            None,
-        ),
-        (
-            "Sorted, Example City",
-            "2026-11-16T08:00:00+00:00",
-            "2026-11-16T08:00:00+00:00",
-            None,
-        ),
+        ("Arrived, Example City", "2026-11-15T08:00:00+00:00", None, None),
+        ("Sorted, Example City", "2026-11-16T08:00:00+00:00", None, None),
+    ]
+    parcel = holder(engine)
+    assert parcel is not None
+    assert [
+        (event.time, event.label, event.undated, event.dayless)
+        for event in own_events(parcel)
+    ] == [
+        (at(15, 8), "Arrived, Example City", False, False),
+        (at(16, 8), "Sorted, Example City", False, False),
+        (at(16, 8) + 10 * MICROSECOND, "Departed, Example City", True, False),
     ]
 
 
@@ -864,7 +890,12 @@ async def test_delivery_without_events_gives_its_status(
     engine: ParcelsEngine,
     parcel_app: FakeParcelApp,
 ) -> None:
-    """A delivery without events still tells its status, as of the read."""
+    """A delivery without events still tells its status, without a date.
+
+    It goes on the parcel's last known day, here its shipping e-mail's: the
+    read may come days after the status changed. Without a date, out for
+    delivery doesn't mean today.
+    """
     add_parcel(engine, "a")
     parcel_app.deliveries = [delivery(status=4, events=())]
 
@@ -872,10 +903,15 @@ async def test_delivery_without_events_gives_its_status(
 
     parcel = holder(engine)
     assert parcel is not None
+    anchored = at(15, 10) + 10 * MICROSECOND
     assert [
-        (event.time, event.status, event.label) for event in own_events(parcel)
-    ] == [(at(17, 10), ParcelStatus.OUT_FOR_DELIVERY, None)]
-    assert parcel.state.status is ParcelStatus.OUT_FOR_DELIVERY
+        (event.time, event.status, event.label, event.undated)
+        for event in own_events(parcel)
+    ] == [(anchored, ParcelStatus.OUT_FOR_DELIVERY, None, True)]
+    state = parcel.state
+    assert state.status is ParcelStatus.OUT_FOR_DELIVERY
+    assert (state.status_time, state.status_undated) == (anchored, True)
+    assert state.eta is None
 
 
 async def test_reading_again_keeps_what_was_read(
@@ -918,13 +954,17 @@ async def test_reading_again_keeps_what_was_read(
     assert parcel.state.status is ParcelStatus.OUT_FOR_DELIVERY
 
 
-async def test_undated_event_keeps_its_first_time(
+async def test_undated_event_never_takes_the_read_time(
     hass: HomeAssistant,
     freezer: FrozenDateTimeFactory,
     engine: ParcelsEngine,
     parcel_app: FakeParcelApp,
 ) -> None:
-    """An undated event is dated when first read, and stays so."""
+    """An undated event stays on the parcel's last known day.
+
+    It keeps when it was first seen with its status; a new status is seen
+    again.
+    """
     add_parcel(engine, "a")
     parcel_app.deliveries = [delivery(events=(("Update", "garbage"),))]
     await read(hass, freezer, parcel_app)
@@ -932,17 +972,369 @@ async def test_undated_event_keeps_its_first_time(
     await read(hass, freezer, parcel_app)
     parcel = holder(engine)
     assert parcel is not None
-    assert [(event.time, event.status) for event in own_events(parcel)] == [
-        (at(17, 10), ParcelStatus.IN_TRANSIT)
-    ]
+    anchored = at(15, 10) + 10 * MICROSECOND
+    assert [
+        (event.time, event.status, event.undated) for event in own_events(parcel)
+    ] == [(anchored, ParcelStatus.IN_TRANSIT, True)]
+    assert record(engine)["history"][0]["seen"] == dt_to_str(at(17, 10))
 
     parcel_app.deliveries = [delivery(status=4, events=(("Update", "garbage"),))]
     await read(hass, freezer, parcel_app)
     parcel = holder(engine)
     assert parcel is not None
-    assert [(event.time, event.status) for event in own_events(parcel)] == [
-        (at(17, 10), ParcelStatus.OUT_FOR_DELIVERY)
+    assert [
+        (event.time, event.status, event.undated) for event in own_events(parcel)
+    ] == [(anchored, ParcelStatus.OUT_FOR_DELIVERY, True)]
+    assert record(engine)["history"][0]["seen"] == dt_to_str(
+        at(17, 10) + 2 * MIN_INTERVAL
+    )
+
+
+@pytest.mark.parametrize("parcel_date", [False, True])
+async def test_undated_delivery_goes_on_the_expected_day(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    parcel_date: bool,
+) -> None:
+    """A delivery read days later without a date isn't put on the read's day.
+
+    It goes on the parcel's last known day, here the expected day, Parcel's
+    or the e-mails', and stays marked as undated.
+    """
+    add_parcel(
+        engine,
+        "a",
+        age=timedelta(days=7),
+        eta=None if parcel_date else Eta(day(12), day(12)),
+    )
+    expected = {"date_expected": "2026-11-12 00:00:00"} if parcel_date else {}
+    parcel_app.deliveries = [
+        delivery(status=0, events=(("Delivered", "garbage"),), **expected)
     ]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    anchored = at(12, 0) + 10 * MICROSECOND
+    assert [
+        (event.time, event.status, event.undated)
+        for event in own_events(parcel)
+        if event.status is not None
+    ] == [(anchored, ParcelStatus.DELIVERED, True)]
+    state = parcel.state
+    assert state.status is ParcelStatus.DELIVERED
+    assert (state.status_time, state.status_undated) == (anchored, True)
+    assert (state.delivered_at, state.delivered_undated) == (anchored, True)
+
+
+async def test_undated_delivery_after_a_dated_one(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Parcel's undated delivery doesn't add one at the read time.
+
+    It goes just after the delivery an e-mail dated, which keeps its time.
+    """
+    add_parcel(
+        engine, "a", kind=MailKind.DELIVERED, age=timedelta(hours=21, minutes=17)
+    )
+    parcel_app.deliveries = [delivery(status=0, events=(("Delivered", "garbage"),))]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    delivered = at(16, 12, 43)
+    assert [
+        (event.time, event.status, event.undated) for event in own_events(parcel)
+    ] == [(delivered + 10 * MICROSECOND, ParcelStatus.DELIVERED, True)]
+    state = parcel.state
+    assert state.status is ParcelStatus.DELIVERED
+    assert (state.status_time, state.status_undated) == (delivered, False)
+    assert (state.delivered_at, state.delivered_undated) == (delivered, False)
+
+
+async def test_imported_undated_delivery_has_no_day(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery only in Parcel, delivered on a day not known, has no day.
+
+    Nothing tells when it happened: it isn't dated by the read, and no news
+    is fired for it.
+    """
+    fired = capture_news(hass)
+    parcel_app.deliveries = [delivery(status=0, events=(("Delivered", "garbage"),))]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    assert [
+        (event.time, event.status, event.undated, event.dayless)
+        for event in own_events(parcel)
+    ] == [(at(17, 10), ParcelStatus.DELIVERED, True, True)]
+    state = parcel.state
+    assert state.status is ParcelStatus.DELIVERED
+    assert (state.status_time, state.status_undated) == (None, True)
+    assert (state.delivered_at, state.delivered_undated) == (None, True)
+    assert fired == []
+
+
+@pytest.mark.parametrize("same_day", [True, False])
+async def test_undated_delivery_waits_for_a_dated_report(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    same_day: bool,
+) -> None:
+    """No news for a delivery of a day not known, until an e-mail dates it.
+
+    An e-mail from the day Parcel's delivery was read gives its time, and
+    the news then. One from a later day is about it too, but its date isn't
+    the delivery's: nothing changes.
+    """
+    add_parcel(engine, "a")
+    await hass.async_block_till_done()
+    fired = capture_news(hass)
+    parcel_app.deliveries = [delivery(status=0, events=(("Delivered", "garbage"),))]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    anchored = at(15, 10) + 10 * MICROSECOND
+    assert [
+        (event.time, event.status, event.undated, event.by)
+        for event in own_events(parcel)
+    ] == [(anchored, ParcelStatus.DELIVERED, True, at(17, 10))]
+    assert (parcel.state.status_time, parcel.state.status_undated) == (
+        anchored,
+        True,
+    )
+    assert fired == []
+
+    if not same_day:
+        freezer.move_to(at(18, 10))
+    add_parcel(engine, "b", kind=MailKind.DELIVERED, age=timedelta(hours=1))
+    await hass.async_block_till_done()
+
+    parcel = holder(engine)
+    assert parcel is not None
+    state = parcel.state
+    assert state.status is ParcelStatus.DELIVERED
+    if same_day:
+        assert (state.status_time, state.status_undated) == (at(17, 9), False)
+        assert (state.delivered_at, state.delivered_undated) == (at(17, 9), False)
+        assert fired == [
+            (EVENT_STATUS_CHANGED, ParcelStatus.DELIVERED.value),
+            (EVENT_DELIVERED, ParcelStatus.DELIVERED.value),
+        ]
+    else:
+        assert (state.status_time, state.status_undated) == (anchored, True)
+        assert (state.delivered_at, state.delivered_undated) == (anchored, True)
+        assert fired == []
+
+
+async def test_diagnostics_tell_the_dates_not_read(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Diagnostics count the event dates of the last read Parcels can't use.
+
+    Dates to come are only counted. The ten commonest shapes are kept: digits
+    become 9 and words x, but for the words of dates. Never the events.
+    """
+    dates = [
+        "garbage",
+        "garbage",
+        "garbage",
+        "Today, 2:05 PM",
+        "Today, 2:05 PM",
+        "2026-11-25 10:00:00",
+        *("#" + "1" * size for size in range(1, 8)),
+        "abc1",
+        "2026-11-16 18:30:00",
+    ]
+    item = delivery(
+        events=[(f"Secret note {index}", value) for index, value in enumerate(dates)]
+    )
+    item["events"].append({"event": "Secret note", "location": PLACE})
+    parcel_app.deliveries = [item]
+
+    await read(hass, freezer, parcel_app)
+
+    diagnostics = sync_of(engine).diagnostics()
+    found = diagnostics["event_dates"]
+    assert (found["unparsed"], found["future"]) == (14, 1)
+    assert list(found["shapes"].items()) == [
+        ("x", 3),
+        ("today, 9:99 pm", 2),
+        ("#9", 1),
+        ("#99", 1),
+        ("#999", 1),
+        ("#9999", 1),
+        ("#99999", 1),
+        ("#999999", 1),
+        ("#9999999", 1),
+        ("missing", 1),
+    ]
+    text = json.dumps(diagnostics)
+    for secret in ("Secret", "garbage", "Today", "abc", NUMBER, SHOP, PLACE):
+        assert secret not in text
+
+
+async def test_repair_places_undated_events_again(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    freezer: FrozenDateTimeFactory,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Once, the events 0.1.6 put at the time they were read are placed again.
+
+    That time is kept as when they were first seen, and the deliveries are
+    applied again at the next read, which keeps them there.
+    """
+    read_at = at(16, 17, 21)
+    data = ParcelsData()
+    shipped = contribution(
+        "msg:a#0", time=at(14, 9), carrier="ups", number=NUMBER, owner=OWNER
+    )
+    apply_contribution(data, shipped, at(14, 9))
+    delivered = contribution(
+        "msg:b#0",
+        kind=MailKind.DELIVERED,
+        time=at(10, 12),
+        carrier="ups",
+        number=OTHER_UPS,
+        owner=OWNER,
+    )
+    other = apply_contribution(data, delivered, at(10, 12)).parcel_id
+    assert other is not None
+    stored: dict[str, Any] = {}
+    for key, time_read in ((NUMBER, read_at), (OTHER_UPS, at(11, 9))):
+        info = "Delivered, " + PLACE
+        apply_contribution(
+            data,
+            Contribution(
+                origin=Origin(
+                    id=PARCELAPP_PREFIX + key,
+                    source=Source.PARCELAPP,
+                    time=time_read,
+                    label="Parcel app",
+                    carrier="ups",
+                    tracking_number=key,
+                ),
+                events=[
+                    ParcelEvent(
+                        time=time_read,
+                        source=Source.PARCELAPP,
+                        status=ParcelStatus.DELIVERED,
+                        label=info,
+                    )
+                ],
+            ),
+            time_read,
+        )
+        stored[key] = {
+            "history": [
+                {
+                    "info": info,
+                    "at": None,
+                    "time": dt_to_str(time_read),
+                    "status": "delivered",
+                }
+            ],
+            "fp": "0.1.6",
+            "since": dt_to_str(time_read),
+            "held": True,
+            "code": "ups",
+        }
+    data.parcels[other].archived = at(11, 10)
+    dated = {
+        "info": "In transit, " + PLACE,
+        "at": dt_to_str(at(16, 8)),
+        "time": dt_to_str(at(16, 8)),
+        "status": "in_transit",
+    }
+    stored[THIRD_UPS] = {
+        "history": [dated],
+        "fp": "0.1.6",
+        "since": dt_to_str(at(16, 8)),
+        "held": False,
+        "code": "ups",
+    }
+    data.parcelapp["records"] = stored
+    data.engine[REPAIR_KEY] = REPAIR_VERSION
+    hass_storage[DOMAIN] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": DOMAIN,
+        "data": data.as_dict(),
+    }
+    hub = add_hub(hass, **OPTIONS)
+
+    engine = await async_setup_parcels(hass)
+
+    assert engine.data.engine["parcel_app_dates"] == 2
+    assert engine.diagnostics()["parcel_app_dates_repaired"] == 2
+    parcel = holder(engine)
+    assert parcel is not None
+    expected = [(at(14, 9) + 10 * MICROSECOND, ParcelStatus.DELIVERED, True, read_at)]
+    assert [
+        (event.time, event.status, event.undated, event.by)
+        for event in own_events(parcel)
+    ] == expected
+    assert parcel.state.status_time == at(14, 9) + 10 * MICROSECOND
+    archived = holder(engine, OTHER_UPS)
+    assert archived is not None
+    assert archived.archived is not None
+    assert [
+        (event.time, event.undated) for event in own_events(archived, OTHER_UPS)
+    ] == [(at(10, 12) + 10 * MICROSECOND, True)]
+    assert record(engine)["history"] == [
+        {
+            "info": "Delivered, " + PLACE,
+            "at": None,
+            "status": "delivered",
+            "seen": dt_to_str(read_at),
+        }
+    ]
+    assert "fp" not in record(engine)
+    assert "fp" not in record(engine, OTHER_UPS)
+    third = record(engine, THIRD_UPS)
+    assert third["fp"] == "0.1.6"
+    assert third["history"] == [
+        {name: value for name, value in dated.items() if name != "time"}
+    ]
+
+    with patch("custom_components.parcels.engine.repair_parcel_dates") as repair:
+        assert await hass.config_entries.async_reload(hub.entry_id)
+        await hass.async_block_till_done()
+    repair.assert_not_called()
+    engine = get_engine(hass)
+    assert engine is not None
+
+    parcel_app.deliveries = [delivery(status=0, events=(("Delivered", "garbage"),))]
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    assert [
+        (event.time, event.status, event.undated, event.by)
+        for event in own_events(parcel)
+    ] == expected
+    assert record(engine)["fp"]
 
 
 @pytest.mark.parametrize(

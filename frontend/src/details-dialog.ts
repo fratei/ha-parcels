@@ -730,16 +730,20 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const returns = this._returnsOf(parcel);
     const row = (label: string, value: unknown): TemplateResult =>
       html`<div><dt>${label}</dt><dd>${value}</dd></div>`;
-    const since = parcel.status_time
-      ? ` · ${fmt(STRINGS.sinceDate, { date: formatDateTime(parcel.status_time, locale) })}`
-      : "";
+    const since = parcel.status_undated
+      ? ` · ${STRINGS.dateNotKnownInline}`
+      : parcel.status_time
+        ? ` · ${fmt(STRINGS.sinceDate, { date: formatDateTime(parcel.status_time, locale) })}`
+        : "";
     const etaSource = etaSourceLabel(parcel);
     const name = parcelAppName(parcel);
     return html`<dl class="facts">
       ${row(STRINGS.status, `${statusLabel(parcel.status)}${since}`)}
-      ${parcel.delivered_at
-        ? row(STRINGS.delivered, formatDateTime(parcel.delivered_at, locale))
-        : nothing}
+      ${parcel.delivered_undated
+        ? row(STRINGS.delivered, STRINGS.dateNotKnown)
+        : parcel.delivered_at
+          ? row(STRINGS.delivered, formatDateTime(parcel.delivered_at, locale))
+          : nothing}
       ${eta
         ? row(
             STRINGS.expected,
@@ -865,9 +869,11 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const locale = this.locale;
     const name = item.tracking_number?.trim() || parcelTitle(item);
     const eta = etaRange(item);
-    const when = item.delivered_at
-      ? formatDateTime(item.delivered_at, locale)
-      : eta
+    const when = item.delivered_undated
+      ? STRINGS.dateNotKnownInline
+      : item.delivered_at
+        ? formatDateTime(item.delivered_at, locale)
+        : eta
         ? formatDateRange(eta.start, eta.end, locale)
         : "";
     const text = [statusLabel(item.status), when].filter(Boolean).join(" · ");
@@ -898,7 +904,8 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
       ${newestFirst(timeline).map((entry) => {
         const status = statusLabel(entry.status);
         const label = entry.label.trim();
-        const meta = [formatDateTime(entry.time, locale), sourceLabel(entry.source)]
+        const time = entry.undated ? STRINGS.dateNotKnown : formatDateTime(entry.time, locale);
+        const meta = [time, sourceLabel(entry.source)]
           .filter(Boolean)
           .join(" · ");
         return html`<li style=${styleMap({ "--dot-color": statusColor(entry.status) })}>

@@ -76,6 +76,7 @@ from .models import (
     ParcelsData,
     Source,
     date_from_str,
+    day_known,
     is_carrier_mail,
     local_date,
     merchant_key,
@@ -1618,11 +1619,28 @@ def _last_activity(parcel: Parcel) -> datetime | None:
 
 
 def _real_delivery(parcel: Parcel) -> datetime | None:
-    """Return when a parcel was delivered, unless that was only inferred."""
+    """Return when a parcel was delivered, unless that was only inferred.
+
+    A delivery reported without a date gives none unless its day is known:
+    it's placed on the day the parcel was expected, which can't prove that
+    it came that day.
+    """
     state = parcel.state
-    if state.status is ParcelStatus.DELIVERED and not state.inferred:
-        return state.delivered_at
-    return None
+    if state.status is not ParcelStatus.DELIVERED or state.inferred:
+        return None
+    delivered = state.delivered_at
+    if (
+        delivered is not None
+        and state.delivered_undated
+        and not any(
+            event.time == delivered
+            and event.status is ParcelStatus.DELIVERED
+            and day_known(event)
+            for event in parcel.events
+        )
+    ):
+        return None
+    return delivered
 
 
 def _reported_delivery(parcel: Parcel) -> datetime | None:
@@ -1983,7 +2001,7 @@ def _delivery_day(parcel: Parcel) -> date | None:
     if state.status is ParcelStatus.OUT_FOR_DELIVERY:
         if state.eta is not None:
             return state.eta.end
-        if state.status_time is not None:
+        if state.status_time is not None and not state.status_undated:
             return local_date(state.status_time)
     return None
 

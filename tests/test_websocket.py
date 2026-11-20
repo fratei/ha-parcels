@@ -730,14 +730,17 @@ async def test_get(
             "status": "in_transit",
             "source": "parser",
             "label": "",
+            "undated": False,
         },
         {
             "time": "2026-11-17T10:10:00+00:00",
             "status": "delivered",
             "source": "manual",
             "label": "",
+            "undated": False,
         },
     ]
+    assert (shown["status_undated"], shown["delivered_undated"]) == (False, False)
     assert details["orders"] == []
 
 

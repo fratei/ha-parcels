@@ -35,7 +35,7 @@ from custom_components.parcels.dedup import (
     undo_inferred_delivery,
     update_parcel,
 )
-from custom_components.parcels.models import ParcelsData, Source, order_key
+from custom_components.parcels.models import ParcelEvent, ParcelsData, Source, order_key
 from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.parsers.tracking import tracking_url
 from custom_components.parcels.views import shipment_groups
@@ -224,6 +224,47 @@ def test_order_mail_after_the_delivery_stays_apart() -> None:
     assert not result.removed
     assert result.suggestions == []
     assert infer_deliveries(data, _nov(10, 8)) == set()
+
+
+@pytest.mark.parametrize(
+    "status", [ParcelStatus.DELIVERED, ParcelStatus.OUT_FOR_DELIVERY]
+)
+@pytest.mark.parametrize(
+    ("seen", "paired"), [(_nov(9, 20), True), (_nov(12, 9), False)]
+)
+def test_news_of_an_unknown_day_pairs_nothing(
+    status: ParcelStatus, seen: datetime, paired: bool
+) -> None:
+    """News without a date pairs by day, or infers a delivery, only on its day.
+
+    It's placed on the day the parcel was expected. Seen that day, that's
+    its day; seen days later, it may have happened on any day in between.
+    """
+    data = ParcelsData()
+    ctt = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.IN_TRANSIT, _nov(8, 15)), SYNC)
+    parcel = data.parcels[ctt]
+    parcel.events.append(
+        ParcelEvent(
+            time=_nov(9) + timedelta(microseconds=10),
+            source=Source.PARCELAPP,
+            origin="pa:" + CTT_1,
+            status=status,
+            undated=True,
+            by=seen,
+        )
+    )
+    parcel.touch(seen)
+    amazon = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(7, 2, 5), _eta(9)), seen)
+
+    result = reconcile(data, seen)
+
+    assert result.suggestions == []
+    assert infer_deliveries(data, seen) == set()
+    holder = next(p for p in data.parcels.values() if "msg:a1#0" in p.origins)
+    assert ("msg:c1#0" in holder.origins) is paired
+    if not paired:
+        assert holder.id == amazon
+        assert holder.state.status is ParcelStatus.SHIPPED
 
 
 def test_same_day_groups_are_suggested() -> None:

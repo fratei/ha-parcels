@@ -126,6 +126,7 @@ from .models import (
     is_carrier_mail,
     new_id,
 )
+from .parcelapp.sync import DATES_REPAIR_KEY, repair_parcel_dates
 from .parsers import NOTE_KNOWN_SENDER_UNPARSED, is_refund, parse_message
 from .parsers.auth import verify_sender
 from .parsers.base import MailMessage, ParseResult, SenderVerdict, message_hash
@@ -411,6 +412,14 @@ class ParcelsEngine:
         now = dt_util.utcnow()
         if int(data.engine.get(REPAIR_KEY) or 0) < REPAIR_VERSION:
             self._repair(now)
+        if DATES_REPAIR_KEY not in data.engine:
+            # Before the Parcel app source starts: without a key, it forgets
+            # its deliveries.
+            fixed = repair_parcel_dates(data, now, self.tz)
+            data.engine[DATES_REPAIR_KEY] = fixed
+            if fixed:
+                _LOGGER.info("Parcels placed Parcel app events on %d parcels", fixed)
+            self.store.async_schedule_save()
         if not (data.parcels or data.review):
             # Nothing stored by an earlier release to check after the update.
             data.engine.setdefault(FILL_CHECK_KEY, True)
@@ -627,10 +636,16 @@ class ParcelsEngine:
                 or state.inferred
             ):
                 continue
-            if (
-                state.status_time is not None
-                and now - state.status_time > EVENT_MAX_AGE
-            ):
+            old = state.status_time is None or now - state.status_time > EVENT_MAX_AGE
+            if state.status_undated and old:
+                # When it happened isn't known: a dated report may tell later,
+                # and then it's news.
+                if previous is None:
+                    del statuses[parcel.id]
+                else:
+                    statuses[parcel.id] = previous
+                continue
+            if state.status_time is not None and old:
                 continue
             payload = _event_payload(parcel)
             if previous is None:
@@ -2230,6 +2245,7 @@ class ParcelsEngine:
             "paack_amazon": paack_amazon_counts(data),
             "amazon_shipment_ids": amazon_shipment_id_counts(data, dt_util.utcnow()),
             "repair": data.engine.get(REPAIR_KEY),
+            "parcel_app_dates_repaired": data.engine.get(DATES_REPAIR_KEY),
             "reconcile_waiting": len(self._syncing | self._more),
             # How the sender checks went for the newest e-mails under review:
             # the shop's domain and the servers that wrote the headers only.

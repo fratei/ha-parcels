@@ -232,7 +232,11 @@ export class ParcelsReturnDialog extends ParcelsDialogBase {
   /** A parcel the items came in; a tap shows its details instead. */
   private _renderParcel(parcel: Parcel): TemplateResult {
     const name = parcelTitle(parcel);
-    const when = parcel.delivered_at ? formatDateTime(parcel.delivered_at, this.locale) : "";
+    const when = parcel.delivered_undated
+      ? STRINGS.dateNotKnownInline
+      : parcel.delivered_at
+        ? formatDateTime(parcel.delivered_at, this.locale)
+        : "";
     const text = [statusLabel(parcel.status), when].filter(Boolean).join(" · ");
     if (parcel.restricted) {
       return html`<li>${name} · ${text}</li>`;

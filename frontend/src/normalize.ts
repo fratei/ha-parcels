@@ -111,12 +111,14 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     // Unknown statuses are kept as sent; the cards treat them like an active status.
     status: text(raw.status) as ParcelStatus,
     status_time: str(raw.status_time),
+    status_undated: raw.status_undated === true,
     eta_start: str(raw.eta_start),
     eta_end: str(raw.eta_end),
     window_start: str(raw.window_start),
     window_end: str(raw.window_end),
     eta_source: etaSource(raw.eta_source),
     delivered_at: str(raw.delivered_at),
+    delivered_undated: raw.delivered_undated === true,
     inferred: raw.inferred === true,
     inferred_reason: inferredReason(raw.inferred_reason),
     pickup_point: str(raw.pickup_point),
@@ -353,6 +355,7 @@ function timelineEntry(raw: unknown): TimelineEntry | null {
     status: text(raw.status) as ParcelStatus,
     source: timelineSource(raw.source),
     label: text(raw.label),
+    undated: raw.undated === true,
   };
 }
 

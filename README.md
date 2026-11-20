@@ -540,8 +540,8 @@ How they behave:
   day.
 - Updates are sent only when something changes, and silently unless the
   status changed. A time window shows a countdown.
-- A delivered parcel shows "Delivered ✓" with the time, and its activity ends
-  30 minutes later.
+- A delivered parcel shows "Delivered ✓" with the time when it's known, and
+  its activity ends 30 minutes later.
 - Apple ends activities after 8 hours, so an undelivered parcel's activity is
   restarted after 7.5 hours. The new activity plays the start alert once,
   because iOS doesn't let a new activity start silently.
@@ -561,9 +561,9 @@ From the start time until the next morning, a persistent notification in Home
 Assistant (`parcels_today`) lists the day's parcels with their shop, carrier,
 status and time window, and links to the Parcels page. Packages of one shipment
 with the same status share a line, with their count ("4 packages"); delivered
-ones keep their own line, with the time. Private parcels are only counted.
-Parcels ready for pickup stay in it for up to a week. The **Daily
-notification** switch turns it off and on.
+ones keep their own line, with the time when it's known. Private parcels are
+only counted. Parcels ready for pickup stay in it for up to a week. The
+**Daily notification** switch turns it off and on.
 
 Return pickups show only on the Parcels page and in `calendar.parcels`: they
 start no Live Activity or notification, and aren't in the persistent
@@ -682,6 +682,17 @@ twice within 10 minutes, restarts and the `parcels.refresh` action included.
 Parcel allows 20 reads an hour, which other tools using your key may share,
 and answers from its cache: a read doesn't make Parcel check the carrier
 ([Parcel's API](https://parcelapp.net/help/api-view-deliveries.html)).
+
+**Dates.** Parcel gives events' dates without a time zone; Parcels reads
+them in Home Assistant's. It reads ISO dates, dates as the app shows them,
+and day-first dates such as 16/11/2026, 16-11-2026 or 16.11.2026. An event
+whose date it can't read, or dated after tomorrow, never takes the time of
+the read. It goes on the last day known before Parcels saw it: the day of
+the parcel's last dated news, or its expected day if that's later, and its
+details say "Date not known". With no such day, the event has no day
+either: a parcel delivered then says "Date not known" and isn't in the
+calendar. News of the same status from another source, such as an e-mail,
+dated no later than the day Parcels first saw the event, gives it its time.
 
 **Adding.** After each read, Parcels adds the tracking numbers of its open
 parcels to your list, the parcels due soonest first, with at most **Parcels
@@ -877,8 +888,12 @@ carrier, status and dates. Each mailbox has a **Last sync** sensor and a
 `eta_end`, `private` and `owners`, and for shared parcels also `merchant` and
 `tracking_number`. They never carry item names. Returns fire no events, and
 neither do deliveries that Parcels only inferred, archived parcels, or news
-more than a day old, such as old e-mails read in a mailbox's first sync. For
-example:
+more than a day old, such as old e-mails read in a mailbox's first sync.
+News without a date that Parcels can read, such as some events from the
+Parcel app, goes on the parcel's last known day (see
+[Parcel app](#parcel-app)). When that day is more than a day back, or isn't
+known, its event waits until dated news, such as an e-mail, gives it a time,
+and fires only if that time is less than a day old. For example:
 
 ```yaml
 triggers:
@@ -959,6 +974,14 @@ actions:
   GLS or DPD, is added only once Parcels has learned its code from a delivery
   you added to Parcel yourself. The hub's diagnostics show today's adds and
   the codes in use (`parcelapp`).
+- **A Parcel app event says "Date not known".** Parcel gave it no date that
+  Parcels can read, so it's on the parcel's last known day (see
+  [Parcel app](#parcel-app)). The hub's diagnostics show the forms of the
+  dates of the last read that Parcels couldn't use (`event_dates`). Version
+  0.1.6 gave such events the time of the read, so a parcel could show as
+  delivered on the wrong day. After the update, Parcels places them again
+  once, and the next read checks them (`parcel_app_dates_repaired` counts
+  the parcels that changed).
 - **Repair: "The Parcel app refused the API key".** The key may have been
   replaced, or the Parcel account may no longer have Premium. Enter the key
   from web.parcelapp.net again in the Parcels options, or clear it. Parcels
@@ -980,12 +1003,16 @@ actions:
   senders other than known or trusted ones counted as "other"
   (`recent_emails`), where working days come from (`working_days`), the
   refunds ignored (`refunds_dropped`), the check after updating to 0.1.5
-  (`returns_check`), Paack's matches (`paack_amazon`) and the shapes of
-  Amazon's shipment IDs (`amazon_shipment_ids`); its 17TRACK part
-  counts the numbers 17TRACK can't find, by carrier
+  (`returns_check`), Paack's matches (`paack_amazon`), the shapes of
+  Amazon's shipment IDs (`amazon_shipment_ids`) and the parcels whose Parcel
+  app events the update to 0.1.7 placed again (`parcel_app_dates_repaired`);
+  its 17TRACK part counts the numbers 17TRACK can't find, by carrier
   (`not_found_by_carrier`); its Parcel app part (`parcelapp`) counts the
   deliveries read, matched, shown on their own and left out, and today's
-  adds, and lists the carrier codes in use, without tracking numbers.
+  adds, lists the carrier codes in use, and counts the last read's event
+  dates that Parcels couldn't read or that were after tomorrow, with the
+  forms of the first, digits as 9 and words as x but for date words
+  (`event_dates`), all without tracking numbers or event text.
 
 ## Development
 
