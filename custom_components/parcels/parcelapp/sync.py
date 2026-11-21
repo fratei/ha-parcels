@@ -96,6 +96,8 @@ from .api import (
 from .carriers import (
     NEEDS_POSTCODE,
     UNUSABLE,
+    amazon_code,
+    amazon_store,
     normalize_code,
     parcel_code,
     parcel_codes,
@@ -210,9 +212,7 @@ def order_number(raw: Any, key: str, code: str | None) -> str | None:
     """
     if len(key) != 17 or not key.isdigit():
         return None
-    if not _AMAZON_ORDER_RE.fullmatch(str(raw).strip()) and (
-        parcels_carrier(code) != "amazon"
-    ):
+    if not _AMAZON_ORDER_RE.fullmatch(str(raw).strip()) and not amazon_store(code):
         return None
     return f"{key[:3]}-{key[3:10]}-{key[10:]}"
 
@@ -991,7 +991,7 @@ class ParcelAppSync:
         if imported:
             merchant = (
                 "Amazon"
-                if order is not None or parcels_carrier(code) == "amazon"
+                if order is not None or amazon_store(code)
                 else known_merchant_name(description)
             )
         since = dt_from_str(record.get("since")) or now
@@ -1001,7 +1001,7 @@ class ParcelAppSync:
             time=min([event.time for event in events] + [since]),
             label=ORIGIN_LABEL,
             carrier=(base_state.carrier if base_state else None)
-            or parcels_carrier(code),
+            or parcels_carrier(code, key),
             tracking_number=None if order is not None else key,
             merchant=merchant,
             order_numbers=(order,) if order is not None else (),
@@ -1229,7 +1229,7 @@ class ParcelAppSync:
             carrier = base.state.carrier if base is not None else None
             if carrier is None or carrier == "other" or carrier not in CARRIER_NAMES:
                 continue
-            named = parcels_carrier(code)
+            named = "amazon" if amazon_code(code) else parcels_carrier(code)
             if named is not None and carrier_family(named) != carrier_family(carrier):
                 continue
             entry = learned.get(key)

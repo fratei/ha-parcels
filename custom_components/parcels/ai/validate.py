@@ -33,7 +33,10 @@ check and records an error code for every value it drops:
   differs from it (business days are counted here, not by the model).
 * The carrier comes from the sender's domain when it is a carrier's, else
   from the model's answer when the e-mail names that carrier, else from the
-  sender name, else from each tracking number's format.
+  sender name, else from each tracking number's format. A shop that
+  delivers too counts only by its delivery service's name or one of its
+  tracking numbers: "Amazon" in Amazon's e-mail is the shop, and only
+  "Amazon Logistics" or a TBA number names the carrier.
 * Free text (merchant, items, pickup point) must be short plain text, and
   the pickup code (a pickup code, delivery PIN or one-time code) must be
   written in the e-mail and can't be one of the tracking or order numbers.
@@ -146,6 +149,7 @@ NOTE_ORDER_MOVED_TO_TRACKING = "order_moved_to_tracking"
 NOTE_ORDER_FROM_TEXT = "order_from_text"
 NOTE_TRACKING_FROM_TEXT = "tracking_from_text"
 NOTE_MERCHANT_IS_CARRIER = "merchant_is_carrier"
+NOTE_CARRIER_UNPROVEN = "carrier_unproven"
 NOTE_MERCHANT_FROM_SENDER = "merchant_from_sender_name"
 NOTE_MERCHANT_FROM_TEXT = "merchant_from_text"
 NOTE_PICKUP_POINT_DROPPED = "pickup_point_not_pickup"
@@ -522,12 +526,6 @@ def _build_aliases() -> dict[str, str]:
 
 
 CARRIER_ALIASES: dict[str, str] = _build_aliases()
-_ALIAS_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {}
-for _alias, _carrier in CARRIER_ALIASES.items():
-    _ALIAS_PATTERNS[_carrier] = (
-        *_ALIAS_PATTERNS.get(_carrier, ()),
-        re.compile(rf"(?<![a-z0-9]){re.escape(_alias)}(?![a-z0-9])"),
-    )
 
 
 def map_carrier(name: str, *, prefix: bool = True) -> str | None:
@@ -567,6 +565,40 @@ _SHOP_CARRIERS = frozenset(
     if info.kind == "merchant"
     and (carrier := map_carrier(info.name, prefix=False)) is not None
 )
+
+
+def _shop_names() -> frozenset[str]:
+    """Return the names of the shops that deliver too, as carrier aliases."""
+    names: set[str] = set()
+    for info in KNOWN_SENDERS.values():
+        if info.kind != "merchant":
+            continue
+        if (carrier := map_carrier(info.name, prefix=False)) is None:
+            continue
+        for name in (info.name, carrier):
+            key = _name_key(name)
+            names.update((key, key.replace(" ", "")))
+    return frozenset(names)
+
+
+# How an e-mail names each carrier. A shop that delivers too is named only
+# by its delivery service's name ("Amazon Logistics"): its own name
+# ("Amazon") names the shop in its e-mails.
+_SHOP_NAMES = _shop_names()
+_ALIAS_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {}
+_SHOP_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {}
+for _alias, _carrier in CARRIER_ALIASES.items():
+    _patterns = _SHOP_PATTERNS if _alias in _SHOP_NAMES else _ALIAS_PATTERNS
+    _patterns[_carrier] = (
+        *_patterns.get(_carrier, ()),
+        re.compile(rf"(?<![a-z0-9]){re.escape(_alias)}(?![a-z0-9])"),
+    )
+
+
+def _names_service(carrier: str, text: str) -> bool:
+    """Return True when ``text`` names a shop's delivery service, not the shop."""
+    key = _name_key(text)
+    return any(p.search(key) for p in _ALIAS_PATTERNS.get(carrier, ()))
 
 
 def sender_carrier(message: MailMessage) -> str | None:
@@ -1464,7 +1496,12 @@ class _Checker:
                 return None
             brands = brand_carriers(self.message.sender_name or "")
             return brands[0] if len(brands) == 1 else None
-        return map_carrier(self.message.sender_name or "", prefix=False)
+        name = self.message.sender_name or ""
+        carrier = map_carrier(name, prefix=False)
+        if carrier in _SHOP_CARRIERS and not _names_service(carrier, name):
+            # "Amazon" is the shop; "Amazon Logistics" its delivery service.
+            return None
+        return carrier
 
     def carrier(self) -> str | None:
         """Return the e-mail's carrier: the sender's, the model's, or None."""
@@ -1485,11 +1522,24 @@ class _Checker:
             return None
         if carrier == hint or self.carrier_named(carrier):
             return carrier
+        if carrier in _SHOP_CARRIERS and any(
+            p.search(self.carrier_text) for p in _SHOP_PATTERNS.get(carrier, ())
+        ):
+            # The e-mail names the shop ("Amazon"), which the model read as
+            # its delivery service: a misreading of this value alone, so the
+            # rest of the answer stands. A carrier's e-mail keeps its carrier.
+            if hint is None and self.name_carrier is None:
+                self.note(NOTE_CARRIER_UNPROVEN)
+            return None
         self.error("carrier_not_in_email")
         return None
 
     def carrier_named(self, carrier: str) -> bool:
-        """Return True when the e-mail names the carrier or one of its numbers."""
+        """Return True when the e-mail names the carrier or one of its numbers.
+
+        A shop that delivers too counts only by its delivery service's name
+        ("Amazon Logistics", not "Amazon") or one of its numbers.
+        """
         if any(p.search(self.carrier_text) for p in _ALIAS_PATTERNS.get(carrier, ())):
             return True
         numbers = [match.number for match in find_tracking_numbers(self.detector_text)]

@@ -66,7 +66,7 @@
           "ai_mode": "Suggest sends every AI result to Needs review. Automatic adds results that pass every check, but only from trusted senders.",
           "ai_task_entity": "Reads shipping e-mails that no parser understands. Only an Ollama AI task with a local model on the Home Assistant host is accepted, never a cloud model.",
           "archive_days": "Days after delivery. Archived parcels stay visible in past weeks.",
-          "collapse_threshold": "When more parcels than this are expected on the same day, they share one Live Activity.",
+          "collapse_threshold": "When more packages than this are expected on the same day, they share one Live Activity. Orders that one of the day's packages may hold don't count.",
           "cutoff_time": "Remaining Live Activities end at this time. Undelivered parcels stay in the persistent notification.",
           "excluded_devices": "Companion app devices that never get Live Activities, such as a shared tablet.",
           "item_names_on_lock_screen": "Live Activities are visible on the lock screen. When off, they show merchant, carrier, status and time window only.",

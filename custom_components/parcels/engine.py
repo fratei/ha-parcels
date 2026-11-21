@@ -77,6 +77,7 @@ from .customer_returns import (
     return_origin,
 )
 from .dedup import (
+    AMAZON_REPAIR_KEY,
     REPAIR_KEY,
     REPAIR_VERSION,
     Contribution,
@@ -486,10 +487,12 @@ class ParcelsEngine:
     def _repair(self, now: datetime) -> None:
         """Fix what earlier releases stored, once per repair version.
 
-        Parcels are reconciled right after, as on every start.
+        The steps of the versions the store already had are skipped. Parcels
+        are reconciled right after, as on every start.
         """
         data = self.data
-        changed = repair_store(data, now)
+        since = int(data.engine.get(REPAIR_KEY) or 0)
+        changed = repair_store(data, now, since=since)
         data.engine[REPAIR_KEY] = REPAIR_VERSION
         if changed:
             _LOGGER.info("Parcels updated %d stored parcels", len(changed))
@@ -2269,6 +2272,7 @@ class ParcelsEngine:
             "paack_amazon": paack_amazon_counts(data),
             "amazon_shipment_ids": amazon_shipment_id_counts(data, dt_util.utcnow()),
             "repair": data.engine.get(REPAIR_KEY),
+            "amazon_carrier_repaired": data.engine.get(AMAZON_REPAIR_KEY),
             "parcel_app_dates_repaired": data.engine.get(DATES_REPAIR_KEY),
             "reconcile_waiting": len(self._syncing | self._more),
             # How the sender checks went for the newest e-mails under review:

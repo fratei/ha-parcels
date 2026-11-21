@@ -8,6 +8,8 @@ from custom_components.parcels.const import CARRIER_NAMES
 from custom_components.parcels.dedup import carrier_family
 from custom_components.parcels.parcelapp.carriers import (
     UNUSABLE,
+    amazon_code,
+    amazon_store,
     normalize_code,
     parcel_code,
     parcels_carrier,
@@ -62,9 +64,10 @@ def test_parcel_code(
         ("dpdgpcode", "dpd"),
         ("inpespcode", "inpost"),
         ("inpostit", "inpost"),
-        ("amzles", "amazon"),
-        ("amship", "amazon"),
-        ("swiship", "amazon"),
+        # Amazon's own codes follow orders, not a carrier.
+        ("amzles", None),
+        ("amshipuk", None),
+        ("swiship", None),
         ("tntp", "postnl"),
         ("tntpitp", "postnl"),
         ("tnt", "tnt"),
@@ -81,6 +84,59 @@ def test_parcel_code(
 def test_parcels_carrier(code: object, expected: str | None) -> None:
     """Codes map back to Parcels' carriers, by name or by family prefix."""
     assert parcels_carrier(code) == expected
+
+
+@pytest.mark.parametrize(
+    ("code", "number", "expected"),
+    [
+        ("amshipuk", "TBA123456789012", "amazon"),
+        ("swiship", "tba 123456789012", "amazon"),
+        ("amzles", "TBA123456789012", "amazon"),
+        ("amshipuk", "QA1234567890", None),
+        ("swiship", "1Z999AA10123456784", None),
+        ("amzles", "17112345671234567", None),
+        ("ctt", "TBA123456789012", "ctt"),
+    ],
+)
+def test_amazon_logistics_needs_its_number(
+    code: str, number: str, expected: str | None
+) -> None:
+    """Amazon's codes stand for Amazon Logistics only with one of its numbers."""
+    assert parcels_carrier(code, number) == expected
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("amzles", True),
+        (" AMZLUS ", True),
+        ("amshipfr", True),
+        ("swiship", True),
+        ("amz", False),
+        ("ctt", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_amazon_code(code: object, expected: bool) -> None:
+    """Amazon's own codes: its stores, Amazon Shipping and its sellers' site."""
+    assert amazon_code(code) is expected
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("amzles", True),
+        ("AMZLUS", True),
+        ("amshipfr", False),
+        ("swiship", False),
+        ("ctt", False),
+        (None, False),
+    ],
+)
+def test_amazon_store(code: object, expected: bool) -> None:
+    """Only the codes of Amazon's stores follow Amazon's own orders."""
+    assert amazon_store(code) is expected
 
 
 def test_normalize_code() -> None:

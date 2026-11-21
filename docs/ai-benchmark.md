@@ -296,6 +296,19 @@ order and shipment e-mails, which went to the model with 0.1.6. As before,
 an e-mail the parsers read with too little confidence still goes to the
 model.
 
+### What changed in 0.1.8
+
+0.1.8 keeps the instructions, the answer's structure and the input: every
+e-mail gets the same input as with 0.1.7, byte for byte. This set's expected
+answers, the 574 variants and one more variant per e-mail, with the carrier
+"Amazon", were checked with 0.1.7 and 0.1.8: all 656 gave the same results.
+None of this set's e-mails names Amazon, the shop the change is about:
+
+| Answer | What Parcels does |
+|---|---|
+| The carrier "Amazon", for an e-mail that names Amazon only as the shop | Amazon's name in its own e-mails names the shop, not its delivery service, so the carrier is left empty, with the note `carrier_unproven`. It isn't a failed check: the rest of the answer is used. Only "Amazon Logistics" or one of its numbers (`TBA` and 12 digits) names the carrier. A carrier's e-mail about an Amazon order keeps its own carrier. 0.1.7 took Amazon for the carrier, which kept these parcels apart from their carrier's deliveries. |
+| No carrier, in an e-mail from an unknown sender named "Amazon" | The sender name names the shop, so it gives no carrier. "Amazon Logistics" still does. 0.1.7 gave Amazon as the carrier. |
+
 ## Check codes
 
 An answer that fails a check waits in **Needs review**, as "The local AI's

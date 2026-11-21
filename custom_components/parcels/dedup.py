@@ -54,6 +54,10 @@ share (a shop's recommendations read as items) don't count at all.
 date has passed when the same merchant delivered another parcel then. Shops
 pack several orders in one carrier parcel, so these are marked as inferred,
 not merged.
+
+:func:`boxes_of_day` tells delivery day which of the day's orders without a
+carrier's number a carrier's package of the day may hold, so it counts
+packages rather than records. That is a guess, never a merge.
 """
 
 from __future__ import annotations
@@ -76,6 +80,7 @@ from .models import (
     Parcel,
     ParcelEvent,
     ParcelsData,
+    ParcelState,
     Source,
     date_from_str,
     day_known,
@@ -98,6 +103,7 @@ from .parsers.senders import (
 )
 from .parsers.tracking import (
     PAACK_STEM_RE,
+    amazon_logistics_number,
     detect_carrier,
     is_s10,
     normalize_tracking_number,
@@ -131,12 +137,24 @@ LATE_DAYS = timedelta(days=14)
 EARLY_DAYS = timedelta(days=7)
 # Shorter parts of a seller's name ("SA", "PT") don't name a shop.
 SELLER_KEY_MIN_LENGTH = 4
+# An order delivered this long before or after a package wasn't in it.
+BOX_DELIVERY_SLACK = timedelta(hours=3)
+# What doesn't come to the door on a day, and the orders that need the user.
+_NOT_COMING = frozenset(
+    {ParcelStatus.READY_FOR_PICKUP, ParcelStatus.RETURNED, ParcelStatus.CANCELLED}
+)
+_PROBLEMS = frozenset({ParcelStatus.ATTEMPTED, ParcelStatus.EXCEPTION})
 
-# Engine-state keys: pairs of origins the user keeps apart, and the version
-# of the one-time repair of stored parcels.
+# Engine-state keys: pairs of origins the user keeps apart, the version of
+# the one-time repair of stored parcels, and what its fourth step changed.
 KEPT_APART = "kept_apart"
 REPAIR_KEY = "repair"
-REPAIR_VERSION = 3
+REPAIR_VERSION = 4
+AMAZON_REPAIR_KEY = "amazon_carrier_repaired"
+# Where a carrier is read from the parcel's or someone else's say-so: the
+# local AI, the Parcel app and 17TRACK. Amazon is their carrier only with
+# one of its numbers.
+_SAID_SOURCES = frozenset({Source.AI, Source.PARCELAPP, Source.SEVENTEENTRACK})
 # Before any stored news: the one-time repair looks at every parcel.
 _EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
 
@@ -2166,6 +2184,113 @@ def _pair_by_day(
                 )
 
 
+# --- Packages of the day ---------------------------------------------------------
+
+
+def _of_day(state: ParcelState, day: date) -> bool:
+    """Return whether a parcel comes on a day: due then or late, or came then."""
+    if state.status in _NOT_COMING:
+        return False
+    if state.status is ParcelStatus.DELIVERED:
+        delivered = state.delivered_at or state.status_time
+        return delivered is None or local_date(delivered) == day
+    return state.eta is None or state.eta.end <= day
+
+
+def _box_may_hold(
+    order: Parcel, box: Parcel, apart: Callable[[Parcel, Parcel], bool]
+) -> bool:
+    """Return whether a carrier's package may hold an order of the same day.
+
+    Its shop must be the order's or unknown, its carrier the one the shop
+    named, if any, and it can't hold a public order when it's private. A
+    delivered order was in a package delivered within a few hours, and an
+    order that had news after the package came, or none before, wasn't in it.
+    """
+    mine, theirs = order.state, box.state
+    if box.private and not order.private:
+        return False
+    keys, box_keys = _shop_keys(order), _shop_keys(box)
+    if box_keys and keys.isdisjoint(box_keys):
+        return False
+    if (
+        not _same_carrier(mine.carrier, theirs.carrier)
+        or _parcels_conflict(order, box)
+        or apart(order, box)
+    ):
+        return False
+    delivered = _real_delivery(box)
+    if (
+        delivered is not None
+        and (first := first_news(order)) is not None
+        and first >= delivered
+    ):
+        return False
+    if mine.status is ParcelStatus.DELIVERED:
+        if theirs.status is not ParcelStatus.DELIVERED:
+            return False
+        came = None if mine.delivered_undated else mine.delivered_at
+        if (
+            came is not None
+            and delivered is not None
+            and abs(came - delivered) > BOX_DELIVERY_SLACK
+        ):
+            return False
+    elif (
+        delivered is not None
+        and mine.status_time is not None
+        and not mine.status_undated
+        and mine.status_time > delivered
+    ):
+        return False
+    return True
+
+
+def _box_rank(order: Parcel, box: Parcel) -> tuple[int, int]:
+    """Rank the packages that may hold an order: its shop's, its carrier's."""
+    family = carrier_family(order.state.carrier)
+    return (
+        0 if _shop_keys(order) & _shop_keys(box) else 1,
+        0 if family is not None and family == carrier_family(box.state.carrier) else 1,
+    )
+
+
+def boxes_of_day(
+    data: ParcelsData, parcels: Iterable[Parcel], day: date
+) -> dict[str, tuple[str, ...]]:
+    """Return the packages that may hold each of a day's orders.
+
+    An order here is a parcel of the day, delivered or not, of a known shop
+    and without a carrier's number. A carrier's package that no order is
+    linked to may hold it,
+    see :func:`_box_may_hold`: shops pack orders together, so one package
+    may hold several. Only the likeliest packages are kept, every one of
+    them on a tie. An order that no package may hold, or with a problem, is
+    left out.
+    """
+    apart = _apart_checker(data)
+    today = [parcel for parcel in parcels if _of_day(parcel.state, day)]
+    boxes = [
+        parcel
+        for parcel in today
+        if parcel.state.tracking_number and not parcel_order_keys(parcel)
+    ]
+    covered: dict[str, tuple[str, ...]] = {}
+    if not boxes:
+        return covered
+    for order in today:
+        state = order.state
+        if state.tracking_number or state.status in _PROBLEMS or not _shop_keys(order):
+            continue
+        fits = [box for box in boxes if _box_may_hold(order, box, apart)]
+        if fits:
+            best = min(_box_rank(order, box) for box in fits)
+            covered[order.id] = tuple(
+                box.id for box in fits if _box_rank(order, box) == best
+            )
+    return covered
+
+
 def _pair_by_reference(
     data: ParcelsData,
     pool: list[Parcel],
@@ -2446,13 +2571,48 @@ def _drop_recommendations(data: ParcelsData, now: datetime) -> set[str]:
     return changed
 
 
-def repair_store(data: ParcelsData, now: datetime) -> set[str]:
+def _forget_unproven_amazon_answers(data: ParcelsData) -> int:
+    """Drop Amazon as the carrier of the local AI's answers under review.
+
+    Amazon stays with one of its numbers. A fill that offered nothing else is
+    dropped, as when the user dismisses it. Returns how many answers changed.
+    """
+    changed = 0
+    for key, item in list(data.review.items()):
+        suggestion = item.suggestion
+        if (
+            item.source is not Source.AI
+            or suggestion is None
+            or suggestion.carrier != "amazon"
+            or any(amazon_logistics_number(n) for n in suggestion.tracking_numbers)
+        ):
+            continue
+        changed += 1
+        suggestion = replace(suggestion, carrier=None)
+        if item.fill and not (
+            suggestion.eta_start or suggestion.items or suggestion.tracking_numbers
+        ):
+            del data.review[key]
+            continue
+        item.suggestion = suggestion
+    return changed
+
+
+def repair_store(data: ParcelsData, now: datetime, since: int = 0) -> set[str]:
     """Fix what earlier versions stored; returns the changed parcel IDs.
+
+    ``since`` is the repair version the store already had: the steps marked
+    with a version run only for a store repaired before it.
 
     * Carrier brands in sender names become carriers, never merchants.
     * A shop's bare domain is replaced by its name from other e-mails.
-    * Amazon e-mails without a tracking number no longer claim that Amazon
-      delivers: the carrier is unknown until a carrier's e-mail names it.
+    * (3) Amazon e-mails without a tracking number no longer claim that
+      Amazon delivers: the carrier is unknown until a carrier's e-mail
+      names it.
+    * (4) Amazon is no longer the carrier that the local AI, the Parcel app
+      or 17TRACK gave without one of its numbers, nor the carrier learned
+      for a sender or offered by an answer waiting in "Needs review". What
+      a parser read ("Amazon Logistics") and the user's edits stay.
     * A shop's recommendations read as items are dropped.
     * Parcels of one order that are the same package are merged, undoably.
     * Orders are recorded again under the current order keys.
@@ -2460,10 +2620,15 @@ def repair_store(data: ParcelsData, now: datetime) -> set[str]:
     * A carrier's delivery and the shop's only parcel that could be it are
       merged, undoably, however old they are.
 
-    Every step can run again harmlessly.
+    The other steps can run again harmlessly. The fourth step's counts go to
+    the engine state under ``AMAZON_REPAIR_KEY``.
     """
+    unproven = {"origins": 0, "senders": 0, "answers": 0}
     for domain, prefs in data.senders.items():
-        if prefs.carrier and ships_with_many(domain):
+        if since < 4 and prefs.carrier == "amazon":
+            prefs.carrier = None
+            unproven["senders"] += 1
+        elif prefs.carrier and ships_with_many(domain):
             prefs.carrier = None
     names = _merchant_names(_all_origins(data))
     changed: set[str] = set()
@@ -2472,8 +2637,10 @@ def repair_store(data: ParcelsData, now: datetime) -> set[str]:
         for origin in parcel.origins.values():
             dirty |= _brand_carrier(origin)
             dirty |= _name_merchant(data, origin, names)
+            if origin.carrier != "amazon":
+                continue
             if (
-                origin.carrier == "amazon"
+                since < 3
                 and origin.source in (Source.PARSER, Source.AI)
                 and not origin.tracking_number
                 and (info := lookup(origin.label)) is not None
@@ -2481,9 +2648,20 @@ def repair_store(data: ParcelsData, now: datetime) -> set[str]:
             ):
                 origin.carrier = None
                 dirty = True
+            elif (
+                since < 4
+                and origin.source in _SAID_SOURCES
+                and not amazon_logistics_number(origin.tracking_number)
+            ):
+                origin.carrier = None
+                dirty = True
+                unproven["origins"] += 1
         if dirty:
             parcel.touch(now)
             changed.add(parcel.id)
+    if since < 4:
+        unproven["answers"] = _forget_unproven_amazon_answers(data)
+        data.engine[AMAZON_REPAIR_KEY] = unproven
     changed |= _drop_recommendations(data, now)
     merged = Reconciled()
     apart = _apart_checker(data)

@@ -45,6 +45,7 @@ S10 = "RR123456785PT"
 S10_BAD_CHECK_DIGIT = "RR123456784PT"
 UPS_NUMBER = "1Z999AA10123456784"
 GLS_NUMBER = "12345678901"
+AMAZON_LOGISTICS_NUMBER = "TBA123456789012"
 
 REFERENCE = date(2026, 11, 18)
 NOV_19 = date(2026, 11, 19)
@@ -624,6 +625,106 @@ def test_ai_carrier(
         assert error in result.notes
     else:
         assert not any(note.startswith("carrier") for note in result.notes)
+
+
+@pytest.mark.parametrize(
+    ("ai_carrier", "text", "sender", "carrier", "code"),
+    [
+        (
+            "Amazon",
+            "A sua encomenda foi enviada. Vendido e enviado por Amazon.",
+            "envio@amazon.es",
+            None,
+            "carrier_unproven",
+        ),
+        (
+            "Amazon Logistics",
+            "A sua encomenda Amazon foi enviada.",
+            "envio@amazon.es",
+            None,
+            "carrier_unproven",
+        ),
+        (
+            "Amazon",
+            "A sua encomenda foi enviada e será entregue pela Amazon Logistics.",
+            "envio@amazon.es",
+            "amazon",
+            None,
+        ),
+        (
+            "Amazon",
+            f"A sua encomenda foi enviada. Seguimento: {AMAZON_LOGISTICS_NUMBER}",
+            "envio@amazon.es",
+            "amazon",
+            None,
+        ),
+        (
+            "Amazon",
+            "A sua encomenda Amazon está a caminho.",
+            "no-reply@notifications.cttexpress.com",
+            "ctt_expresso",
+            None,
+        ),
+        (
+            "Amazon",
+            "A sua encomenda está a caminho.",
+            "no-reply@notifications.cttexpress.com",
+            "ctt_expresso",
+            "carrier_not_in_email",
+        ),
+    ],
+    ids=[
+        "shop",
+        "service-not-written",
+        "service-named",
+        "service-number",
+        "ctt",
+        "ctt-shop-not-named",
+    ],
+)
+def test_shop_named_as_the_carrier(
+    ai_carrier: str, text: str, sender: str, carrier: str | None, code: str | None
+) -> None:
+    """A shop that delivers too is the carrier only with its service's proof.
+
+    "Amazon" in Amazon's e-mails names the shop; only "Amazon Logistics" or
+    one of its numbers shows that it delivers. The shop's name is dropped
+    with a note, not a failed check, so the rest of the answer stands. A
+    carrier's own e-mail that names the shop keeps its carrier.
+    """
+    validation = validate(
+        answer(kind="shipped", merchant="Amazon", carrier=ai_carrier),
+        text,
+        sender=sender,
+    )
+    result = validation.result
+    assert result is not None
+    assert result.merchant == "Amazon"
+    assert result.shipments[-1].carrier == carrier
+    if code:
+        assert code in result.notes
+    else:
+        assert not any(note.startswith("carrier") for note in result.notes)
+    failed = code if code == "carrier_not_in_email" else None
+    assert validation.errors == ((failed,) if failed else ())
+
+
+@pytest.mark.parametrize(
+    ("sender_name", "carrier"),
+    [("Amazon", None), ("Amazon.es", None), ("Amazon Logistics", "amazon")],
+)
+def test_shop_sender_name_is_not_its_delivery_service(
+    sender_name: str, carrier: str | None
+) -> None:
+    """A sender named after a shop that delivers too isn't its carrier."""
+    result = checked(
+        answer(kind="shipped"),
+        "A sua encomenda foi enviada.",
+        sender="avisos@envios-exemplo.pt",
+        sender_name=sender_name,
+    )
+    assert result.shipments[0].carrier == carrier
+    assert not any(note.startswith("carrier") for note in result.notes)
 
 
 @pytest.mark.parametrize(

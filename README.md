@@ -75,7 +75,10 @@ api.parcel.app, which Parcels contacts itself with your API key.
   tracking number or an order number, and the details then show the shop and
   who delivers it ("Delivered by"). Until an e-mail names the carrier, or the
   tracking number's format gives it away, the parcel says "Carrier not known
-  yet".
+  yet". Amazon is the carrier (Amazon Logistics) only with one of its
+  numbers (`TBA` and 12 digits) or an e-mail naming Amazon Logistics:
+  Amazon's own e-mails name Amazon whoever delivers, and so do the Parcel
+  app's codes for Amazon's stores.
 - **Paack**: Paack's order IDs, nine letters and digits, `_` and the package
   number (such as `Ab3Cd4Ef5_1`), are kept as written, capitals included.
   The part before `_` is Paack's shipment reference, which the details show
@@ -375,7 +378,7 @@ entry.
 | Excluded devices | none | Devices that never get them, such as a shared tablet. |
 | Start time | 08:00 | Live Activities for parcels expected today start at this time. |
 | Cut-off time | 22:00 | Remaining Live Activities end at this time. |
-| Combine Live Activities above | 3 | With more parcels than this on one day, they share one Live Activity. |
+| Combine Live Activities above | 3 | With more packages than this on one day, they share one Live Activity. Orders that ride along with a package don't count. |
 | Show item names on the lock screen | off | When off, the lock screen shows shop, carrier, status and time window only. |
 | Live status from 17TRACK | on | Has effect only when the 17TRACK integration is set up. See [17TRACK](#17track). |
 | Parcel app API key | none | Turns on the [Parcel app](#parcel-app) source; needs Parcel Premium. The Parcel app options below show once a key is entered. Clear it to stop using Parcel. |
@@ -499,8 +502,8 @@ For a month view, add Home Assistant's own calendar card with
 `calendar.parcels`. It has no week grid, which is why Parcels brings its own.
 
 Parcels marked private show only to their owner. A return of a private parcel
-is private too: others see only "Private return" on its day. The review list's
-actions need an administrator.
+is private too: others see only "Private return" on its day. The review card,
+with **Needs review** and **Filtered**, shows only to administrators.
 
 ### Trusted and ignored senders
 
@@ -530,6 +533,32 @@ Administrators can also use the `parcels.trust_sender` and
 
 ## Delivery day
 
+### How the day is counted
+
+The day counts packages, not orders. A shop's e-mails often give no
+tracking number, and the carrier's e-mails about the package name no
+order, so Parcels can't always tell which package holds which order. An
+order of the day without a tracking number rides along with the day's
+packages that may hold it:
+
+- a carrier's package that no order is linked to, from the order's shop or
+  from a shop that isn't known, preferring the shop's own;
+- by the carrier the shop named, if it named one;
+- not one you kept apart from the order, with **Not this one**;
+- for an order that came, a package delivered within three hours of it.
+  An order whose first news came after the package was delivered, or that
+  had news since, wasn't in it.
+
+One package may hold several orders, since shops pack orders together. An
+order that rides along doesn't count, and starts no Live Activity or
+notification of its own. With **Show item names on the lock screen** on, the
+package's Live Activity or notification says what it may hold, such as
+"Possibly: Desk lamp (+2)". That's a guess: on the Parcels page the order
+stays as it is. An order that no package may hold counts on its own, as
+"Expected today", and so does one with a failed attempt or a problem. When an
+order stops riding along, for example after **Not this one**, it counts on its
+own again.
+
 ### Live Activities
 
 [Live Activities](https://companion.home-assistant.io/docs/notifications/live-activities/)
@@ -553,15 +582,17 @@ How they behave:
 
 - At the start time (08:00), each parcel expected today starts an activity:
   one with a single-day date, on the last day of its date range, or announced
-  for today. Later in the day a parcel starts one as soon as it's out for
-  delivery or ready for pickup.
-- With more parcels than the threshold (3) on one iPhone, they share one
+  for today. Orders that ride along with a package don't. Later in the day a
+  parcel starts one as soon as it's out for delivery or ready for pickup.
+- With more packages than the threshold (3) on one iPhone, they share one
   activity, such as "2 of 5 delivered · next: DPD 13–14h", for the rest of the
-  day.
+  day. Orders that ride along with a package don't count (see
+  [How the day is counted](#how-the-day-is-counted)).
 - Updates are sent only when something changes, and silently unless the
   status changed. A time window shows a countdown.
 - A delivered parcel shows "Delivered ✓" with the time when it's known, and
-  its activity ends 30 minutes later.
+  its activity ends 30 minutes later. So does a shared activity once every
+  package is delivered ("3 of 3 delivered ✓").
 - Apple ends activities after 8 hours, so an undelivered parcel's activity is
   restarted after 7.5 hours. The new activity plays the start alert once,
   because iOS doesn't let a new activity start silently.
@@ -581,9 +612,12 @@ From the start time until the next morning, a persistent notification in Home
 Assistant (`parcels_today`) lists the day's parcels with their shop, carrier,
 status and time window, and links to the Parcels page. Packages of one shipment
 with the same status share a line, with their count ("4 packages"); delivered
-ones keep their own line, with the time when it's known. Private parcels are
-only counted. Parcels ready for pickup stay in it for up to a week. The
-**Daily notification** switch turns it off and on.
+ones keep their own line, with the time when it's known. Orders that ride
+along with a package aren't in the count: a shop's orders that the same
+packages may hold share a line, such as "Amazon · 2 orders · Possibly in a
+package from CTT Expresso". Private parcels are only counted, and private
+orders that ride along aren't mentioned. Parcels ready for pickup stay in it
+for up to a week. The **Daily notification** switch turns it off and on.
 
 Return pickups show only on the Parcels page and in `calendar.parcels`: they
 start no Live Activity or notification, and aren't in the persistent
@@ -684,7 +718,9 @@ To set it up:
 
 **Deliveries only in Parcel**, such as the ones you add in the app, show as
 parcels of the Parcel app user, named after the shop when Parcels can tell
-it, such as Amazon, and otherwise after their name in Parcel. When an e-mail
+it, such as Amazon, and otherwise after their name in Parcel. Parcel's codes
+for Amazon's stores, such as `amzles` for Amazon Spain, name the shop, not
+the carrier: Parcel follows those orders whoever delivers them. When an e-mail
 with the same tracking number arrives, it joins that parcel. A delivery under
 an Amazon order number joins that order's parcel, and is left out when the
 order has several parcels, since Parcels can't tell which one Parcel follows.
@@ -838,9 +874,9 @@ refund e-mail that the answer says with confidence isn't about a parcel.
 Paack's order IDs are kept as the e-mail writes them, and in Paack's own
 e-mails the part before `_`, given alone as the order number, becomes the
 shipment reference. [docs/ai-benchmark.md](docs/ai-benchmark.md) lists the
-checks. An answer that fails one waits in **Needs review**, where **Checks
-the AI answer failed** names the checks it failed, such as
-`tracking_not_in_email`, without any values. The
+checks. An answer that fails one waits in **Needs review**, which only
+administrators see. There, **Checks the AI answer failed** names the checks
+it failed, such as `tracking_not_in_email`, without any values; the
 [list of codes](docs/ai-benchmark.md#check-codes) explains each one.
 
 Limits: 5 minutes per e-mail, one retry, 50 e-mails a day, and only the last
@@ -1023,6 +1059,18 @@ actions:
 - **No Live Activity.** Check the iPhone's Live Activities setting for the
   Home Assistant app, remote access, the **Live Activities** switch, test mode
   and the people to notify, then try `parcels.test_live_activity`.
+- **Live Activities count fewer parcels than the page.** Orders that one of
+  the day's packages may hold ride along with it (see
+  [How the day is counted](#how-the-day-is-counted)). The notifications part
+  of the hub's diagnostics counts today's (`orders_in_a_box`).
+- **Amazon shows as the carrier, but didn't deliver.** Before 0.1.8, Amazon
+  became the carrier whenever the local AI, the Parcel app or 17TRACK named
+  it, which kept Amazon's orders apart from their carrier's deliveries. After
+  the update, Parcels drops that carrier once wherever no Amazon Logistics
+  number proves it, also from the carriers learned for senders and the
+  answers waiting in **Needs review**, and pairs the parcels again. What a
+  parser read and your own edits stay. The hub's diagnostics count what it
+  changed (`amazon_carrier_repaired`).
 - **Diagnostics.** **Download diagnostics** on the hub or a mailbox gives
   counts and states, without addresses, tokens or parcel details. The hub's
   include the last 14 days' e-mails counted by day, sender and state, with
@@ -1030,8 +1078,11 @@ actions:
   (`recent_emails`), where working days come from (`working_days`), the
   refunds ignored (`refunds_dropped`), the check after updating to 0.1.5
   (`returns_check`), Paack's matches (`paack_amazon`), the shapes of
-  Amazon's shipment IDs (`amazon_shipment_ids`) and the parcels whose Parcel
-  app events the update to 0.1.7 placed again (`parcel_app_dates_repaired`);
+  Amazon's shipment IDs (`amazon_shipment_ids`), the parcels whose Parcel
+  app events the update to 0.1.7 placed again (`parcel_app_dates_repaired`)
+  and the sources, senders and answers whose unproven Amazon carrier the
+  update to 0.1.8 dropped (`amazon_carrier_repaired`); its notifications part
+  counts today's orders that ride along with a package (`orders_in_a_box`);
   its 17TRACK part counts the numbers 17TRACK can't find, by carrier
   (`not_found_by_carrier`); its Parcel app part (`parcelapp`) counts the
   deliveries read, matched, shown on their own and left out, and today's

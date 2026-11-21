@@ -8,12 +8,19 @@ the few marked otherwise need something Parcels can't give.
 Parcels only adds a number under a code it is sure of. GLS, DPD, InPost and
 DHL have several codes each, by country and service, so their codes are
 learned from the deliveries the user added himself instead.
+
+Amazon's codes don't name a carrier: Parcel follows orders from Amazon's
+stores under amzl* codes (Amazon Spain is amzles), whoever delivers them, and
+Amazon Shipping (amship*) and swiship carry other shops' goods. Only an
+Amazon Logistics number makes Amazon the carrier.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Final
+
+from ..parsers.tracking import amazon_logistics_number
 
 # Parcels' carrier -> Parcel's code.
 _CODES: Final[Mapping[str, str]] = {
@@ -96,13 +103,10 @@ _REVERSE: Final[Mapping[str, str]] = {
     "dicom": "gls",
     "gso": "gls",
     "inpespcode": "inpost",
-    "swiship": "amazon",
 }
 # Families of codes, by prefix; the longest prefix first.
 _PREFIXES: Final[tuple[tuple[str, str], ...]] = (
-    ("amship", "amazon"),
     ("inpost", "inpost"),
-    ("amzl", "amazon"),
     ("tntp", "postnl"),
     ("dhl", "dhl"),
     ("dpd", "dpd"),
@@ -117,10 +121,26 @@ def normalize_code(code: object) -> str | None:
     return text if text.isascii() and text.isalnum() and len(text) <= 32 else None
 
 
-def parcels_carrier(code: object) -> str | None:
-    """Return the Parcels carrier a Parcel code stands for, or None."""
+def amazon_store(code: object) -> bool:
+    """Return True for the code of one of Amazon's stores (amzl*)."""
+    return (normalize_code(code) or "").startswith("amzl")
+
+
+def amazon_code(code: object) -> bool:
+    """Return True for Amazon's codes: its stores, Amazon Shipping, swiship."""
+    text = normalize_code(code) or ""
+    return amazon_store(text) or text.startswith("amship") or text == "swiship"
+
+
+def parcels_carrier(code: object, number: str | None = None) -> str | None:
+    """Return the Parcels carrier a Parcel code stands for, or None.
+
+    Amazon's codes stand for Amazon Logistics only with one of its numbers.
+    """
     if (text := normalize_code(code)) is None:
         return None
+    if amazon_code(text):
+        return "amazon" if amazon_logistics_number(number) else None
     if (carrier := _REVERSE.get(text)) is not None:
         return carrier
     return next(

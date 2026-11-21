@@ -1562,6 +1562,12 @@ async def test_reads_more_often_on_delivery_day(
         (NUMBER, "ups", SHOP, None, SHOP, "ups"),
         (NUMBER, "ups", "Amazon.es order", "Amazon", "Amazon.es order", "ups"),
         (TBA, "amzles", "Headphones", "Amazon", "Headphones", "amazon"),
+        # Amazon's stores follow orders; only Amazon Logistics' numbers say
+        # who delivers.
+        (GLS, "amzles", "Headphones", "Amazon", "Headphones", None),
+        # Amazon Shipping and Amazon's sellers' site carry other shops' goods.
+        (GLS, "amshipuk", "Headphones", None, "Headphones", None),
+        (TBA, "swiship", "Headphones", None, "Headphones", "amazon"),
         (GLS, None, SHOP, None, SHOP, None),
         (NUMBER, "ups", None, None, None, "ups"),
         (NUMBER, "ups", "Parcels", None, None, "ups"),
@@ -1949,8 +1955,9 @@ async def test_order_without_a_parcel_becomes_one(
         origin.tracking_number,
         origin.order_numbers,
         origin.owners,
-    ) == ("Amazon", "amazon", None, (ORDER,), (OWNER,))
+    ) == ("Amazon", None, None, (ORDER,), (OWNER,))
     assert parcel.state.merchant == "Amazon"
+    assert parcel.state.carrier is None
     assert counts(engine) == (1, 0, 1, 0)
 
     joined = amazon_order(engine, "a")
@@ -3449,6 +3456,8 @@ def test_delivery_key(value: Any, expected: str | None) -> None:
         (ORDER_KEY, ORDER_KEY, "ups", None),
         (ORDER_KEY, ORDER_KEY, None, None),
         (TBA, TBA, "amzles", None),
+        (ORDER_KEY, ORDER_KEY, "swiship", None),
+        (ORDER_KEY, ORDER_KEY, "amshipuk", None),
         ("TBA12345678901234", "TBA12345678901234", "amzles", None),
         ("4051234567123456", "4051234567123456", "amzles", None),
     ],

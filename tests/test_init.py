@@ -22,7 +22,7 @@ from custom_components.parcels.dedup import (
     apply_contribution,
 )
 from custom_components.parcels.engine import ParcelsEngine, get_engine
-from custom_components.parcels.models import ParcelsData
+from custom_components.parcels.models import ParcelsData, Source
 from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.store import ParcelsStore
 
@@ -315,4 +315,66 @@ async def test_start_repairs_again_for_newer_rules(
         engine = await async_setup_parcels(hass)
 
     repair.assert_called_once()
+    # Only the rules added since run again.
+    assert repair.call_args.kwargs["since"] == 1
     assert engine.data.engine[REPAIR_KEY] == REPAIR_VERSION
+
+
+async def test_start_forgets_an_unproven_amazon_carrier(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """A store 0.1.7 repaired loses the carriers Amazon never proved.
+
+    The local AI and the Parcel app named Amazon without one of its numbers;
+    what a parser read stays.
+    """
+    data = ParcelsData()
+    data.engine[REPAIR_KEY] = 3
+    when = datetime(2026, 11, 16, 9, tzinfo=UTC)
+    parcels: dict[Source, str] = {}
+    for day, source, origin_id, label in (
+        (19, Source.AI, "msg:ai#0", "amazon.es"),
+        (20, Source.PARCELAPP, "pa:171-0000020-0000001", "Parcel app"),
+        (21, Source.PARSER, "msg:parser#0", "amazon.es"),
+    ):
+        parcel_id = apply_contribution(
+            data,
+            contribution(
+                origin_id,
+                time=when,
+                carrier="amazon",
+                merchant="Amazon.es",
+                orders=[f"171-00000{day}-0000001"],
+                eta=Eta(start=date(2026, 11, day), end=date(2026, 11, day)),
+                source=source,
+                label=label,
+            ),
+            when,
+        ).parcel_id
+        assert parcel_id is not None
+        parcels[source] = parcel_id
+    hass_storage["parcels"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "parcels",
+        "data": data.as_dict(),
+    }
+    add_hub(hass)
+
+    engine = await async_setup_parcels(hass)
+
+    carriers = {
+        source: engine.data.parcels[parcel_id].state.carrier
+        for source, parcel_id in parcels.items()
+    }
+    assert carriers == {
+        Source.AI: None,
+        Source.PARCELAPP: None,
+        Source.PARSER: "amazon",
+    }
+    assert engine.data.engine[REPAIR_KEY] == REPAIR_VERSION
+    assert engine.diagnostics()["amazon_carrier_repaired"] == {
+        "origins": 2,
+        "senders": 0,
+        "answers": 0,
+    }

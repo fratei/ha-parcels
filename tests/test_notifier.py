@@ -36,6 +36,7 @@ from custom_components.parcels.const import (
     PERSISTENT_NOTIFICATION_ID,
     ParcelStatus,
 )
+from custom_components.parcels.dedup import repair_store
 from custom_components.parcels.models import (
     Origin,
     Parcel,
@@ -1108,6 +1109,318 @@ async def test_pickup(env: Env, hass: HomeAssistant) -> None:
     )
 
 
+def _amazon_said_it_delivers(order: Parcel, source: Source) -> None:
+    """Add what 0.1.7 stored: Amazon as the carrier, without one of its numbers."""
+    origin = Origin(
+        id=f"said-{order.id}",
+        source=source,
+        time=at(7),
+        carrier="amazon",
+        merchant="Amazon",
+    )
+    order.origins[origin.id] = origin
+    order.touch(at(7))
+
+
+async def test_delivery_day_counts_packages(env: Env, hass: HomeAssistant) -> None:
+    """Orders without a carrier number ride in the day's packages: 3 of 3."""
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 2})
+    ctt = env.parcel(eta=on(), carrier="ctt_expresso")
+    paack = [env.parcel(eta=on(), merchant=None, carrier="paack") for _ in range(2)]
+    lamp = env.parcel(eta=on(), carrier=None, items=("Desk lamp",))
+    gifts = env.parcel(
+        eta=on(), carrier=None, items=("Blue scarf", "Wool hat", "Green gloves")
+    )
+    _amazon_said_it_delivers(lamp, Source.PARCELAPP)
+    _amazon_said_it_delivers(gifts, Source.AI)
+    assert lamp.state.carrier == gifts.state.carrier == "amazon"
+    # The one-time repair forgets it.
+    repair_store(env.host.data, at(7), since=3)
+    assert len(env.host.data.parcels) == 5
+    assert lamp.state.carrier is None
+    assert gifts.state.carrier is None
+
+    notifier = await env.start()
+    await env.goto(at(8))
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "0 of 3 delivered",
+            "0/3",
+            0,
+            BOX,
+            0.5,
+            progress_max=3,
+        )
+    ]
+
+    await env.goto(at(11, 10))
+    env.change(ctt, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "1 of 3 delivered",
+            "1/3",
+            1,
+            BOX,
+            0.5,
+            progress_max=3,
+        )
+    ]
+
+    await env.goto(at(14, 20))
+    for box in paack:
+        env.change(box, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"3 of 3 delivered {CHECK}",
+            "3/3",
+            3,
+            DONE,
+            0.2,
+            progress_max=3,
+        )
+    ]
+
+    await env.goto(at(14, 51))
+    assert phone.take() == [end(COMBINED)]
+
+    # The Parcel app tells, without a date, that an order came: in a package.
+    await env.goto(at(15, 2))
+    env.change(lamp, S.DELIVERED, undated=True)
+    await env.settle()
+    assert phone.take() == []
+    assert persistent(hass) == lines(
+        "**3 parcels today**",
+        "",
+        f"- Amazon{SEP}CTT Expresso{SEP}Delivered 11:10 {CHECK}",
+        f"- Paack{SEP}Delivered 14:20 {CHECK}",
+        f"- Paack{SEP}Delivered 14:20 {CHECK}",
+        f"- Amazon{SEP}2 orders{SEP}Possibly in a package from CTT Expresso",
+        "",
+        f"[Open Parcels]({PATH})",
+    )
+    assert notifier.diagnostics()["today"]["orders_in_a_box"] == 2
+
+
+async def test_order_no_package_could_hold_counts_alone(env: Env) -> None:
+    """An order that none of the day's packages could hold is its own entry."""
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    box = env.parcel(eta=on(), carrier="gls")
+    alone = env.parcel(eta=on(), carrier=None)
+    # The shop named CTT, which doesn't deliver the GLS package.
+    alone.origins["named"] = Origin(
+        id="named", source=Source.PARSER, time=at(7), carrier="ctt", merchant="Amazon"
+    )
+    alone.touch(at(7))
+    env.parcel(eta=on(), carrier=None)
+    await env.start()
+    await env.goto(at(8))
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "0 of 2 delivered",
+            "0/2",
+            0,
+            BOX,
+            0.5,
+            progress_max=2,
+        )
+    ]
+
+    await env.goto(at(10))
+    env.change(box, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "1 of 2 delivered",
+            "1/2",
+            1,
+            BOX,
+            0.5,
+            progress_max=2,
+        )
+    ]
+    await env.goto(at(10, 31))
+    assert phone.take() == []
+
+
+async def test_orders_wait_for_their_package(env: Env) -> None:
+    """Until the package that may hold them comes, its orders are pending."""
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    amazon = env.parcel(eta=on(), carrier="ctt")
+    zalando = env.parcel(eta=on(), merchant="Zalando", carrier="gls")
+    env.parcel(eta=on(), carrier=None)
+    await env.start()
+    await env.goto(at(8))
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "0 of 2 delivered",
+            "0/2",
+            0,
+            BOX,
+            0.5,
+            progress_max=2,
+        )
+    ]
+
+    await env.goto(at(10))
+    env.change(zalando, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "1 of 2 delivered",
+            "1/2",
+            1,
+            BOX,
+            0.5,
+            progress_max=2,
+        )
+    ]
+    await env.goto(at(10, 31))
+    assert phone.take() == []
+
+    await env.goto(at(12))
+    env.change(amazon, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"2 of 2 delivered {CHECK}",
+            "2/2",
+            2,
+            DONE,
+            0.2,
+            progress_max=2,
+        )
+    ]
+    await env.goto(at(12, 31))
+    assert phone.take() == [end(COMBINED)]
+
+
+async def test_order_of_another_shop_counts_alone(env: Env) -> None:
+    """A package from one shop never holds another shop's order."""
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    boxes = [
+        env.parcel(eta=on(), carrier="ctt"),
+        env.parcel(eta=on(), merchant="Zalando", carrier="gls"),
+    ]
+    env.parcel(eta=on(), carrier=None)
+    env.parcel(eta=on(), merchant="Decathlon", carrier=None)
+    await env.start()
+    await env.goto(at(8))
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "0 of 3 delivered",
+            "0/3",
+            0,
+            BOX,
+            0.5,
+            progress_max=3,
+        )
+    ]
+
+    await env.goto(at(10))
+    for box in boxes:
+        env.change(box, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "2 of 3 delivered",
+            "2/3",
+            2,
+            BOX,
+            0.5,
+            progress_max=3,
+        )
+    ]
+    await env.goto(at(10, 31))
+    assert phone.take() == []
+
+
+async def test_package_shows_the_orders_it_may_hold(
+    env: Env, hass: HomeAssistant
+) -> None:
+    """A package's activity names, as uncertain, the orders it may hold."""
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    env.hub(**{CONF_ITEM_NAMES: True, CONF_COLLAPSE_THRESHOLD: 9})
+    box = env.parcel(eta=on(), carrier="ctt")
+    lamp = env.parcel(eta=on(), carrier=None, items=("Desk lamp",))
+    env.parcel(eta=on(), carrier=None, items=("Blue scarf", "Wool hat"))
+    env.parcel(
+        eta=on(), carrier=None, items=("Secret gift",), owners=(ALEX,), private=True
+    )
+    await env.start()
+    await env.goto(at(8))
+    possibly = f"CTT{SEP}Possibly: Desk lamp (+2)"
+    assert iphone.take() == [
+        activity(
+            tag_of(box),
+            "Amazon",
+            f"Expected today{SEP}{possibly}",
+            "Today",
+            2,
+            TRUCK,
+            0.5,
+        )
+    ]
+    assert ipad.take() == []
+
+    await env.goto(at(10, 42))
+    env.change(box, S.DELIVERED)
+    await env.settle()
+    delivered = f"Delivered {CHECK} 10:42{SEP}{possibly}"
+    assert iphone.take() == [
+        activity(tag_of(box), "Amazon", delivered, f"{CHECK} 10:42", 4, DONE, 0.2)
+    ]
+    assert ipad.take() == [
+        {
+            "title": "Amazon",
+            "message": delivered,
+            "data": {"tag": tag_of(box), "url": PATH},
+        }
+    ]
+
+    await env.goto(at(10, 50))
+    env.change(lamp, S.DELIVERED, undated=True)
+    await env.settle()
+    assert iphone.take() == ipad.take() == []
+    await env.goto(at(11, 13))
+    assert iphone.take() == [end(tag_of(box))]
+    assert ipad.take() == []
+    assert persistent(hass) == lines(
+        "**1 parcel today**",
+        "",
+        f"- Amazon{SEP}CTT{SEP}Delivered 10:42 {CHECK}",
+        f"- Amazon{SEP}2 orders{SEP}Possibly in a package from CTT",
+        "",
+        f"[Open Parcels]({PATH})",
+    )
+
+
 async def test_test_live_activity(env: Env, hass: HomeAssistant) -> None:
     """The demo activity goes to one iPhone and ends a minute later."""
     iphone = env.phone("Alex iPhone", ALEX)
@@ -1175,6 +1488,7 @@ async def test_diagnostics(env: Env) -> None:
         "activity_starts": 1,
         "running": 1,
         "notifications_sent": 0,
+        "orders_in_a_box": 0,
     }
     dumped = json.dumps(diagnostics).casefold()
     for secret in (iphone.device_id, android.device_id, parcel.id, "Amazon", "Alex"):

@@ -787,6 +787,15 @@ def detect_carrier(number: str) -> str | None:
     return None
 
 
+def amazon_logistics_number(number: str | None) -> bool:
+    """Return True for an Amazon Logistics number (TBA and 12 digits).
+
+    Only that format proves Amazon delivers a parcel: Amazon's e-mails name
+    Amazon whoever carries the parcel.
+    """
+    return bool(number) and detect_carrier(number) == "amazon"
+
+
 def _self_identifying(number: str) -> bool:
     """True for numbers that need no context: S10, 1Z and prefixed formats."""
     return is_s10(number) or detect_carrier(number) is not None

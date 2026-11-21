@@ -6,26 +6,36 @@ Also how e-mails about one of an order's packages find that package.
 from __future__ import annotations
 
 from collections.abc import Callable, Generator
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from homeassistant.util import dt as dt_util
 import pytest
 
-from custom_components.parcels.const import MailKind, ParcelStatus
+from custom_components.parcels.const import (
+    REASON_AI_FILL,
+    REASON_AI_SUGGESTION,
+    MailKind,
+    ParcelStatus,
+)
 from custom_components.parcels.dedup import (
+    AMAZON_REPAIR_KEY,
     REASON_SAME_MERCHANT_DAY,
     REASON_SAME_MERCHANT_DOMAIN,
     REASON_SAME_MERCHANT_ETA,
     REASON_SAME_ORDER,
     REASON_SAME_REFERENCE,
+    REPAIR_VERSION,
     Applied,
     Contribution,
     DedupError,
     accept_suggestion,
     apply_contribution,
+    boxes_of_day,
     dismiss_suggestion,
     infer_deliveries,
+    keep_apart,
     merge_parcels,
     order_parcels,
     reconcile,
@@ -35,7 +45,16 @@ from custom_components.parcels.dedup import (
     undo_inferred_delivery,
     update_parcel,
 )
-from custom_components.parcels.models import ParcelEvent, ParcelsData, Source, order_key
+from custom_components.parcels.models import (
+    Origin,
+    Parcel,
+    ParcelEvent,
+    ParcelsData,
+    ReviewItem,
+    Source,
+    Suggestion,
+    order_key,
+)
 from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.parsers.tracking import tracking_url
 from custom_components.parcels.views import shipment_groups
@@ -50,6 +69,8 @@ CTT_2 = "EX123456789013"
 SHOP = "bricolage-exemplo.example"
 SHOP_NAME = "Bricolage Exemplo"
 SHOP_ORDER = "5180001234"
+SELLER_SHOP = "loja-exemplo.example"
+AMAZON_LOGISTICS = "TBA123456789012"
 GLS = ("61234567890123", "61234567890124", "61234567890125")
 LM = "leroymerlin.pt"
 LM_NAME = "Leroy Merlin"
@@ -884,6 +905,185 @@ def test_repair_forgets_a_carrier_learned_for_amazon() -> None:
     assert data.senders[SHOP].carrier == "gls"
 
 
+def test_repair_forgets_an_unproven_amazon_carrier() -> None:
+    """Amazon is a parcel's carrier only when one of its numbers proves it.
+
+    The local AI and the Parcel app gave Amazon as the carrier of Amazon's
+    orders that other carriers delivered, after 0.1.3's repair. What a
+    parser read in Amazon's e-mail ("Amazon Logistics") and the user's own
+    edits stay.
+    """
+    data = ParcelsData()
+    by_ai = _apply(
+        data,
+        _amazon(
+            "msg:a1#0",
+            ORDER_1,
+            _nov(16, 8),
+            _eta(19),
+            carrier="amazon",
+            source=Source.AI,
+        ),
+    )
+    parcel_app = _apply(
+        data,
+        contribution(
+            f"pa:{ORDER_2}",
+            time=_nov(16, 9),
+            carrier="amazon",
+            merchant="Amazon",
+            orders=[ORDER_2],
+            eta=_eta(20),
+            source=Source.PARCELAPP,
+            label="Parcel app",
+        ),
+    )
+    proven = _apply(
+        data,
+        _amazon(
+            "msg:a3#0",
+            ORDER_3,
+            _nov(16, 10),
+            _eta(21),
+            carrier="amazon",
+            number=AMAZON_LOGISTICS,
+            source=Source.AI,
+        ),
+    )
+    named = _apply(
+        data,
+        _amazon(
+            "msg:a4#0", "171-0000004-0000004", _nov(16, 11), _eta(22), carrier="amazon"
+        ),
+    )
+    edited = _apply(
+        data, _amazon("msg:a5#0", "171-0000005-0000005", _nov(16, 12), _eta(23))
+    )
+    update_parcel(data, edited, {"carrier": "amazon"}, _nov(16, 13))
+
+    changed = repair_store(data, _nov(22, 8), since=3)
+
+    assert changed == {by_ai, parcel_app}
+    carriers = {
+        parcel_id: data.parcels[parcel_id].state.carrier
+        for parcel_id in (by_ai, parcel_app, proven, named, edited)
+    }
+    assert carriers == {
+        by_ai: None,
+        parcel_app: None,
+        proven: "amazon",
+        named: "amazon",
+        edited: "amazon",
+    }
+    counts = {"origins": 2, "senders": 0, "answers": 0}
+    assert data.engine[AMAZON_REPAIR_KEY] == counts
+    assert repair_store(data, _nov(22, 9), since=REPAIR_VERSION) == set()
+    assert data.engine[AMAZON_REPAIR_KEY] == counts
+
+
+def _answer(
+    item_id: str,
+    suggestion: Suggestion,
+    *,
+    fill: bool = False,
+    source: Source = Source.AI,
+    reason: str = REASON_AI_SUGGESTION,
+) -> ReviewItem:
+    """An e-mail waiting under "Needs review"."""
+    return ReviewItem(
+        id=item_id,
+        created=_nov(20, 8),
+        message=f"m-{item_id}",
+        received=_nov(20, 8),
+        sender=f"Loja Exemplo <envios@{SELLER_SHOP}>",
+        sender_domain=SELLER_SHOP,
+        subject="A sua encomenda foi enviada",
+        mailbox="entry",
+        owner="person.one",
+        reason=REASON_AI_FILL if fill else reason,
+        authenticated=True,
+        source=source,
+        suggestion=suggestion,
+        fill=fill,
+    )
+
+
+def test_repair_forgets_an_unproven_amazon_carrier_under_review() -> None:
+    """Answers under review and learned carriers lose an unproven Amazon.
+
+    The rest of an answer stands, as for a new answer. A fill that offered
+    only the carrier is dropped.
+    """
+    data = ParcelsData()
+    data.sender(SELLER_SHOP).carrier = "amazon"
+    data.sender(SHOP).carrier = "gls"
+    amazon = Suggestion(
+        kind=MailKind.SHIPPED,
+        merchant="Amazon",
+        carrier="amazon",
+        order_numbers=(ORDER_1,),
+    )
+    proven = replace(amazon, tracking_numbers=(AMAZON_LOGISTICS,))
+    dated = Suggestion(
+        kind=MailKind.SHIPPED,
+        carrier="amazon",
+        eta_start=date(2026, 11, 21),
+        eta_end=date(2026, 11, 21),
+    )
+    data.review = {
+        "r1": _answer("r1", amazon),
+        "r2": _answer("r2", proven),
+        "r3": _answer(
+            "r3", Suggestion(kind=MailKind.SHIPPED, carrier="amazon"), fill=True
+        ),
+        "r4": _answer("r4", dated, fill=True),
+        "r5": _answer("r5", amazon, source=Source.PARSER, reason="low_confidence"),
+    }
+
+    repair_store(data, _nov(22, 8), since=3)
+
+    assert data.senders[SELLER_SHOP].carrier is None
+    assert data.senders[SHOP].carrier == "gls"
+    assert set(data.review) == {"r1", "r2", "r4", "r5"}
+    answer = data.review["r1"]
+    assert answer.suggestion == replace(amazon, carrier=None)
+    assert (answer.reason, answer.errors) == (REASON_AI_SUGGESTION, ())
+    assert data.review["r2"].suggestion == proven
+    assert data.review["r2"].errors == ()
+    assert data.review["r4"].suggestion == replace(dated, carrier=None)
+    assert data.review["r4"].errors == ()
+    assert data.review["r5"].suggestion == amazon
+    assert data.engine[AMAZON_REPAIR_KEY] == {
+        "origins": 0,
+        "senders": 1,
+        "answers": 3,
+    }
+
+
+def test_order_pairs_with_its_delivery_once_amazon_is_not_its_carrier() -> None:
+    """An order that lost its unproven carrier pairs with the day's delivery."""
+    data = _separate(
+        _amazon(
+            "msg:a1#0",
+            ORDER_1,
+            _nov(16, 9),
+            _eta(18),
+            items=[MUG],
+            carrier="amazon",
+            source=Source.AI,
+        ),
+        _ctt("msg:t1#0", CTT_1, MailKind.DELIVERED, _nov(18, 11, 12)),
+    )
+
+    repair_store(data, _nov(18, 14), since=3)
+
+    (parcel,) = data.parcels.values()
+    assert parcel.state.carrier == "ctt_expresso"
+    assert parcel.state.status is ParcelStatus.DELIVERED
+    assert parcel.state.items == (MUG,)
+    assert parcel.auto_merged is not None
+
+
 @pytest.mark.parametrize(("delivered_day", "merged"), [(15, True), (12, False)])
 def test_delivery_read_first_joins_its_order(delivered_day: int, merged: bool) -> None:
     """An order's "delivered" e-mail read before its "shipped" e-mail is one parcel.
@@ -1513,3 +1713,122 @@ def test_paack_stem_is_suggested_for_each_package() -> None:
     assert parcel.auto_merged is not None
     assert parcel.auto_merged.reason == REASON_SAME_REFERENCE
     assert parcel.state.status is ParcelStatus.OUT_FOR_DELIVERY
+
+
+DAY_20 = date(2026, 11, 20)
+
+
+def _day_parcel(
+    pid: str,
+    status: ParcelStatus = ParcelStatus.IN_TRANSIT,
+    when: datetime | None = None,
+    *,
+    carrier: str | None = None,
+    tracked: bool | None = None,
+    merchant: str | None = "Amazon",
+    orders: tuple[str, ...] = (),
+    eta: Eta | None = None,
+    private: bool = False,
+    first: datetime | None = None,
+    undated: bool = False,
+) -> Parcel:
+    """A parcel of one e-mail, due on the 20th; a carrier brings its number."""
+    moment = when or _nov(20, 7)
+    origin = Origin(
+        id=f"origin-{pid}",
+        source=Source.PARSER,
+        time=first or _nov(20, 7),
+        carrier=carrier,
+        tracking_number=f"TEST{pid.upper()}"
+        if (carrier if tracked is None else tracked)
+        else None,
+        merchant=merchant,
+        order_numbers=orders,
+    )
+    event = ParcelEvent(
+        time=moment,
+        source=Source.PARSER,
+        origin=origin.id,
+        status=status,
+        eta=eta or _eta(20),
+        force=True,
+        undated=undated,
+        by=moment if undated else None,
+    )
+    return Parcel(
+        id=pid,
+        created=origin.time,
+        updated=moment,
+        origins={origin.id: origin},
+        events=[event],
+        private=private,
+    )
+
+
+def _boxes(
+    *parcels: Parcel, apart: tuple[Parcel, Parcel] | None = None
+) -> dict[str, tuple[str, ...]]:
+    data = ParcelsData()
+    for parcel in parcels:
+        data.parcels[parcel.id] = parcel
+    if apart is not None:
+        keep_apart(data, *apart)
+    return boxes_of_day(data, parcels, DAY_20)
+
+
+def test_boxes_of_day() -> None:
+    """Which of the day's packages may hold an order without a carrier number."""
+    delivered = ParcelStatus.DELIVERED
+    order = _day_parcel("order")
+    box = _day_parcel("box", carrier="ctt_expresso")
+    # The shop's package, or one whose shop isn't known; the shop's first.
+    assert _boxes(order, box) == {"order": ("box",)}
+    paack = _day_parcel("paack", carrier="paack", merchant=None)
+    assert _boxes(order, paack) == {"order": ("paack",)}
+    assert _boxes(paack, order, box) == {"order": ("box",)}
+    # As likely: both.
+    gls = _day_parcel("gls", carrier="gls")
+    assert _boxes(order, box, gls) == {"order": ("box", "gls")}
+    # The carrier the shop named, when known, first.
+    ctt_order = _day_parcel("order", carrier="ctt", tracked=False)
+    assert _boxes(ctt_order, gls, box) == {"order": ("box",)}
+    assert _boxes(_day_parcel("order", carrier="dpd", tracked=False), box) == {}
+
+    # Never another shop's package, a private package for a public order, a
+    # package of another day, a pickup, or one that names an order.
+    assert (
+        _boxes(order, _day_parcel("zalando", carrier="gls", merchant="Zalando")) == {}
+    )
+    assert _boxes(order, _day_parcel("box", carrier="ctt", private=True)) == {}
+    assert _boxes(_day_parcel("order", private=True), box) == {"order": ("box",)}
+    assert _boxes(order, _day_parcel("box", carrier="ctt", eta=_eta(21))) == {}
+    ready = ParcelStatus.READY_FOR_PICKUP
+    assert _boxes(order, _day_parcel("box", ready, carrier="ctt")) == {}
+    assert _boxes(order, _day_parcel("box", carrier="ctt", orders=(ORDER_1,))) == {}
+    assert _boxes(order, box, apart=(order, box)) == {}
+    # An order with a problem, one without a shop, or one due later stands alone.
+    attempted = ParcelStatus.ATTEMPTED
+    assert _boxes(_day_parcel("order", attempted), box) == {}
+    assert _boxes(_day_parcel("order", merchant=None), box) == {}
+    assert _boxes(_day_parcel("order", eta=_eta(22)), box) == {}
+    assert _boxes(_day_parcel("order", eta=_eta(18)), box) == {"order": ("box",)}
+
+    # Delivered: the package must be too, within three hours when both
+    # times are known.
+    came = _day_parcel("box", delivered, _nov(20, 10), carrier="ctt")
+    assert _boxes(_day_parcel("order", delivered, _nov(20, 12, 30)), came) == {
+        "order": ("box",)
+    }
+    assert _boxes(_day_parcel("order", delivered, _nov(20, 13, 30)), came) == {}
+    undated = _day_parcel("order", delivered, _nov(20, 18), undated=True)
+    assert _boxes(undated, came) == {"order": ("box",)}
+    assert _boxes(undated, box) == {}
+    assert _boxes(_day_parcel("order", delivered, _nov(19, 12)), came) == {}
+    # Not when its news came after the delivery, or a dated status did.
+    later = _nov(20, 11)
+    assert (
+        _boxes(_day_parcel("order", first=later, when=later, undated=True), came) == {}
+    )
+    out = ParcelStatus.OUT_FOR_DELIVERY
+    assert _boxes(_day_parcel("order", out, _nov(20, 12)), came) == {}
+    assert _boxes(_day_parcel("order", out, _nov(20, 9)), came) == {"order": ("box",)}

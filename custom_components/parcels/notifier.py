@@ -48,6 +48,14 @@ Live Activities
     goes out for delivery after all. The state is persisted, so a restart of
     Home Assistant neither ends nor duplicates an activity.
 
+Packages
+    The day counts packages, not records. An order without a carrier's
+    number that one of the day's packages may hold rides along with it (see
+    :func:`~.dedup.boxes_of_day`): it doesn't count, start an activity or
+    notify on its own, and with item names on, the package says what it may
+    hold ("Possibly: ..."). An order that no package may hold counts on its
+    own. When an order stops riding along, its activity starts again.
+
 Persistent notification
     ``parcels_today`` lists the day's parcels from the start time until the
     next morning's start time, without item names; private parcels are only
@@ -58,7 +66,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Coroutine, Mapping
+from collections.abc import Coroutine, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
@@ -99,8 +107,10 @@ from .const import (
     STATUS_RANK,
     ParcelStatus,
 )
+from .dedup import boxes_of_day
 from .models import Parcel, ParcelsData, ParcelState, local_date
 from .parsers.base import Eta
+from .parsers.items import unique_items
 from .views import shipment_groups
 
 _LOGGER = logging.getLogger(__name__)
@@ -596,8 +606,13 @@ def _status_texts(state: ParcelState, today: date) -> tuple[str, str]:
     return text, critical
 
 
-def _parcel_content(parcel: Parcel, ctx: _Context) -> _Content:
-    """Return what a parcel's activity or notification shows."""
+def _parcel_content(
+    parcel: Parcel, ctx: _Context, possibly: Sequence[str] = ()
+) -> _Content:
+    """Return what a parcel's activity or notification shows.
+
+    ``possibly`` lists the items of the orders the package may hold.
+    """
     state = parcel.state
     text, critical = _status_texts(state, ctx.today)
     title = _title(state)
@@ -617,6 +632,11 @@ def _parcel_content(parcel: Parcel, ctx: _Context) -> _Content:
         }:
             # What the user calls it in the Parcel app, unless it's the shop.
             parts.append(name)
+        elif possibly:
+            more = len(possibly) - 1
+            parts.append(
+                f"Possibly: {_clean(possibly[0], 30)}" + (f" (+{more})" if more else "")
+            )
     end = _chronometer_end(state, ctx)
     return _Content(
         title=title,
@@ -628,6 +648,27 @@ def _parcel_content(parcel: Parcel, ctx: _Context) -> _Content:
         relevance=_relevance(state, ctx),
         when=int(end.timestamp()) if end is not None else None,
         status=state.status.value,
+    )
+
+
+def _packages(
+    data: ParcelsData, parcels: list[Parcel], day: date
+) -> tuple[list[Parcel], dict[str, list[str]]]:
+    """Return the parcels that count on a day, and what each package may hold.
+
+    An order that one of the day's packages may hold rides along with it and
+    doesn't count. Each package gets the items of the public orders it may
+    hold.
+    """
+    covered = boxes_of_day(data, parcels, day)
+    items: dict[str, list[str]] = {}
+    for parcel in parcels:
+        if not parcel.private:
+            for box in covered.get(parcel.id, ()):
+                items.setdefault(box, []).extend(parcel.state.items)
+    return (
+        [parcel for parcel in parcels if parcel.id not in covered],
+        {box: unique_items(names) for box, names in items.items()},
     )
 
 
@@ -868,12 +909,15 @@ def _persistent_message(
     day: date,
     today: date,
     path: str,
+    riders: Sequence[tuple[ParcelState, Sequence[ParcelState]]] = (),
 ) -> str:
     """Return the Markdown of the persistent notification.
 
     ``listed`` pairs each parcel with its shipment. Packages of one shipment
     with the same status share a line; a delivered one keeps its own, with
-    its time. The count in the title stays in packages.
+    its time. The count in the title stays in packages. ``riders`` pairs each
+    public order that packages of the day may hold with those packages; the
+    orders of a shop that the same packages may hold share a line.
     """
     total = len(listed) + private
     lines = [
@@ -891,6 +935,27 @@ def _persistent_message(
         if len(states) > 1:
             parts.append(f"{len(states)} packages")
         parts.append(status)
+        lines.append("- " + SEP.join(_markdown(part) for part in parts))
+    orders: Counter[tuple[str, tuple[str, ...]]] = Counter()
+    for state, boxes in riders:
+        labels: list[str] = []
+        for box in boxes:
+            label = _clean(box.carrier_name) or _title(box)
+            if label.casefold() not in {known.casefold() for known in labels}:
+                labels.append(label)
+        orders[_title(state), tuple(labels)] += 1
+    for (title, labels), count in sorted(
+        orders.items(),
+        key=lambda row: (row[0][0].casefold(), [x.casefold() for x in row[0][1]]),
+    ):
+        where = labels[-1]
+        if len(labels) > 1:
+            where = f"{', '.join(labels[:-1])} or {where}"
+        parts = [
+            title,
+            f"{count} order{'' if count == 1 else 's'}",
+            f"Possibly in a package from {where}",
+        ]
         lines.append("- " + SEP.join(_markdown(part) for part in parts))
     if private:
         lines.append(f"- +{private} private parcel{'' if private == 1 else 's'}")
@@ -1190,7 +1255,15 @@ class Notifier:
         """Return counts for the diagnostics, without names or IDs."""
         state = self._data
         options = _Options.from_entry(self.entry)
-        day = state["days"].get(dt_util.now().date().isoformat()) or _new_day()
+        today = dt_util.now().date()
+        day = state["days"].get(today.isoformat()) or _new_day()
+        parcels = {parcel.id: parcel for parcel in self._host.visible_parcels()}
+        board = [
+            parcel
+            for parcel_id in day["board"]
+            if (parcel := parcels.get(parcel_id)) is not None
+            and parcel.state.status not in GONE
+        ]
         records = [
             record
             for records in day["activities"].values()
@@ -1216,6 +1289,7 @@ class Notifier:
                 "activity_starts": sum(record["gen"] for record in records),
                 "running": sum(1 for record in records if record["running"]),
                 "notifications_sent": sum(len(s) for s in day["notified"].values()),
+                "orders_in_a_box": len(boxes_of_day(self._host.data, board, today)),
             },
             "persistent_notification_shown": self._persistent_fp
             not in (None, _UNKNOWN),
@@ -1453,21 +1527,24 @@ class Notifier:
                 moved.append(parcel)
             else:
                 members.append(parcel)
+        entries, possibly = _packages(self._host.data, members, ctx.today)
         records: dict[str, Any] = day["activities"].get(device_id, {})
-        if device_id in day["combined"] or len(members) > ctx.options.threshold:
+        if device_id in day["combined"] or len(entries) > ctx.options.threshold:
             if device_id not in day["combined"]:
                 day["combined"].append(device_id)
             for key, record in records.items():
                 if key != COMBINED and record["running"]:
                     await self._async_end(device_id, record, REASON_COLLAPSED, ctx.now)
-            await self._async_combined(ctx, day, device, members)
+            await self._async_combined(ctx, day, device, entries)
             return
-        keep = {parcel.id for parcel in (*members, *moved)}
+        keep = {parcel.id for parcel in (*entries, *moved)}
         for key, record in records.items():
             if record["running"] and key not in keep:
                 await self._async_end(device_id, record, REASON_REMOVED, ctx.now)
-        for parcel in members:
-            await self._async_individual(ctx, day, device, parcel)
+        for parcel in entries:
+            await self._async_individual(
+                ctx, day, device, parcel, possibly.get(parcel.id, ())
+            )
         for parcel in moved:
             record = day["activities"].get(device_id, {}).get(parcel.id)
             if record is not None and record["running"]:
@@ -1475,12 +1552,17 @@ class Notifier:
                 await self._async_linger(ctx, device, record, content, REASON_MOVED)
 
     async def _async_individual(
-        self, ctx: _Context, day: dict[str, Any], device: _Device, parcel: Parcel
+        self,
+        ctx: _Context,
+        day: dict[str, Any],
+        device: _Device,
+        parcel: Parcel,
+        possibly: Sequence[str] = (),
     ) -> None:
         """Start, update, restart or end the activity of one parcel."""
         record = day["activities"].get(device.device_id, {}).get(parcel.id)
         status = parcel.state.status
-        content = _parcel_content(parcel, ctx)
+        content = _parcel_content(parcel, ctx, possibly)
         if record is None or not record["running"]:
             if status is S.DELIVERED:
                 return
@@ -1720,20 +1802,24 @@ class Notifier:
         """Notify an iPad or an Android phone of key changes of today's parcels."""
         if not ctx.in_window or not self.live_activities_enabled:
             return
-        for parcel_id in day["board"]:
-            parcel = parcels.get(parcel_id)
-            if parcel is None or not _routed(parcel, device):
-                continue
+        board = [
+            parcel
+            for parcel_id in day["board"]
+            if (parcel := parcels.get(parcel_id)) is not None
+            and _routed(parcel, device)
+            and parcel.state.status not in GONE
+        ]
+        entries, possibly = _packages(self._host.data, board, ctx.today)
+        for parcel in entries:
             status = parcel.state.status
             sent = day["notified"].get(device.device_id, {})
-            if status not in KEY_STATUSES or sent.get(parcel_id) == status.value:
+            if status not in KEY_STATUSES or sent.get(parcel.id) == status.value:
                 continue
-            payload = _key_payload(
-                _parcel_content(parcel, ctx), parcel_id, device.kind, ctx.options.path
-            )
+            content = _parcel_content(parcel, ctx, possibly.get(parcel.id, ()))
+            payload = _key_payload(content, parcel.id, device.kind, ctx.options.path)
             result = await self._async_send(device.service, device.kind, payload)
             if result is _Result.SENT:
-                day["notified"].setdefault(device.device_id, {})[parcel_id] = (
+                day["notified"].setdefault(device.device_id, {})[parcel.id] = (
                     status.value
                 )
             elif result is _Result.FAILED:
@@ -1761,23 +1847,30 @@ class Notifier:
         shipments = shipment_groups(
             parcel for parcel in parcels.values() if not parcel.private
         )
+        pool = [
+            parcel
+            for parcel in parcels.values()
+            if parcel.state.status not in GONE
+            and (parcel.id in board or _shown_on(parcel.state, shown))
+        ]
+        covered = boxes_of_day(self._host.data, pool, shown)
         listed: list[tuple[str, ParcelState]] = []
+        riders: list[tuple[ParcelState, list[ParcelState]]] = []
         private = 0
-        for parcel in parcels.values():
-            state = parcel.state
-            if state.status in GONE or (
-                parcel.id not in board and not _shown_on(state, shown)
-            ):
-                continue
-            if parcel.private:
+        for parcel in pool:
+            if (boxes := covered.get(parcel.id)) is not None:
+                # Counted with its package; a private one isn't named at all.
+                if not parcel.private:
+                    riders.append((parcel.state, [parcels[box].state for box in boxes]))
+            elif parcel.private:
                 private += 1
             else:
-                listed.append((shipments.get(parcel.id, parcel.id), state))
+                listed.append((shipments.get(parcel.id, parcel.id), parcel.state))
         if not listed and not private:
             self._dismiss_persistent()
             return
         message = _persistent_message(
-            listed, private, shown, ctx.today, ctx.options.path
+            listed, private, shown, ctx.today, ctx.options.path, riders
         )
         fingerprint = hashlib.sha256(message.encode()).hexdigest()[:16]
         if fingerprint != self._persistent_fp:

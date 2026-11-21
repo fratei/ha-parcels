@@ -10,6 +10,7 @@ from custom_components.parcels.parsers.tracking import (
     FALLBACK_URL,
     URL_TEMPLATES,
     TrackingMatch,
+    amazon_logistics_number,
     check_digit_ok,
     detect_carrier,
     find_tracking_numbers,
@@ -165,6 +166,24 @@ def test_validate_tracking_number(
 def test_detect_carrier(number: str, carrier: str | None) -> None:
     """Formats that name their carrier on their own."""
     assert detect_carrier(number) == carrier
+
+
+@pytest.mark.parametrize(
+    ("number", "expected"),
+    [
+        ("TBA123456789012", True),
+        ("tba-1234 5678 9012", True),
+        ("TBA12345678901", False),
+        ("AB1234567890", False),
+        ("17112345671234567", False),
+        (UPS, False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_amazon_logistics_number(number: str | None, expected: bool) -> None:
+    """Only Amazon Logistics' own format proves Amazon delivers a parcel."""
+    assert amazon_logistics_number(number) is expected
 
 
 @pytest.mark.parametrize(
