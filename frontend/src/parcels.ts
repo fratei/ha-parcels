@@ -1,6 +1,7 @@
 import { compareYmd, diffDays, isYmd, localDateOf, parseInstant } from "./dates.ts";
 import { carrierLabel } from "./labels.ts";
 import { isActiveStatus } from "./status.ts";
+import { STRINGS } from "./strings.ts";
 import type { MergeSuggestion, Parcel } from "./types.ts";
 
 export interface DateRange {
@@ -75,14 +76,39 @@ function sellerKey(parcel: Parcel): string {
   return parcel.merchant?.trim().toLowerCase() ?? "";
 }
 
-/** The days a parcel is about: its ETA, else the day its status last changed. */
+/** Delivered on a known day, not just inferred from another parcel. */
+function deliveredDay(parcel: Parcel, timeZone: string): string | null {
+  if (parcel.status !== "delivered" || parcel.inferred || parcel.delivered_undated) {
+    return null;
+  }
+  return localDateOf(parcel.delivered_at, timeZone);
+}
+
+/** The days a parcel is about: the day it was delivered, else its ETA, else the day its status last changed. */
 function daysOf(parcel: Parcel, timeZone: string): { start: string; end: string } | null {
+  const delivered = deliveredDay(parcel, timeZone);
+  if (delivered) {
+    return { start: delivered, end: delivered };
+  }
   const eta = etaRange(parcel);
   if (eta) {
     return eta;
   }
   const day = localDateOf(parcel.delivered_at ?? parcel.status_time, timeZone);
   return day ? { start: day, end: day } : null;
+}
+
+/**
+ * Whether one of the two was delivered on a day before the other was
+ * shipped (or ordered), so it can't have held it.
+ */
+function deliveredBeforeSent(a: Parcel, b: Parcel, timeZone: string): boolean {
+  const before = (box: Parcel, other: Parcel): boolean => {
+    const delivered = deliveredDay(box, timeZone);
+    const sent = localDateOf(other.shipped_at ?? other.ordered_at, timeZone);
+    return delivered !== null && sent !== null && compareYmd(delivered, sent) < 0;
+  };
+  return before(a, b) || before(b, a);
 }
 
 function dayDistance(a: Parcel, b: Parcel, timeZone: string): number {
@@ -135,7 +161,10 @@ function isOlder(parcel: Parcel, { today, timeZone }: DayContext): boolean {
   return day !== null && diffDays(day, today) > RECENT_DAYS;
 }
 
-/** The parcels the given one can be merged with: every other parcel the viewer may see. */
+/**
+ * The parcels the given one can be merged with: every other parcel the viewer
+ * may see. Ones delivered before the other was shipped go behind "Show older".
+ */
 export function rankMergeCandidates(
   parcels: readonly Parcel[],
   parcel: Parcel,
@@ -147,7 +176,9 @@ export function rankMergeCandidates(
     if (candidate.id === parcel.id || candidate.restricted) {
       continue;
     }
-    (isOlder(candidate, context) ? older : likely).push(candidate);
+    const old =
+      isOlder(candidate, context) || deliveredBeforeSent(parcel, candidate, context.timeZone);
+    (old ? older : likely).push(candidate);
   }
   likely.sort(compareLikelihood(parcel, context));
   older.sort(newestFirst);
@@ -198,6 +229,8 @@ export interface PossibleMatch {
   parcel: Parcel;
   /** The suggestion's candidate, as `suggestion/accept` and `suggestion/dismiss` take it. */
   candidateId: string;
+  /** Why the suggestion was made, e.g. "same_merchant_day". */
+  reason: string;
 }
 
 /**
@@ -211,20 +244,75 @@ export function possibleMatches(
 ): PossibleMatch[] {
   const matches: PossibleMatch[] = [];
   const seen = new Set<string>();
-  const add = (suggestionId: string, parcel: Parcel, candidateId: string): void => {
+  const add = (suggestion: MergeSuggestion, parcel: Parcel, candidateId: string): void => {
     if (!seen.has(parcel.id)) {
       seen.add(parcel.id);
-      matches.push({ suggestionId, parcel, candidateId });
+      matches.push({ suggestionId: suggestion.id, parcel, candidateId, reason: suggestion.reason });
     }
   };
   for (const suggestion of suggestions ?? []) {
     if (suggestion.parcel.id === parcelId) {
       for (const candidate of suggestion.candidates) {
-        add(suggestion.id, candidate, candidate.id);
+        add(suggestion, candidate, candidate.id);
       }
     } else if (suggestion.candidates.some((candidate) => candidate.id === parcelId)) {
-      add(suggestion.id, suggestion.parcel, parcelId);
+      add(suggestion, suggestion.parcel, parcelId);
     }
   }
   return matches;
+}
+
+/**
+ * The possible matches nearest to the parcel's day first, without the ones
+ * delivered before the other was shipped.
+ */
+export function rankPossible(
+  parcel: Parcel,
+  matches: readonly PossibleMatch[],
+  { timeZone }: DayContext,
+): PossibleMatch[] {
+  const distance = (match: PossibleMatch): number => dayDistance(parcel, match.parcel, timeZone);
+  return matches
+    .filter((match) => !deliveredBeforeSent(parcel, match.parcel, timeZone))
+    .sort((a, b) => distance(a) - distance(b) || newestFirst(a.parcel, b.parcel));
+}
+
+/**
+ * The other parcels with known items or orders that a possible match of the
+ * given parcel may also be, to rule them out: still open or delivered, not
+ * put away.
+ */
+export function alsoPossible(
+  suggestions: readonly MergeSuggestion[] | undefined,
+  matchId: string,
+  parcelId: string,
+): Parcel[] {
+  return possibleMatches(suggestions, matchId)
+    .map((match) => match.parcel)
+    .filter(
+      (other) =>
+        other.id !== parcelId &&
+        !other.archived &&
+        !other.restricted &&
+        other.status !== "cancelled" &&
+        other.status !== "returned" &&
+        (other.items.length > 0 || other.order_numbers.length > 0),
+    );
+}
+
+/** Why the possible matches of a parcel aren't merged yet, from its side of the suggestions. */
+export function possibleHint(matches: readonly PossibleMatch[]): string {
+  const many = matches.length > 1;
+  // Suggestions are about a tracked delivery; their candidates are what it may have brought.
+  const delivery = matches.some((match) => match.candidateId === match.parcel.id);
+  if (matches.length && matches.every((match) => match.reason === "same_reference")) {
+    if (delivery) {
+      return STRINGS.possibleHintShipment;
+    }
+    return many ? STRINGS.possibleHintStemMany : STRINGS.possibleHintStemOne;
+  }
+  if (delivery) {
+    return many ? STRINGS.possibleHintDeliveryMany : STRINGS.possibleHintDeliveryOne;
+  }
+  return many ? STRINGS.possibleHintOrderMany : STRINGS.possibleHintOrderOne;
 }

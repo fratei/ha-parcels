@@ -7,6 +7,7 @@ import {
   numberTail,
   chipMeta,
   chipPin,
+  couldAlsoBe,
   describeParcel,
   itemsSummary,
   possiblyLine,
@@ -267,12 +268,19 @@ describe("merge candidates", () => {
     assert.equal(numberTail("  "), null);
   });
 
+  test("a package number keeps its underscore", () => {
+    assert.equal(numberTail("Qx7Tm4Rb_2"), "…m4Rb_2");
+    assert.equal(numberTail("Qx7Tm4Rb_12"), "…4Rb_12");
+  });
+
   test("tell parcels of one shop apart by items, carrier, number, order and date", () => {
     assert.deepEqual(candidateLines(kettle, GB), {
       title: "Example Shop",
       when: `In transit · ${range}`,
       carrier: "DHL · No. …12345 · Order …04321",
       items: "2 items · Blue kettle, Tea towel",
+      emails: null,
+      noItems: "Items not known yet",
     });
     assert.equal(
       candidateLabel(kettle, GB),
@@ -280,13 +288,91 @@ describe("merge candidates", () => {
     );
   });
 
-  test("a delivered parcel shows the day it arrived", () => {
+  test("an expected parcel shows its time window", () => {
+    const windowedKettle = makeParcel({ ...kettle, window_start: "13:00", window_end: "15:00" });
+    assert.equal(candidateLines(windowedKettle, GB).when, `In transit · ${range} · 13:00–15:00`);
+  });
+
+  test("a delivered parcel shows the day and time it arrived", () => {
     const delivered = makeParcel({
       ...kettle,
       status: "delivered",
       delivered_at: "2026-07-13T09:30:00Z",
+      window_start: "09:00",
+      window_end: "11:00",
     });
-    assert.equal(candidateLines(delivered, GB).when, `Delivered · ${formatDateRange("2026-07-13", "2026-07-13", GB)}`);
+    assert.equal(candidateLines(delivered, GB).when, "Delivered · Mon 13 Jul at 10:30");
+    const inferred = makeParcel({ ...delivered, inferred: true });
+    assert.equal(candidateLines(inferred, GB).when, "Delivered · Mon 13 Jul");
+  });
+
+  test("a delivery known only by its day shows no time", () => {
+    const daily = makeParcel({ ...kettle, status: "delivered", delivered_at: "2026-07-12T23:00:00Z" });
+    assert.equal(candidateLines(daily, GB).when, "Delivered · Mon 13 Jul");
+  });
+
+  test("say who wrote about a candidate, first sender first", () => {
+    const told = makeParcel({
+      ...kettle,
+      senders: [
+        { name: "Example Carrier", source: "email", carrier: true, count: 2 },
+        { name: "example.com", source: "email", carrier: false, count: 1 },
+        { name: "17TRACK", source: "seventeentrack", carrier: false, count: 3 },
+      ],
+    });
+    assert.equal(
+      candidateLines(told, GB).emails,
+      "2 e-mails from Example Carrier, 1 e-mail from example.com, 3 updates from 17TRACK",
+    );
+    const many = makeParcel({
+      senders: ["a.example", "b.example", "c.example", "d.example", "e.example"].map((name) => ({
+        name,
+        source: "email" as const,
+        carrier: false,
+        count: 1,
+      })),
+    });
+    assert.equal(
+      candidateLines(many, GB).emails,
+      "1 e-mail from a.example, 1 e-mail from b.example, 1 e-mail from c.example, +2 more",
+    );
+    const update = makeParcel({ senders: [{ name: "Parcel app", source: "parcelapp", carrier: false, count: 1 }] });
+    assert.equal(candidateLines(update, GB).emails, "1 update from Parcel app");
+  });
+
+  test("a delivery known only from its carrier says why its items aren't known", () => {
+    const carrierMail = { name: "Example Carrier", source: "email" as const, carrier: true, count: 2 };
+    const tracking = { name: "17TRACK", source: "seventeentrack" as const, carrier: false, count: 1 };
+    const shopMail = { name: "example.com", source: "email" as const, carrier: false, count: 1 };
+    const box = makeParcel({ carrier: "dhl", tracking_number: "JD0000000067890" });
+    const noItems = (senders: Parcel["senders"]): string =>
+      candidateLines(makeParcel({ ...box, senders }), GB).noItems;
+    assert.equal(noItems([carrierMail]), "Carrier e-mails don't list items");
+    assert.equal(noItems([carrierMail, tracking]), "Carrier e-mails don't list items");
+    assert.equal(noItems([tracking]), "Tracking updates don't list items");
+    assert.equal(noItems([carrierMail, shopMail]), "Items not known yet");
+    assert.equal(noItems([]), "Items not known yet");
+  });
+
+  test("an item-less delivery names the other orders it could be", () => {
+    const lamp = makeParcel({
+      id: "lamp",
+      merchant: "Example Shop",
+      order_numbers: ["111-0000001-0000002"],
+      items: ["Lumen desk lamp", "Bulb"],
+    });
+    const hose = makeParcel({ id: "hose", merchant: "Example Shop", items: ["Garden hose"] });
+    const bare = makeParcel({ id: "bare", merchant: "Other Shop", order_numbers: ["A-0000777"] });
+    assert.equal(
+      couldAlsoBe([lamp, hose, bare]),
+      "Could also be: Lumen desk lamp +1 (order …00002); Garden hose; Other Shop (order …00777)",
+    );
+    const extra = makeParcel({ id: "extra", items: ["Brava bin"] });
+    assert.equal(
+      couldAlsoBe([lamp, hose, bare, extra]),
+      "Could also be: Lumen desk lamp +1 (order …00002); Garden hose; Other Shop (order …00777); +1 more",
+    );
+    assert.equal(couldAlsoBe([]), null);
   });
 
   test("a delivery whose source gave no date says so, not the day it's kept on", () => {
@@ -310,6 +396,8 @@ describe("merge candidates", () => {
       when: "Ordered",
       carrier: "Carrier not known yet · No. …T0002",
       items: null,
+      emails: null,
+      noItems: "Items not known yet",
     });
     assert.equal(
       candidateLabel(bare, GB),

@@ -66,8 +66,29 @@ export const STRINGS = {
   possiblyOr: " or ",
   itemsMore: "{name} +{count}",
   possibleMatches: "Possibly the same package as",
-  possibleMatchesHint:
-    "Not confirmed: this package's e-mails don't name the order. Merge the parcel it is, or rule one out.",
+  possibleHintOrderMany:
+    "Not confirmed: the carrier's e-mails for these deliveries don't name an order. Merge the one this package came in, or rule out the others.",
+  possibleHintOrderOne:
+    "Not confirmed: the carrier's e-mails for this delivery don't name an order. Merge it if this package came in it, or rule it out.",
+  possibleHintDeliveryMany:
+    "Not confirmed: the carrier's e-mails for this delivery don't name an order. Merge the order that came in it, or rule out the others.",
+  possibleHintDeliveryOne:
+    "Not confirmed: the carrier's e-mails for this delivery don't name an order. Merge the order if it came in it, or rule it out.",
+  possibleHintStemMany:
+    "Not confirmed: this parcel's e-mails name only a shipment that several packages share. Merge the package they're about, or rule out the others.",
+  possibleHintStemOne:
+    "Not confirmed: this parcel's e-mails name only a shipment reference. Merge the package if they're about it, or rule it out.",
+  possibleHintShipment:
+    "Not confirmed: an e-mail names only the shipment this package is part of. Merge it if it's about this package, or rule it out.",
+  candidateEmail: "1 e-mail from {name}",
+  candidateEmails: "{count} e-mails from {name}",
+  candidateUpdate: "1 update from {name}",
+  candidateUpdates: "{count} updates from {name}",
+  candidateMore: "+{count} more",
+  carrierEmailsNoItems: "Carrier e-mails don't list items",
+  trackingNoItems: "Tracking updates don't list items",
+  couldAlsoBe: "Could also be: {list}",
+  couldAlsoBeOrder: "{items} (order {tail})",
   notThisOne: "Not this one",
   notThisOneLabel: "{candidate} isn't {title}",
   aiBadge: "AI",
@@ -115,7 +136,8 @@ export const STRINGS = {
   reviewTabs: "Review lists",
   emptyReview: "Nothing to review.",
   emptyFiltered: "No filtered e-mails.",
-  filteredHint: "E-mails the local AI classed as not about a parcel.",
+  filteredHint:
+    "E-mails the local AI classed as not about a parcel, and e-mails removed from a parcel in its details. Restore reads one again.",
   receivedOn: "Received {date}",
   noSubject: "(no subject)",
   mailboxOf: "Mailbox: {owner}",
@@ -146,6 +168,8 @@ export const STRINGS = {
   trustKeptMany: "{count} still need review",
   senderChecks: "Sender check details",
   failedChecks: "Checks the AI answer failed",
+  aiNotes: "Notes on the AI answer",
+  aiNotesHint: "What Parcels changed in the answer while checking it. These aren't failed checks.",
   checkHeaders: "Authentication headers",
   checkServers: "Servers, in order",
   checkNoServer: "(no name)",
@@ -279,6 +303,47 @@ export const STRINGS = {
   windowEndBeforeStart: "The time window must end after it starts.",
   actionFailed: "That didn't work: {message}",
 
+  dayAtTime: "{day} at {time}",
+  originsTitle: "E-mails ({count})",
+  originsAndUpdatesTitle: "E-mails and updates ({count})",
+  originsHint: "What each e-mail and source said and added to this parcel, oldest first.",
+  originEmail: "E-mail",
+  originEdits: "Changed by hand",
+  factShop: "Shop: {name}",
+  factSeller: "Sold by {name}",
+  factShipment: "Shipment {n}/{total}",
+  factCarrierNumber: "{carrier} No. {tail}",
+  factReference: "Reference {tail}",
+  factPickup: "Pickup: {place}",
+  factName: "Name: {name}",
+  originItems: "Items",
+  originAiAll: "read by the local AI",
+  originAiPart: "partly read by the local AI",
+  originRepeats: "{count} more from {sender}",
+  originRepeatsLatest: "latest: {said}",
+  moveToNewParcel: "Move to a new parcel",
+  moveToNewParcelLabel: "Move to a new parcel: {row}",
+  removeFromParcels: "Remove from Parcels",
+  removeFromParcelsLabel: "Remove from Parcels: {row}",
+  splitBlockedNothingLeft: "Can't move: nothing else would be left in this parcel.",
+  splitBlockedShared:
+    "Can't move: it shares the tracking number or shipment with other e-mails here.",
+  splitBlockedOther: "Can't move this one to a new parcel.",
+  movedNotice: "Moved to a new parcel.",
+  movedBackNotice: "Moved back into this parcel.",
+  removedNotice: "Removed from Parcels. It's listed under Filtered in Needs review.",
+  removedGoneNotice:
+    "Removed from Parcels. Nothing else was left in this parcel, so it's gone. Undo reads the e-mail again.",
+  restoredNotice: "Restored. The e-mail was read again.",
+  restoredElsewhereNotice: "Restored. The e-mail was read again into another parcel.",
+  restoredReviewNotice:
+    "Restored. The e-mail is no longer in the mailbox, so it waits under Needs review.",
+  restoredNoParcelNotice:
+    "Restored. The e-mail was read again, but it isn't part of a parcel now. Look under Needs review.",
+  showOtherParcel: "Show",
+  showOtherParcelLabel: "Show that parcel",
+  removedFromParcel: "Removed from a parcel",
+
   addTitle: "Add parcel",
   addSubmit: "Add",
   trackingRequired: "Enter a tracking number.",
@@ -372,6 +437,27 @@ export const REASON_LABELS: Readonly<Record<string, string>> = {
   ai_timeout: "The local AI took too long on this e-mail",
   ai_rejected: "The local AI's answer didn't pass the checks",
   restored: "Moved back from Filtered",
+};
+
+/** What each note on an AI answer means, as docs/ai-benchmark.md explains it. */
+export const NOTE_MEANINGS: Readonly<Record<string, string>> = {
+  tracking_added_by_detector: "Parcels' own detector added a tracking number that the e-mail writes.",
+  pickup_code_from_text: "The e-mail's only delivery or pickup code was used, as the answer gave none that the e-mail writes.",
+  item_recommended: "Products the e-mail lists only under Buy again or Recommended for you were dropped.",
+  item_is_number: "An item that was the parcel's tracking or order number, code or reference was dropped.",
+  kind_from_text: "The e-mail's words give a different status from the answer's, and theirs was used.",
+  out_for_delivery_not_today: "Out for delivery, with a later delivery date and no such words in the e-mail, was read as in transit.",
+  eta_dropped_for_kind: "A date was dropped, as no delivery is pending in e-mails of this kind.",
+  eta_from_text: "The date by the e-mail's delivery words was used, as the answer gave another date or none.",
+  order_moved_to_tracking: "An order number in a carrier's e-mail was the parcel's tracking number.",
+  order_from_text: "An order number was taken as the e-mail writes it: the whole joined number, or a miscopy repaired.",
+  tracking_from_text: "A miscopied tracking number was replaced by the e-mail's own.",
+  merchant_is_carrier: "The shop given was this e-mail's carrier, so it was dropped.",
+  carrier_unproven: "The shop, such as Amazon, was given as the carrier without proof that it delivers, so the carrier was left empty.",
+  merchant_from_sender_name: "A shop given as a domain was named from the sender's name.",
+  merchant_from_text: "A shop given as a domain was named from a line of the e-mail.",
+  pickup_point_not_pickup: "An address the e-mail doesn't give as a pickup point was dropped.",
+  pickup_point_generic: "A generic pickup point, such as a branch, was dropped.",
 };
 
 /** Why two parcels were merged automatically (auto_merged.reason). */

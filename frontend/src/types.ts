@@ -32,6 +32,17 @@ export type InferredReason = "shop" | "return" | "quiet";
 
 export type AiMode = "off" | "suggest" | "auto";
 
+/** Who told about a parcel: a sender of e-mails, 17TRACK or the Parcel app. */
+export interface ParcelSender {
+  /** The known sender's name, else the e-mail's sender domain or the source's name. */
+  name: string;
+  source: "email" | "seventeentrack" | "parcelapp";
+  /** The carrier's own e-mails. */
+  carrier: boolean;
+  /** How many e-mails or updates; at least 1. */
+  count: number;
+}
+
 export interface AutoMerged {
   origin: string;
   at: string;
@@ -99,6 +110,12 @@ export interface Parcel {
   /** Packages sent together share this ID (the shipment's first parcel ID); null when alone. */
   shipment_group: string | null;
   restricted: boolean;
+  /** Who told about it, in the order they first did; empty when restricted. */
+  senders: ParcelSender[];
+  /** When it was ordered, per a dated e-mail; null when not known or restricted. */
+  ordered_at: string | null;
+  /** When it left, per a dated e-mail; null when not known or restricted. */
+  shipped_at: string | null;
 }
 
 /** What the parser or the AI read from an e-mail; also the shape of accept overrides. */
@@ -150,6 +167,8 @@ export interface ReviewItem {
   fill: boolean;
   /** The checks a rejected AI answer failed, as codes without values. */
   errors: string[];
+  /** What the checks changed in an AI answer, as codes: not failures. */
+  notes: string[];
   source: "parser" | "ai";
   suggestion: Suggestion | null;
 }
@@ -169,6 +188,8 @@ export interface FilteredItem {
   sender: string;
   sender_domain: string;
   subject: string;
+  /** Removed from a parcel in its details, rather than filtered when it was read. */
+  removed: boolean;
 }
 
 export interface Settings {
@@ -268,11 +289,51 @@ export interface OrderInfo {
   parcel_ids: string[];
 }
 
+/** What one e-mail or source of a parcel said and added (`parcels/get`), oldest first. */
 export interface OriginInfo {
   id: string;
+  /** An e-mail's sender domain, or the source's name; may be empty for the user's edits. */
   label: string;
   source: ParcelSource;
+  /** The known sender's name, for an e-mail from one. */
+  sender_name: string | null;
+  /** The delivery's name in the Parcel app. */
+  name: string | null;
+  /** When it arrived. */
   time: string | null;
+  /** The latest status it gave. */
+  status: ParcelStatus | null;
+  /** What kind of e-mail it was (a MailKind value). */
+  kind: string | null;
+  /** When that status happened, per the source. */
+  event_time: string | null;
+  /** The source gave no date for it that could be read. */
+  undated: boolean;
+  /** Not even the day is known. */
+  dayless: boolean;
+  eta_start: string | null;
+  eta_end: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  carrier: string | null;
+  carrier_name: string | null;
+  tracking_number: string | null;
+  reference: string | null;
+  merchant: string | null;
+  seller: string | null;
+  order_numbers: string[];
+  items: string[];
+  pickup_point: string | null;
+  /** Which of the order's shipments it's about, [n, total]; null with only one. */
+  shipment: [number, number] | null;
+  /** It's an e-mail, rather than 17TRACK, the Parcel app or the user's edits. */
+  email: boolean;
+  /** The user's edits of the parcel. */
+  edits: boolean;
+  /** What the local AI read in an e-mail: the ID of that e-mail's row, which it belongs to. */
+  part_of: string | null;
+  /** Why it can't be moved to a new parcel (a code); null when it can. */
+  split_blocked: string | null;
 }
 
 /** Result of `parcels/get`. */
@@ -326,5 +387,6 @@ export interface HomeAssistant {
     serviceData?: Record<string, unknown>,
     target?: Record<string, unknown>,
     notifyOnError?: boolean,
+    returnResponse?: boolean,
   ): Promise<unknown>;
 }

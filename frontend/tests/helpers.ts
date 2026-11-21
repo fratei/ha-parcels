@@ -1,4 +1,4 @@
-import type { CustomerReturn, Parcel } from "../src/types.ts";
+import type { CustomerReturn, OriginInfo, Parcel } from "../src/types.ts";
 
 /** A synthetic parcel; every field can be overridden. */
 export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
@@ -40,6 +40,45 @@ export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
     origins: [],
     shipment_group: null,
     restricted: false,
+    senders: [],
+    ordered_at: null,
+    shipped_at: null,
+    ...overrides,
+  };
+}
+
+/** A synthetic e-mail of a parcel's details, as read by the parser; every field can be overridden. */
+export function makeOrigin(overrides: Partial<OriginInfo> = {}): OriginInfo {
+  return {
+    id: "m1",
+    label: "",
+    source: "parser",
+    sender_name: null,
+    name: null,
+    time: null,
+    status: null,
+    kind: null,
+    event_time: null,
+    undated: false,
+    dayless: false,
+    eta_start: null,
+    eta_end: null,
+    window_start: null,
+    window_end: null,
+    carrier: null,
+    carrier_name: null,
+    tracking_number: null,
+    reference: null,
+    merchant: null,
+    seller: null,
+    order_numbers: [],
+    items: [],
+    pickup_point: null,
+    shipment: null,
+    email: false,
+    edits: false,
+    part_of: null,
+    split_blocked: null,
     ...overrides,
   };
 }

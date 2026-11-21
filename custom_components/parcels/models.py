@@ -1233,6 +1233,8 @@ class ReviewItem:
     fill: bool = False
     # The checks a rejected AI answer failed, as codes without values.
     errors: tuple[str, ...] = ()
+    # What the checks changed in an AI answer, as codes: not failures.
+    notes: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the item."""
@@ -1255,6 +1257,8 @@ class ReviewItem:
         }
         if self.errors:
             data["errors"] = list(self.errors)
+        if self.notes:
+            data["notes"] = list(self.notes)
         return data
 
     @classmethod
@@ -1281,6 +1285,7 @@ class ReviewItem:
             checks=dict(checks) if isinstance(checks, Mapping) else None,
             fill=bool(data.get("fill", False)),
             errors=check_codes(data.get("errors")),
+            notes=check_codes(data.get("notes")),
         )
 
 
@@ -1288,7 +1293,7 @@ _CHECK_CODE = re.compile(r"[a-z0-9_]{1,40}")
 
 
 def check_codes(value: Any) -> tuple[str, ...]:
-    """Return the failed-check codes in a value; anything else is dropped."""
+    """Return the check codes or notes in a value; anything else is dropped."""
     if not isinstance(value, list | tuple):
         return ()
     return tuple(
@@ -1302,7 +1307,12 @@ def check_codes(value: Any) -> tuple[str, ...]:
 
 @dataclass(slots=True)
 class FilteredItem:
-    """An e-mail the AI classed as not about a parcel, kept so it can be undone."""
+    """An e-mail the AI classed as not about a parcel, kept so it can be undone.
+
+    ``removed`` marks an e-mail an administrator removed from Parcels after
+    it was read into a parcel. Its subject is empty: Parcels doesn't keep
+    the subjects of e-mails it reads into parcels.
+    """
 
     id: str
     created: datetime
@@ -1312,6 +1322,7 @@ class FilteredItem:
     sender_domain: str
     subject: str
     mailbox: str | None
+    removed: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the item."""
@@ -1324,6 +1335,7 @@ class FilteredItem:
             "sender_domain": self.sender_domain,
             "subject": self.subject,
             "mailbox": self.mailbox,
+            "removed": self.removed,
         }
 
     @classmethod
@@ -1338,6 +1350,7 @@ class FilteredItem:
             sender_domain=str(data.get("sender_domain", "")),
             subject=str(data.get("subject", "")),
             mailbox=data.get("mailbox"),
+            removed=bool(data.get("removed", False)),
         )
 
 

@@ -707,6 +707,30 @@ def test_shop_named_as_the_carrier(
         assert not any(note.startswith("carrier") for note in result.notes)
     failed = code if code == "carrier_not_in_email" else None
     assert validation.errors == ((failed,) if failed else ())
+    noted = code if code == "carrier_unproven" else None
+    carrier_notes = tuple(n for n in validation.notes if n.startswith("carrier"))
+    assert carrier_notes == ((noted,) if noted else ())
+
+
+def test_notes_are_kept_apart_from_failed_checks() -> None:
+    """What the checks changed in an answer isn't a failure, and is listed once.
+
+    The result's notes still hold both, as before.
+    """
+    validation = validate(
+        answer(
+            kind="shipped",
+            merchant="Amazon",
+            carrier="Amazon",
+            tracking_numbers=["RR123456785PT"],
+        ),
+        "A sua encomenda foi enviada. Vendido e enviado por Amazon.",
+        sender="envio@amazon.es",
+    )
+    assert validation.errors == ("tracking_not_in_email",)
+    assert validation.notes == ("carrier_unproven",)
+    assert validation.result is not None
+    assert validation.result.notes == ("tracking_not_in_email", "carrier_unproven")
 
 
 @pytest.mark.parametrize(

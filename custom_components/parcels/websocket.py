@@ -8,7 +8,7 @@ from typing import Any
 
 from homeassistant.components import websocket_api
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_call_later
@@ -53,7 +53,7 @@ type Handler = Callable[
 def _send_validation_error(
     connection: websocket_api.ActiveConnection,
     msg_id: int,
-    err: ServiceValidationError,
+    err: HomeAssistantError,
 ) -> None:
     connection.send_error(
         msg_id,
@@ -101,6 +101,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_review_trust_sender,
         ws_review_ignore_sender,
         ws_review_restore,
+        ws_origin_remove,
         ws_filtered_clear,
         ws_filtered_clear_all,
         ws_return_remove,
@@ -294,16 +295,65 @@ def ws_review_ignore_sender(
     }
 )
 @websocket_api.require_admin
-@_expected_errors
-@callback
-def ws_review_restore(
+@websocket_api.async_response
+async def ws_review_restore(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Move an e-mail that was filtered out to the review list."""
-    review_id = _engine(hass).filtered_restore(msg["filtered_id"])
-    connection.send_result(msg["id"], {"review_id": review_id})
+    """Restore a filtered e-mail.
+
+    One that was filtered out moves to the review list; one the user removed
+    from Parcels is read again, and its review ID is None. "parcel_ids" are
+    the parcels the user may see that hold the e-mail now.
+    """
+    engine = _engine(hass)
+    entry = engine.data.filtered.get(msg["filtered_id"])
+    message = entry.message if entry else None
+    try:
+        review_id = await engine.async_filtered_restore(msg["filtered_id"])
+    except HomeAssistantError as err:
+        _send_validation_error(connection, msg["id"], err)
+        return
+    viewer = viewer_for(hass, connection.user)
+    parcel_ids = sorted(
+        parcel.id
+        for parcel in engine.data.parcels.values()
+        if message is not None
+        and viewer.can_see(parcel)
+        and any(origin.message == message for origin in parcel.origins.values())
+    )
+    connection.send_result(
+        msg["id"], {"review_id": review_id, "parcel_ids": parcel_ids}
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        p.Required("type"): f"{DOMAIN}/origin/remove",
+        p.Required("parcel_id"): cv.string,
+        p.Required("origin_id"): cv.string,
+    }
+)
+@websocket_api.require_admin
+@_expected_errors
+@callback
+def ws_origin_remove(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remove an e-mail from Parcels, with everything it added.
+
+    The answer's parcel_id is None when the parcel went with the e-mail.
+    """
+    engine = _engine(hass)
+    parcel = engine.parcel(msg["parcel_id"])
+    if not viewer_for(hass, connection.user).can_see(parcel):
+        raise validation_error("not_allowed")
+    filtered_id = engine.remove_email(parcel.id, msg["origin_id"])
+    kept = parcel.id if parcel.id in engine.data.parcels else None
+    connection.send_result(msg["id"], {"filtered_id": filtered_id, "parcel_id": kept})
 
 
 @websocket_api.websocket_command(

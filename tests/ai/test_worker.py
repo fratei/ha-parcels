@@ -247,6 +247,9 @@ async def test_suggest_mode_offers_the_answer(
     assert item.suggestion is not None
     assert item.suggestion.kind is MailKind.IN_TRANSIT
     assert item.suggestion.tracking_numbers == (TRACKING,)
+    # The answer passed; the checks only noted what they added.
+    assert item.errors == ()
+    assert item.notes == ("tracking_added_by_detector",)
     assert engine.ai.queue_size == 0
     assert not engine.data.parcels
     assert engine.ai.today()["calls"] == 1
@@ -328,6 +331,7 @@ async def test_not_parcel_answer_with_a_tracking_number_is_rejected(
     assert item.reason == REASON_AI_REJECTED
     assert item.source is Source.PARSER
     assert item.errors == ("not_parcel_has_tracking",)
+    assert item.notes == ()
     assert not engine.data.filtered
     assert engine.ai.today()["rejected"] == 1
 
@@ -532,8 +536,9 @@ async def test_answer_failing_checks_is_offered_as_rejected(
     assert item.suggestion is not None
     assert item.suggestion.kind is MailKind.IN_TRANSIT
     assert "RR123456785PT" not in item.suggestion.tracking_numbers
-    # Which checks failed, without the values.
+    # Which checks failed, without the values; notes aren't failures.
     assert item.errors == ("tracking_not_in_email",)
+    assert item.notes == ("tracking_added_by_detector",)
     assert not engine.data.parcels
     assert engine.ai.today()["rejected"] == 1
     assert engine.ai.today()["suggested"] == 0
@@ -1151,6 +1156,41 @@ async def test_fill_suggests_what_the_parser_missed(
     assert parcel.origins[fill_origin_id(message.hash)].confirmed
     assert not engine.data.review
     assert engine.data.messages[message.hash].state is MessageState.APPLIED
+
+
+async def test_fill_lists_the_notes_on_the_answer(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """A fill lists what the checks changed in the answer, with an older fill's.
+
+    A newer fill of an e-mail replaces the older one and keeps what it found,
+    so it keeps its notes too.
+    """
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    (entry,) = engine.ai.queue
+    older = dataclasses.replace(
+        ReviewItem.from_dict(entry["review"]),
+        id="r_older",
+        reason=REASON_AI_FILL,
+        source=Source.AI,
+        suggestion=Suggestion(MailKind.IN_TRANSIT, items=("Caneca azul",)),
+        fill=True,
+        notes=("item_recommended",),
+    )
+    engine.data.review[older.id] = older
+    # No tracking number: the checks add the e-mail's own.
+    generate.return_value = result(kind="in_transit", eta_start="2026-11-20")
+
+    await engine.ai._async_step()
+
+    (item,) = engine.data.review.values()
+    assert item.fill
+    assert item.suggestion is not None
+    assert item.suggestion.eta_start == FILLED
+    assert item.suggestion.items == ("Caneca azul",)
+    assert item.errors == ()
+    assert item.notes == ("item_recommended", "tracking_added_by_detector")
 
 
 async def test_fill_is_added_in_auto_mode(

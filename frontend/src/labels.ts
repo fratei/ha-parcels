@@ -2,6 +2,7 @@ import { CARRIER_NAMES, carrierName } from "./carriers.ts";
 import {
   KIND_LABELS,
   MERGE_REASON_LABELS,
+  NOTE_MEANINGS,
   REASON_LABELS,
   SOURCE_LABELS,
   STATUS_LABELS,
@@ -115,6 +116,12 @@ export function inferredNotice(parcel: Pick<Parcel, "inferred_reason">): string 
 /** A readable review reason: a known label, else the code made readable, else the text as sent. */
 export function reasonLabel(reason: unknown): string {
   return lookup(REASON_LABELS, reason);
+}
+
+/** What a note on an AI answer means, in one line; null for a code without a meaning. */
+export function noteMeaning(code: unknown): string | null {
+  const value = clean(code);
+  return value && Object.hasOwn(NOTE_MEANINGS, value) ? (NOTE_MEANINGS[value] ?? null) : null;
 }
 
 /** Why a parcel was merged automatically, for use inside a sentence; "" without a reason. */

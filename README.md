@@ -51,9 +51,11 @@ api.parcel.app, which Parcels contacts itself with your API key.
   guess (same shop, matching dates, only one candidate) are marked, and you
   can undo them. A guess counts only when no other open parcel of that shop
   could be the one, late parcels and those due in the next days included, and
-  when the carriers named by the shop and the delivery agree. When several
-  parcels could match, Parcels asks in **Needs review** instead. Parcels with
-  different tracking numbers are never merged.
+  when the carriers named by the shop and the delivery agree. A delivery made
+  on a day before the shop's package was shipped is another package, and
+  isn't suggested either. When several parcels could match, Parcels asks
+  in **Needs review** instead. Parcels with different tracking numbers are
+  never merged.
 - **Parcels without a tracking number**: when a carrier delivers another
   parcel from the same shop around the expected day, and no e-mail says
   otherwise, the parcel is marked as probably delivered, unless that delivery
@@ -165,8 +167,8 @@ api.parcel.app, which Parcels contacts itself with your API key.
   sender's domain, when it arrived and what Parcels did with it, to recognize
   the e-mails it has read and to download one again when needed. E-mails in
   **Needs review** and **Filtered** also keep their sender's address and
-  subject until they leave the list. E-mail bodies are never stored or
-  logged.
+  subject until they leave the list; those removed from a parcel keep only
+  the sender's domain. E-mail bodies are never stored or logged.
 - **No remote content.** Images, tracking pixels and links in e-mails are
   never loaded. Tracking links are built from each carrier's public URL
   pattern.
@@ -185,7 +187,8 @@ api.parcel.app, which Parcels contacts itself with your API key.
   status and time window, never item names unless you turn that on. With item
   names on, a parcel without items shows its name in the Parcel app instead.
   A parcel marked private notifies only its owner and is only counted in the
-  shared persistent notification.
+  shared persistent notification. The link that opens a parcel from them
+  carries only its ID in Parcels.
 - **Delivery PINs** are shown only on the Parcels page, to the people who can
   see the parcel: on its box until it's delivered, returned or cancelled, in
   its details, and to administrators in the e-mails waiting for review. They
@@ -433,15 +436,35 @@ add a resource.
   and parcel ID, and to mark it delivered, edit it,
   make it private, merge, split or archive it. Its expected date ends in
   "· Parcel app" when it comes from the Parcel app. Merges and deliveries
-  that Parcels guessed are marked there, to keep or undo. **Merge** lists the
-  likely matches first (same order or shop, still open, close dates), each
-  with its items, order number, carrier, tracking number, status and date;
-  older parcels are behind **Show older** and the search. For
-  administrators, when a carrier's e-mails don't say which of a shop's
-  parcels it's delivering, the box says "Possibly: …" with the candidates'
-  items, and the details list them, to merge or rule out with one tap. The
-  card also adds parcels by tracking number. Options: `title` (an empty
-  string hides it) and `show_archived` (default `true`).
+  that Parcels guessed are marked there, to keep or undo.
+  **E-mails**, closed until you open it, lists the parcel's e-mails and
+  other sources, oldest first: where each came from (the sender, 17TRACK,
+  the Parcel app or your edits) and when, what it said, such as a status
+  with its date or time window, and what it added: items, order numbers,
+  carrier and tracking number, shop, seller, pickup point, and Amazon's
+  shipments as "Shipment 1/2". E-mails from one sender that add nothing new
+  share a line, such as "3 more from FedEx". It shows only what Parcels
+  keeps, never subjects or bodies. **Move to a new parcel** splits one row
+  off, or says why it can't, for example when it shares the tracking number.
+  For an e-mail that isn't about the parcel, such as a survey or an ad,
+  administrators can select **Remove from Parcels**: what it added goes, the
+  parcel is worked out again without it, or deleted if nothing else made it,
+  and Parcels doesn't read the e-mail again. It's then listed under
+  **Filtered**, where **Restore** reads it again. Both can be undone.
+  **Split…** shows the same details for each row.
+  **Merge** lists the likely matches first (same order or shop, still open,
+  close dates), each with its items, order number, carrier, tracking number,
+  status, date and time, and who wrote about it, such as "2 e-mails from CTT
+  Expresso". Older parcels, and deliveries made before the other parcel was
+  shipped, are behind **Show older** and the search. For administrators,
+  when a carrier's e-mails don't say which of a shop's parcels it's
+  delivering, the box says "Possibly: …" with the candidates' items, and the
+  details list them, nearest to the parcel's day first, to merge or rule out
+  with one tap. A delivery whose items aren't known says why, such as
+  "Carrier e-mails don't list items", and which other orders it could also
+  be, with their items, so you can rule them out. The card also adds parcels
+  by tracking number. Options: `title` (an empty string hides it) and
+  `show_archived` (default `true`).
 - **Parcels without a date** (`custom:parcels-list-card`): active parcels that
   don't have a delivery date yet. Option: `title`.
 - **Parcels review** (`custom:parcels-review-card`): **Needs review** lists the
@@ -450,14 +473,19 @@ add a resource.
   be the same one, to merge or keep apart. While e-mails wait for the local AI,
   it says how many and, after the AI's first answer, about how long they'll
   take. **Filtered** lists e-mails that looked like shipping e-mails but
-  turned out not to be about a parcel; you can move them back, or clear one or
-  all of them. A cleared e-mail isn't read again, apart from one check for
-  returns after updating to 0.1.5 (see [Troubleshooting](#troubleshooting)).
+  turned out not to be about a parcel, and those removed from a parcel in its
+  details; you can restore them, or clear one or all of them. A filtered
+  e-mail goes back to **Needs review**; a removed one is read again, or waits
+  in **Needs review** when it's gone from the mailbox. A cleared e-mail isn't
+  read again, apart from one check for returns after updating to 0.1.5 (see
+  [Troubleshooting](#troubleshooting)).
   Items leave the list as soon as you act on them, and come back with the
   error if the action fails. Option: `title`.
 
-Delivery notifications open `/dashboard-parcels/week`. To make them land on
-your page, go to **Settings > Dashboards > Add dashboard > New dashboard from
+Delivery notifications open `/dashboard-parcels/week`. A parcel's Live
+Activity or notification adds `?parcel=` and the parcel's ID, and the week
+or list card opens that parcel's details. To make them land on your page, go
+to **Settings > Dashboards > Add dashboard > New dashboard from
 scratch**, name it **Parcels** with the icon `mdi:package-variant-closed`, and
 keep the URL `dashboard-parcels`. Open it, choose **Edit dashboard > ⋮ > Raw
 configuration editor** and paste:
@@ -585,11 +613,26 @@ How they behave:
   for today. Orders that ride along with a package don't. Later in the day a
   parcel starts one as soon as it's out for delivery or ready for pickup.
 - With more packages than the threshold (3) on one iPhone, they share one
-  activity, such as "2 of 5 delivered · next: DPD 13–14h", for the rest of the
-  day. Orders that ride along with a package don't count (see
+  activity, such as "2 of 5 delivered · next: Amazon via DPD 13–14h", for the
+  rest of the day. It names the next package's shop and carrier, or the one
+  that's known. Orders that ride along with a package don't count (see
   [How the day is counted](#how-the-day-is-counted)).
+- The icon and the progress bar take the color of the status: blue on the
+  way, orange out for delivery, green delivered, purple ready for pickup, and
+  red for a failed attempt or a problem. The card stays dark, and the icon and
+  the text still say the status. A shared activity takes the color of its
+  most urgent package (out for delivery, then a problem, then a pickup), and
+  turns green when all are delivered. Android notifications take the color
+  too; iPad notifications have no color.
+- The message always shows the time window, such as "Out for delivery
+  13:00–14:00 · DPD". On the lock screen a countdown takes its place only in
+  the last hour of the window (all of a shorter one), started by one silent
+  update. A window with only an end ("by 14:00") counts down only while the
+  parcel is out for delivery.
 - Updates are sent only when something changes, and silently unless the
-  status changed. A time window shows a countdown.
+  status changed.
+- Tapping a parcel's activity or notification opens its details on the
+  Parcels page; the shared activity opens the week.
 - A delivered parcel shows "Delivered ✓" with the time when it's known, and
   its activity ends 30 minutes later. So does a shared activity once every
   package is delivered ("3 of 3 delivered ✓").
@@ -877,7 +920,12 @@ shipment reference. [docs/ai-benchmark.md](docs/ai-benchmark.md) lists the
 checks. An answer that fails one waits in **Needs review**, which only
 administrators see. There, **Checks the AI answer failed** names the checks
 it failed, such as `tracking_not_in_email`, without any values; the
-[list of codes](docs/ai-benchmark.md#check-codes) explains each one.
+[list of codes](docs/ai-benchmark.md#check-codes) explains each one. Below
+it, on any of the local AI's answers there, **Notes on the AI answer** lists
+what the checks changed in an answer they let through, such as
+`carrier_unproven` when the shop was given as the carrier, each with its
+meaning. Notes aren't failed checks: the rest of the answer is used (see the
+[list of notes](docs/ai-benchmark.md#notes)).
 
 Limits: 5 minutes per e-mail, one retry, 50 e-mails a day, and only the last
 14 days during a mailbox's first sync. An e-mail whose retry fails as well
@@ -971,6 +1019,11 @@ actions:
 - **A parcel shows twice.** Check **Needs review** for a merge suggestion, or
   select the parcel and merge it. Packages of one shipment that arrive on
   different days have a box each.
+- **A parcel mixes up packages or e-mails.** Open **E-mails** in its details
+  to see what each e-mail added. **Move to a new parcel** splits off an
+  e-mail about another package. An e-mail that isn't about any parcel, such
+  as a survey or an ad, can be removed by an administrator with **Remove from
+  Parcels**; **Restore** under **Filtered** brings it back.
 - **A delivery PIN is missing.** Parcels doesn't read the e-mails it read
   before version 0.1.2 again by itself. Select the parcel, copy its
   **Parcel ID** from the details, and run `parcels.reprocess` with that
@@ -1059,6 +1112,9 @@ actions:
 - **No Live Activity.** Check the iPhone's Live Activities setting for the
   Home Assistant app, remote access, the **Live Activities** switch, test mode
   and the people to notify, then try `parcels.test_live_activity`.
+- **Tapping a Live Activity or notification shows the week, not the
+  parcel.** The page at the link needs the week or list card. A parcel merged
+  into another one or deleted since then has no details to open.
 - **Live Activities count fewer parcels than the page.** Orders that one of
   the day's packages may hold ride along with it (see
   [How the day is counted](#how-the-day-is-counted)). The notifications part

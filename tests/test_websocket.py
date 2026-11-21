@@ -40,6 +40,7 @@ from custom_components.parcels.dedup import (
     apply_contribution,
 )
 from custom_components.parcels.engine import ParcelsEngine
+from custom_components.parcels.mail.errors import MailError
 from custom_components.parcels.models import (
     PARCELAPP_PREFIX,
     MessageState,
@@ -114,6 +115,9 @@ HIDDEN = {
     "shipment_group": None,
     "name": None,
     "eta_source": None,
+    "senders": [],
+    "ordered_at": None,
+    "shipped_at": None,
     "restricted": True,
 }
 
@@ -329,7 +333,9 @@ async def test_list(engine: ParcelsEngine, ws: MockHAClientWebSocket) -> None:
         "sender",
         "sender_domain",
         "subject",
+        "removed",
     }
+    assert not filtered["removed"]
     assert filtered["sender_domain"] == FILTERED_SENDER
     assert filtered["subject"] == "A sua encomenda está a caminho"
     assert snapshot["settings"] == {
@@ -745,13 +751,71 @@ async def test_get(
     assert shown["eta_start"] == "2026-11-19"
     # The edits stay with the parcel; only the e-mail can be split off.
     assert shown["origins"] == [mail_origin]
+    # What each e-mail and source said and brought, oldest first.
     assert details["origins"] == [
         {
             "id": mail_origin,
-            "label": "ctt.pt",
             "source": "parser",
+            "label": "ctt.pt",
+            "sender_name": "CTT",
+            "name": None,
             "time": "2026-11-17T08:05:00+00:00",
-        }
+            "status": "in_transit",
+            "kind": "in_transit",
+            "event_time": "2026-11-17T08:05:00+00:00",
+            "undated": False,
+            "dayless": False,
+            "eta_start": "2026-11-19",
+            "eta_end": "2026-11-19",
+            "window_start": None,
+            "window_end": None,
+            "carrier": "ctt",
+            "carrier_name": "CTT",
+            "tracking_number": CTT_NUMBER,
+            "reference": None,
+            "merchant": "Worten",
+            "seller": None,
+            "order_numbers": [],
+            "items": [],
+            "pickup_point": None,
+            "shipment": None,
+            "email": True,
+            "edits": False,
+            "part_of": None,
+            # It's the parcel's only e-mail.
+            "split_blocked": "nothing_left",
+        },
+        {
+            "id": f"man:{parcel_id}",
+            "source": "manual",
+            "label": "",
+            "sender_name": None,
+            "name": None,
+            "time": "2026-11-17T10:10:00+00:00",
+            "status": "delivered",
+            "kind": "delivered",
+            "event_time": "2026-11-17T10:10:00+00:00",
+            "undated": False,
+            "dayless": False,
+            "eta_start": "2026-11-19",
+            "eta_end": "2026-11-19",
+            "window_start": None,
+            "window_end": None,
+            "carrier": None,
+            "carrier_name": None,
+            "tracking_number": None,
+            "reference": None,
+            "merchant": None,
+            "seller": None,
+            "order_numbers": [],
+            "items": [],
+            "pickup_point": "Locker 12",
+            "shipment": None,
+            "email": False,
+            "edits": True,
+            "part_of": None,
+            "split_blocked": None,
+        },
     ]
     # The ETA change isn't a step on the way.
     assert details["timeline"] == [
@@ -772,6 +836,233 @@ async def test_get(
     ]
     assert (shown["status_undated"], shown["delivered_undated"]) == (False, False)
     assert details["orders"] == []
+
+
+async def test_get_origin_rows(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket
+) -> None:
+    """Each e-mail and source shows what it said and what it brought.
+
+    An order's Amazon shipments are numbered, 17TRACK, the Parcel app and
+    the local AI show as such, and e-mails that share a tracking number
+    can't be moved apart.
+    """
+    data = engine.data
+    now = dt_util.utcnow()
+    order = "405-1234567-7654321"
+    amazon = {"merchant": "Amazon", "orders": [order], "label": "amazon.es"}
+    gloves = apply_contribution(
+        data,
+        contribution(
+            "msg:az1#0",
+            time=now - timedelta(hours=3),
+            carrier="dhl",
+            number=DHL_NUMBER,
+            shipment_id="SHIPMENT1",
+            items=["Garden gloves", "Rain jacket"],
+            **amazon,
+        ),
+        now,
+    ).parcel_id
+    lamp = apply_contribution(
+        data,
+        contribution(
+            "msg:az2#0",
+            time=now - timedelta(hours=2),
+            carrier="dhl",
+            number=OTHER_DHL_NUMBER,
+            shipment_id="SHIPMENT2",
+            items=["Desk lamp"],
+            **amazon,
+        ),
+        now,
+    ).parcel_id
+    assert lamp != gloves
+    carrier_mail = contribution(
+        "msg:dhl1#0",
+        kind=MailKind.IN_TRANSIT,
+        time=now - timedelta(hours=1),
+        carrier="dhl",
+        number=DHL_NUMBER,
+        label="dhl.com",
+    )
+    assert apply_contribution(data, carrier_mail, now).parcel_id == gloves
+    for origin, status, minutes in (
+        (
+            Origin(
+                id="17t:" + DHL_NUMBER,
+                source=Source.SEVENTEENTRACK,
+                time=now - timedelta(minutes=30),
+                label="17TRACK",
+                carrier="dhl",
+                tracking_number=DHL_NUMBER,
+            ),
+            ParcelStatus.IN_TRANSIT,
+            30,
+        ),
+        (
+            Origin(
+                id=PARCELAPP_PREFIX + DHL_NUMBER,
+                source=Source.PARCELAPP,
+                time=now - timedelta(minutes=10),
+                label="Parcel app",
+                carrier="dhl",
+                tracking_number=DHL_NUMBER,
+                name="Gloves",
+            ),
+            ParcelStatus.OUT_FOR_DELIVERY,
+            10,
+        ),
+    ):
+        event = ParcelEvent(
+            time=now - timedelta(minutes=minutes), source=origin.source, status=status
+        )
+        tracked = Contribution(origin=origin, events=[event])
+        assert apply_contribution(data, tracked, now).parcel_id == gloves
+    fill = fill_contribution(
+        Suggestion(kind=MailKind.SHIPPED, eta_start=date(2026, 11, 20)),
+        message_hash="az1",
+        time=now,
+        label="amazon.es",
+    )
+    assert fill is not None
+    assert apply_contribution(data, fill, now).parcel_id == gloves
+
+    rows = (await result(ws, "parcels/get", parcel_id=gloves))["origins"]
+
+    said = [
+        (
+            row["source"],
+            row["label"],
+            row["sender_name"],
+            row["name"],
+            row["status"],
+            row["kind"],
+            row["eta_start"],
+            row["email"],
+        )
+        for row in rows
+    ]
+    assert said == [
+        ("parser", "amazon.es", "Amazon", None, "shipped", "shipped", None, True),
+        ("parser", "dhl.com", "DHL", None, "in_transit", "in_transit", None, True),
+        ("seventeentrack", "17TRACK", None, None, "in_transit", None, None, False),
+        (
+            "parcelapp",
+            "Parcel app",
+            None,
+            "Gloves",
+            "out_for_delivery",
+            None,
+            None,
+            False,
+        ),
+        ("ai", "amazon.es", "Amazon", None, None, None, "2026-11-20", True),
+    ]
+    first = rows[0]
+    assert first["items"] == ["Garden gloves", "Rain jacket"]
+    assert (first["merchant"], first["order_numbers"]) == ("Amazon", [order])
+    assert (first["carrier_name"], first["tracking_number"]) == ("DHL", DHL_NUMBER)
+    # The shipment is shown by its place in the order, never by its ID.
+    assert first["shipment"] == [1, 2]
+    assert "SHIPMENT1" not in str(rows)
+    assert [row["shipment"] for row in rows[1:]] == [None] * 4
+    # What the AI read is part of its e-mail: they move together, and the
+    # tracking number holds the e-mails together.
+    assert [row["part_of"] for row in rows] == [None] * 4 + ["msg:az1#0"]
+    assert [row["split_blocked"] for row in rows] == ["shared_number"] * 5
+    assert not any(row["edits"] for row in rows)
+
+    other = (await result(ws, "parcels/get", parcel_id=lamp))["origins"]
+    assert [(row["shipment"], row["split_blocked"]) for row in other] == [
+        ([2, 2], "nothing_left")
+    ]
+
+
+async def test_list_senders_and_dates(
+    hass: HomeAssistant, engine: ParcelsEngine, ws: MockHAClientWebSocket
+) -> None:
+    """A parcel lists who told about it, and when it was ordered and sent.
+
+    Each e-mail counts once, with or without the local AI's reading, and the
+    user's edits don't count. Only dated news gives the days.
+    """
+    data = engine.data
+    now = dt_util.utcnow()
+    amazon = {"merchant": "Amazon", "orders": ["405-1234567-7654321"]}
+    ctt = {"carrier": "ctt", "number": SHOP_NUMBER}
+    mails = [
+        contribution(
+            "msg:az1#0",
+            kind=MailKind.ORDER,
+            time=now - timedelta(days=3),
+            items=["Garden gloves"],
+            label="amazon.es",
+            **amazon,
+        ),
+        # Its date isn't known: it doesn't say when the parcel left.
+        contribution(
+            "msg:ctt1#0",
+            kind=MailKind.IN_TRANSIT,
+            time=now - timedelta(days=2, hours=12),
+            undated=True,
+            label="ctt.pt",
+            **ctt,
+        ),
+        contribution(
+            "msg:az2#0",
+            time=now - timedelta(days=2),
+            label="amazon.es",
+            **amazon,
+            **ctt,
+        ),
+        contribution(
+            "msg:ctt2#0",
+            kind=MailKind.IN_TRANSIT,
+            time=now - timedelta(days=1),
+            label="ctt.pt",
+            **ctt,
+        ),
+    ]
+    tracked = Contribution(
+        origin=Origin(
+            id="17t:" + SHOP_NUMBER,
+            source=Source.SEVENTEENTRACK,
+            time=now - timedelta(hours=12),
+            label="17TRACK",
+            carrier="ctt",
+            tracking_number=SHOP_NUMBER,
+        ),
+        events=[
+            ParcelEvent(
+                time=now - timedelta(hours=12),
+                source=Source.SEVENTEENTRACK,
+                status=ParcelStatus.IN_TRANSIT,
+            )
+        ],
+    )
+    fill = fill_contribution(
+        Suggestion(kind=MailKind.SHIPPED, eta_start=date(2026, 11, 19)),
+        message_hash="az2",
+        time=now,
+        label="amazon.es",
+    )
+    assert fill is not None
+    for item in (*mails, tracked, fill):
+        parcel_id = apply_contribution(data, item, now).parcel_id
+    assert len(data.parcels[parcel_id].origins) == 6
+    await call(hass, "update", {"parcel_id": parcel_id, "pickup_point": "Locker 12"})
+
+    parcels = (await result(ws, "parcels/list"))["parcels"]
+
+    (shown,) = [parcel for parcel in parcels if parcel["id"] == parcel_id]
+    assert shown["senders"] == [
+        {"name": "Amazon", "source": "email", "carrier": False, "count": 2},
+        {"name": "CTT", "source": "email", "carrier": True, "count": 2},
+        {"name": "17TRACK", "source": "seventeentrack", "carrier": False, "count": 1},
+    ]
+    assert shown["ordered_at"] == "2026-11-14T10:00:00+00:00"
+    assert shown["shipped_at"] == "2026-11-15T10:00:00+00:00"
 
 
 async def test_get_orders(
@@ -1062,6 +1353,223 @@ async def test_filtered_admin_only(
     assert filtered_id in engine.data.filtered
 
 
+# -- Removing e-mails ---------------------------------------------------------
+
+
+async def test_origin_remove(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    client: FakeMailClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An e-mail removed from Parcels takes what it added and isn't read again.
+
+    It waits under Filtered, marked as removed. A parcel left with only the
+    user's edits goes too: the answer's parcel_id is None.
+    """
+    ((parcel_id, parcel),) = engine.data.parcels.items()
+    (origin_id,) = parcel.origins
+    key = parcel.origins[origin_id].message
+    assert key is not None
+    await call(hass, "update", {"parcel_id": parcel_id, "pickup_point": "Locker 12"})
+
+    removed = await result(
+        ws, "parcels/origin/remove", parcel_id=parcel_id, origin_id=origin_id
+    )
+
+    assert not engine.data.parcels
+    assert removed["parcel_id"] is None
+    assert engine.data.messages[key].state is MessageState.FILTERED
+    snapshot = await result(ws, "parcels/list")
+    assert snapshot["parcels"] == []
+    (entry,) = [f for f in snapshot["filtered"] if f["id"] == removed["filtered_id"]]
+    assert entry == {
+        "id": removed["filtered_id"],
+        "created": "2026-11-17T10:00:00+00:00",
+        "received": "2026-11-17T08:05:00+00:00",
+        "sender": "CTT",
+        "sender_domain": "ctt.pt",
+        "subject": "",
+        "removed": True,
+    }
+    # The mailbox reports the e-mail again: it isn't downloaded or read.
+    fetches = len(client.fetches)
+    client.add("carriers/ctt_in_transit_pt.eml")
+    (mailbox,) = engine.mailboxes.values()
+    assert mailbox.coordinator is not None
+    await mailbox.coordinator.async_refresh()
+    assert len(client.fetches) == fetches
+    assert not engine.data.parcels
+    assert engine.data.messages[key].state is MessageState.FILTERED
+    assert no_errors_logged(caplog)
+
+
+async def test_origin_remove_everywhere(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket
+) -> None:
+    """A removed e-mail leaves every parcel it was part of; the others stay.
+
+    Parcels doesn't need to have kept the e-mail's record.
+    """
+    data = engine.data
+    now = dt_util.utcnow()
+    first = apply_contribution(
+        data,
+        contribution("msg:both#0", carrier="dhl", number=DHL_NUMBER, label="dhl.com"),
+        now,
+    ).parcel_id
+    second = apply_contribution(
+        data,
+        contribution(
+            "msg:both#1", carrier="dhl", number=OTHER_DHL_NUMBER, label="dhl.com"
+        ),
+        now,
+    ).parcel_id
+    kept = apply_contribution(
+        data,
+        contribution(
+            "msg:dhl#0",
+            kind=MailKind.IN_TRANSIT,
+            carrier="dhl",
+            number=DHL_NUMBER,
+            label="dhl.com",
+        ),
+        now,
+    )
+    assert kept.parcel_id == first
+    assert "both" not in data.messages
+
+    removed = await result(
+        ws, "parcels/origin/remove", parcel_id=first, origin_id="msg:both#0"
+    )
+
+    assert removed["parcel_id"] == first
+    assert second not in data.parcels
+    assert list(data.parcels[first].origins) == ["msg:dhl#0"]
+    assert data.messages["both"].state is MessageState.FILTERED
+    (entry,) = [f for f in data.filtered.values() if f.removed]
+    assert (entry.message, entry.sender, entry.sender_domain) == (
+        "both",
+        "DHL",
+        "dhl.com",
+    )
+
+
+async def test_origin_remove_refused(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    sam_ws: MockHAClientWebSocket,
+    sam: User,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only administrators remove, only e-mails, from parcels they may see."""
+    data = engine.data
+    ((parcel_id, parcel),) = data.parcels.items()
+    (origin_id,) = parcel.origins
+    await call(hass, "update", {"parcel_id": parcel_id, "pickup_point": "Locker 12"})
+    now = dt_util.utcnow()
+    tracked = Origin(
+        id=PARCELAPP_PREFIX + CTT_NUMBER,
+        source=Source.PARCELAPP,
+        time=now,
+        label="Parcel app",
+        carrier="ctt",
+        tracking_number=CTT_NUMBER,
+    )
+    event = ParcelEvent(time=now, source=Source.PARCELAPP, status=ParcelStatus.SHIPPED)
+    assert (
+        apply_contribution(data, Contribution(origin=tracked, events=[event]), now)
+    ).parcel_id == parcel_id
+    sam_parcel = await add(hass, DHL_NUMBER, user=sam, carrier="dhl", private=True)
+    (sam_origin,) = data.parcels[sam_parcel].origins
+    remove = "parcels/origin/remove"
+
+    err = await error(sam_ws, remove, parcel_id=parcel_id, origin_id=origin_id)
+    assert err["code"] == "unauthorized"
+    # Home Assistant logs that refusal itself; the others aren't errors.
+    caplog.clear()
+    await refused(ws, remove, "unknown_parcel", parcel_id="p_missing", origin_id="x")
+    await refused(ws, remove, "not_allowed", parcel_id=sam_parcel, origin_id=sam_origin)
+    await refused(ws, remove, "unknown_origin", parcel_id=parcel_id, origin_id="x")
+    for not_mail in (f"man:{parcel_id}", tracked.id):
+        await refused(
+            ws, remove, "not_an_email", parcel_id=parcel_id, origin_id=not_mail
+        )
+
+    assert set(data.parcels[parcel_id].origins) == {
+        origin_id,
+        f"man:{parcel_id}",
+        tracked.id,
+    }
+    assert not [entry for entry in data.filtered.values() if entry.removed]
+    assert no_errors_logged(caplog)
+
+
+async def test_origin_restore(
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    client: FakeMailClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Restoring a removed e-mail reads it again into a parcel.
+
+    The answer names the parcels it's in now. While its mailbox can't give
+    it, it stays removed; once it's gone from the mailbox, it waits for
+    review.
+    """
+    data = engine.data
+    (parcel,) = data.parcels.values()
+    (origin_id,) = parcel.origins
+    key = parcel.origins[origin_id].message
+    assert key is not None
+    (provider_id,) = data.messages[key].refs.values()
+
+    async def remove() -> str:
+        (parcel_id,) = data.parcels
+        removed = await result(
+            ws, "parcels/origin/remove", parcel_id=parcel_id, origin_id=origin_id
+        )
+        assert not data.parcels
+        return str(removed["filtered_id"])
+
+    filtered_id = await remove()
+    restored = await result(ws, "parcels/review/restore", filtered_id=filtered_id)
+
+    (parcel,) = data.parcels.values()
+    assert restored == {"review_id": None, "parcel_ids": [parcel.id]}
+    assert (parcel.state.tracking_number, list(parcel.origins)) == (
+        CTT_NUMBER,
+        [origin_id],
+    )
+    assert data.messages[key].state is MessageState.APPLIED
+    assert filtered_id not in data.filtered
+
+    filtered_id = await remove()
+    client.fetch_errors[provider_id] = MailError("Mailbox down")
+    await refused(
+        ws, "parcels/review/restore", "message_unavailable", filtered_id=filtered_id
+    )
+    assert data.filtered[filtered_id].removed
+    assert data.messages[key].state is MessageState.FILTERED
+
+    del client.fetch_errors[provider_id]
+    client.delete(provider_id)
+    restored = await result(ws, "parcels/review/restore", filtered_id=filtered_id)
+
+    assert restored["parcel_ids"] == []
+    review = data.review[restored["review_id"]]
+    assert (review.message, review.reason, review.sender_domain) == (
+        key,
+        "restored",
+        "ctt.pt",
+    )
+    assert filtered_id not in data.filtered
+    assert not data.parcels
+    assert no_errors_logged(caplog)
+
+
 async def test_review_senders(
     hass: HomeAssistant,
     engine: ParcelsEngine,
@@ -1176,7 +1684,7 @@ async def test_review_lists_fills(
 async def test_review_lists_failed_checks(
     engine: ParcelsEngine, ws: MockHAClientWebSocket, review: dict[str, str]
 ) -> None:
-    """A rejected AI answer lists the checks it failed, as codes."""
+    """A rejected AI answer lists the checks it failed and its notes, as codes."""
     data = engine.data
     item = data.review[review[SHOP]]
     data.review["r_rejected"] = replace(
@@ -1185,11 +1693,14 @@ async def test_review_lists_failed_checks(
         reason="ai_rejected",
         source=Source.AI,
         errors=("tracking_is_order", "eta_not_in_text"),
+        notes=("carrier_unproven",),
     )
 
     listed = {r["id"]: r for r in (await result(ws, "parcels/list"))["review"]}
 
     assert listed["r_rejected"]["errors"] == ["tracking_is_order", "eta_not_in_text"]
+    assert listed["r_rejected"]["notes"] == ["carrier_unproven"]
+    assert listed[item.id]["notes"] == []
     assert listed[item.id]["errors"] == []
 
 

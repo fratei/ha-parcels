@@ -553,6 +553,7 @@ def _full_data() -> ParcelsData:
                 suggestion,
                 fill=True,
                 errors=("tracking_invalid", "eta_not_in_text"),
+                notes=("carrier_unproven", "eta_from_text"),
             )
         },
         filtered={
@@ -579,6 +580,7 @@ def test_round_trip() -> None:
     assert loaded.review["r1"].suggestion == data.review["r1"].suggestion
     assert loaded.review["r1"].fill
     assert loaded.review["r1"].errors == ("tracking_invalid", "eta_not_in_text")
+    assert loaded.review["r1"].notes == ("carrier_unproven", "eta_from_text")
     assert loaded.trusted_domains() == ("example.com",)
 
 
@@ -619,12 +621,16 @@ def test_seller() -> None:
 
 
 def test_review_item_keeps_only_check_codes() -> None:
-    """A stored item's failed checks are codes: anything else is dropped."""
+    """A stored item's failed checks and notes are codes: anything else is dropped."""
     stored = _full_data().review["r1"].as_dict()
     stored["errors"] = ["order_is_part", "RR123456785PT", 7, "x" * 41, "order_is_part"]
-    assert ReviewItem.from_dict(stored).errors == ("order_is_part",)
-    del stored["errors"]
-    assert ReviewItem.from_dict(stored).errors == ()
+    stored["notes"] = ["eta_from_text", "Amazon", None, "eta_from_text"]
+    item = ReviewItem.from_dict(stored)
+    assert (item.errors, item.notes) == (("order_is_part",), ("eta_from_text",))
+    del stored["errors"], stored["notes"]
+    item = ReviewItem.from_dict(stored)
+    assert (item.errors, item.notes) == ((), ())
+    assert "notes" not in item.as_dict()
 
 
 def test_unreadable_entries_are_skipped(caplog: pytest.LogCaptureFixture) -> None:

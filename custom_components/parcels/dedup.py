@@ -72,6 +72,7 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
+from .ai.validate import NOTE_CARRIER_UNPROVEN
 from .const import MailKind, ParcelStatus
 from .models import (
     AutoMerge,
@@ -82,6 +83,7 @@ from .models import (
     ParcelsData,
     ParcelState,
     Source,
+    check_codes,
     date_from_str,
     day_known,
     is_carrier_mail,
@@ -1118,6 +1120,30 @@ def merge_parcels(
     return target
 
 
+def split_problem(parcel: Parcel, moving: Collection[str]) -> str | None:
+    """Return why origins can't move out of a parcel, or None when they can.
+
+    Nothing to move, an origin that isn't the parcel's (or is the user's
+    edits), nothing left behind, or the two sides share a tracking number
+    or shipment (the next e-mail would merge them again).
+    """
+    edit_id = manual_origin_id(parcel.id)
+    if not moving:
+        return "no_origins"
+    if not set(moving) <= parcel.origins.keys() or edit_id in moving:
+        return "unknown_origin"
+    staying = [o for oid, o in parcel.origins.items() if oid not in moving]
+    if not [o for o in staying if o.id != edit_id]:
+        return "nothing_left"
+    if any(
+        _origins_linked(parcel.origins[oid], other)
+        for oid in moving
+        for other in staying
+    ):
+        return "shared_number"
+    return None
+
+
 def split_parcel(
     data: ParcelsData, parcel_id: str, origin_ids: Iterable[str], now: datetime
 ) -> Parcel:
@@ -1125,26 +1151,12 @@ def split_parcel(
 
     The user's edits stay with the original parcel, and the two parcels are
     kept apart, so reconciling doesn't merge them again. Raises DedupError
-    when the split is impossible: nothing to move, nothing left behind, or
-    the two sides share a tracking number or shipment (the next e-mail would
-    merge them again).
+    when the split is impossible (see :func:`split_problem`).
     """
     parcel = data.parcels[parcel_id]
     moving = set(origin_ids)
-    edit_id = manual_origin_id(parcel_id)
-    if not moving:
-        raise DedupError("no_origins")
-    if not moving <= parcel.origins.keys() or edit_id in moving:
-        raise DedupError("unknown_origin")
-    staying = [o for oid, o in parcel.origins.items() if oid not in moving]
-    if not [o for o in staying if o.id != edit_id]:
-        raise DedupError("nothing_left")
-    if any(
-        _origins_linked(parcel.origins[oid], other)
-        for oid in moving
-        for other in staying
-    ):
-        raise DedupError("shared_number")
+    if (problem := split_problem(parcel, moving)) is not None:
+        raise DedupError(problem)
 
     new = Parcel(id=new_id("p"), created=now, updated=now, private=parcel.private)
     for oid in sorted(moving):
@@ -1679,6 +1691,38 @@ def first_news(parcel: Parcel) -> datetime | None:
     return min(_news_times(parcel), default=None)
 
 
+_SENT = frozenset({ParcelStatus.SHIPPED, ParcelStatus.IN_TRANSIT})
+_ORDERED = frozenset({ParcelStatus.ORDERED})
+
+
+def _first_dated(parcel: Parcel, statuses: frozenset[ParcelStatus]) -> datetime | None:
+    """Return the time of the first dated news with one of these statuses.
+
+    The user's edits and inferred events don't count.
+    """
+    return min(
+        (
+            event.time
+            for event in parcel.events
+            if event.status in statuses
+            and not event.undated
+            and not event.inferred
+            and event.source is not Source.MANUAL
+        ),
+        default=None,
+    )
+
+
+def ordered_at(parcel: Parcel) -> datetime | None:
+    """Return when the first news said a parcel's order was placed."""
+    return _first_dated(parcel, _ORDERED)
+
+
+def shipped_at(parcel: Parcel) -> datetime | None:
+    """Return when the first news said a parcel left: shipped or in transit."""
+    return _first_dated(parcel, _SENT)
+
+
 def _last_activity(parcel: Parcel) -> datetime | None:
     """Return the time of the latest news, not counting the user's edits."""
     times = _news_times(parcel)
@@ -2111,9 +2155,10 @@ def _pair_by_day(
     carrier delivers (or is delivering) on the shop's date and they're the
     only two that could be the same package, they merge. An open parcel of
     the shop that is late, or due in the next days, could be it too, and two
-    carriers known to differ never pair. Otherwise the user gets suggestions.
+    carriers known to differ never pair, nor does a delivery made before the
+    day the shop's package left. Otherwise the user gets suggestions.
     """
-    untracked: list[tuple[Parcel, set[str], date, date, datetime]] = []
+    untracked: list[tuple[Parcel, set[str], date, date, datetime, date | None]] = []
     tracked: list[tuple[Parcel, set[str], date]] = []
     for parcel in pool:
         state = parcel.state
@@ -2125,12 +2170,21 @@ def _pair_by_day(
         elif (expected := _expected_days(parcel)) is not None and (
             first := first_news(parcel)
         ) is not None:
-            untracked.append((parcel, keys, *expected, first))
+            shipped = shipped_at(parcel)
+            untracked.append(
+                (
+                    parcel,
+                    keys,
+                    *expected,
+                    first,
+                    None if shipped is None else local_date(shipped),
+                )
+            )
 
     edges: dict[str, set[str]] = defaultdict(set)
     days: dict[str, date] = {}
     fits: set[frozenset[str]] = set()
-    for parcel, keys, start, end, first in untracked:
+    for parcel, keys, start, end, first, sent in untracked:
         # A parcel may arrive late or early, unless news closed it (a
         # "probably delivered" guess doesn't); only a fit is sure.
         waiting = not _finished(parcel)
@@ -2145,6 +2199,7 @@ def _pair_by_day(
                 )
                 and _same_carrier(parcel.state.carrier, other.state.carrier)
                 and (delivered is None or first < delivered)
+                and (sent is None or sent <= day)
                 and not _parcels_conflict(parcel, other)
                 and not apart(parcel, other)
             ):
@@ -2574,8 +2629,10 @@ def _drop_recommendations(data: ParcelsData, now: datetime) -> set[str]:
 def _forget_unproven_amazon_answers(data: ParcelsData) -> int:
     """Drop Amazon as the carrier of the local AI's answers under review.
 
-    Amazon stays with one of its numbers. A fill that offered nothing else is
-    dropped, as when the user dismisses it. Returns how many answers changed.
+    Amazon stays with one of its numbers. A kept answer gets the note the
+    checks now give it, for administrators. A fill that offered nothing else
+    is dropped, as when the user dismisses it. Returns how many answers
+    changed.
     """
     changed = 0
     for key, item in list(data.review.items()):
@@ -2595,6 +2652,7 @@ def _forget_unproven_amazon_answers(data: ParcelsData) -> int:
             del data.review[key]
             continue
         item.suggestion = suggestion
+        item.notes = check_codes((*item.notes, NOTE_CARRIER_UNPROVEN))
     return changed
 
 

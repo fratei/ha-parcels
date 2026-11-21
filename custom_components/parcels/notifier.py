@@ -48,6 +48,17 @@ Live Activities
     goes out for delivery after all. The state is persisted, so a restart of
     Home Assistant neither ends nor duplicates an activity.
 
+    The icon and the progress bar take the colour of the status: blue on the
+    way, orange out for delivery, green delivered, purple ready for pickup and
+    red for a missed attempt or a problem. The card keeps the system's dark
+    background, and the icon and the text still say the status. A combined
+    activity takes the colour of its most urgent parcel: out for delivery,
+    then a problem, then a pickup; green once all are delivered. The message
+    always shows the delivery window; the countdown runs only in the last
+    hour of the window (all of a shorter one) and starts with one quiet
+    update. Tapping an activity or a notification opens the parcel on the
+    dashboard (``<path>?parcel=<id>``); the combined activity opens the week.
+
 Packages
     The day counts packages, not records. An order without a carrier's
     number that one of the day's packages may hold rides along with it (see
@@ -76,6 +87,7 @@ import logging
 import re
 import traceback
 from typing import Any, Protocol
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
@@ -125,6 +137,7 @@ APPLE_LIMIT = timedelta(hours=8)
 RETRY_DELAY = timedelta(minutes=5)
 TEST_ACTIVITY_DURATION = timedelta(minutes=1)
 DUE_TOLERANCE = timedelta(seconds=1)
+COUNTDOWN = timedelta(hours=1)
 PICKUP_DAYS = 7
 
 PROGRESS_MAX = 4
@@ -133,6 +146,9 @@ COMBINED_TITLE = "Parcels today"
 TEST_TAG = "parcels-test"
 MAX_TAG = 64
 MAX_TEXT = 40
+MAX_NAME = 20
+# The query parameters the dashboard opens details from.
+LINK_KEYS = frozenset({"parcel", "return"})
 
 NOTIFY_DOMAIN = "notify"
 MOBILE_APP_DOMAIN = "mobile_app"
@@ -174,6 +190,21 @@ ICONS: dict[ParcelStatus, str] = {
     S.EXCEPTION: "mdi:alert-circle-outline",
 }
 DEFAULT_ICON = "mdi:package-variant-closed"
+
+# Legible on the Lock Screen's dark card; never the only sign of a status.
+BLUE = "#039BE5"
+ORANGE = "#FFA600"
+GREEN = "#43A047"
+PURPLE = "#926BC7"
+RED = "#DB4437"
+COLORS: dict[ParcelStatus, str] = {
+    S.OUT_FOR_DELIVERY: ORANGE,
+    S.DELIVERED: GREEN,
+    S.READY_FOR_PICKUP: PURPLE,
+    S.ATTEMPTED: RED,
+    S.EXCEPTION: RED,
+}
+DEFAULT_COLOR = BLUE
 
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _MONTHS = (
@@ -503,22 +534,63 @@ def _routed(parcel: Parcel, device: _Device) -> bool:
     return not parcel.private or bool(device.persons & set(parcel.state.owners))
 
 
+def _countdown(eta: Eta, day: date) -> tuple[datetime, datetime] | None:
+    """Return when the countdown to the end of a day's window starts and ends.
+
+    It covers the last hour of the window, or all of a shorter one.
+    """
+    if eta.window_end is None:
+        return None
+    end = _local_at(day, eta.window_end)
+    start = end - COUNTDOWN
+    if eta.window_start is not None:
+        start = max(start, _local_at(day, eta.window_start))
+    return start, end
+
+
+def _wake_moments(eta: Eta, day: date) -> list[datetime]:
+    """Return when the time alone may change what a day's window shows."""
+    moments = [
+        _local_at(day, value)
+        for value in (eta.window_start, eta.window_end)
+        if value is not None
+    ]
+    if (countdown := _countdown(eta, day)) is not None:
+        moments.append(countdown[0])
+    return moments
+
+
 def _chronometer_end(state: ParcelState, ctx: _Context) -> datetime | None:
-    """Return the end of today's delivery window while it is in progress."""
+    """Return the end of today's delivery window during its countdown.
+
+    Without a window start ("by 14:00") it runs only while out for delivery.
+    """
     eta = state.eta
     if (
         eta is None
         or eta.end != ctx.today
-        or eta.window_end is None
         or state.status not in EN_ROUTE
+        or (eta.window_start is None and state.status is not S.OUT_FOR_DELIVERY)
+        or (countdown := _countdown(eta, ctx.today)) is None
     ):
         return None
-    end = _local_at(ctx.today, eta.window_end)
-    if ctx.now >= end:
-        return None
-    if eta.window_start is not None:
-        return end if ctx.now >= _local_at(ctx.today, eta.window_start) else None
-    return end if state.status is S.OUT_FOR_DELIVERY else None
+    start, end = countdown
+    return end if start <= ctx.now < end else None
+
+
+def _detail_url(path: str, key: str, value: str) -> str:
+    """Return the dashboard path that opens the details of a parcel or a return.
+
+    The dashboard path's own query is kept, except an earlier link.
+    """
+    parts = urlsplit(path)
+    query = [
+        pair
+        for pair in parts.query.split("&")
+        if pair and pair.split("=", 1)[0] not in LINK_KEYS
+    ]
+    query.append(urlencode({key: value}))
+    return urlunsplit(parts._replace(query="&".join(query)))
 
 
 def _relevance(state: ParcelState, ctx: _Context) -> float:
@@ -561,9 +633,11 @@ class _Content:
     progress: int
     progress_max: int
     icon: str
+    color: str
     relevance: float
     when: int | None
     status: str
+    url: str
 
 
 def _status_texts(state: ParcelState, today: date) -> tuple[str, str]:
@@ -645,9 +719,11 @@ def _parcel_content(
         progress=max(1, min(PROGRESS_MAX, STATUS_RANK.get(state.status, 1))),
         progress_max=PROGRESS_MAX,
         icon=ICONS.get(state.status, DEFAULT_ICON),
+        color=COLORS.get(state.status, DEFAULT_COLOR),
         relevance=_relevance(state, ctx),
         when=int(end.timestamp()) if end is not None else None,
         status=state.status.value,
+        url=_detail_url(ctx.options.path, "parcel", parcel.id),
     )
 
 
@@ -697,6 +773,15 @@ def _next_state(states: list[ParcelState], today: date) -> ParcelState | None:
     return min(candidates, key=order, default=None)
 
 
+def _next_label(state: ParcelState) -> str:
+    """Return who brings the next delivery: Amazon via Paack, else either name."""
+    shop = _clean(state.merchant, MAX_NAME)
+    carrier = _clean(state.carrier_name, MAX_NAME)
+    if shop and carrier and shop.casefold() != carrier.casefold():
+        return f"{shop} via {carrier}"
+    return shop or carrier or "Parcel"
+
+
 def _combined_content(parcels: list[Parcel], ctx: _Context) -> _Content:
     """Return what a device's combined activity shows."""
     states = [parcel.state for parcel in parcels]
@@ -714,23 +799,24 @@ def _combined_content(parcels: list[Parcel], ctx: _Context) -> _Content:
         parts.append(f"{problems} problem" + ("s" if problems > 1 else ""))
     when: int | None = None
     if (upcoming := _next_state(states, ctx.today)) is not None:
-        label = _clean(upcoming.carrier_name) or _clean(upcoming.merchant) or "Parcel"
+        label = _next_label(upcoming)
         if short := _window_short(upcoming.eta):
             parts.append(f"next: {label} {short}")
         elif upcoming.status is S.OUT_FOR_DELIVERY:
             parts.append(f"{label} out for delivery")
         if (end := _chronometer_end(upcoming, ctx)) is not None:
             when = int(end.timestamp())
+    # The most urgent parcel leads the icon and the colour.
     if out:
-        icon = ICONS[S.OUT_FOR_DELIVERY]
+        lead: ParcelStatus | None = S.OUT_FOR_DELIVERY
     elif done:
-        icon = ICONS[S.DELIVERED]
-    elif pickup:
-        icon = ICONS[S.READY_FOR_PICKUP]
+        lead = S.DELIVERED
     elif problems:
-        icon = ICONS[S.EXCEPTION]
+        lead = S.EXCEPTION
+    elif pickup:
+        lead = S.READY_FOR_PICKUP
     else:
-        icon = DEFAULT_ICON
+        lead = None
     relevance = max(
         (_relevance(state, ctx) for state in states if state.status is not S.DELIVERED),
         default=0.2,
@@ -741,17 +827,23 @@ def _combined_content(parcels: list[Parcel], ctx: _Context) -> _Content:
         critical=f"{delivered}/{total}",
         progress=delivered,
         progress_max=max(total, 1),
-        icon=icon,
+        icon=ICONS[lead] if lead is not None else DEFAULT_ICON,
+        color=COLORS[lead] if lead is not None else DEFAULT_COLOR,
         relevance=relevance,
         when=when,
         status=f"{delivered}/{total}/{out}/{pickup}/{problems}",
+        url=ctx.options.path,
     )
 
 
 def _activity_payload(
-    content: _Content, tag: str, title: str, path: str, *, silent: bool
+    content: _Content, tag: str, title: str, *, silent: bool
 ) -> dict[str, Any]:
-    """Return the notify payload that starts or updates a Live Activity."""
+    """Return the notify payload that starts or updates a Live Activity.
+
+    Every update repeats the colours, the link and the relevance, which an
+    update without them isn't guaranteed to keep.
+    """
     data: dict[str, Any] = {
         "tag": tag,
         "live_update": True,
@@ -759,7 +851,9 @@ def _activity_payload(
         "progress": content.progress,
         "progress_max": content.progress_max,
         "notification_icon": content.icon,
-        "url": path,
+        "notification_icon_color": content.color,
+        "progress_bar_color": content.color,
+        "url": content.url,
         "relevance_score": content.relevance,
     }
     if content.when is not None:
@@ -775,16 +869,19 @@ def _end_payload(tag: str) -> dict[str, Any]:
     return {"message": CLEAR_NOTIFICATION, "data": {"tag": tag}}
 
 
-def _key_payload(
-    content: _Content, parcel_id: str, kind: DeviceKind, path: str
-) -> dict[str, Any]:
-    """Return a normal notification for an iPad or an Android phone."""
+def _key_payload(content: _Content, parcel_id: str, kind: DeviceKind) -> dict[str, Any]:
+    """Return a normal notification for an iPad or an Android phone.
+
+    Android tints the icon with the status colour; iPad notifications have no
+    colour.
+    """
     data: dict[str, Any] = {"tag": _parcel_tag(parcel_id)}
     if kind is DeviceKind.ANDROID:
-        data["clickAction"] = path
+        data["clickAction"] = content.url
         data["notification_icon"] = content.icon
+        data["color"] = content.color
     else:
-        data["url"] = path
+        data["url"] = content.url
     return {"title": content.title, "message": content.message, "data": data}
 
 
@@ -800,6 +897,8 @@ def _test_payload(now: datetime, path: str) -> dict[str, Any]:
             "progress": 3,
             "progress_max": PROGRESS_MAX,
             "notification_icon": ICONS[S.OUT_FOR_DELIVERY],
+            "notification_icon_color": COLORS[S.OUT_FOR_DELIVERY],
+            "progress_bar_color": COLORS[S.OUT_FOR_DELIVERY],
             "url": path,
             "relevance_score": 0.5,
             "chronometer": True,
@@ -1326,11 +1425,10 @@ class Notifier:
         parcels = {parcel.id: parcel for parcel in self._host.visible_parcels()}
         # Chronometers appear and disappear with today's delivery windows.
         self._wake_points = [
-            _local_at(ctx.today, moment)
+            moment
             for parcel in parcels.values()
             if (eta := parcel.state.eta) is not None and eta.end == ctx.today
-            for moment in (eta.window_start, eta.window_end)
-            if moment is not None
+            for moment in _wake_moments(eta, ctx.today)
         ]
         days: dict[str, Any] = self._data["days"]
         if ctx.in_window:
@@ -1663,9 +1761,7 @@ class Notifier:
         tag = (
             _combined_tag(ctx.today, gen) if key == COMBINED else _parcel_tag(key, gen)
         )
-        payload = _activity_payload(
-            content, tag, content.title, ctx.options.path, silent=False
-        )
+        payload = _activity_payload(content, tag, content.title, silent=False)
         result = await self._async_send(device.service, device.kind, payload)
         if result is not _Result.SENT:
             if result is _Result.FAILED:
@@ -1702,7 +1798,6 @@ class Notifier:
             content,
             record["tag"],
             record["title"],
-            ctx.options.path,
             silent=record["status"] == content.status,
         )
         fingerprint = _fingerprint(payload)
@@ -1816,7 +1911,7 @@ class Notifier:
             if status not in KEY_STATUSES or sent.get(parcel.id) == status.value:
                 continue
             content = _parcel_content(parcel, ctx, possibly.get(parcel.id, ()))
-            payload = _key_payload(content, parcel.id, device.kind, ctx.options.path)
+            payload = _key_payload(content, parcel.id, device.kind)
             result = await self._async_send(device.service, device.kind, payload)
             if result is _Result.SENT:
                 day["notified"].setdefault(device.device_id, {})[parcel.id] = (

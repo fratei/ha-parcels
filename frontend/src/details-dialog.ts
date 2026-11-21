@@ -10,10 +10,10 @@ import {
 } from "lit";
 import { live } from "lit/directives/live.js";
 import { styleMap } from "lit/directives/style-map.js";
-import { callParcelsCommand, callParcelsService } from "./api.ts";
+import { callParcelsCommand, callParcelsService, callParcelsServiceForParcel } from "./api.ts";
 import { canCheckAgain, checkAgainText, normalizeCheckAgain } from "./check-again.ts";
 import { parseInstant } from "./dates.ts";
-import { candidateLabel, candidateLines } from "./describe.ts";
+import { candidateLabel, candidateLines, couldAlsoBe } from "./describe.ts";
 import { ParcelsDialogBase, OPEN_RETURN_EVENT, type ReturnFocus } from "./dialog-base.ts";
 import { errorMessage } from "./errors.ts";
 import {
@@ -45,10 +45,25 @@ import {
 } from "./labels.ts";
 import { normalizeDetails } from "./normalize.ts";
 import {
+  originEntries,
+  originRows,
+  originsTitle,
+  restoreOutcome,
+  rowIds,
+  splitBlockedReason,
+  type OriginEntry,
+  type OriginRow,
+  type RestoreOutcome,
+} from "./origins.ts";
+import {
+  alsoPossible,
   etaRange,
+  possibleHint,
   possibleMatches,
   rankMergeCandidates,
+  rankPossible,
   searchCandidates,
+  type DayContext,
   type MergeCandidates,
   type PossibleMatch,
 } from "./parcels.ts";
@@ -62,6 +77,22 @@ import type { CustomerReturn, Parcel, ParcelDetails, Snapshot, TimelineEntry } f
 
 type Mode = "view" | "date" | "merge" | "split" | "archive";
 type CopyState = "idle" | "copied" | "failed";
+
+const RESTORE_NOTICES: Record<RestoreOutcome["notice"], string> = {
+  restored: STRINGS.restoredNotice,
+  elsewhere: STRINGS.restoredElsewhereNotice,
+  review: STRINGS.restoredReviewNotice,
+  noParcel: STRINGS.restoredNoParcelNotice,
+};
+
+/** What a row action of the "E-mails" section did. */
+interface OriginNotice {
+  text: string;
+  /** Takes the action back; null when it can't be. */
+  undo: (() => void) | null;
+  /** A parcel the notice can show. */
+  show: string | null;
+}
 
 const EXPECTED_FORMAT: Intl.DateTimeFormatOptions = {
   weekday: "short",
@@ -101,6 +132,9 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     _pendingPrivate: { state: true },
     _checking: { state: true },
     _checkStatus: { state: true },
+    _originsOpen: { state: true },
+    _openFolds: { state: true },
+    _originNotice: { state: true },
   };
 
   static override styles: CSSResultGroup = [
@@ -231,6 +265,81 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
       .switch-row {
         margin-top: 12px;
       }
+      .origins > summary {
+        cursor: pointer;
+      }
+      .origins > .hint {
+        margin-bottom: 8px;
+      }
+      .origin-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .origin-list .origin-list {
+        margin-top: 6px;
+      }
+      .origin {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        padding: 8px 10px;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 8px;
+        font-size: 0.875rem;
+      }
+      .origin .row-actions {
+        margin-top: 6px;
+      }
+      .origin-line {
+        overflow-wrap: anywhere;
+      }
+      .origin-items {
+        margin: 2px 0 0;
+        padding-inline-start: 18px;
+        overflow-wrap: anywhere;
+      }
+      span.origin-items {
+        display: flex;
+        flex-direction: column;
+        padding-inline-start: 0;
+      }
+      .fold-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        padding-inline-start: 0;
+        text-align: start;
+        --mdc-icon-size: 18px;
+      }
+      .split-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .split-row {
+        align-items: flex-start;
+        padding: 8px 10px;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 8px;
+      }
+      .split-row input {
+        flex: none;
+        width: 18px;
+        height: 18px;
+        margin: 1px 0 0;
+      }
+      .origin-body {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        font-size: 0.875rem;
+      }
       .timeline {
         margin: 0;
         padding: 0;
@@ -304,6 +413,12 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
   declare private _checking: boolean;
   /** What "Check again" did, until another parcel is shown. */
   declare private _checkStatus: string | null;
+  /** The "E-mails" section is open. */
+  declare private _originsOpen: boolean;
+  /** The folds of repeated e-mails that are open, by key. */
+  declare private _openFolds: ReadonlySet<string>;
+  /** What a row action did, until another parcel is shown. */
+  declare private _originNotice: OriginNotice | null;
 
   /** Counts loads, so that only the latest result is shown. */
   private _request = 0;
@@ -311,6 +426,8 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
   private _checkRun = 0;
   /** The snapshot parcel the details were loaded for. */
   private _loadedKey = "";
+  /** The rows of the "E-mails" section, for the details and locale they were made from. */
+  private _rowsCache: { details: ParcelDetails; locale: LocaleOptions; rows: OriginRow[] } | null = null;
 
   constructor() {
     super();
@@ -332,6 +449,9 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._pendingPrivate = null;
     this._checking = false;
     this._checkStatus = null;
+    this._originsOpen = false;
+    this._openFolds = new Set();
+    this._originNotice = null;
   }
 
   /** Opens the dialog for a parcel; `returnFocus` runs when it closes. */
@@ -346,6 +466,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._checkRun += 1;
     this._checking = false;
     this._checkStatus = null;
+    this._resetOrigins();
     void this._load();
     await this.showDialog(returnFocus);
   }
@@ -364,8 +485,16 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._formError = null;
     this._pendingPrivate = null;
     this._checkStatus = null;
+    this._resetOrigins();
     void this._load();
     void this.focusAfterRender("[data-current-package]");
+  }
+
+  /** Another parcel is shown: its "E-mails" section starts closed, without a notice. */
+  private _resetOrigins(): void {
+    this._originsOpen = false;
+    this._openFolds = new Set();
+    this._originNotice = null;
   }
 
   protected override dialogClosed(): void {
@@ -379,6 +508,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._checkRun += 1;
     this._checking = false;
     this._checkStatus = null;
+    this._resetOrigins();
   }
 
   protected override canLightDismiss(): boolean {
@@ -471,14 +601,50 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
             </div>
           </div>`
         : nothing}
-      ${parcel && this._mode === "view" ? this._renderCheckStatus() : nothing}
+      ${this._mode === "view" ? this._renderStatus() : nothing}
       ${parcel && !parcel.restricted ? this._renderActions(parcel) : nothing}
     `;
   }
 
-  /** Always there in the view, so that screen readers announce what "Check again" did. */
-  private _renderCheckStatus(): TemplateResult {
+  /**
+   * Always there in the view, so that screen readers announce what "Check
+   * again" or a row of the "E-mails" section did, even when the parcel went.
+   */
+  private _renderStatus(): TemplateResult {
+    const notice = this._originNotice;
+    const busy = this._busy ? "true" : "false";
     return html`<div class="dialog-status" role="status">
+      ${notice
+        ? html`<div class="alert" data-origin-notice>
+            <ha-icon icon="mdi:email-check-outline" aria-hidden="true"></ha-icon>
+            <span class="grow">${notice.text}</span>
+            ${notice.show
+              ? html`<button
+                  type="button"
+                  class="btn"
+                  aria-label=${STRINGS.showOtherParcelLabel}
+                  aria-disabled=${busy}
+                  @click=${() => this._showParcel(notice.show)}
+                >
+                  ${STRINGS.showOtherParcel}
+                </button>`
+              : nothing}
+            ${notice.undo
+              ? html`<button type="button" class="btn" aria-disabled=${busy} @click=${notice.undo}>
+                  ${STRINGS.undo}
+                </button>`
+              : nothing}
+            <button
+              type="button"
+              class="icon-btn"
+              aria-label=${STRINGS.dismissMessage}
+              title=${STRINGS.dismissMessage}
+              @click=${this._dismissOriginNotice}
+            >
+              <ha-icon icon="mdi:close" aria-hidden="true"></ha-icon>
+            </button>
+          </div>`
+        : nothing}
       ${this._checkStatus
         ? html`<div class="alert">
             <ha-icon icon="mdi:email-sync-outline" aria-hidden="true"></ha-icon>
@@ -598,9 +764,160 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
             />
             <span>${STRINGS.fieldPrivate}</span>
           </label>`}
+      ${restricted ? nothing : this._renderOrigins()}
       <h3 class="section-title">${STRINGS.timeline}</h3>
       ${this._details ? this._renderTimeline(this._details.timeline) : this._renderLoadState()}
     `;
+  }
+
+  /** The rows of the "E-mails" section; none until the details are loaded. */
+  private get _rows(): OriginRow[] {
+    const details = this._details;
+    if (!details) {
+      return [];
+    }
+    const cache = this._rowsCache;
+    if (cache?.details === details && cache.locale === this.locale) {
+      return cache.rows;
+    }
+    const rows = originRows(details.origins, this.locale);
+    this._rowsCache = { details, locale: this.locale, rows };
+    return rows;
+  }
+
+  /** The rows that can move to a new parcel: not the user's edits, which stay. */
+  private get _splitRows(): OriginRow[] {
+    return this._rows.filter((row) => !row.edits);
+  }
+
+  /** The chosen rows of a split that are still there. */
+  private get _splitChosen(): string[] {
+    const leads = new Set(this._splitRows.map((row) => row.lead));
+    return this._splitSelection.filter((lead) => leads.has(lead));
+  }
+
+  /**
+   * What each e-mail and source said and added, oldest first, closed until
+   * opened. A row can move to a new parcel; an e-mail can leave Parcels
+   * (administrators).
+   */
+  private _renderOrigins(): TemplateResult | typeof nothing {
+    const rows = this._rows;
+    if (!rows.length) {
+      return nothing;
+    }
+    const movable = this._splitRows.length >= 2;
+    return html`<details class="origins" .open=${this._originsOpen} @toggle=${this._onOriginsToggle}>
+      <summary class="section-title" data-origins-summary>${originsTitle(rows)}</summary>
+      <p class="hint">${STRINGS.originsHint}</p>
+      <ol class="origin-list">
+        ${originEntries(rows).map((entry) => this._renderOriginEntry(entry, movable))}
+      </ol>
+    </details>`;
+  }
+
+  private _renderOriginEntry(entry: OriginEntry, movable: boolean): TemplateResult {
+    if (entry.type === "row") {
+      return html`<li class="origin" data-origin=${entry.row.lead}>
+        ${this._renderOriginBody(entry.row, false)}${this._renderRowActions(entry.row, movable)}
+      </li>`;
+    }
+    const open = this._openFolds.has(entry.key);
+    const latest = entry.latest.said;
+    return html`<li class="origin fold">
+      <span class="origin-line">
+        <button
+          type="button"
+          class="link-btn fold-toggle"
+          aria-expanded=${open ? "true" : "false"}
+          @click=${() => this._toggleFold(entry.key)}
+        >
+          <ha-icon icon=${open ? "mdi:chevron-up" : "mdi:chevron-down"} aria-hidden="true"></ha-icon>
+          ${fmt(STRINGS.originRepeats, { count: String(entry.rows.length), sender: entry.header })}
+        </button>
+        ${latest
+          ? html`<span class="muted">· ${fmt(STRINGS.originRepeatsLatest, { said: latest })}</span>`
+          : nothing}
+      </span>
+      ${open
+        ? html`<ol class="origin-list">
+            ${entry.rows.map(
+              (row) => html`<li class="origin" data-origin=${row.lead}>
+                ${this._renderOriginBody(row, false)}${this._renderRowActions(row, movable)}
+              </li>`,
+            )}
+          </ol>`
+        : nothing}
+    </li>`;
+  }
+
+  /**
+   * Who or what a row came from and when, what it said and what it added.
+   * Inside a label (split) everything is a span.
+   */
+  private _renderOriginBody(row: OriginRow, inLabel: boolean): TemplateResult {
+    let items: TemplateResult | typeof nothing = nothing;
+    if (row.items.length && inLabel) {
+      items = html`<span class="origin-line origin-items">
+        ${row.items.map((item) => html`<span class="origin-item">${item}</span>`)}
+      </span>`;
+    } else if (row.items.length) {
+      items = html`<ul class="origin-items" aria-label=${STRINGS.originItems}>
+        ${row.items.map((item) => html`<li>${item}</li>`)}
+      </ul>`;
+    }
+    const ai = row.ai === "all" ? STRINGS.originAiAll : STRINGS.originAiPart;
+    return html`<span class="origin-line">
+        <strong>${row.header}</strong>${row.when
+          ? html`<span class="muted"> · ${row.when}</span>`
+          : nothing}${row.ai ? html`<span class="muted"> · ${ai}</span>` : nothing}
+      </span>
+      ${row.said ? html`<span class="origin-line">${row.said}</span>` : nothing}
+      ${row.facts.length
+        ? html`<span class="origin-line muted">${row.facts.join(" · ")}</span>`
+        : nothing}
+      ${items}`;
+  }
+
+  /** Move to a new parcel (or why it can't), and Remove from Parcels for an administrator. */
+  private _renderRowActions(row: OriginRow, movable: boolean): TemplateResult | typeof nothing {
+    const remove = row.email && this.snapshot?.settings.user_is_admin === true;
+    if (row.edits || (!movable && !remove)) {
+      return nothing;
+    }
+    const blocked = movable ? splitBlockedReason(row.splitBlocked) : null;
+    const busy = this._busy ? "true" : "false";
+    const name = row.when ? `${row.header} · ${row.when}` : row.header;
+    let move: TemplateResult | typeof nothing = nothing;
+    if (blocked) {
+      move = html`<span class="hint">${blocked}</span>`;
+    } else if (movable) {
+      move = html`<button
+        type="button"
+        class="btn"
+        data-move
+        aria-label=${fmt(STRINGS.moveToNewParcelLabel, { row: name })}
+        aria-disabled=${busy}
+        @click=${() => this._moveRow(row)}
+      >
+        ${STRINGS.moveToNewParcel}
+      </button>`;
+    }
+    return html`<span class="row-actions">
+      ${move}
+      ${remove
+        ? html`<button
+            type="button"
+            class="btn"
+            data-remove
+            aria-label=${fmt(STRINGS.removeFromParcelsLabel, { row: name })}
+            aria-disabled=${busy}
+            @click=${() => this._removeRow(row)}
+          >
+            ${STRINGS.removeFromParcels}
+          </button>`
+        : nothing}
+    </span>`;
   }
 
   /**
@@ -608,7 +925,8 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
    * shown as uncertain, with Merge or "Not this one" for each.
    */
   private _renderPossible(parcel: Parcel): TemplateResult | typeof nothing {
-    const matches = possibleMatches(this.snapshot?.merge_suggestions, parcel.id);
+    const suggestions = this.snapshot?.merge_suggestions;
+    const matches = rankPossible(parcel, possibleMatches(suggestions, parcel.id), this._dayContext());
     if (!matches.length) {
       return nothing;
     }
@@ -617,19 +935,12 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const title = parcelTitle(parcel);
     return html`<section class="possible" aria-labelledby="possible-title">
       <h3 class="section-title" id="possible-title">${STRINGS.possibleMatches}</h3>
-      <p class="hint">${STRINGS.possibleMatchesHint}</p>
+      <p class="hint">${possibleHint(matches)}</p>
       <ul class="possible-list">
         ${matches.map((match) => {
-          const lines = candidateLines(match.parcel, locale);
           const candidate = candidateLabel(match.parcel, locale);
           return html`<li class="possible-item" data-possible=${match.parcel.id}>
-            <span class="merge-lines">
-              <span class="merge-line"><strong>${lines.title}</strong> · ${lines.when}</span>
-              <span class="merge-line muted">${lines.carrier}</span>
-              <span class="merge-line items ${lines.items ? "" : "muted"}">
-                ${lines.items ?? STRINGS.itemsNotKnown}
-              </span>
-            </span>
+            ${this._renderCandidateLines(match.parcel, parcel.id)}
             <span class="possible-actions">
               <button
                 type="button"
@@ -979,7 +1290,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
       <fieldset class="merge-list" aria-describedby="merge-intro">
         <legend class="sr-only">${STRINGS.mergeChoose}</legend>
         ${shown.map((candidate, index) =>
-          this._renderCandidate(candidate, {
+          this._renderCandidate(candidate, parcel.id, {
             checked: candidate.id === target,
             first: !withSearch && index === 0,
             olderFirst: index === olderFirst,
@@ -1004,9 +1315,9 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
 
   private _renderCandidate(
     candidate: Parcel,
+    parcelId: string,
     marks: { checked: boolean; first: boolean; olderFirst: boolean },
   ): TemplateResult {
-    const lines = candidateLines(candidate, this.locale);
     return html`<label class="merge-option">
       <input
         type="radio"
@@ -1017,38 +1328,57 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
         ?data-older-first=${marks.olderFirst}
         @change=${this._onMergeTarget}
       />
-      <span class="merge-lines">
-        <span class="merge-line"><strong>${lines.title}</strong> · ${lines.when}</span>
-        <span class="merge-line muted">${lines.carrier}</span>
-        <span class="merge-line items ${lines.items ? "" : "muted"}">
-          ${lines.items ?? STRINGS.itemsNotKnown}
-        </span>
-      </span>
+      ${this._renderCandidateLines(candidate, parcelId)}
     </label>`;
   }
 
+  /**
+   * A parcel the viewed one may be: shop, status and day, carrier and
+   * numbers, who wrote about it, and its items. Without items, why they
+   * aren't known and which other orders it could also be.
+   */
+  private _renderCandidateLines(candidate: Parcel, parcelId: string): TemplateResult {
+    const lines = candidateLines(candidate, this.locale);
+    const also = lines.items
+      ? null
+      : couldAlsoBe(alsoPossible(this.snapshot?.merge_suggestions, candidate.id, parcelId));
+    return html`<span class="merge-lines">
+      <span class="merge-line"><strong>${lines.title}</strong> · ${lines.when}</span>
+      <span class="merge-line muted">${lines.carrier}</span>
+      ${lines.emails ? html`<span class="merge-line muted">${lines.emails}</span>` : nothing}
+      <span class="merge-line items ${lines.items ? "" : "muted"}">
+        ${lines.items ?? lines.noItems}
+      </span>
+      ${also ? html`<span class="merge-line items" data-also>${also}</span>` : nothing}
+    </span>`;
+  }
+
+  /** Today and the server's time zone, from the snapshot. */
+  private _dayContext(): DayContext {
+    const settings = this.snapshot?.settings;
+    return {
+      today: settings?.today ?? "",
+      timeZone: settings?.time_zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+    };
+  }
+
   private _renderSplit(): TemplateResult {
-    const origins = this._details?.origins ?? [];
-    const locale = this.locale;
     return html`<fieldset aria-describedby="split-hint">
         <legend>${STRINGS.splitIntro}</legend>
-        ${origins.map((origin, index) => {
-          const time = origin.time ? formatDateTime(origin.time, locale) : "";
-          return html`<label class="check-row">
-            <input
-              type="checkbox"
-              .value=${origin.id}
-              .checked=${live(this._splitSelection.includes(origin.id))}
-              ?data-first=${index === 0}
-              @change=${this._onSplitChange}
-            />
-            <span>
-              ${origin.label.trim() || sourceLabel(origin.source)}${time
-                ? html`<span class="muted"> · ${time}</span>`
-                : nothing}
-            </span>
-          </label>`;
-        })}
+        <div class="split-list">
+          ${this._splitRows.map(
+            (row, index) => html`<label class="check-row split-row">
+              <input
+                type="checkbox"
+                .value=${row.lead}
+                .checked=${live(this._splitSelection.includes(row.lead))}
+                ?data-first=${index === 0}
+                @change=${this._onSplitChange}
+              />
+              <span class="origin-body">${this._renderOriginBody(row, true)}</span>
+            </label>`,
+          )}
+        </div>
       </fieldset>
       <p class="hint" id="split-hint">${STRINGS.splitHint}</p>`;
   }
@@ -1083,7 +1413,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
         </div>`;
       }
       case "split": {
-        const valid = isValidSplit(this._splitSelection, this._details?.origins.length ?? 0);
+        const valid = isValidSplit(this._splitChosen, this._splitRows.length);
         return html`<div class="dialog-actions">
           ${cancel}
           <button
@@ -1109,7 +1439,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
           </button>
         </div>`;
       default: {
-        const canSplit = (this._details?.origins.length ?? 0) >= 2;
+        const canSplit = this._splitRows.length >= 2;
         return html`<div class="dialog-actions" role="group" aria-label=${STRINGS.actions}>
           <button type="button" class="btn" data-mode="date" @click=${this._editDate}>
             ${STRINGS.editDate}
@@ -1333,10 +1663,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     if (!snapshot) {
       return { likely: [], older: [] };
     }
-    return rankMergeCandidates(snapshot.parcels, parcel, {
-      today: snapshot.settings.today,
-      timeZone: snapshot.settings.time_zone,
-    });
+    return rankMergeCandidates(snapshot.parcels, parcel, this._dayContext());
   }
 
   /** The candidates on show, and the chosen one while it is on show. */
@@ -1437,11 +1764,173 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
   }
 
   private _split(): void {
-    const total = this._details?.origins.length ?? 0;
-    if (!isValidSplit(this._splitSelection, total)) {
+    const rows = this._splitRows;
+    const chosen = this._splitChosen;
+    if (!isValidSplit(chosen, rows.length)) {
       return;
     }
-    this._parcelService("split", { origins: [...this._splitSelection] }, () => this._backToView());
+    // A row moves with what the local AI read in its e-mail.
+    this._parcelService("split", { origins: rowIds(rows, chosen) }, () => this._backToView());
+  }
+
+  private _onOriginsToggle(event: Event): void {
+    this._originsOpen = (event.currentTarget as HTMLDetailsElement).open;
+  }
+
+  private _toggleFold(key: string): void {
+    const folds = new Set(this._openFolds);
+    if (!folds.delete(key)) {
+      folds.add(key);
+    }
+    this._openFolds = folds;
+  }
+
+  private _dismissOriginNotice(): void {
+    this._originNotice = null;
+  }
+
+  private _showParcel(parcelId: string | null): void {
+    if (parcelId !== null) {
+      this._switchTo(parcelId);
+    }
+  }
+
+  /** After a row action, focus stays with the "E-mails" section, or goes to the close button. */
+  private async _focusOrigins(): Promise<void> {
+    await this.updateComplete;
+    if (!this.isOpen) {
+      return;
+    }
+    const summary = this.renderRoot.querySelector<HTMLElement>("dialog [data-origins-summary]");
+    if (summary) {
+      summary.focus();
+    } else {
+      this.focusInDialog("[data-autofocus]");
+    }
+  }
+
+  /** Moves a row, with what the local AI read in its e-mail, to a new parcel; Undo merges it back. */
+  private _moveRow(row: OriginRow): void {
+    const hass = this.hass;
+    const parcel = this._parcel;
+    if (!hass || !parcel || this._busy) {
+      return;
+    }
+    const parcelId = parcel.id;
+    let created: string | null = null;
+    this._originNotice = null;
+    void this.runAction(
+      async () => {
+        created = await callParcelsServiceForParcel(hass, "split", {
+          parcel_id: parcelId,
+          origins: row.ids,
+        });
+      },
+      () => {
+        const moved = created;
+        this._originNotice = {
+          text: STRINGS.movedNotice,
+          undo: moved === null ? null : () => this._moveBack(parcelId, moved),
+          show: moved,
+        };
+        void this._load();
+        void this._focusOrigins();
+      },
+    );
+  }
+
+  private _moveBack(parcelId: string, moved: string): void {
+    const hass = this.hass;
+    if (!hass || this._busy) {
+      return;
+    }
+    void this.runAction(
+      () => callParcelsService(hass, "merge", { parcel_ids: [parcelId, moved] }),
+      () => {
+        this._originNotice = { text: STRINGS.movedBackNotice, undo: null, show: null };
+        void this._load();
+        void this._focusOrigins();
+      },
+    );
+  }
+
+  /**
+   * Removes an e-mail from Parcels, with what it added (administrators). It
+   * waits under Filtered; Undo restores it, and it's read again.
+   */
+  private _removeRow(row: OriginRow): void {
+    const hass = this.hass;
+    const parcel = this._parcel;
+    if (!hass || !parcel || this._busy) {
+      return;
+    }
+    const parcelId = parcel.id;
+    let filtered: string | null = null;
+    let kept = true;
+    this._originNotice = null;
+    void this.runAction(
+      async () => {
+        const result = await callParcelsCommand<{ filtered_id?: unknown; parcel_id?: unknown }>(
+          hass,
+          "origin/remove",
+          { parcel_id: parcelId, origin_id: row.lead },
+        );
+        filtered = typeof result?.filtered_id === "string" ? result.filtered_id : null;
+        kept = typeof result?.parcel_id === "string";
+      },
+      () => {
+        const entry = filtered;
+        this._originNotice = {
+          text: kept ? STRINGS.removedNotice : STRINGS.removedGoneNotice,
+          undo: entry === null ? null : () => this._restoreRow(entry, parcelId),
+          show: null,
+        };
+        if (kept) {
+          void this._load();
+        }
+        void this._focusOrigins();
+      },
+    );
+  }
+
+  /** Restores a removed e-mail; the dialog follows it when its parcel went with it. */
+  private _restoreRow(filteredId: string, parcelId: string): void {
+    const hass = this.hass;
+    if (!hass || this._busy) {
+      return;
+    }
+    let review: string | null = null;
+    let parcels: string[] = [];
+    void this.runAction(
+      async () => {
+        const result = await callParcelsCommand<{ review_id?: unknown; parcel_ids?: unknown }>(
+          hass,
+          "review/restore",
+          { filtered_id: filteredId },
+        );
+        review = typeof result?.review_id === "string" ? result.review_id : null;
+        const ids = result?.parcel_ids;
+        parcels = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+      },
+      () => {
+        const gone =
+          this._parcelId === parcelId &&
+          !this.snapshot?.parcels.some((item) => item.id === parcelId);
+        const outcome = restoreOutcome({ review, parcels }, parcelId, gone);
+        if (outcome.follow !== null) {
+          this._parcelId = outcome.follow;
+          this._details = null;
+          this._loadError = null;
+        }
+        this._originNotice = {
+          text: RESTORE_NOTICES[outcome.notice],
+          undo: null,
+          show: outcome.show,
+        };
+        void this._load();
+        void this._focusOrigins();
+      },
+    );
   }
 
   private async _copy(event: MouseEvent): Promise<void> {

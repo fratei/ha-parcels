@@ -280,6 +280,9 @@
     "unknown_origin": {
       "message": "A chosen source isn't part of this parcel."
     },
+    "not_an_email": {
+      "message": "This source isn't an e-mail, so it can't be removed."
+    },
     "nothing_left": {
       "message": "Leave at least one source in the parcel."
     },

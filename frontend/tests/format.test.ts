@@ -6,6 +6,7 @@ import {
   formatDate,
   formatDateRange,
   formatDateTime,
+  formatDayTime,
   formatWindow,
   localeOptions,
 } from "../src/format.ts";
@@ -109,5 +110,19 @@ describe("times", () => {
     assert.equal(formatDateTime(null, GB), "");
     assert.equal(formatDateTime("whenever", GB), "whenever");
     assert.ok(formatDateTime("2026-07-14T23:30:00Z", { ...GB, timeZone: "Not/A_Zone" }).length > 0);
+  });
+
+  test("the day and time of an event, in the given zone", () => {
+    assert.equal(formatDayTime("2026-07-14T23:30:00Z", GB), "Wed 15 Jul at 00:30");
+    assert.equal(formatDayTime("2026-11-20T14:05:00Z", GB), "Fri 20 Nov at 14:05");
+    assert.match(formatDayTime("2026-11-20T14:05:00Z", US), /^Fri, Nov 20 at 9:05\sAM$/u);
+    assert.equal(formatDayTime(null, GB), "");
+    assert.equal(formatDayTime("whenever", GB), "");
+  });
+
+  test("a time of exactly midnight is a day without a time", () => {
+    assert.equal(formatDayTime("2026-07-13T23:00:00Z", GB), "Tue 14 Jul");
+    assert.equal(formatDayTime("2026-07-13T23:00:00.001Z", GB), "Tue 14 Jul at 00:00");
+    assert.match(formatDayTime("2026-11-20T05:00:00Z", US), /^Fri, Nov 20$/u);
   });
 });

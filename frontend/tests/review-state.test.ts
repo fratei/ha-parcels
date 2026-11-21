@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 
 import {
   aiQueueText,
+  filteredTitle,
   hideHandled,
   hidePending,
   isHidden,
@@ -146,5 +147,19 @@ describe("sender check details", () => {
         ["Header used", "None"],
       ],
     );
+  });
+});
+
+describe("filteredTitle", () => {
+  test("an e-mail filtered when it was read shows its subject", () => {
+    assert.equal(filteredTitle({ subject: "  Your weekly offers  ", removed: false }), "Your weekly offers");
+  });
+
+  test("an e-mail without a subject says so", () => {
+    assert.equal(filteredTitle({ subject: " ", removed: false }), "(no subject)");
+  });
+
+  test("an e-mail removed from a parcel says where it came from, as no subject is kept", () => {
+    assert.equal(filteredTitle({ subject: "", removed: true }), "Removed from a parcel");
   });
 });

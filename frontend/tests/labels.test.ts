@@ -9,6 +9,7 @@ import {
   etaSourceLabel,
   kindLabel,
   mergeReasonLabel,
+  noteMeaning,
   parcelAppName,
   parcelSubtitle,
   parcelTitle,
@@ -157,6 +158,15 @@ describe("labels", () => {
     assert.equal(reasonLabel("__proto__"), "__proto__");
     assert.equal(mergeReasonLabel("same_reference"), "same shipment reference");
     assert.equal(humanize("low-confidence"), "Low confidence");
+  });
+
+  test("a note on an AI answer has a one-line meaning; an unknown one has none", () => {
+    assert.match(noteMeaning("carrier_unproven") ?? "", /^The shop, such as Amazon, was given as the carrier/);
+    assert.match(noteMeaning("tracking_added_by_detector") ?? "", /detector/);
+    assert.equal(noteMeaning("brand_new_note"), null);
+    assert.equal(noteMeaning("__proto__"), null);
+    assert.equal(noteMeaning(""), null);
+    assert.equal(noteMeaning(null), null);
   });
 
   test("an inferred delivery says why", () => {

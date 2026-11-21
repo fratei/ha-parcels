@@ -14,6 +14,7 @@ import type {
   OriginInfo,
   Parcel,
   ParcelDetails,
+  ParcelSender,
   ParcelSource,
   ParcelStatus,
   PickupRule,
@@ -92,6 +93,22 @@ function autoMerged(value: unknown): AutoMerged | null {
   return { origin: text(value.origin), at: text(value.at), reason: text(value.reason) };
 }
 
+function sender(raw: unknown): ParcelSender | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  const name = id(raw.name);
+  if (!name) {
+    return null;
+  }
+  return {
+    name,
+    source: raw.source === "seventeentrack" || raw.source === "parcelapp" ? raw.source : "email",
+    carrier: raw.carrier === true,
+    count: Math.max(1, count(raw.count)),
+  };
+}
+
 export function normalizeParcel(raw: unknown): Parcel | null {
   if (!isObj(raw)) {
     return null;
@@ -139,6 +156,9 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     origins: strs(raw.origins),
     shipment_group: id(raw.shipment_group),
     restricted: raw.restricted === true,
+    senders: list(raw.senders, sender),
+    ordered_at: id(raw.ordered_at),
+    shipped_at: id(raw.shipped_at),
   };
 }
 
@@ -185,6 +205,7 @@ export function normalizeReviewItem(raw: unknown): ReviewItem | null {
     checks: senderChecks(raw.checks),
     fill: raw.fill === true,
     errors: checkCodes(raw.errors),
+    notes: checkCodes(raw.notes),
     source: raw.source === "ai" ? "ai" : "parser",
     suggestion: normalizeSuggestion(raw.suggestion),
   };
@@ -192,7 +213,7 @@ export function normalizeReviewItem(raw: unknown): ReviewItem | null {
 
 const CHECK_CODE = /^[a-z0-9_]{1,40}$/;
 
-/** The codes of the checks an AI answer failed; anything else is dropped. */
+/** The codes of the checks an AI answer failed, or of its notes; anything else is dropped. */
 function checkCodes(raw: unknown): string[] {
   if (!Array.isArray(raw)) {
     return [];
@@ -237,6 +258,7 @@ export function normalizeFilteredItem(raw: unknown): FilteredItem | null {
     sender: text(raw.sender),
     sender_domain: text(raw.sender_domain),
     subject: text(raw.subject),
+    removed: raw.removed === true,
   };
 }
 
@@ -373,6 +395,15 @@ function orderInfo(raw: unknown): OrderInfo | null {
   };
 }
 
+/** [n, total] with 1 <= n <= total, else null. */
+function shipment(value: unknown): [number, number] | null {
+  if (!Array.isArray(value) || value.length !== 2) {
+    return null;
+  }
+  const [n, total] = value.map(count);
+  return n && total && n <= total ? [n, total] : null;
+}
+
 function originInfo(raw: unknown): OriginInfo | null {
   if (!isObj(raw)) {
     return null;
@@ -385,7 +416,32 @@ function originInfo(raw: unknown): OriginInfo | null {
     id: originId,
     label: text(raw.label),
     source: source(raw.source),
+    sender_name: id(raw.sender_name),
+    name: id(raw.name),
     time: str(raw.time),
+    status: id(raw.status) as ParcelStatus | null,
+    kind: id(raw.kind),
+    event_time: id(raw.event_time),
+    undated: raw.undated === true,
+    dayless: raw.dayless === true,
+    eta_start: isYmd(raw.eta_start) ? raw.eta_start : null,
+    eta_end: isYmd(raw.eta_end) ? raw.eta_end : null,
+    window_start: id(raw.window_start),
+    window_end: id(raw.window_end),
+    carrier: id(raw.carrier),
+    carrier_name: id(raw.carrier_name),
+    tracking_number: id(raw.tracking_number),
+    reference: id(raw.reference),
+    merchant: id(raw.merchant),
+    seller: id(raw.seller),
+    order_numbers: strs(raw.order_numbers),
+    items: strs(raw.items),
+    pickup_point: id(raw.pickup_point),
+    shipment: shipment(raw.shipment),
+    email: raw.email === true,
+    edits: raw.edits === true,
+    part_of: id(raw.part_of),
+    split_blocked: id(raw.split_blocked),
   };
 }
 

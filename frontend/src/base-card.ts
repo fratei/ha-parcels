@@ -30,6 +30,7 @@ import type { ParcelsReturnDialog } from "./return-dialog.ts";
 import { SnapshotController } from "./snapshot-controller.ts";
 import { STRINGS, fmt } from "./strings.ts";
 import type { CustomerReturn, HomeAssistant, Parcel, Snapshot } from "./types.ts";
+import { readDeepLink, withoutDeepLink } from "./url.ts";
 
 export abstract class ParcelsCardBase extends LitElement {
   static override properties: PropertyDeclarations = {
@@ -195,12 +196,16 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
     this._filter = readFilter();
     window.addEventListener(FILTER_EVENT, this._onFilterEvent);
     window.addEventListener("storage", this._onStorage);
+    window.addEventListener("location-changed", this._onLocationChanged);
+    window.addEventListener("popstate", this._onLocationChanged);
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener(FILTER_EVENT, this._onFilterEvent);
     window.removeEventListener("storage", this._onStorage);
+    window.removeEventListener("location-changed", this._onLocationChanged);
+    window.removeEventListener("popstate", this._onLocationChanged);
   }
 
   /** Chooses the filter for every card on this device. */
@@ -273,6 +278,42 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
     }
   };
 
+  /** The app navigated, e.g. to a notification's link while the page was open. */
+  private readonly _onLocationChanged = (): void => {
+    this._openLinked();
+  };
+
+  /**
+   * Opens the parcel or return that a notification or a Live Activity links
+   * to (`?parcel=…`, `?return=…`) once the parcels are known, and drops the
+   * link from the address so that a reload doesn't open it again. The first
+   * card on the page to see the link opens it.
+   */
+  private _openLinked(): void {
+    const snapshot = this.snapshot;
+    if (!snapshot || !this.isConnected) {
+      return;
+    }
+    const { pathname, search, hash } = window.location;
+    const rest = withoutDeepLink(search);
+    if (rest === search) {
+      return;
+    }
+    window.history.replaceState(window.history.state, "", `${pathname}${rest}${hash}`);
+    const link = readDeepLink(search);
+    if (link?.kind === "parcel") {
+      const parcel = snapshot.parcels.find((item) => item.id === link.id);
+      if (parcel) {
+        this.openDetails(parcel, null);
+      }
+    } else if (link?.kind === "return") {
+      const ret = snapshot.returns.find((item) => item.id === link.id);
+      if (ret) {
+        this.openReturn(ret, null);
+      }
+    }
+  }
+
   protected override willUpdate(changed: PropertyValues): void {
     super.willUpdate(changed);
     const active = this.shadowRoot?.activeElement;
@@ -283,7 +324,12 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
 
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
-    // Moving or replacing a chip drops its focus; give it back to the same parcel or return.
+    this._restoreFocus();
+    this._openLinked();
+  }
+
+  /** Moving or replacing a chip drops its focus; gives it back to the same parcel or return. */
+  private _restoreFocus(): void {
     const parcelId = this._focusedParcel;
     const returnId = this._focusedReturn;
     this._focusedParcel = null;
@@ -303,10 +349,11 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
     return this.renderRoot.querySelector<HTMLElement>("[data-focus-fallback], button.chip-main");
   }
 
-  protected readonly openDetails = (parcel: Parcel, opener: HTMLElement): void => {
+  /** Opens a parcel's details; focus goes back to `opener`, else to the parcel's chip. */
+  protected readonly openDetails = (parcel: Parcel, opener: HTMLElement | null): void => {
     const dialog = this.renderRoot.querySelector<ParcelsDetailsDialog>("parcels-details-dialog");
     void dialog?.open(parcel.id, () => {
-      const target = opener.isConnected
+      const target = opener?.isConnected
         ? opener
         : (this.renderRoot.querySelector<HTMLElement>(chipSelector(parcel.id)) ??
           this.focusFallback());
@@ -314,10 +361,11 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
     });
   };
 
-  protected readonly openReturn = (ret: CustomerReturn, opener: HTMLElement): void => {
+  /** Opens a return's details; focus goes back to `opener`, else to the return's chip. */
+  protected readonly openReturn = (ret: CustomerReturn, opener: HTMLElement | null): void => {
     const dialog = this.renderRoot.querySelector<ParcelsReturnDialog>("parcels-return-dialog");
     void dialog?.open(ret.id, () => {
-      const target = opener.isConnected
+      const target = opener?.isConnected
         ? opener
         : (this.renderRoot.querySelector<HTMLElement>(returnChipSelector(ret.id)) ??
           this.focusFallback());

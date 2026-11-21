@@ -170,3 +170,40 @@ export function formatDateTime(value: string | null, locale: LocaleOptions): str
   }
   return formatter(locale, { dateStyle: "medium", timeStyle: "short" }, false).format(ms);
 }
+
+const CLOCK_PARTS: Intl.DateTimeFormatOptions = {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+};
+
+/** Exactly 00:00:00.000 in the zone: how a date known only by its day is stored. */
+function isMidnight(ms: number, timeZone: string | undefined): boolean {
+  if (ms % 1000 !== 0) {
+    return false;
+  }
+  const clock = { language: "en-GB", hour12: undefined, timeZone };
+  return formatter(clock, CLOCK_PARTS, false)
+    .formatToParts(ms)
+    .every((part) => part.type === "literal" || part.value === "00");
+}
+
+/**
+ * "Fri 20 Nov at 14:05": an ISO date-time's day and time in the user's zone,
+ * only the day when it's exactly midnight there; "" when invalid.
+ */
+export function formatDayTime(value: string | null, locale: LocaleOptions): string {
+  const ms = value ? parseInstant(value) : null;
+  if (ms === null) {
+    return "";
+  }
+  const day = formatter(locale, DAY_FORMAT, false).format(ms);
+  if (isMidnight(ms, locale.timeZone)) {
+    return day;
+  }
+  return fmt(STRINGS.dayAtTime, {
+    day,
+    time: formatter(locale, { timeStyle: "short" }, false).format(ms),
+  });
+}

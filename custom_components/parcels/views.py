@@ -31,21 +31,28 @@ from .dedup import (
     is_shop_sender,
     manual_origin_id,
     order_parcels,
+    ordered_at,
     parcel_order_keys,
+    shipped_at,
+    split_problem,
 )
 from .models import (
+    FILL_ORIGIN_SUFFIX,
     FilteredItem,
     InferredReason,
+    Origin,
     Parcel,
+    ParcelEvent,
     ReturnEntry,
     ReviewItem,
+    Source,
     TimelineEntry,
     dt_to_str,
     inference_reason,
     merchant_key,
     time_to_str,
 )
-from .parsers.senders import organizational_domain
+from .parsers.senders import lookup, organizational_domain
 from .parsers.tracking import tracking_url
 
 if TYPE_CHECKING:
@@ -280,6 +287,9 @@ def parcel_json(
         "shipment_group": shipment,
         "name": state.name,
         "eta_source": state.eta_source.value if state.eta_source else None,
+        "senders": parcel_senders(parcel),
+        "ordered_at": dt_to_str(ordered_at(parcel)),
+        "shipped_at": dt_to_str(shipped_at(parcel)),
         "restricted": restricted,
     }
     if restricted:
@@ -306,8 +316,48 @@ def parcel_json(
             shipment_group=None,
             name=None,
             eta_source=None,
+            senders=[],
+            ordered_at=None,
+            shipped_at=None,
         )
     return result
+
+
+# How a parcel's list of senders names where its news came from.
+_SENDER_SOURCES: dict[Source, str] = {
+    Source.PARSER: "email",
+    Source.AI: "email",
+    Source.SEVENTEENTRACK: "seventeentrack",
+    Source.PARCELAPP: "parcelapp",
+}
+
+
+def parcel_senders(parcel: Parcel) -> list[dict[str, Any]]:
+    """Return who told about a parcel, in the order they first did.
+
+    Each e-mail counts once, with or without the local AI's reading of it;
+    the user's edits don't count. ``carrier`` is True for a carrier's own
+    e-mails.
+    """
+    senders: dict[tuple[str, str], dict[str, Any]] = {}
+    seen: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for origin in sorted(parcel.origins.values(), key=lambda o: (o.time, o.id)):
+        source = _SENDER_SOURCES.get(origin.source)
+        if source is None:
+            continue
+        known = lookup(origin.label) if source == "email" and origin.label else None
+        name = known.name if known else origin.label
+        group = (source, name)
+        seen[group].add(origin.message or origin.id)
+        senders.setdefault(
+            group,
+            {
+                "name": name,
+                "source": source,
+                "carrier": known is not None and known.kind == "carrier",
+            },
+        )["count"] = len(seen[group])
+    return list(senders.values())
 
 
 def return_json(
@@ -399,6 +449,7 @@ def review_json(
         "checks": item.checks,
         "fill": item.fill,
         "errors": list(item.errors),
+        "notes": list(item.notes),
         "source": "ai" if item.source.value == "ai" else "parser",
         "suggestion": item.suggestion.as_dict() if item.suggestion else None,
     }
@@ -413,6 +464,8 @@ def filtered_json(item: FilteredItem) -> dict[str, Any]:
         "sender": item.sender,
         "sender_domain": item.sender_domain,
         "subject": item.subject,
+        # Removed from Parcels by an administrator, rather than filtered.
+        "removed": item.removed,
     }
 
 
@@ -574,15 +627,6 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
                 ],
             }
         )
-    origins = [
-        {
-            "id": origin_id,
-            "label": (origin := parcel.origins[origin_id]).label,
-            "source": origin.source.value,
-            "time": dt_to_str(origin.time),
-        }
-        for origin_id in splittable_origins(parcel)
-    ]
     groups = shipment_groups(
         other for other in data.parcels.values() if viewer.can_see(other)
     )
@@ -592,5 +636,147 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
         ),
         "timeline": timeline,
         "orders": orders,
-        "origins": origins,
+        "origins": origin_rows(engine, parcel, viewer),
     }
+
+
+def _origin_news(
+    parcel: Parcel, origin_id: str
+) -> tuple[ParcelEvent | None, ParcelEvent | None]:
+    """Return an origin's latest news and its latest delivery estimate.
+
+    Inferred events aren't the origin's news. Of events at the same time,
+    the later one in the list counts.
+    """
+    said = estimate = None
+    events = (e for e in parcel.events if e.origin == origin_id and not e.inferred)
+    for event in sorted(events, key=lambda e: e.time):
+        if event.status is not None or event.kind is not None:
+            said = event
+        if event.eta is not None or event.clears_eta:
+            estimate = event
+    return said, estimate
+
+
+def _shipment_numbers(
+    engine: ParcelsEngine, parcel: Parcel, viewer: Viewer
+) -> dict[str, list[int]]:
+    """Number the Amazon shipments of a parcel's orders: [1, 2], [2, 2]…
+
+    Shipments are numbered by when they were first seen, across the parcel
+    and the other parcels of its orders the viewer may see. Orders of one
+    shipment aren't numbered.
+    """
+    parcels = {parcel.id: parcel}
+    for key in parcel_order_keys(parcel):
+        parcels |= {
+            other.id: other
+            for other in order_parcels(engine.data, key)
+            if viewer.can_see(other)
+        }
+    first: dict[str, datetime] = {}
+    for each in parcels.values():
+        for origin in each.origins.values():
+            shipment = origin.amazon_shipment_id
+            if shipment and (shipment not in first or origin.time < first[shipment]):
+                first[shipment] = origin.time
+    if len(first) < 2:
+        return {}
+    ordered = sorted(first, key=lambda shipment: (first[shipment], shipment))
+    return {
+        shipment: [number, len(ordered)]
+        for number, shipment in enumerate(ordered, start=1)
+    }
+
+
+def _sender_name(origin: Origin) -> str | None:
+    """Return the name of an e-mail's sender, when Parcels knows it."""
+    if origin.message is None or not origin.label:
+        return None
+    sender = lookup(origin.label)
+    return sender.name if sender else None
+
+
+def _email_parts(parcel: Parcel) -> dict[str, str]:
+    """Map each AI fill of a parcel to its e-mail's parser origin, if here.
+
+    Both come from one e-mail, so they're shown and moved together.
+    """
+    parsed: dict[str, str] = {}
+    for origin_id in sorted(parcel.origins):
+        origin = parcel.origins[origin_id]
+        if origin.message is not None and not origin_id.endswith(FILL_ORIGIN_SUFFIX):
+            parsed.setdefault(origin.message, origin_id)
+    return {
+        origin_id: parsed[origin.message]
+        for origin_id, origin in parcel.origins.items()
+        if origin_id.endswith(FILL_ORIGIN_SUFFIX)
+        and origin.message is not None
+        and origin.message in parsed
+    }
+
+
+def origin_rows(
+    engine: ParcelsEngine, parcel: Parcel, viewer: Viewer
+) -> list[dict[str, Any]]:
+    """Return what each e-mail and source of a parcel said and added.
+
+    Oldest first, the user's edits included. Only what's stored is shown:
+    never a subject, a body, a pickup code or an Amazon shipment ID. A row
+    tells whether it can be moved to a new parcel ("split_blocked" says why
+    not) and whether it's an e-mail, which can be removed from Parcels.
+    What the local AI filled in for an e-mail is "part_of" that e-mail's
+    row: the two move together.
+    """
+    edits = manual_origin_id(parcel.id)
+    shipments = _shipment_numbers(engine, parcel, viewer)
+    parts = _email_parts(parcel)
+    groups: dict[str, set[str]] = defaultdict(set)
+    for origin_id in parcel.origins:
+        lead = parts.get(origin_id, origin_id)
+        groups[lead].add(origin_id)
+    rows = []
+    for origin in sorted(parcel.origins.values(), key=lambda o: (o.time, o.id)):
+        lead = parts.get(origin.id, origin.id)
+        said, estimate = _origin_news(parcel, origin.id)
+        eta = estimate.eta if estimate else None
+        carrier = origin.carrier or None
+        shipment = origin.amazon_shipment_id
+        rows.append(
+            {
+                "id": origin.id,
+                "source": origin.source.value,
+                "label": origin.label,
+                "sender_name": _sender_name(origin),
+                "name": origin.name or None,
+                "time": dt_to_str(origin.time),
+                "status": said.status.value if said and said.status else None,
+                "kind": said.kind.value if said and said.kind else None,
+                "event_time": dt_to_str(said.time) if said else None,
+                "undated": said.undated if said else False,
+                "dayless": said.dayless if said else False,
+                "eta_start": eta.start.isoformat() if eta else None,
+                "eta_end": eta.end.isoformat() if eta else None,
+                "window_start": time_to_str(eta.window_start) if eta else None,
+                "window_end": time_to_str(eta.window_end) if eta else None,
+                "carrier": carrier,
+                "carrier_name": CARRIER_NAMES.get(carrier, carrier)
+                if carrier
+                else None,
+                "tracking_number": origin.tracking_number or None,
+                "reference": origin.reference or None,
+                "merchant": origin.merchant or None,
+                "seller": origin.seller or None,
+                "order_numbers": list(origin.order_numbers),
+                "items": list(origin.items),
+                "pickup_point": origin.pickup_point or None,
+                "shipment": shipments.get(shipment) if shipment else None,
+                "email": origin.message is not None,
+                "edits": origin.id == edits,
+                "part_of": parts.get(origin.id),
+                "split_blocked": (
+                    None if origin.id == edits else split_problem(parcel, groups[lead])
+                ),
+            }
+        )
+    return rows

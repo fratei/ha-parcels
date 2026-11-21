@@ -14,6 +14,7 @@ from homeassistant.setup import async_setup_component
 from pytest_homeassistant.typing import ClientSessionGenerator
 
 from custom_components.parcels import const
+from custom_components.parcels.ai import validate
 from custom_components.parcels.cards import (
     CARDS_FILE,
     FRONTEND_DIR,
@@ -25,6 +26,7 @@ from .common import add_hub
 
 CARDS = FRONTEND_DIR / CARDS_FILE
 STRINGS = Path(__file__).parents[1] / "frontend" / "src" / "strings.ts"
+BENCHMARK = Path(__file__).parents[1] / "docs" / "ai-benchmark.md"
 
 
 async def test_cards(hass: HomeAssistant, hass_client: ClientSessionGenerator) -> None:
@@ -73,3 +75,26 @@ def test_review_card_labels_every_review_reason() -> None:
     assert len(set(reasons)) == len(reasons)
     assert set(reasons) <= set(labels)
     assert len({labels[reason] for reason in reasons}) == len(reasons)
+
+
+def test_review_card_explains_every_ai_note() -> None:
+    """The card explains each note on an AI answer in one line, as the docs do.
+
+    A note without one would show as its bare code.
+    """
+    notes = {
+        value for name, value in vars(validate).items() if name.startswith("NOTE_")
+    }
+    source = STRINGS.read_text(encoding="utf-8")
+    block = source.split("export const NOTE_MEANINGS", 1)[1].split("};", 1)[0]
+    meanings = {
+        code: text.replace('\\"', '"')
+        for code, text in re.findall(
+            r'^\s*(\w+): "((?:[^"\\]|\\.)+)",$', block, re.MULTILINE
+        )
+    }
+    docs = BENCHMARK.read_text(encoding="utf-8")
+    section = docs.split("\n### Notes\n", 1)[1].split("\n## ", 1)[0]
+    documented = dict(re.findall(r"^\| `(\w+)` \| (.+) \|$", section, re.MULTILINE))
+    assert set(meanings) == notes
+    assert meanings == documented

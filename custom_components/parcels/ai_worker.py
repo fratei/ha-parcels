@@ -729,6 +729,7 @@ class AIWorker:
                 # The parcel may have changed meanwhile.
                 engine.fill_gaps_for(record.hash, parsed),
                 now,
+                notes=validation.notes,
             )
             return
         self._decide(
@@ -739,6 +740,7 @@ class AIWorker:
             now,
             trusted=verdict.verified,
             errors=validation.errors,
+            notes=validation.notes,
             parser=parsed.parser,
         )
 
@@ -779,13 +781,15 @@ class AIWorker:
         *,
         trusted: bool,
         errors: tuple[str, ...] = (),
+        notes: tuple[str, ...] = (),
         parser: str | None = None,
     ) -> None:
         """Apply, suggest, filter or review the AI's reading of an e-mail.
 
         ``errors`` are the checks the answer failed; its other values are
-        still offered for review. ``parser`` names the parser that recognised
-        the sender: the answer is sorted the same way as the parser's, so a
+        still offered for review. ``notes`` say what the checks changed, for
+        administrators. ``parser`` names the parser that recognised the
+        sender: the answer is sorted the same way as the parser's, so a
         refund is dropped and a customer return told apart.
         """
         engine = self.engine
@@ -808,7 +812,11 @@ class AIWorker:
                 # The AI said "not a parcel" but the e-mail has tracking numbers.
                 self._count("rejected")
                 self._to_review(
-                    entry, now, reason=REASON_AI_REJECTED, errors=check_codes(errors)
+                    entry,
+                    now,
+                    reason=REASON_AI_REJECTED,
+                    errors=check_codes(errors),
+                    notes=check_codes(notes),
                 )
             return
         if engine.ai_mode is AIMode.AUTO and trusted and is_confident(result):
@@ -834,6 +842,7 @@ class AIWorker:
             source=Source.AI,
             suggestion=engine.suggestion_for(result, message, now),
             errors=check_codes(errors),
+            notes=check_codes(notes),
         )
 
     def _fill(
@@ -845,12 +854,15 @@ class AIWorker:
         result: ParseResult | None,
         gaps: set[str],
         now: datetime,
+        *,
+        notes: tuple[str, ...] = (),
     ) -> None:
         """Add, or suggest, the gaps the AI filled in an e-mail a parser read.
 
         Only checked values that fill a gap count: the parser's values always
         win. In Auto mode they're added, marked as the AI's until confirmed;
-        otherwise they wait in "Needs review".
+        otherwise they wait in "Needs review", with the answer's ``notes``
+        and those of the older fill they replace.
         """
         engine = self.engine
         suggestion = fill_suggestion(result, gaps, parsed)
@@ -870,6 +882,7 @@ class AIWorker:
         else:
             if (old := engine.fill_item(record.hash)) is not None and old.suggestion:
                 suggestion = merge_fills(old.suggestion, suggestion)
+                notes = (*old.notes, *notes)
             item = ReviewItem.from_dict(entry["review"])
             engine.add_review(
                 replace(
@@ -880,6 +893,7 @@ class AIWorker:
                     source=Source.AI,
                     suggestion=suggestion,
                     fill=True,
+                    notes=check_codes(notes),
                 ),
                 record,
             )

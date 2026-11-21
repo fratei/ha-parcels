@@ -3,7 +3,13 @@
  * carrier line, items) and the full description used as the chip's accessible
  * name and tooltip.
  */
-import { formatDate, formatDateRange, formatWindow, type LocaleOptions } from "./format.ts";
+import {
+  formatDate,
+  formatDateRange,
+  formatDayTime,
+  formatWindow,
+  type LocaleOptions,
+} from "./format.ts";
 import { carrierLabel, statusLabel } from "./labels.ts";
 import { localDateOf } from "./dates.ts";
 import { etaRange, isActiveParcel } from "./parcels.ts";
@@ -281,37 +287,113 @@ export function describeParcel(parcel: Parcel, context: ChipContext): string {
   return parts.join(", ");
 }
 
-/** "…12345": the last five letters or digits of a long tracking or order number. */
+/**
+ * "…12345": the last five letters or digits of a long tracking or order
+ * number, with any "_" among them, e.g. "…4Ef5_1".
+ */
 export function numberTail(value: string | null | undefined): string | null {
   const text = value?.trim();
   if (!text) {
     return null;
   }
-  return text.length <= 6 ? text : `…${text.replace(/[^0-9a-z]/gi, "").slice(-5)}`;
+  if (text.length <= 6) {
+    return text;
+  }
+  const kept = text.replace(/[^0-9a-z_]/gi, "");
+  let tail = "";
+  let count = 0;
+  for (let index = kept.length - 1; index >= 0 && count < 5; index -= 1) {
+    const char = kept.charAt(index);
+    tail = char + tail;
+    if (char !== "_") {
+      count += 1;
+    }
+  }
+  return `…${tail.replace(/^_+/, "")}`;
 }
 
 export interface CandidateLines {
   /** The shop. */
   title: string;
-  /** The status, with the day it arrived or the expected days. */
+  /** The status, with the day and time it arrived or the expected days and window. */
   when: string;
   /** The carrier with the tails of the tracking and order numbers. */
   carrier: string;
   /** The items summary; null when the items aren't known. */
   items: string | null;
+  /** Who wrote about it, e.g. "2 e-mails from DHL"; null when that isn't shown. */
+  emails: string | null;
+  /** What to show instead of the items when they aren't known, and why. */
+  noItems: string;
+}
+
+const MAX_SENDERS = 3;
+
+function sendersLine(parcel: Parcel): string | null {
+  const senders = parcel.restricted ? [] : (parcel.senders ?? []);
+  if (!senders.length) {
+    return null;
+  }
+  const parts = senders.slice(0, MAX_SENDERS).map((sender) => {
+    const update = sender.source !== "email";
+    const one = sender.count <= 1;
+    const template = update
+      ? one
+        ? STRINGS.candidateUpdate
+        : STRINGS.candidateUpdates
+      : one
+        ? STRINGS.candidateEmail
+        : STRINGS.candidateEmails;
+    return fmt(template, { count: String(sender.count), name: sender.name });
+  });
+  if (senders.length > MAX_SENDERS) {
+    parts.push(fmt(STRINGS.candidateMore, { count: String(senders.length - MAX_SENDERS) }));
+  }
+  return parts.join(", ");
+}
+
+/** Why the items aren't known: carriers and tracking services never list them. */
+function noItemsText(parcel: Parcel): string {
+  const senders = parcel.restricted ? [] : (parcel.senders ?? []);
+  const tracking = (sender: Parcel["senders"][number]): boolean => sender.source !== "email";
+  if (senders.length && senders.every(tracking)) {
+    return STRINGS.trackingNoItems;
+  }
+  if (senders.some((sender) => sender.carrier) && senders.every((s) => s.carrier || tracking(s))) {
+    return STRINGS.carrierEmailsNoItems;
+  }
+  return STRINGS.itemsNotKnown;
+}
+
+/** When a closed parcel arrived: its day and time, the day alone when the time isn't known. */
+function closedWhen(parcel: Parcel, locale: LocaleOptions): string | null {
+  const at = parcel.delivered_at ?? parcel.status_time;
+  const undated = parcel.delivered_at ? parcel.delivered_undated : parcel.status_undated;
+  if (undated) {
+    return STRINGS.dateNotKnownInline;
+  }
+  if (!parcel.inferred) {
+    const dayTime = formatDayTime(at, locale);
+    if (dayTime) {
+      return dayTime;
+    }
+  }
+  const timeZone = locale.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const day = localDateOf(at, timeZone);
+  return day ? formatDateRange(day, day, locale) : null;
 }
 
 /** What tells one parcel from another in the merge picker and merge suggestions. */
 export function candidateLines(parcel: Parcel, locale: LocaleOptions): CandidateLines {
-  let days: string | null = null;
+  const when: (string | null)[] = [statusLabel(parcel.status)];
   if (isActiveParcel(parcel)) {
     const eta = etaRange(parcel);
-    days = eta ? formatDateRange(eta.start, eta.end, locale) : null;
+    when.push(
+      eta ? formatDateRange(eta.start, eta.end, locale) : null,
+      formatWindow(parcel.window_start, parcel.window_end, locale),
+    );
   } else {
-    const timeZone = locale.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const undated = parcel.delivered_at ? parcel.delivered_undated : parcel.status_undated;
-    const day = localDateOf(parcel.delivered_at ?? parcel.status_time, timeZone);
-    days = undated ? STRINGS.dateNotKnownInline : day ? formatDateRange(day, day, locale) : null;
+    when.push(closedWhen(parcel, locale));
   }
   const carrier = [carrierLabel(parcel) ?? STRINGS.carrierNotKnown];
   const number = numberTail(parcel.tracking_number);
@@ -324,9 +406,11 @@ export function candidateLines(parcel: Parcel, locale: LocaleOptions): Candidate
   }
   return {
     title: sellerLine(parcel),
-    when: [statusLabel(parcel.status), days].filter(Boolean).join(" · "),
+    when: when.filter(Boolean).join(" · "),
     carrier: carrier.join(" · "),
     items: itemsSummary(parcel),
+    emails: sendersLine(parcel),
+    noItems: noItemsText(parcel),
   };
 }
 
@@ -334,4 +418,26 @@ export function candidateLines(parcel: Parcel, locale: LocaleOptions): Candidate
 export function candidateLabel(parcel: Parcel, locale: LocaleOptions): string {
   const lines = candidateLines(parcel, locale);
   return [lines.title, lines.items, lines.carrier, lines.when].filter(Boolean).join(" · ");
+}
+
+const MAX_ALSO = 3;
+
+/**
+ * The other orders a delivery whose items aren't known could also be, e.g.
+ * "Could also be: Lumen desk lamp +1 (order …00002); Garden hose". Null
+ * without any.
+ */
+export function couldAlsoBe(others: readonly Parcel[]): string | null {
+  const entries = others.slice(0, MAX_ALSO).map((parcel) => {
+    const items = firstItem(parcel) ?? sellerLine(parcel);
+    const tail = numberTail(parcel.order_numbers[0]);
+    return tail ? fmt(STRINGS.couldAlsoBeOrder, { items, tail }) : items;
+  });
+  if (!entries.length) {
+    return null;
+  }
+  if (others.length > MAX_ALSO) {
+    entries.push(fmt(STRINGS.candidateMore, { count: String(others.length - MAX_ALSO) }));
+  }
+  return fmt(STRINGS.couldAlsoBe, { list: entries.join("; ") });
 }

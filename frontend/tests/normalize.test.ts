@@ -9,7 +9,7 @@ import {
   normalizeSettings,
   normalizeSnapshot,
 } from "../src/normalize.ts";
-import { makeParcel } from "./helpers.ts";
+import { makeOrigin, makeParcel } from "./helpers.ts";
 
 const NOW = Date.UTC(2026, 6, 14, 23, 30);
 
@@ -98,8 +98,27 @@ describe("normalizeSnapshot", () => {
       ["r1"],
     );
     assert.deepEqual(snapshot.filtered, [
-      { id: "f1", created: "", received: null, sender: "news@example.com", sender_domain: "", subject: "" },
+      {
+        id: "f1",
+        created: "",
+        received: null,
+        sender: "news@example.com",
+        sender_domain: "",
+        subject: "",
+        removed: false,
+      },
     ]);
+  });
+
+  test("tells e-mails removed from a parcel apart from filtered ones", () => {
+    const filtered = normalizeSnapshot(
+      { filtered: [{ id: "f1", removed: true }, { id: "f2", removed: "yes" }] },
+      NOW,
+    ).filtered;
+    assert.deepEqual(
+      filtered.map((item) => item.removed),
+      [true, false],
+    );
   });
 });
 
@@ -145,8 +164,38 @@ describe("normalizeParcel", () => {
       origins: ["o1", "o2"],
       shipment_group: "p0",
       restricted: false,
+      senders: [
+        { name: "Example Shop", source: "email", carrier: false, count: 1 },
+        { name: "DHL", source: "email", carrier: true, count: 2 },
+        { name: "17TRACK", source: "seventeentrack", carrier: false, count: 1 },
+      ],
+      ordered_at: "2026-07-10T09:00:00+00:00",
+      shipped_at: "2026-07-12T09:00:00+00:00",
     });
     assert.deepEqual(normalizeParcel(JSON.parse(JSON.stringify(parcel))), parcel);
+  });
+
+  test("reads who told about a parcel defensively", () => {
+    const parcel = normalizeParcel({
+      id: "p1",
+      senders: [
+        { name: "DHL", source: "email", carrier: true, count: 3 },
+        { name: "Example Shop", source: "pigeon", carrier: "yes", count: -2 },
+        { source: "email", count: 1 },
+        { name: "", source: "email", count: 1 },
+        "DHL",
+      ],
+      ordered_at: 3,
+      shipped_at: "",
+    });
+    assert.ok(parcel);
+    assert.deepEqual(parcel.senders, [
+      { name: "DHL", source: "email", carrier: true, count: 3 },
+      { name: "Example Shop", source: "email", carrier: false, count: 1 },
+    ]);
+    assert.equal(parcel.ordered_at, null);
+    assert.equal(parcel.shipped_at, null);
+    assert.deepEqual(normalizeParcel({ id: "p1", senders: "DHL" })?.senders, []);
   });
 
   test("never trusts the types it gets", () => {
@@ -323,6 +372,18 @@ describe("normalizeReviewItem", () => {
     assert.deepEqual(item.errors, ["tracking_is_order", "eta_not_in_text"]);
     assert.deepEqual(normalizeReviewItem({ id: "r7", errors: "tracking_is_order" })?.errors, []);
   });
+
+  test("keeps only the codes of the notes on an AI answer, apart from failed checks", () => {
+    const item = normalizeReviewItem({
+      id: "r8",
+      errors: ["tracking_not_in_email"],
+      notes: ["carrier_unproven", "Amazon", null, "carrier_unproven", "eta_from_text"],
+    });
+    assert.ok(item);
+    assert.deepEqual(item.notes, ["carrier_unproven", "eta_from_text"]);
+    assert.deepEqual(item.errors, ["tracking_not_in_email"]);
+    assert.deepEqual(normalizeReviewItem({ id: "r9" })?.notes, []);
+  });
 });
 
 describe("normalizeDetails", () => {
@@ -359,8 +420,72 @@ describe("normalizeDetails", () => {
     assert.deepEqual(details.orders, [
       { id: "o1", merchant: null, number: "ORDER-1", placed_at: null, parcel_ids: ["p1"] },
     ]);
-    assert.deepEqual(details.origins, [
-      { id: "m1", label: "E-mail from Example Shop", source: "parser", time: null },
-    ]);
+    assert.deepEqual(details.origins, [makeOrigin({ id: "m1", label: "E-mail from Example Shop", time: null })]);
+  });
+
+  test("keeps what each e-mail said and added", () => {
+    const origin = makeOrigin({
+      id: "m2",
+      label: "example.com",
+      source: "ai",
+      sender_name: "Example Shop",
+      name: "Blue mug",
+      time: "2026-07-14T08:00:00+00:00",
+      status: "out_for_delivery",
+      kind: "delayed",
+      event_time: "2026-07-14T07:00:00+00:00",
+      undated: true,
+      dayless: true,
+      eta_start: "2026-07-14",
+      eta_end: "2026-07-15",
+      window_start: "13:00",
+      window_end: "15:00",
+      carrier: "dhl",
+      carrier_name: "DHL",
+      tracking_number: "TEST0001",
+      reference: "Ab3Cd5Ef7",
+      merchant: "Example Shop",
+      seller: "Example Seller",
+      order_numbers: ["ORDER-1"],
+      items: ["Blue mug", "Tea towel"],
+      pickup_point: "Example Locker 12",
+      shipment: [1, 2],
+      email: true,
+      edits: false,
+      part_of: "m1",
+      split_blocked: "shared_number",
+    });
+    const details = normalizeDetails({ parcel: { id: "p1" }, origins: [JSON.parse(JSON.stringify(origin))] });
+    assert.deepEqual(details?.origins, [origin]);
+  });
+
+  test("never trusts an origin's types", () => {
+    const details = normalizeDetails({
+      parcel: { id: "p1" },
+      origins: [
+        { id: "m1", status: 3, kind: "", items: ["Blue mug", 7], shipment: [2, 1], split_blocked: 4, email: "yes", part_of: 2 },
+        { id: "m2", shipment: [0, 2] },
+        { id: "m3", shipment: [1.5, 2] },
+        { id: "m4", shipment: "1/2" },
+        { id: "m5", shipment: [1, 2, 3] },
+        { id: "m6", shipment: [2, 2], edits: true, dayless: 1 },
+      ],
+    });
+    assert.ok(details);
+    const [first, ...rest] = details.origins;
+    assert.ok(first);
+    assert.equal(first.status, null);
+    assert.equal(first.kind, null);
+    assert.deepEqual(first.items, ["Blue mug"]);
+    assert.equal(first.shipment, null);
+    assert.equal(first.split_blocked, null);
+    assert.equal(first.email, false);
+    assert.equal(first.part_of, null);
+    assert.deepEqual(
+      rest.map((origin) => origin.shipment),
+      [null, null, null, null, [2, 2]],
+    );
+    assert.equal(rest.at(-1)?.edits, true);
+    assert.equal(rest.at(-1)?.dayless, false);
   });
 });

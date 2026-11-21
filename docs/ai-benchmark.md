@@ -309,6 +309,13 @@ None of this set's e-mails names Amazon, the shop the change is about:
 | The carrier "Amazon", for an e-mail that names Amazon only as the shop | Amazon's name in its own e-mails names the shop, not its delivery service, so the carrier is left empty, with the note `carrier_unproven`. It isn't a failed check: the rest of the answer is used. Only "Amazon Logistics" or one of its numbers (`TBA` and 12 digits) names the carrier. A carrier's e-mail about an Amazon order keeps its own carrier. 0.1.7 took Amazon for the carrier, which kept these parcels apart from their carrier's deliveries. |
 | No carrier, in an e-mail from an unknown sender named "Amazon" | The sender name names the shop, so it gives no carrier. "Amazon Logistics" still does. 0.1.7 gave Amazon as the carrier. |
 
+### What changed in 0.1.9
+
+0.1.9 keeps the instructions, the answer's structure, the input and the
+checks: every e-mail gets the same input as with 0.1.8, byte for byte, and
+the same 656 variants give the same results. Administrators now also see the
+[notes](#notes) on an answer in **Needs review**.
+
 ## Check codes
 
 An answer that fails a check waits in **Needs review**, as "The local AI's
@@ -353,6 +360,34 @@ text" below means no link, e-mail address, HTML or control character.
 
 The `tracking_is_*` checks skip numbers whose format identifies them, such
 as `EA123456785PT`, and Paack's order IDs.
+
+### Notes
+
+Some checks change an answer they let through: they leave a value out, or
+take it from the e-mail's own words. These notes aren't failed checks, and
+the rest of the answer is used. On the local AI's answers in **Needs
+review**, administrators see them under **Notes on the AI answer**, below
+the failed checks, as codes without values, each with its meaning:
+
+| Note | What Parcels changed |
+|---|---|
+| `tracking_added_by_detector` | Parcels' own detector added a tracking number that the e-mail writes. |
+| `pickup_code_from_text` | The e-mail's only delivery or pickup code was used, as the answer gave none that the e-mail writes. |
+| `item_recommended` | Products the e-mail lists only under Buy again or Recommended for you were dropped. |
+| `item_is_number` | An item that was the parcel's tracking or order number, code or reference was dropped. |
+| `kind_from_text` | The e-mail's words give a different status from the answer's, and theirs was used. |
+| `out_for_delivery_not_today` | Out for delivery, with a later delivery date and no such words in the e-mail, was read as in transit. |
+| `eta_dropped_for_kind` | A date was dropped, as no delivery is pending in e-mails of this kind. |
+| `eta_from_text` | The date by the e-mail's delivery words was used, as the answer gave another date or none. |
+| `order_moved_to_tracking` | An order number in a carrier's e-mail was the parcel's tracking number. |
+| `order_from_text` | An order number was taken as the e-mail writes it: the whole joined number, or a miscopy repaired. |
+| `tracking_from_text` | A miscopied tracking number was replaced by the e-mail's own. |
+| `merchant_is_carrier` | The shop given was this e-mail's carrier, so it was dropped. |
+| `carrier_unproven` | The shop, such as Amazon, was given as the carrier without proof that it delivers, so the carrier was left empty. |
+| `merchant_from_sender_name` | A shop given as a domain was named from the sender's name. |
+| `merchant_from_text` | A shop given as a domain was named from a line of the e-mail. |
+| `pickup_point_not_pickup` | An address the e-mail doesn't give as a pickup point was dropped. |
+| `pickup_point_generic` | A generic pickup point, such as a branch, was dropped. |
 
 ## Results
 

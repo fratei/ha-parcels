@@ -150,3 +150,15 @@ export function senderCheckRows(checks: SenderChecks): Array<[string, string]> {
   );
   return rows;
 }
+
+/**
+ * The title of a filtered e-mail: its subject, or, for one removed from a
+ * parcel in its details (Parcels keeps no subject then), where it came from.
+ */
+export function filteredTitle(item: { subject: string; removed: boolean }): string {
+  const subject = item.subject.trim();
+  if (subject) {
+    return subject;
+  }
+  return item.removed ? STRINGS.removedFromParcel : STRINGS.noSubject;
+}

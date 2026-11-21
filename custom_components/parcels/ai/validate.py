@@ -501,10 +501,16 @@ _DATE_EVIDENCE_RE = re.compile(
 
 @dataclass(frozen=True, slots=True)
 class Validation:
-    """A checked AI answer: a result, or the reasons it was rejected."""
+    """A checked AI answer: a result, or the reasons it was rejected.
+
+    ``errors`` are the checks the answer failed. ``notes`` say what the
+    checks changed in an answer they let through, such as a carrier left
+    empty; they aren't failures. The result's notes hold both.
+    """
 
     result: ParseResult | None
     errors: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
 
 
 def _name_key(text: str) -> str:
@@ -1016,7 +1022,7 @@ class _Checker:
             source="ai",
             notes=(*self.errors, *self.notes),
         )
-        return Validation(result, tuple(self.errors))
+        return Validation(result, tuple(self.errors), tuple(dict.fromkeys(self.notes)))
 
     def kind(self) -> MailKind | None:
         value = self.data.get("kind")

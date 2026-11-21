@@ -90,11 +90,13 @@ from .dedup import (
     archive_parcel,
     dismiss_suggestion,
     infer_deliveries,
+    manual_origin_id,
     mark_delivered,
     merge_parcels,
     paack_amazon_counts,
     reconcile,
     remove_message,
+    remove_origins,
     remove_parcel_origins,
     remove_return_origins,
     repair_store,
@@ -1593,6 +1595,68 @@ class ParcelsEngine:
         self.async_changed()
         return item.id
 
+    async def async_filtered_restore(self, filtered_id: str) -> str | None:
+        """Restore a filtered e-mail; returns the review ID, if it waits there.
+
+        An e-mail the user removed from Parcels is read again, as if it were
+        new. When it's gone from the mailboxes, it waits for review instead;
+        while no mailbox can give it, it stays removed.
+        """
+        data = self.data
+        if (entry := data.filtered.get(filtered_id)) is None:
+            raise validation_error("unknown_filtered")
+        if not entry.removed or entry.message not in data.messages:
+            return self.filtered_restore(filtered_id)
+        try:
+            await self.async_reprocess(entry.message)
+        except HomeAssistantError as err:
+            if err.translation_key != "message_gone":
+                raise
+            return self.filtered_restore(filtered_id)
+        return None
+
+    def remove_email(self, parcel_id: str, origin_id: str) -> str:
+        """Remove an e-mail from Parcels, with everything it added.
+
+        The e-mail leaves every parcel and return it was part of, and isn't
+        read again; it waits under Filtered, from where it can be restored.
+        A parcel left with only the user's edits is deleted. Returns the ID
+        of the filtered entry.
+        """
+        data = self.data
+        parcel = self.parcel(parcel_id)
+        if (origin := parcel.origins.get(origin_id)) is None:
+            raise validation_error("unknown_origin")
+        if (key := origin.message) is None:
+            raise validation_error("not_an_email")
+        now = dt_util.utcnow()
+        if (record := data.messages.get(key)) is None:
+            record = data.messages[key] = MessageRecord(
+                hash=key, seen=now, state=MessageState.FILTERED
+            )
+        for affected in self._clear_outputs(key, now):
+            if (left := data.parcels.get(affected)) is not None and set(
+                left.origins
+            ) <= {manual_origin_id(left.id)}:
+                remove_origins(data, left, set(left.origins), now)
+        domain = record.sender_domain or origin.label
+        known = lookup(domain) if domain else None
+        entry = FilteredItem(
+            id=new_id("f"),
+            created=now,
+            message=key,
+            received=record.received,
+            sender=known.name if known is not None else "",
+            sender_domain=domain,
+            subject="",
+            mailbox=next(iter(record.refs), None),
+            removed=True,
+        )
+        data.filtered[entry.id] = entry
+        record.state = MessageState.FILTERED
+        self.async_changed()
+        return entry.id
+
     def filtered_clear(self, filtered_id: str) -> None:
         """Drop a filtered e-mail; its hash stays, so it's never read again."""
         data = self.data
@@ -2042,15 +2106,19 @@ class ParcelsEngine:
             self.async_schedule_save()
         _LOGGER.debug("%s's rejected e-mails read again: %s", sender, counts)
 
-    def _clear_outputs(self, key: str, now: datetime) -> None:
-        """Undo everything an e-mail added: parcels, review and queue."""
+    def _clear_outputs(self, key: str, now: datetime) -> set[str]:
+        """Undo everything an e-mail added: parcels, review and queue.
+
+        Returns the IDs of the parcels that changed.
+        """
         data = self.data
-        remove_message(data, key, now)
+        affected = remove_message(data, key, now)
         for review_id in [k for k, r in data.review.items() if r.message == key]:
             del data.review[review_id]
         for filtered_id in [k for k, f in data.filtered.items() if f.message == key]:
             del data.filtered[filtered_id]
         self.ai.drop(key)
+        return affected
 
     # -- Parcel services --------------------------------------------------
 

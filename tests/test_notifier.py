@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from itertools import count
 import json
+import re
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -27,6 +28,7 @@ from pytest_homeassistant.common import (
 
 from custom_components.parcels.const import (
     CONF_COLLAPSE_THRESHOLD,
+    CONF_DASHBOARD_PATH,
     CONF_EXCLUDED_DEVICES,
     CONF_ITEM_NAMES,
     CONF_NOTIFY_PERSONS,
@@ -69,14 +71,32 @@ NEXT_DAY = DAY + timedelta(days=1)
 PATH = "/dashboard-parcels/week"
 END = "clear_notification"
 COMBINED = "parcels-today-20260618"
+CART = "mdi:cart-outline"
 TRUCK = "mdi:truck-fast"
 OUT = "mdi:truck-delivery"
 DONE = "mdi:package-check"
 SHOP = "mdi:storefront"
+ALERT = "mdi:alert-circle-outline"
 BOX = "mdi:package-variant-closed"
+BLUE = "#039BE5"
+ORANGE = "#FFA600"
+GREEN = "#43A047"
+PURPLE = "#926BC7"
+RED = "#DB4437"
+# The colour each icon goes with, so expected payloads needn't repeat it.
+COLOURS = {
+    CART: BLUE,
+    TRUCK: BLUE,
+    BOX: BLUE,
+    OUT: ORANGE,
+    DONE: GREEN,
+    SHOP: PURPLE,
+    ALERT: RED,
+}
 DASH = "\u2013"
 SEP = " \u00b7 "
 CHECK = "\u2713"
+ELLIPSIS = "\u2026"
 
 ALEX = "person.alex_doe"
 SAM = "person.sam_example"
@@ -113,6 +133,17 @@ def tag_of(parcel: Parcel, gen: int = 1) -> str:
     return f"parcel-{parcel.id.removeprefix('p_')}{suffix}"
 
 
+def link_of(parcel: Parcel) -> str:
+    """Return the dashboard path that opens a parcel's details."""
+    return f"{PATH}?parcel={parcel.id}"
+
+
+def _link_of_tag(tag: str) -> str:
+    """Return what tapping an activity with a tag opens."""
+    match = re.fullmatch(r"parcel-([0-9a-f]+)(?:-\d+)?", tag)
+    return f"{PATH}?parcel=p_{match.group(1)}" if match else PATH
+
+
 def activity(
     tag: str,
     title: str,
@@ -134,7 +165,9 @@ def activity(
         "progress": progress,
         "progress_max": progress_max,
         "notification_icon": icon,
-        "url": PATH,
+        "notification_icon_color": COLOURS[icon],
+        "progress_bar_color": COLOURS[icon],
+        "url": _link_of_tag(tag),
         "relevance_score": relevance,
     }
     if when is not None:
@@ -443,7 +476,7 @@ async def test_routing(env: Env, hass: HomeAssistant) -> None:
         {
             "title": "Amazon",
             "message": message,
-            "data": {"tag": tag_of(parcel), "url": PATH},
+            "data": {"tag": tag_of(parcel), "url": link_of(parcel)},
         }
     ]
     assert android.take() == [
@@ -452,8 +485,9 @@ async def test_routing(env: Env, hass: HomeAssistant) -> None:
             "message": message,
             "data": {
                 "tag": tag_of(parcel),
-                "clickAction": PATH,
+                "clickAction": link_of(parcel),
                 "notification_icon": OUT,
+                "color": ORANGE,
             },
         }
     ]
@@ -594,7 +628,7 @@ async def test_collapse_is_sticky(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            f"0 of 4 delivered{SEP}next: GLS 13{DASH}14h",
+            f"0 of 4 delivered{SEP}next: IKEA via GLS 13{DASH}14h",
             "0/4",
             0,
             OUT,
@@ -609,7 +643,7 @@ async def test_collapse_is_sticky(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            f"1 of 4 delivered{SEP}next: DPD 15{DASH}16h",
+            f"1 of 4 delivered{SEP}next: Amazon via DPD 15{DASH}16h",
             "1/4",
             1,
             BOX,
@@ -625,7 +659,7 @@ async def test_collapse_is_sticky(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            f"1 of 3 delivered{SEP}next: DPD 15{DASH}16h",
+            f"1 of 3 delivered{SEP}next: Amazon via DPD 15{DASH}16h",
             "1/3",
             1,
             BOX,
@@ -647,7 +681,7 @@ async def test_collapsed_from_the_start(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            f"0 of 2 delivered{SEP}next: DPD 13{DASH}14h",
+            f"0 of 2 delivered{SEP}next: Amazon via DPD 13{DASH}14h",
             "0/2",
             0,
             BOX,
@@ -951,7 +985,7 @@ async def test_switches(env: Env, hass: HomeAssistant) -> None:
         {
             "title": "Amazon",
             "message": message,
-            "data": {"tag": tag_of(parcel), "url": PATH},
+            "data": {"tag": tag_of(parcel), "url": link_of(parcel)},
         }
     ]
 
@@ -1400,7 +1434,7 @@ async def test_package_shows_the_orders_it_may_hold(
         {
             "title": "Amazon",
             "message": delivered,
-            "data": {"tag": tag_of(box), "url": PATH},
+            "data": {"tag": tag_of(box), "url": link_of(box)},
         }
     ]
 
@@ -1419,6 +1453,255 @@ async def test_package_shows_the_orders_it_may_hold(
         "",
         f"[Open Parcels]({PATH})",
     )
+
+
+@pytest.mark.parametrize(
+    ("status", "icon", "colour"),
+    [
+        (S.ORDERED, CART, BLUE),
+        (S.SHIPPED, TRUCK, BLUE),
+        (S.IN_TRANSIT, TRUCK, BLUE),
+        (S.OUT_FOR_DELIVERY, OUT, ORANGE),
+        (S.READY_FOR_PICKUP, SHOP, PURPLE),
+        (S.ATTEMPTED, ALERT, RED),
+        (S.EXCEPTION, ALERT, RED),
+    ],
+)
+async def test_colour_follows_the_status(
+    env: Env, status: ParcelStatus, icon: str, colour: str
+) -> None:
+    """The icon and the progress bar take the status colour; the card stays dark."""
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    android = env.phone("Sam Pixel", SAM, "android")
+    parcel = env.parcel(status, eta=on())
+    await env.start()
+    await env.goto(at(8))
+    looks = (
+        "notification_icon",
+        "notification_icon_color",
+        "progress_bar_color",
+        "background_color",
+        "text_color",
+    )
+    [started] = iphone.take()
+    assert [started["data"].get(key) for key in looks] == [
+        icon,
+        colour,
+        colour,
+        None,
+        None,
+    ]
+    key = status in {S.OUT_FOR_DELIVERY, S.READY_FOR_PICKUP, S.ATTEMPTED, S.EXCEPTION}
+    assert [payload["data"] for payload in android.take()] == (
+        [
+            {
+                "tag": tag_of(parcel),
+                "clickAction": link_of(parcel),
+                "notification_icon": icon,
+                "color": colour,
+            }
+        ]
+        if key
+        else []
+    )
+    # An iPad notification has no colour.
+    assert [payload["data"] for payload in ipad.take()] == (
+        [{"tag": tag_of(parcel), "url": link_of(parcel)}] if key else []
+    )
+
+    await env.goto(at(10))
+    env.change(parcel, S.DELIVERED)
+    await env.settle()
+    [delivered] = iphone.take()
+    assert [delivered["data"].get(key) for key in looks] == [
+        DONE,
+        GREEN,
+        GREEN,
+        None,
+        None,
+    ]
+    assert [payload["data"] for payload in android.take()] == [
+        {
+            "tag": tag_of(parcel),
+            "clickAction": link_of(parcel),
+            "notification_icon": DONE,
+            "color": GREEN,
+        }
+    ]
+    assert [payload["data"] for payload in ipad.take()] == [
+        {"tag": tag_of(parcel), "url": link_of(parcel)}
+    ]
+
+
+async def test_combined_takes_the_most_urgent_colour(env: Env) -> None:
+    """Out for delivery leads, then a problem, then a pickup; all done is green."""
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    moving = env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    ready = env.parcel(S.READY_FOR_PICKUP, merchant="Decathlon", carrier="gls")
+    missed = env.parcel(S.ATTEMPTED, eta=on(), merchant="IKEA", carrier="correos")
+    await env.start()
+    await env.goto(at(8))
+    counts = f"0 of 3 delivered{SEP}1 ready for pickup{SEP}1 problem"
+    assert phone.take() == [
+        activity(
+            COMBINED, "Parcels today", counts, "0/3", 0, ALERT, 0.7, progress_max=3
+        )
+    ]
+
+    await env.goto(at(9))
+    env.change(moving, S.OUT_FOR_DELIVERY, eta=on())
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"{counts}{SEP}Zalando via CTT out for delivery",
+            "0/3",
+            0,
+            OUT,
+            0.9,
+            progress_max=3,
+        )
+    ]
+
+    await env.goto(at(10))
+    for parcel in (moving, ready, missed):
+        env.change(parcel, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"3 of 3 delivered {CHECK}",
+            "3/3",
+            3,
+            DONE,
+            0.2,
+            progress_max=3,
+        )
+    ]
+
+
+async def test_tapping_opens_the_parcel(env: Env, hass: HomeAssistant) -> None:
+    """A tap opens the parcel's details; the combined activity opens the week."""
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    android = env.phone("Sam Pixel", SAM, "android")
+    path = "/parcels-test/week?kiosk"
+    env.hub(**{CONF_DASHBOARD_PATH: path, CONF_COLLAPSE_THRESHOLD: 1})
+    first = env.parcel(S.OUT_FOR_DELIVERY, eta=on())
+    second = env.parcel(eta=on(NEXT_DAY), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    link = f"{path}&parcel={first.id}"
+    assert [payload["data"]["url"] for payload in iphone.take()] == [link]
+    assert [payload["data"] for payload in ipad.take()] == [
+        {"tag": tag_of(first), "url": link}
+    ]
+    assert [payload["data"] for payload in android.take()] == [
+        {
+            "tag": tag_of(first),
+            "clickAction": link,
+            "notification_icon": OUT,
+            "color": ORANGE,
+        }
+    ]
+    assert (persistent(hass) or "").endswith(f"[Open Parcels]({path})")
+
+    await env.goto(at(9))
+    env.change(second, S.OUT_FOR_DELIVERY, eta=on())
+    await env.settle()
+    assert [
+        (payload["data"]["tag"], payload["data"].get("url"))
+        for payload in iphone.take()
+    ] == [(tag_of(first), None), (COMBINED, path)]
+    assert [payload["data"]["clickAction"] for payload in android.take()] == [
+        f"{path}&parcel={second.id}"
+    ]
+    assert (persistent(hass) or "").endswith(f"[Open Parcels]({path})")
+
+
+@pytest.mark.parametrize(
+    ("eta", "countdown", "ends", "shown", "short"),
+    [
+        (window(9, 12), at(11), at(12), f"09:00{DASH}12:00", f"9{DASH}12h"),
+        (
+            Eta(start=DAY, end=DAY, window_start=time(13), window_end=time(13, 45)),
+            at(13),
+            at(13, 45),
+            f"13:00{DASH}13:45",
+            f"13{DASH}13:45",
+        ),
+    ],
+)
+async def test_countdown_in_the_last_hour(
+    env: Env, eta: Eta, countdown: datetime, ends: datetime, shown: str, short: str
+) -> None:
+    """The timer runs in the last hour of the window; until then the text shows."""
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(S.OUT_FOR_DELIVERY, eta=eta)
+    notifier = await env.start()
+    await env.goto(at(8))
+    message = f"Out for delivery {shown}{SEP}DPD"
+    assert phone.take() == [
+        activity(tag_of(parcel), "Amazon", message, short, 3, OUT, 0.9)
+    ]
+
+    await env.goto(countdown - timedelta(minutes=1))
+    assert phone.take() == []
+
+    # One quiet update starts the timer.
+    await env.goto(countdown)
+    assert phone.take() == [
+        activity(
+            tag_of(parcel),
+            "Amazon",
+            message,
+            short,
+            3,
+            OUT,
+            1.0,
+            when=ends,
+            silent=True,
+        )
+    ]
+
+    await env.goto(ends)
+    assert phone.take() == [
+        activity(tag_of(parcel), "Amazon", message, short, 3, OUT, 0.9, silent=True)
+    ]
+    assert notifier.diagnostics()["today"]["activity_starts"] == 1
+
+
+@pytest.mark.parametrize(
+    ("merchant", "carrier", "label"),
+    [
+        ("Amazon", "paack", "Amazon via Paack"),
+        (None, "paack", "Paack"),
+        ("Loja Exemplo", None, "Loja Exemplo"),
+        ("DPD", "dpd", "DPD"),
+        (
+            "A very long shop name that goes on",
+            "gls",
+            f"A very long shop na{ELLIPSIS} via GLS",
+        ),
+    ],
+)
+async def test_combined_next_names_shop_and_carrier(
+    env: Env, merchant: str | None, carrier: str | None, label: str
+) -> None:
+    """The next delivery of the combined activity names its shop and carrier."""
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    env.parcel(eta=window(13, 15), merchant=merchant, carrier=carrier)
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert [payload["message"] for payload in phone.take()] == [
+        f"0 of 2 delivered{SEP}next: {label} 13{DASH}15h"
+    ]
 
 
 async def test_test_live_activity(env: Env, hass: HomeAssistant) -> None:

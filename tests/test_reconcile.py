@@ -300,6 +300,38 @@ def test_order_mail_after_the_delivery_stays_apart() -> None:
 
 
 @pytest.mark.parametrize(
+    ("delivered", "paired"), [(_nov(14, 11), False), (_nov(15, 16), True)]
+)
+def test_delivery_before_the_shipping_mail_stays_apart(
+    delivered: datetime, paired: bool
+) -> None:
+    """A delivery made before the order shipped is another package.
+
+    The order e-mail came days earlier, but the shipping e-mail tells when
+    the package left: a delivery of an earlier day isn't even a suggestion.
+    The day counts, not the hour, since e-mails come late.
+    """
+    data = ParcelsData()
+    ctt = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, delivered))
+    order = _amazon(
+        "msg:a0#0", ORDER_1, _nov(12, 20), _eta(13, 17), kind=MailKind.ORDER
+    )
+    amazon = _apply(data, order)
+    shipped = _amazon("msg:a1#0", ORDER_1, _nov(15, 8), _eta(15, 17))
+    assert _apply(data, shipped) == amazon
+
+    result = reconcile(data, _nov(15, 18))
+
+    assert result.suggestions == []
+    if paired:
+        assert result.removed == {amazon}
+        assert data.parcels[ctt].state.order_numbers == (ORDER_1,)
+    else:
+        assert not result.removed
+        assert set(data.parcels) == {ctt, amazon}
+
+
+@pytest.mark.parametrize(
     "status", [ParcelStatus.DELIVERED, ParcelStatus.OUT_FOR_DELIVERY]
 )
 @pytest.mark.parametrize(
@@ -1011,8 +1043,8 @@ def _answer(
 def test_repair_forgets_an_unproven_amazon_carrier_under_review() -> None:
     """Answers under review and learned carriers lose an unproven Amazon.
 
-    The rest of an answer stands, as for a new answer. A fill that offered
-    only the carrier is dropped.
+    The rest of an answer stands, as for a new answer, with the same note for
+    admins. A fill that offered only the carrier is dropped.
     """
     data = ParcelsData()
     data.sender(SELLER_SHOP).carrier = "amazon"
@@ -1036,7 +1068,7 @@ def test_repair_forgets_an_unproven_amazon_carrier_under_review() -> None:
         "r3": _answer(
             "r3", Suggestion(kind=MailKind.SHIPPED, carrier="amazon"), fill=True
         ),
-        "r4": _answer("r4", dated, fill=True),
+        "r4": replace(_answer("r4", dated, fill=True), notes=("eta_from_text",)),
         "r5": _answer("r5", amazon, source=Source.PARSER, reason="low_confidence"),
     }
 
@@ -1048,11 +1080,14 @@ def test_repair_forgets_an_unproven_amazon_carrier_under_review() -> None:
     answer = data.review["r1"]
     assert answer.suggestion == replace(amazon, carrier=None)
     assert (answer.reason, answer.errors) == (REASON_AI_SUGGESTION, ())
+    assert answer.notes == ("carrier_unproven",)
     assert data.review["r2"].suggestion == proven
-    assert data.review["r2"].errors == ()
+    assert (data.review["r2"].errors, data.review["r2"].notes) == ((), ())
     assert data.review["r4"].suggestion == replace(dated, carrier=None)
     assert data.review["r4"].errors == ()
+    assert data.review["r4"].notes == ("eta_from_text", "carrier_unproven")
     assert data.review["r5"].suggestion == amazon
+    assert data.review["r5"].notes == ()
     assert data.engine[AMAZON_REPAIR_KEY] == {
         "origins": 0,
         "senders": 1,

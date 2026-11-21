@@ -25,11 +25,12 @@ import {
   type FormProblem,
   type SuggestionForm,
 } from "./forms.ts";
-import { carrierLabel, kindLabel, mergeReasonLabel, reasonLabel } from "./labels.ts";
+import { carrierLabel, kindLabel, mergeReasonLabel, noteMeaning, reasonLabel } from "./labels.ts";
 import { compareLikelihood, etaRange } from "./parcels.ts";
 import { defineElement, registerCard } from "./register.ts";
 import {
   aiQueueText,
+  filteredTitle,
   hideHandled,
   hidePending,
   senderCheckRows,
@@ -672,12 +673,13 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     </article>`;
   }
 
-  /** The lines that tell parcels apart: shop and status, carrier and numbers, items. */
+  /** The lines that tell parcels apart: shop and status, carrier and numbers, senders, items. */
   private _renderLines(parcel: Parcel): TemplateResult {
     const lines = candidateLines(parcel, this.locale);
     return html`<span class="block"><strong>${lines.title}</strong> · ${lines.when}</span>
       <span class="meta block">${lines.carrier}</span>
-      <span class="meta block items-line">${lines.items ?? STRINGS.itemsNotKnown}</span>`;
+      ${lines.emails ? html`<span class="meta block">${lines.emails}</span>` : nothing}
+      <span class="meta block items-line">${lines.items ?? lines.noItems}</span>`;
   }
 
   private _renderFilteredList(items: readonly FilteredItem[]): TemplateResult {
@@ -722,14 +724,15 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   }
 
   private _renderHead(
-    item: { sender: string; sender_domain: string; subject: string },
+    item: { sender: string; sender_domain: string; subject: string; removed?: boolean },
     subjectId: string,
     badge: TemplateResult | typeof nothing = nothing,
   ): TemplateResult {
+    const title = filteredTitle({ subject: item.subject, removed: item.removed === true });
     return html`<div class="item-head">
         <span class="sender">${item.sender || item.sender_domain}</span>${badge}
       </div>
-      <h3 class="subject" id=${subjectId}>${item.subject.trim() || STRINGS.noSubject}</h3>`;
+      <h3 class="subject" id=${subjectId}>${title}</h3>`;
   }
 
   private _renderError(itemId: string): TemplateResult | typeof nothing {
@@ -782,6 +785,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
           </div>`}
       ${item.checks ? this._renderChecks(item.checks) : nothing}
       ${item.errors.length ? this._renderFailedChecks(item.errors) : nothing}
+      ${item.notes.length ? this._renderNotes(item.notes) : nothing}
       ${editing ? this._renderEditForm(item, busy) : this._renderSuggestion(item.suggestion)}
       ${this._renderError(item.id)} ${editing ? nothing : this._renderReviewActions(item, busy)}
     </article>`;
@@ -803,6 +807,20 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       <summary>${STRINGS.failedChecks}</summary>
       <ul class="codes">
         ${errors.map((code) => html`<li><code>${code}</code></li>`)}
+      </ul>
+    </details>`;
+  }
+
+  /** What the checks changed in an AI answer: notes for administrators, not failures. */
+  private _renderNotes(notes: string[]): TemplateResult {
+    return html`<details class="checks">
+      <summary>${STRINGS.aiNotes}</summary>
+      <p class="hint">${STRINGS.aiNotesHint}</p>
+      <ul class="codes">
+        ${notes.map((code) => {
+          const meaning = noteMeaning(code);
+          return html`<li><code>${code}</code>${meaning ? `: ${meaning}` : nothing}</li>`;
+        })}
       </ul>
     </details>`;
   }
