@@ -112,6 +112,9 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> Calls:
     monkeypatch.setattr(parsers.amazon, "parse_amazon", _stub("amazon", seen))
     monkeypatch.setattr(parsers.shopify, "parse_shopify", _stub("shopify", seen))
     monkeypatch.setattr(parsers.shopify, "parse_shop", _stub("shop", seen))
+    monkeypatch.setattr(
+        parsers.leroymerlin, "parse_leroymerlin", _stub("leroymerlin", seen)
+    )
     monkeypatch.setattr(parsers.carriers, "parse_carrier", _stub("carrier", seen))
     monkeypatch.setattr(parsers.carriers, "CARRIER_PARSERS", frozenset({"ctt"}))
     monkeypatch.setattr(parsers.generic, "parse_generic", _stub("generic", seen))
@@ -126,6 +129,8 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> Calls:
         ("shipment-tracking@amazon.com", ["amazon"]),
         ("noreply@shop.app", ["shop"]),
         ("mailer@shopify.com", ["shopify"]),
+        ("encomendas@leroymerlin.pt", ["leroymerlin"]),
+        ("novidades@mailing.leroymerlin.pt", ["leroymerlin"]),
         ("info@ctt.pt", ["carrier"]),
         ("orders@store.example", ["generic"]),
     ],

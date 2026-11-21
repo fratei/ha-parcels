@@ -5,7 +5,7 @@ Also how e-mails about one of an order's packages find that package.
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -51,6 +51,11 @@ SHOP = "bricolage-exemplo.example"
 SHOP_NAME = "Bricolage Exemplo"
 SHOP_ORDER = "5180001234"
 GLS = ("61234567890123", "61234567890124", "61234567890125")
+LM = "leroymerlin.pt"
+LM_NAME = "Leroy Merlin"
+LM_ORDER = "51800012"
+ENVIO = "1234567890"
+LM_SELLER = "Loja Exemplo (Exemplo Lda)"
 CEX = "3230000000000001"
 MUG = "Caneca Exemplo de cerâmica, 350 ml, pack de 2"
 LAMP = "Candeeiro Exemplo de secretária, LED, 5 W"
@@ -162,6 +167,53 @@ def _gls(origin_id: str, number: str, when: datetime, **kwargs: Any) -> Contribu
         eta=_eta(23),
         label="gls-group.eu",
         **kwargs,
+    )
+
+
+def _lm(
+    origin_id: str, when: datetime, kind: MailKind = MailKind.SHIPPED, **kwargs: Any
+) -> Contribution:
+    """Leroy Merlin's own e-mail about an order: no tracking number."""
+    return contribution(
+        origin_id,
+        kind=kind,
+        time=when,
+        merchant=LM_NAME,
+        orders=[LM_ORDER],
+        label=LM,
+        **kwargs,
+    )
+
+
+def _lm_gls(
+    origin_id: str, number: str, when: datetime, eta: Eta | None = None
+) -> Contribution:
+    """A GLS notice Leroy Merlin sends from its own domain, which it names."""
+    return contribution(
+        origin_id,
+        time=when,
+        carrier="gls",
+        number=number,
+        merchant=LM_NAME,
+        eta=eta or _eta(23),
+        label=LM,
+    )
+
+
+def _lm_survey(
+    origin_id: str, envio: str, when: datetime, *, confirmed: bool = False
+) -> Contribution:
+    """Leroy Merlin's survey about a delivered shipment: no day, no order."""
+    return contribution(
+        origin_id,
+        kind=MailKind.DELIVERED,
+        time=when,
+        merchant=LM_NAME,
+        reference=envio,
+        seller=LM_SELLER,
+        label=LM,
+        attach_only=not confirmed,
+        undated=True,
     )
 
 
@@ -513,18 +565,147 @@ def test_one_shipment(
     assert groups == (dict.fromkeys(parcels, min(parcels)) if together else {})
 
 
-def test_renamed_package_stays_in_its_shipment() -> None:
+@pytest.mark.parametrize("notice", [_shop_gls, _lm_gls], ids=["shop", "leroy-merlin"])
+def test_renamed_package_stays_in_its_shipment(
+    notice: Callable[[str, str, datetime], Contribution],
+) -> None:
     """The shop that sent the packages decides, whatever the user names them."""
     data = ParcelsData()
     parcels = {
-        _apply(data, _shop_gls("msg:g1#0", "61000012310052", _nov(21, 17, 40))),
-        _apply(data, _shop_gls("msg:g2#0", "61000012310061", _nov(21, 17, 41))),
+        _apply(data, notice("msg:g1#0", "61000012310052", _nov(21, 17, 40))),
+        _apply(data, notice("msg:g2#0", "61000012310061", _nov(21, 17, 41))),
     }
     update_parcel(data, max(parcels), {"merchant": "Presente de anos"}, _nov(21, 19))
 
     groups = shipment_groups(data.parcels.values())
 
     assert groups == dict.fromkeys(parcels, min(parcels))
+
+
+def test_leroy_merlin_notices_absorb_the_order() -> None:
+    """Leroy Merlin forwards GLS's notices; they absorb its order's parcel."""
+    data = ParcelsData()
+    order = _apply(data, _lm("msg:o1#0", _nov(20, 20, 30)))
+    shipments = [
+        _apply(data, _lm_gls(f"msg:g{index}#0", number, _nov(21, 17, 40 + index)))
+        for index, number in enumerate(GLS)
+    ]
+    assert len({order, *shipments}) == 4
+
+    result = reconcile(data, _nov(21, 19))
+
+    assert result.removed == {order}
+    assert result.suggestions == []
+    parcel = data.parcels[shipments[0]]
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_DOMAIN
+    assert parcel.state.order_numbers == (LM_ORDER,)
+    assert (parcel.state.carrier, parcel.state.merchant) == ("gls", LM_NAME)
+    assert shipment_groups(data.parcels.values()) == dict.fromkeys(
+        shipments, min(shipments)
+    )
+
+
+def test_survey_confirms_the_delivery_of_its_shipment() -> None:
+    """A survey days later closes its shipment, on the day it was out.
+
+    The e-mail doesn't say when the delivery was. The order's other
+    shipment stays apart, and the "delivered" e-mail, read later, dates it.
+    """
+    data = ParcelsData()
+    first = _apply(
+        data,
+        _lm(
+            "msg:l1#0",
+            _nov(17, 8, 30),
+            MailKind.OUT_FOR_DELIVERY,
+            carrier="gls",
+            eta=_eta(17),
+            reference=ENVIO,
+            seller=LM_SELLER,
+        ),
+    )
+    second = _apply(
+        data,
+        _lm(
+            "msg:l2#0",
+            _nov(17, 8, 40),
+            MailKind.OUT_FOR_DELIVERY,
+            carrier="gls",
+            eta=_eta(17),
+            reference="1234567891",
+        ),
+    )
+    assert first != second
+
+    assert _apply(data, _lm_survey("msg:s1#0", ENVIO, _nov(19, 10))) == first
+
+    state = data.parcels[first].state
+    assert state.status is ParcelStatus.DELIVERED
+    assert state.delivered_undated
+    assert state.delivered_at is not None
+    assert _nov(17, 8, 30) < state.delivered_at < _nov(18)
+    assert state.seller == LM_SELLER
+    assert data.parcels[second].state.status is ParcelStatus.OUT_FOR_DELIVERY
+    assert not reconcile(data, _nov(19, 11)).removed
+
+    delivered = _lm("msg:l3#0", _nov(17, 15), MailKind.DELIVERED, reference=ENVIO)
+    assert _apply(data, delivered, _nov(19, 12)) == first
+    state = data.parcels[first].state
+    assert (state.delivered_at, state.delivered_undated) == (_nov(17, 15), False)
+
+
+def test_survey_without_its_shipment() -> None:
+    """A survey alone makes no parcel; confirmed, it makes one of no known day."""
+    data = ParcelsData()
+    survey = _lm_survey("msg:s1#0", ENVIO, _nov(19, 10))
+
+    assert apply_contribution(data, survey, _nov(19, 10)).parcel_id is None
+    assert not data.parcels
+
+    parcel_id = _apply(
+        data, _lm_survey("msg:s1#0", ENVIO, _nov(19, 10), confirmed=True)
+    )
+    state = data.parcels[parcel_id].state
+    assert state.status is ParcelStatus.DELIVERED
+    assert (state.delivered_at, state.delivered_undated) == (None, True)
+
+
+def test_marketplace_seller_pairs_with_its_carrier() -> None:
+    """The carrier names Leroy Merlin's marketplace seller, not Leroy Merlin."""
+    data = ParcelsData()
+    shop = _apply(
+        data,
+        _lm(
+            "msg:l1#0",
+            _nov(21, 9),
+            eta=_eta(23),
+            reference=ENVIO,
+            seller=LM_SELLER,
+        ),
+    )
+    carrier = _apply(
+        data,
+        contribution(
+            "msg:g1#0",
+            kind=MailKind.DELIVERED,
+            time=_nov(23, 15),
+            carrier="gls",
+            number=GLS[0],
+            merchant="Loja Exemplo",
+            label="gls-group.eu",
+        ),
+    )
+
+    result = reconcile(data, _nov(23, 16))
+
+    assert result.removed == {shop}
+    parcel = data.parcels[carrier]
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_DAY
+    state = parcel.state
+    assert (state.merchant, state.seller) == (LM_NAME, LM_SELLER)
+    assert state.order_numbers == (LM_ORDER,)
 
 
 def test_inferred_delivery() -> None:

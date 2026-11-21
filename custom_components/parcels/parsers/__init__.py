@@ -1,9 +1,9 @@
 """E-mail parsers and the dispatcher that picks one for each e-mail.
 
 ``parse_message`` routes an e-mail by its sender: Amazon marketplaces go to
-the Amazon parser, shop.app to the Shop app parser, e-mails sent through
-Shopify to the Shopify parser, carriers with a dedicated parser to that
-parser, and everything else to the generic parser. Shopify stores send
+the Amazon parser, shop.app to the Shop app parser, Leroy Merlin to its
+parser, e-mails sent through Shopify to the Shopify parser, carriers with a
+dedicated parser to that parser, and everything else to the generic parser. Shopify stores send
 from their own domains, so Shopify is recognised by its DKIM signature and
 its markers rather than by the sender. Parsers run for every sender,
 authenticated or not; the engine applies the trust rules afterwards.
@@ -30,7 +30,17 @@ import logging
 import re
 
 from ..const import MailKind
-from . import amazon, auth, carriers, generic, prefilter, returns, senders, shopify
+from . import (
+    amazon,
+    auth,
+    carriers,
+    generic,
+    leroymerlin,
+    prefilter,
+    returns,
+    senders,
+    shopify,
+)
 from .base import MailMessage, ParseResult, SenderVerdict
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,10 +51,13 @@ NOT_PARCEL_CONFIDENCE = 0.9
 PARSER_AMAZON = "amazon"
 PARSER_SHOP = "shop"
 PARSER_SHOPIFY = "shopify"
+PARSER_LEROYMERLIN = leroymerlin.PARSER
 PARSER_GENERIC = "generic"
 PARSER_NONE = "none"
 # The shops' own parsers: their "return" e-mails are about customer returns.
-_MERCHANT_PARSERS = frozenset({PARSER_AMAZON, PARSER_SHOP, PARSER_SHOPIFY})
+_MERCHANT_PARSERS = frozenset(
+    {PARSER_AMAZON, PARSER_SHOP, PARSER_SHOPIFY, PARSER_LEROYMERLIN}
+)
 
 _SHOPIFY_MAILER = "mailer@shopify.com"
 _SHOPIFY_LINK_RE = re.compile(
@@ -109,6 +122,10 @@ def _dispatch(message: MailMessage, verdict: SenderVerdict, tz: tzinfo) -> Parse
         return _dedicated(PARSER_AMAZON, amazon.parse_amazon, message, verdict, tz)
     if hint == PARSER_SHOP:
         return _dedicated(PARSER_SHOP, shopify.parse_shop, message, verdict, tz)
+    if hint == PARSER_LEROYMERLIN:
+        return _dedicated(
+            PARSER_LEROYMERLIN, leroymerlin.parse_leroymerlin, message, verdict, tz
+        )
     if hint is not None and hint in carriers.CARRIER_PARSERS:
         result = _run(hint, carriers.parse_carrier, message, verdict, tz, hint)
         return result if result is not None else _unparsed(hint, message)

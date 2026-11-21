@@ -117,6 +117,7 @@ def result_contributions(
             message=message_hash,
             owners=(owner,) if owner else (),
             confirmed=confirmed,
+            seller=shipment.seller,
         )
         events: list[ParcelEvent] = []
         if status is not None or shipment.eta is not None:
@@ -127,6 +128,9 @@ def result_contributions(
                     status=status,
                     kind=kind,
                     eta=shipment.eta,
+                    # Placed on the parcel's last known day when applied.
+                    undated=shipment.undated,
+                    by=event_time if shipment.undated else None,
                 )
             )
         contributions.append(
@@ -134,8 +138,10 @@ def result_contributions(
                 origin=origin,
                 events=events,
                 order_placed=time if kind is MailKind.ORDER else None,
-                # An e-mail with just a delivery code adds it to its parcel.
-                attach_only=kind is MailKind.CODE and not confirmed,
+                # An e-mail with just a delivery code adds it to its parcel, as
+                # does one that can only confirm a parcel, such as a survey.
+                attach_only=(kind is MailKind.CODE or shipment.attach_only)
+                and not confirmed,
             )
         )
     return contributions

@@ -5,6 +5,7 @@ export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
   return {
     id: "p1",
     merchant: null,
+    seller: null,
     name: null,
     carrier: null,
     carrier_name: null,

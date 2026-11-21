@@ -351,8 +351,9 @@ class Origin:
     carrier: str | None = None
     tracking_number: str | None = None
     amazon_shipment_id: str | None = None
-    # A shipment number that isn't a tracking number: the part of Paack's
-    # order ID before "_", or a shop's own shipment number.
+    # A shipment number other than the tracking number: the part of Paack's
+    # order ID before "_", or a shop's own shipment number, which may be the
+    # carrier's tracking number too.
     reference: str | None = None
     merchant: str | None = None
     order_numbers: tuple[str, ...] = ()
@@ -365,6 +366,8 @@ class Origin:
     confirmed: bool = False
     # What the user calls the parcel in the Parcel app.
     name: str | None = None
+    # The marketplace seller that a shop's e-mail names, besides the shop.
+    seller: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the origin."""
@@ -388,6 +391,7 @@ class Origin:
                 "owners": list(self.owners),
                 "confirmed": self.confirmed,
                 "name": self.name,
+                "seller": self.seller,
             }
         ) | {
             # Keep explicit clears of manual origins.
@@ -418,6 +422,7 @@ class Origin:
             owners=_tuple(data.get("owners")),
             confirmed=bool(data.get("confirmed", False)),
             name=data.get("name") or None,
+            seller=data.get("seller") or None,
         )
 
 
@@ -597,12 +602,14 @@ class ParcelState:
     name: str | None = None
     # Which source gave the expected date: the newest event that did.
     eta_source: Source | None = None
-    # Shipment numbers that aren't tracking numbers, see Origin.reference.
+    # Shipment numbers, see Origin.reference, other than the tracking numbers.
     references: tuple[str, ...] = ()
     # The status, or the delivery, came without a date: its time is only the
     # last known day (see ParcelEvent.undated), or None when no day is known.
     status_undated: bool = False
     delivered_undated: bool = False
+    # The marketplace seller, see Origin.seller.
+    seller: str | None = None
 
     @property
     def carrier_name(self) -> str | None:
@@ -875,6 +882,8 @@ def derive_state(parcel: Parcel) -> ParcelState:
     order_numbers: list[str] = []
     shipment_ids: set[str] = set()
     references: list[str] = []
+    # A shop's shipment number that's the tracking number too shows once.
+    numbers = {n.upper() for n in (number, *(o.tracking_number for o in origins)) if n}
     owners: set[str] = set()
     for origin in origins:
         for order in origin.order_numbers:
@@ -883,7 +892,11 @@ def derive_state(parcel: Parcel) -> ParcelState:
         if origin.amazon_shipment_id:
             shipment_ids.add(origin.amazon_shipment_id)
         for reference in (origin_paack_stem(origin), origin.reference):
-            if reference and reference not in references:
+            if (
+                reference
+                and reference not in references
+                and reference.upper() not in numbers
+            ):
                 references.append(reference)
         owners.update(origin.owners)
 
@@ -1031,6 +1044,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
         references=tuple(references),
         status_undated=status_undated,
         delivered_undated=delivered_undated,
+        seller=next((o.seller for o in reversed(origins) if o.seller), None),
     )
 
 

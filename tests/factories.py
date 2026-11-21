@@ -37,6 +37,9 @@ def contribution(
     label: str = "",
     items: Iterable[str] = (),
     reference: str | None = None,
+    seller: str | None = None,
+    attach_only: bool = False,
+    undated: bool = False,
 ) -> Contribution:
     """Build what one e-mail says about one parcel."""
     message = origin_id.removeprefix("msg:").split("#")[0]
@@ -49,6 +52,7 @@ def contribution(
         tracking_number=number,
         amazon_shipment_id=shipment_id,
         reference=reference,
+        seller=seller,
         merchant=merchant,
         order_numbers=tuple(orders),
         items=tuple(items),
@@ -61,5 +65,9 @@ def contribution(
         status=status or KIND_TO_STATUS.get(kind),
         kind=kind,
         eta=eta,
+        undated=undated,
+        by=time if undated else None,
     )
-    return Contribution(origin=origin, events=[event], private=private)
+    return Contribution(
+        origin=origin, events=[event], private=private, attach_only=attach_only
+    )

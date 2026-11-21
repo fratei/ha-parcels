@@ -600,6 +600,24 @@ def test_references() -> None:
         assert Origin.from_dict(json.loads(json.dumps(origin.as_dict()))) == origin
 
 
+def test_seller() -> None:
+    """A parcel shows the marketplace seller its newest e-mail names."""
+    parcel = _parcel(
+        _event(S.SHIPPED, at()),
+        origins=(
+            _origin(merchant="Leroy Merlin", order_numbers=("51800012",)),
+            _origin("o2", time=at(hours=1), merchant="Leroy Merlin", seller="Loja A"),
+            _origin("o3", time=at(hours=2), merchant="Leroy Merlin", seller="Loja B"),
+            _origin("o4", time=at(hours=3), carrier="gls", tracking_number="AB12CD34"),
+        ),
+    )
+    assert parcel.state.seller == "Loja B"
+    assert parcel.state.merchant == "Leroy Merlin"
+    for origin in parcel.origins.values():
+        assert Origin.from_dict(json.loads(json.dumps(origin.as_dict()))) == origin
+    assert _parcel(_event(S.SHIPPED, at())).state.seller is None
+
+
 def test_review_item_keeps_only_check_codes() -> None:
     """A stored item's failed checks are codes: anything else is dropped."""
     stored = _full_data().review["r1"].as_dict()

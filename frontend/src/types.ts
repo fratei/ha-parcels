@@ -41,6 +41,8 @@ export interface AutoMerged {
 export interface Parcel {
   id: string;
   merchant: string | null;
+  /** Who sold it, when the merchant is a marketplace; null when restricted. */
+  seller: string | null;
   /** What the user calls the parcel in the Parcel app; null when restricted. */
   name: string | null;
   carrier: string | null;

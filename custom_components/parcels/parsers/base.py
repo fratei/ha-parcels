@@ -151,11 +151,17 @@ class ParsedShipment:
     pickup_point: str | None = None
     pickup_code: str | None = None
     amazon_shipment_id: str | None = None
-    # A shipment number that isn't a tracking number, see Origin.reference.
+    # A shipment number other than the tracking number, see Origin.reference.
     reference: str | None = None
     order_numbers: tuple[str, ...] = ()
     items: tuple[str, ...] = ()
     tracking_url: str | None = None
+    # The marketplace seller, see Origin.seller.
+    seller: str | None = None
+    # The e-mail can only add to a parcel already known, never make one.
+    attach_only: bool = False
+    # The e-mail says what happened but not when: by the time it was sent.
+    undated: bool = False
 
 
 @dataclass(slots=True)

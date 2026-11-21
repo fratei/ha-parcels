@@ -111,6 +111,7 @@ describe("normalizeParcel", () => {
   test("keeps a full parcel as it is", () => {
     const parcel = makeParcel({
       merchant: "Example Shop",
+      seller: "Example Seller (Example Lda)",
       name: "Blue mug",
       carrier: "dhl",
       carrier_name: "DHL",
@@ -153,6 +154,7 @@ describe("normalizeParcel", () => {
       id: "p1",
       status: "teleported",
       merchant: 42,
+      seller: 42,
       items: ["Blue mug", 3, null],
       private: "yes",
       restricted: 1,
@@ -169,6 +171,7 @@ describe("normalizeParcel", () => {
     assert.ok(parcel);
     assert.equal(parcel.status, "teleported");
     assert.equal(parcel.merchant, null);
+    assert.equal(parcel.seller, null);
     assert.deepEqual(parcel.items, ["Blue mug"]);
     assert.equal(parcel.private, false);
     assert.equal(parcel.restricted, false);

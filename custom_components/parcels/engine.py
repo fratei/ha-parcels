@@ -204,6 +204,8 @@ REASON_UNTRUSTED_SERVER = "untrusted_authserv"
 # e-mails under review whose AI reading was rejected: earlier releases
 # couldn't read Paack's order IDs.
 PAACK_CHECK_KEY = "paack_check"
+# The same for Leroy Merlin's e-mails, which earlier releases had no parser for.
+LEROYMERLIN_CHECK_KEY = "leroymerlin_check"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -261,6 +263,14 @@ def _paack_rejected(item: ReviewItem) -> bool:
     return (info is not None and info.carrier == "paack") or (
         item.suggestion is not None and item.suggestion.carrier == "paack"
     )
+
+
+def _leroymerlin_rejected(item: ReviewItem) -> bool:
+    """Return True for Leroy Merlin's e-mail whose AI reading was rejected."""
+    if item.reason != REASON_AI_REJECTED:
+        return False
+    info = lookup(item.sender_domain)
+    return info is not None and info.parser == "leroymerlin"
 
 
 def _aware(value: datetime) -> datetime:
@@ -523,16 +533,19 @@ class ParcelsEngine:
             before = dt_from_str(check.get("before"))
         fill = not engine.get(FILL_CHECK_KEY)
         paack = not engine.get(PAACK_CHECK_KEY)
-        if before is None and not (fill or paack):
+        leroymerlin = not engine.get(LEROYMERLIN_CHECK_KEY)
+        if before is None and not (fill or paack or leroymerlin):
             return
         if before is not None:
             check["started"] = dt_to_str(dt_util.utcnow())
             check["relisted"] = self._relist()
         engine[FILL_CHECK_KEY] = True
         engine[PAACK_CHECK_KEY] = True
+        engine[LEROYMERLIN_CHECK_KEY] = True
         self.async_schedule_save()
         self.async_create_task(
-            self._async_checks(before, fill=fill, paack=paack), "parcels checks"
+            self._async_checks(before, fill=fill, paack=paack, leroymerlin=leroymerlin),
+            "parcels checks",
         )
 
     @callback
@@ -1801,19 +1814,27 @@ class ParcelsEngine:
         )
 
     async def _async_checks(
-        self, before: datetime | None, *, fill: bool, paack: bool
+        self,
+        before: datetime | None,
+        *,
+        fill: bool,
+        paack: bool,
+        leroymerlin: bool,
     ) -> None:
         """Run the one-time checks in turn.
 
-        Returns first, as they can remove parcels. Paack's e-mails last, so
-        that what the parsers read then isn't filled in by the local AI.
+        Returns first, as they can remove parcels. Paack's and Leroy Merlin's
+        e-mails last, so that what the parsers read then isn't filled in by
+        the local AI.
         """
         if before is not None:
             await self._async_returns_check(before)
         if fill:
             await self._async_fill_check()
         if paack:
-            await self._async_paack_check()
+            await self._async_rejected_check(_paack_rejected, "Paack")
+        if leroymerlin:
+            await self._async_rejected_check(_leroymerlin_rejected, "Leroy Merlin")
 
     def _returns_check_keys(self, before: datetime, now: datetime) -> list[str]:
         """Return the e-mails for the returns check, in the order to read them.
@@ -1969,14 +1990,17 @@ class ParcelsEngine:
             return "returns"
         return None
 
-    async def _async_paack_check(self) -> None:
-        """Read Paack's e-mails rejected under review again, once after the update.
+    async def _async_rejected_check(
+        self, rejected: Callable[[ReviewItem], bool], sender: str
+    ) -> None:
+        """Read e-mails rejected under review again, once after the update.
 
-        An e-mail the parsers now read is decided anew, without the local AI;
-        the others stay under review as they were.
+        ``rejected`` picks the e-mails a new parser reads. An e-mail the
+        parsers now read is decided anew, without the local AI; the others
+        stay under review as they were.
         """
         data = self.data
-        items = [item for item in data.review.values() if _paack_rejected(item)]
+        items = [item for item in data.review.values() if rejected(item)]
         counts = {"read": 0, "kept": 0, "gone": 0, "failed": 0}
         for item in items:
             if (record := data.messages.get(item.message)) is None:
@@ -2013,7 +2037,7 @@ class ParcelsEngine:
             self.async_changed()
         else:
             self.async_schedule_save()
-        _LOGGER.debug("Paack's rejected e-mails read again: %s", counts)
+        _LOGGER.debug("%s's rejected e-mails read again: %s", sender, counts)
 
     def _clear_outputs(self, key: str, now: datetime) -> None:
         """Undo everything an e-mail added: parcels, review and queue."""

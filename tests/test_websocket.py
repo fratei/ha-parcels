@@ -93,6 +93,7 @@ AMAZON_CODE_MAIL = "amazon/delivery_code_es.eml"
 # What someone who may not see a private parcel gets instead of its details.
 HIDDEN = {
     "merchant": None,
+    "seller": None,
     "carrier": None,
     "carrier_name": None,
     "tracking_number": None,
@@ -523,6 +524,35 @@ async def test_parcel_app_name_and_date(
     assert seen[parcel_id]["restricted"]
     assert (seen[parcel_id]["name"], seen[parcel_id]["eta_source"]) == (None, None)
     assert seen[parcel_id]["eta_start"] == "2026-11-19"
+
+
+async def test_marketplace_seller(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    sam_ws: MockHAClientWebSocket,
+) -> None:
+    """A parcel shows who sold it on a marketplace, unless it's hidden."""
+    (parcel_id,) = engine.data.parcels
+    now = dt_util.utcnow()
+    shop = contribution(
+        "msg:lm1#0",
+        time=now,
+        carrier="ctt",
+        number=CTT_NUMBER,
+        merchant="Leroy Merlin",
+        seller="Loja Exemplo (Exemplo Lda)",
+        label="leroymerlin.pt",
+    )
+    assert apply_contribution(engine.data, shop, now).parcel_id == parcel_id
+
+    listed = {p["id"]: p for p in (await result(ws, "parcels/list"))["parcels"]}
+    assert listed[parcel_id]["seller"] == "Loja Exemplo (Exemplo Lda)"
+
+    await call(hass, "update", {"parcel_id": parcel_id, "private": True})
+    seen = {p["id"]: p for p in (await result(sam_ws, "parcels/list"))["parcels"]}
+    assert seen[parcel_id]["restricted"]
+    assert seen[parcel_id]["seller"] is None
 
 
 async def test_check_again(

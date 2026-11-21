@@ -161,6 +161,36 @@ def test_code_mail_only_joins_its_parcel(confirmed: bool, attach_only: bool) -> 
     assert contribution.events == []
 
 
+@pytest.mark.parametrize(("confirmed", "attach_only"), [(False, True), (True, False)])
+def test_survey_only_joins_its_parcel(confirmed: bool, attach_only: bool) -> None:
+    """A shipment that can only confirm a known parcel never makes one.
+
+    Unless the user confirmed it in "Needs review". Its seller is kept, and
+    its delivery, which the e-mail doesn't date, had happened by then.
+    """
+    result = _result(
+        MailKind.DELIVERED,
+        ParsedShipment(
+            reference="1234567890",
+            seller="Loja Exemplo",
+            attach_only=True,
+            undated=True,
+        ),
+        merchant="Leroy Merlin",
+    )
+
+    [contribution] = result_contributions(
+        result, message_hash="h", time=SENT, source=Source.PARSER, confirmed=confirmed
+    )
+
+    assert contribution.attach_only is attach_only
+    assert contribution.origin.reference == "1234567890"
+    assert contribution.origin.seller == "Loja Exemplo"
+    [event] = contribution.events
+    assert event.status is ParcelStatus.DELIVERED
+    assert (event.undated, event.by, event.time) == (True, SENT, SENT)
+
+
 def test_status_mail_with_a_code_makes_a_parcel() -> None:
     """A status e-mail that also gives a code is applied as usual."""
     result = _result(

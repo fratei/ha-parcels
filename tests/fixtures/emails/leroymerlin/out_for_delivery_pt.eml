@@ -1,0 +1,35 @@
+Return-Path: <bounce-7f3a1c90@leroymerlin.pt>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@leroymerlin.pt header.s=sel1 header.b=8c2d4e6f;
+       spf=pass (google.com: domain of bounce-7f3a1c90@leroymerlin.pt
+ designates 192.0.2.80 as permitted sender) smtp.mailfrom=bounce-7f3a1c90@leroymerlin.pt;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=leroymerlin.pt
+From: Leroy Merlin <encomendas@leroymerlin.pt>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Encomenda_em_distribui=C3=A7=C3=A3o!?=
+Date: Tue, 17 Nov 2026 08:30:00 +0000
+Message-ID: <20261117083000.lm01@mail.example.com>
+MIME-Version: 1.0
+Content-Language: pt-PT
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Leroy Merlin
+
+Olá Alex,
+
+A sua encomenda será entregue hoje pela GLS.
+
+Encomenda n.º 51800012
+Envio n.º 1234567890
+
+Vendido e expedido por: Loja Exemplo (Exemplo Lda)
+
+Berbequim sem fios 18V
+Quantidade: 1
+
+Acompanhar a encomenda [https://www.leroymerlin.pt/encomendas/51800012]
+
+Obrigado por escolher a Leroy Merlin.
+
+Leroy Merlin · Rua Exemplo 2, 1000-002 Lisboa

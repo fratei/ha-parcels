@@ -28,7 +28,7 @@ from .customer_returns import linked_parcels, order_index
 from .dedup import (
     MergeSuggestion,
     first_news,
-    is_shop,
+    is_shop_sender,
     manual_origin_id,
     order_parcels,
     parcel_order_keys,
@@ -175,7 +175,7 @@ def _package(parcel: Parcel) -> _Package | None:
         shops=frozenset(
             origin.label
             for origin in parcel.origins.values()
-            if origin.message is not None and is_shop(origin.label)
+            if origin.message is not None and is_shop_sender(origin.label)
         ),
         merchant=merchant_key(state.merchant),
     )
@@ -243,6 +243,8 @@ def parcel_json(
     result: dict[str, Any] = {
         "id": parcel.id,
         "merchant": state.merchant,
+        # The marketplace seller, when the shop sells for others.
+        "seller": state.seller,
         "carrier": state.carrier,
         "carrier_name": state.carrier_name,
         "tracking_number": state.tracking_number,
@@ -283,6 +285,7 @@ def parcel_json(
     if restricted:
         result.update(
             merchant=None,
+            seller=None,
             carrier=None,
             carrier_name=None,
             tracking_number=None,

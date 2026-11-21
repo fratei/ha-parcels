@@ -66,6 +66,8 @@ import hashlib
 from itertools import combinations
 from typing import Any
 
+from homeassistant.util import dt as dt_util
+
 from .const import MailKind, ParcelStatus
 from .models import (
     AutoMerge,
@@ -91,6 +93,7 @@ from .parsers.senders import (
     is_free_mail,
     lookup,
     organizational_domain,
+    relays_carrier_mail,
     ships_with_many,
 )
 from .parsers.tracking import (
@@ -126,6 +129,8 @@ _ORDER_STAGE = frozenset(
 # could still be the package a carrier delivers: shops deliver early too.
 LATE_DAYS = timedelta(days=14)
 EARLY_DAYS = timedelta(days=7)
+# Shorter parts of a seller's name ("SA", "PT") don't name a shop.
+SELLER_KEY_MIN_LENGTH = 4
 
 # Engine-state keys: pairs of origins the user keeps apart, and the version
 # of the one-time repair of stored parcels.
@@ -991,6 +996,7 @@ def apply_contribution(
         data.parcels[parcel.id] = parcel
         created = True
 
+    expected = parcel.state.eta
     if (existing := parcel.origins.get(origin.id)) is not None:
         origin.owners = tuple(sorted(set(existing.owners) | set(origin.owners)))
         origin.confirmed = origin.confirmed or existing.confirmed
@@ -999,6 +1005,8 @@ def apply_contribution(
     parcel.events = [
         e for e in parcel.events if e.origin != origin.id and not e.inferred
     ]
+    if origin.message is not None:
+        _place_undated(parcel, events, expected)
     parcel.events.extend(events)
     parcel.private = parcel.private or contribution.private
     if reason:
@@ -1015,6 +1023,43 @@ def apply_contribution(
     return Applied(
         parcel_id=parcel.id, created=created, merged=merged, auto_merged=reason
     )
+
+
+def _place_undated(
+    parcel: Parcel, events: Iterable[ParcelEvent], expected: Eta | None
+) -> None:
+    """Date an e-mail's news that doesn't say when it happened.
+
+    A survey after a delivery says it was delivered, not when. The news goes
+    just after the parcel's latest dated news, or the start of its expected
+    days, from no later than the e-mail: never later than it happened. With
+    neither, its day isn't known either.
+    """
+    pending = [
+        event
+        for event in events
+        if event.undated
+        and not event.dayless
+        and event.by is not None
+        and event.time == event.by
+    ]
+    if not pending:
+        return
+    known = [
+        event.time
+        for event in parcel.events
+        if event.status is not None and not event.inferred and not event.undated
+    ]
+    if expected is not None:
+        known.extend(
+            dt_util.as_utc(dt_util.start_of_local_day(day))
+            for day in (expected.start, expected.end)
+        )
+    for event in pending:
+        if before := [value for value in known if value <= event.time]:
+            event.time = max(before) + timedelta(microseconds=1)
+        else:
+            event.dayless = True
 
 
 def merge_parcels(
@@ -1456,6 +1501,15 @@ def _all_origins(data: ParcelsData) -> Iterator[Origin]:
 def is_shop(label: str) -> bool:
     """Return True for a sender domain of a shop Parcels doesn't know."""
     return bool(label) and lookup(label) is None and not is_free_mail(label)
+
+
+def is_shop_sender(label: str) -> bool:
+    """Return True for a sender domain whose e-mails speak for one shop.
+
+    A shop Parcels doesn't know, or a known one that sends its carriers'
+    notices from its own domain.
+    """
+    return is_shop(label) or relays_carrier_mail(label)
 
 
 def _domain_like(merchant: str, label: str) -> bool:
@@ -1935,7 +1989,7 @@ def _absorb_by_domain(
         state = parcel.state
         shop_mail: dict[str, datetime] = {}
         for origin in parcel.origins.values():
-            if origin.message is not None and is_shop(origin.label):
+            if origin.message is not None and is_shop_sender(origin.label):
                 when = shop_mail.get(origin.label)
                 shop_mail[origin.label] = min(when or origin.time, origin.time)
         for label, when in shop_mail.items():
@@ -2006,6 +2060,24 @@ def _delivery_day(parcel: Parcel) -> date | None:
     return None
 
 
+def _shop_keys(parcel: Parcel) -> set[str]:
+    """Return the names a parcel's shop goes by: its merchant, and its seller.
+
+    A marketplace's carrier names the seller rather than the marketplace,
+    and "Loja Exemplo (Exemplo Lda)" may go by its brand or its company.
+    """
+    state = parcel.state
+    keys = {merchant_key(state.merchant)}
+    if seller := state.seller:
+        brand, _, company = seller.partition("(")
+        keys.update(
+            key
+            for name in (seller, brand, company.partition(")")[0])
+            if len(key := merchant_key(name)) >= SELLER_KEY_MIN_LENGTH
+        )
+    return keys - {""}
+
+
 def _pair_by_day(
     data: ParcelsData,
     pool: list[Parcel],
@@ -2023,32 +2095,32 @@ def _pair_by_day(
     the shop that is late, or due in the next days, could be it too, and two
     carriers known to differ never pair. Otherwise the user gets suggestions.
     """
-    untracked: list[tuple[Parcel, str, date, date, datetime]] = []
-    tracked: list[tuple[Parcel, str, date]] = []
+    untracked: list[tuple[Parcel, set[str], date, date, datetime]] = []
+    tracked: list[tuple[Parcel, set[str], date]] = []
     for parcel in pool:
         state = parcel.state
-        if not (key := merchant_key(state.merchant)):
+        if not (keys := _shop_keys(parcel)):
             continue
         if state.tracking_number:
             if (day := _delivery_day(parcel)) is not None:
-                tracked.append((parcel, key, day))
+                tracked.append((parcel, keys, day))
         elif (expected := _expected_days(parcel)) is not None and (
             first := first_news(parcel)
         ) is not None:
-            untracked.append((parcel, key, *expected, first))
+            untracked.append((parcel, keys, *expected, first))
 
     edges: dict[str, set[str]] = defaultdict(set)
     days: dict[str, date] = {}
     fits: set[frozenset[str]] = set()
-    for parcel, key, start, end, first in untracked:
+    for parcel, keys, start, end, first in untracked:
         # A parcel may arrive late or early, unless news closed it (a
         # "probably delivered" guess doesn't); only a fit is sure.
         waiting = not _finished(parcel)
-        for other, other_key, day in tracked:
+        for other, other_keys, day in tracked:
             delivered = _real_delivery(other)
             fit = start <= day <= end
             if (
-                key == other_key
+                keys & other_keys
                 and (
                     fit
                     or (waiting and _could_arrive(Eta(start=start, end=end), day, day))

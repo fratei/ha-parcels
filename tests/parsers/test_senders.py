@@ -9,12 +9,14 @@ from custom_components.parcels.parsers.senders import (
     KNOWN_SENDERS,
     lookup,
     organizational_domain,
+    relays_carrier_mail,
 )
 
 PARSER_HINTS = {
     "amazon",
     "shop",
     "shopify",
+    "leroymerlin",
     "ctt",
     "ctt_expresso",
     "dpd",
@@ -59,6 +61,8 @@ def test_organizational_domain(domain: str, expected: str) -> None:
         ("amazon.co.uk", "Amazon", "amazon"),
         ("shop.app", "Shop", "shop"),
         ("email.shopify.com", "Shopify", "shopify"),
+        ("leroymerlin.pt", "Leroy Merlin", "leroymerlin"),
+        ("mailing.leroymerlin.pt", "Leroy Merlin", "leroymerlin"),
         ("ctt.pt", "CTT", "ctt"),
         ("notifications.cttexpress.com", "CTT Expresso", "ctt_expresso"),
         ("dpd.de", "DPD", "dpd"),
@@ -80,6 +84,21 @@ def test_lookup(domain: str, name: str, parser: str | None) -> None:
     assert info is not None
     assert info.name == name
     assert info.parser == parser
+
+
+@pytest.mark.parametrize(
+    ("domain", "relays"),
+    [
+        ("leroymerlin.pt", True),
+        ("amazon.es", False),
+        ("gls-group.eu", False),
+        ("bricolage-exemplo.example", False),
+        ("", False),
+    ],
+)
+def test_relays_carrier_mail(domain: str, relays: bool) -> None:
+    """Some known shops forward their carriers' notices from their own domain."""
+    assert relays_carrier_mail(domain) is relays
 
 
 def test_lookup_accepts_addresses() -> None:

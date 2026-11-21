@@ -32,11 +32,11 @@ api.parcel.app, which Parcels contacts itself with your API key.
 - **Mailboxes**: personal Microsoft accounts (Outlook.com, Hotmail, Live) and
   Gmail, signed in from Home Assistant with OAuth. Add as many as you like.
 - **Senders it understands**: Amazon (amazon.es, .com, .co.uk, .de, .fr, .it
-  and .nl), Shopify stores, Shop, and the carriers CTT and CTT Expresso, DPD,
-  GLS, SEUR, UPS, FedEx, DHL, Correos Express, MRW, Nacex, Paack, and InPost
-  and Vinted Go. In other e-mails a generic detector finds tracking numbers,
-  and checks the check digit of UPS (`1Z…`) and postal (`AB123456785PT`)
-  numbers.
+  and .nl), Shopify stores, Shop, Leroy Merlin Portugal, and the carriers CTT
+  and CTT Expresso, DPD, GLS, SEUR, UPS, FedEx, DHL, Correos Express, MRW,
+  Nacex, Paack, and InPost and Vinted Go. In other e-mails a generic detector
+  finds tracking numbers, and checks the check digit of UPS (`1Z…`) and
+  postal (`AB123456785PT`) numbers.
 - **Languages**: Portuguese, Spanish, English, German, French, Italian and
   Dutch. Delivery dates such as "amanhã, entre as 13:00 e as 14:00" or
   "übermorgen" are read relative to the day the e-mail was sent.
@@ -77,15 +77,33 @@ api.parcel.app, which Parcels contacts itself with your API key.
   tracking number's format gives it away, the parcel says "Carrier not known
   yet".
 - **Paack**: Paack's order IDs, nine letters and digits, `_` and the package
-  number (such as `Ab3Cd4Ef5_1`), are kept as written, capitals included. A
-  Paack e-mail joins Amazon's parcel when the part of its ID before `_` is,
-  letter for letter, the shipment ID in Amazon's **Track package** link, or
-  when both give the same label barcode (`5340` and 14 digits), which Amazon
-  shows as its tracking ID. Otherwise the usual guesses apply. Paack's
-  tracking page asks for the order ID and your postcode, so the carrier link
-  opens its search page. Parcels never keeps the postcode, e-mail address or
-  phone number in Paack's links, and doesn't add Paack's numbers to
-  [17TRACK](#17track), which can't follow them without the postcode.
+  number (such as `Ab3Cd4Ef5_1`), are kept as written, capitals included.
+  The part before `_` is Paack's shipment reference, which the details show
+  as **Shipment reference**. Some of Paack's e-mails give only that part, as
+  their order number; it's never taken for the shop's order number. Such an
+  e-mail joins the parcel with that reference. When several parcels have
+  it, Parcels guesses only if one of them is still open, and otherwise
+  suggests merges in **Needs review**. A Paack e-mail joins Amazon's parcel
+  when the part of its ID before `_` is, letter for letter, the shipment ID
+  in Amazon's **Track package** link, or when both give the same label
+  barcode (`5340` and 14 digits), which Amazon shows as its tracking ID.
+  Otherwise the usual guesses apply. Parcels reads Paack's notices, delivery
+  included, in Portuguese, Spanish, French, Italian and English, and takes
+  the shop from them ("Order from", "Pedido de"). Paack's tracking page asks
+  for the order ID and your postcode, so the carrier link opens its search
+  page. Parcels never keeps the postcode, e-mail address or phone number in
+  Paack's links, and doesn't add Paack's numbers to [17TRACK](#17track),
+  which can't follow them without the postcode.
+- **Leroy Merlin**: Leroy Merlin Portugal's e-mails about orders and
+  marketplace shipments give the status in the subject, the order number,
+  the items and Leroy Merlin's shipment number ("Envio n.º"). That number is
+  the shop's shipment reference, and the tracking number too when it fits
+  the format of the carrier the e-mail names, in its sender name (such as
+  "GLS PT Informa"), its text or a link. A marketplace seller shows as
+  **Sold by**. The survey Leroy Merlin sends after a shipment never creates
+  a parcel: it marks the parcel with that shipment number delivered, after
+  its last news and no later than the survey. Newsletters, from
+  mailing.leroymerlin.pt, are ignored.
 - **Returns**: an item you send back to a shop becomes a return of its own,
   apart from the parcel it came in, which keeps its delivery day. The return
   shows on its pickup day, in its own color and with an outgoing-parcel icon.
@@ -136,7 +154,8 @@ api.parcel.app, which Parcels contacts itself with your API key.
 - **Your own app.** You register the OAuth app in your own Microsoft or Google
   account, so no third party holds a token for your mailbox. Home Assistant
   stores the tokens in its configuration.
-- **E-mails aren't kept.** Parcels downloads e-mails that look like shipping
+- **E-mails aren't kept.** Parcels downloads the e-mails of the shops and
+  carriers it knows or you trust, and other e-mails that look like shipping
   e-mails, reads them in memory and keeps only what it found, such as the
   shop, carrier, tracking and order numbers, items, dates and status. For
   each e-mail it keeps a hash of its ID, the ID your mailbox gives it, the
@@ -406,8 +425,9 @@ add a resource.
   the carrier, the parcel its items came in and its e-mails; administrators
   can remove it there. A parcel's details list its returns.
   Select a parcel for its timeline, carrier and carrier link, tracking
-  number, the shipment's other packages, pickup point, PIN or pickup code,
-  name in the Parcel app and parcel ID, and to mark it delivered, edit it,
+  number, shipment reference, the shipment's other packages, pickup point,
+  PIN or pickup code, marketplace seller ("Sold by"), name in the Parcel app
+  and parcel ID, and to mark it delivered, edit it,
   make it private, merge, split or archive it. Its expected date ends in
   "· Parcel app" when it comes from the Parcel app. Merges and deliveries
   that Parcels guessed are marked there, to keep or undo. **Merge** lists the
@@ -484,11 +504,11 @@ actions need an administrator.
 
 ### Trusted and ignored senders
 
-Parcels knows Amazon, Shop, Shopify stores and the carriers above. Their
-e-mails are added straight away when DKIM or DMARC passes. An e-mail with
-parcel details from any other sender waits in **Needs review**; one with
-nothing parcel-like goes to **Filtered**, or is skipped when its sender isn't
-authenticated. In **Needs review** you can:
+Parcels knows Amazon, Shop, Shopify stores, Leroy Merlin Portugal and the
+carriers above. Their e-mails are added straight away when DKIM or DMARC
+passes. An e-mail with parcel details from any other sender waits in
+**Needs review**; one with nothing parcel-like goes to **Filtered**, or is
+skipped when its sender isn't authenticated. In **Needs review** you can:
 
 - **Trust the sender**, for a shop that e-mails you itself: its e-mails are
   then treated like a known sender's, and those waiting in review are read
@@ -815,11 +835,13 @@ answer that a parcel was returned is then sorted by the e-mail's own wording,
 as the parsers' readings are: an item sent back to the shop becomes a return,
 a parcel going back to its sender stays one, and a refund is dropped, as is a
 refund e-mail that the answer says with confidence isn't about a parcel.
-Paack's order IDs are kept as the e-mail writes them.
-[docs/ai-benchmark.md](docs/ai-benchmark.md) lists the checks. An answer
-that fails one waits in **Needs review**, where **Checks the AI answer
-failed** names the checks it failed, such as `tracking_not_in_email`, without
-any values.
+Paack's order IDs are kept as the e-mail writes them, and in Paack's own
+e-mails the part before `_`, given alone as the order number, becomes the
+shipment reference. [docs/ai-benchmark.md](docs/ai-benchmark.md) lists the
+checks. An answer that fails one waits in **Needs review**, where **Checks
+the AI answer failed** names the checks it failed, such as
+`tracking_not_in_email`, without any values. The
+[list of codes](docs/ai-benchmark.md#check-codes) explains each one.
 
 Limits: 5 minutes per e-mail, one retry, 50 e-mails a day, and only the last
 14 days during a mailbox's first sync. An e-mail whose retry fails as well
@@ -957,6 +979,10 @@ actions:
   local AI reading was rejected, and adds the ones it now understands. Accept
   the others in **Needs review**, where Paack's order IDs can be typed as
   written.
+- **Leroy Merlin's e-mails wait in review.** Earlier versions had no parser
+  for them. After the update, Parcels reads once more the Leroy Merlin
+  e-mails whose local AI reading was rejected, and adds the ones it now
+  understands. The others stay in **Needs review**.
 - **A Paack parcel shows apart from its Amazon parcel.** Select one and merge
   them. The hub's diagnostics count Paack's e-mails whose order ID matched an
   Amazon shipment, and those that didn't (`paack_amazon`), without any ID.

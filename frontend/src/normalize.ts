@@ -103,6 +103,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
   return {
     id: parcelId,
     merchant: str(raw.merchant),
+    seller: str(raw.seller),
     name: str(raw.name),
     carrier: str(raw.carrier),
     carrier_name: str(raw.carrier_name),

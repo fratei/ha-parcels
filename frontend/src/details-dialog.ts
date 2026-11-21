@@ -802,6 +802,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
           )
         : nothing}
       ${parcel.merchant ? row(STRINGS.merchant, parcel.merchant) : nothing}
+      ${parcel.seller ? row(STRINGS.seller, parcel.seller) : nothing}
       ${name ? row(STRINGS.parcelAppName, name) : nothing}
       ${orders.length
         ? row(

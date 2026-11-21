@@ -1669,7 +1669,7 @@ def _numbers(
     return numbers[:MAX_SHIPMENTS]
 
 
-def _eta(
+def message_eta(
     message: MailMessage, kind: MailKind, tz: tzinfo, lang: str | None
 ) -> Eta | None:
     """Return the delivery date; "today" for out-for-delivery e-mails."""
@@ -1687,7 +1687,7 @@ def _eta(
     return eta
 
 
-def _is_bounce(message: MailMessage) -> bool:
+def is_bounce(message: MailMessage) -> bool:
     """Return True for bounce messages, which quote someone else's e-mail."""
     local = message.sender.partition("@")[0].lower()
     return local in _BOUNCE_LOCALS or bool(
@@ -1707,7 +1707,7 @@ def parse_generic(
     e-mail with no other news gets the kind ``CODE``. Returns None when
     nothing parcel-like is found.
     """
-    if _is_bounce(message):
+    if is_bounce(message):
         return None
     domain = (verdict.domain or message.sender_domain).lower()
     info = lookup(domain) if domain else None
@@ -1743,7 +1743,9 @@ def parse_generic(
         notes.append(
             NOTE_KIND_FROM_SUBJECT if source == "subject" else NOTE_KIND_FROM_BODY
         )
-    eta = _eta(message, kind, tz, language) if kind is not MailKind.CODE else None
+    eta = (
+        message_eta(message, kind, tz, language) if kind is not MailKind.CODE else None
+    )
     point: str | None = None
     if kind is MailKind.READY_FOR_PICKUP and len(numbers) <= 1:
         point = _pickup_point(text)

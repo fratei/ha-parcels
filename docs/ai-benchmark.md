@@ -198,9 +198,9 @@ shaped the design.
 
 The model never sets the confidence. Parcels computes it:
 
-- 0.8 when nothing was dropped and the answer has a checked identifier: a
-  tracking number, an order number for an order confirmation, or nothing
-  for an e-mail that isn't about a parcel;
+- 0.8 when no check failed and the answer has a checked identifier: a
+  tracking number, Paack's shipment reference, an order number for an order
+  confirmation, or nothing for an e-mail that isn't about a parcel;
 - 0.5 otherwise, below the 0.7 that Parcels needs to apply an answer
   without review.
 
@@ -274,6 +274,72 @@ alone. What Parcels does with some answers changed:
 | A Paack order ID, such as `Ab3Cd4Ef5_1` | In Paack's e-mails it's kept as the e-mail writes it, upper and lower case included, and moved from the order numbers to the tracking numbers, although Paack labels it as an order number. Its first nine characters are never a number of their own. 0.1.4 upper-cased it and dropped it as `tracking_invalid`, which sent the e-mail to review. |
 
 Refund and return e-mails that the parsers recognise never reach the model.
+
+### What changed in 0.1.7
+
+0.1.7 keeps the instructions, the answer's structure and the input: every
+e-mail gets the same input as with 0.1.6, byte for byte. The saved answers
+weren't scored again. Instead, this set's expected answers and 574 made-up
+variants of them (one per kind, one with the tracking and order numbers
+swapped, one without a carrier) were checked with 0.1.6 and 0.1.7, with the
+same results. None of this set's e-mails is from Paack or Leroy Merlin, the
+senders the changes are about:
+
+| Answer | What Parcels does |
+|---|---|
+| The first part of a Paack order ID, such as `Ab3Cd4Ef5` in `Ab3Cd4Ef5_1`, as an order or tracking number | Paack's e-mails call it the order number. In Paack's own e-mail, a value of that shape that the e-mail writes on its own, with a digit or a capital after its first character, is Paack's shipment reference, kept as the e-mail writes it. It's never the shop's order number, a tracking number or an item, and it counts as a checked identifier. Parcels then joins the e-mail to the parcel with that reference, as it does the parsers' readings. 0.1.6 kept it as an order number, at confidence 0.5, or dropped it as `tracking_is_order`. |
+| No carrier, in an e-mail a shop sends in its carrier's name | For a shop that forwards its carrier's notices from its own domain, as Leroy Merlin Portugal does, a sender name that names exactly one carrier gives the carrier, as a carrier's own sender name does. 0.1.6 took the sender name for the shop's and gave no carrier. |
+| An answer that fails a check | The item in **Needs review** keeps the codes of the checks it failed, without values (see [Check codes](#check-codes)). |
+
+The parsers now read Paack's delivery notices and Leroy Merlin Portugal's
+order and shipment e-mails, which went to the model with 0.1.6. As before,
+an e-mail the parsers read with too little confidence still goes to the
+model.
+
+## Check codes
+
+An answer that fails a check waits in **Needs review**, as "The local AI's
+answer didn't pass the checks". Administrators see the codes of the failed
+checks under **Checks the AI answer failed**, never the values. "Plain
+text" below means no link, e-mail address, HTML or control character.
+
+| Code | The check that failed |
+|---|---|
+| `not_a_mapping` | The answer isn't a JSON object. Nothing in it is used. |
+| `kind_invalid` | The kind is missing, or isn't a kind Parcels knows. Nothing in the answer is used. |
+| `merchant_cut`, `carrier_cut`, `tracking_numbers_cut`, `order_numbers_cut`, `eta_start_cut`, `eta_end_cut`, `window_start_cut`, `window_end_cut`, `pickup_point_cut`, `pickup_code_cut` | A value is as long as its cap, so the model was cut off. The value is dropped. Items are never dropped for it: a cut item ends with "…". |
+| `tracking_numbers_invalid`, `order_numbers_invalid`, `items_invalid` | The field is neither a list nor a text. |
+| `tracking_numbers_too_many`, `order_numbers_too_many`, `items_too_many` | More than 20 tracking numbers, 10 order numbers or 10 items. The rest are dropped. |
+| `tracking_invalid` | A tracking number isn't text, isn't 4 to 40 letters and digits (spaces, dashes and dots aside), or fails its carrier's format or check digit. |
+| `tracking_not_in_email` | A tracking number isn't in the e-mail, nor a miscopy of exactly one number in it. |
+| `tracking_is_order` | A tracking number equals an order number, or the e-mail labels it as an order number. |
+| `tracking_is_pickup_code` | The e-mail writes a tracking number only as a delivery or pickup code. |
+| `tracking_is_other_number` | The e-mail labels a tracking number as a phone, tax or bank number. |
+| `order_invalid` | An order number isn't text, has more than 60 characters, or doesn't have 3 to 40 letters and digits, at least one of them a digit. |
+| `order_not_in_email` | An order number isn't in the e-mail, nor a miscopy of exactly one number in it. |
+| `order_is_part` | An order number is only part of longer, hyphen- or slash-joined numbers, and not exactly one of them can be an order number. |
+| `order_is_tracking` | An order number equals a tracking number whose format identifies it. |
+| `order_is_pickup_code` | The e-mail writes an order number only as a delivery or pickup code. |
+| `pickup_code_invalid` | The pickup code isn't text, has more than 20 characters, or isn't 3 or more letters and digits, spaces and hyphens aside. |
+| `pickup_code_not_in_email` | The pickup code isn't in the e-mail. |
+| `pickup_code_is_number` | The pickup code equals a tracking or order number. |
+| `pickup_point_invalid` | The pickup point isn't plain text, or has more than 120 characters. |
+| `merchant_invalid` | The merchant isn't plain text, or has more than 60 characters. |
+| `item_invalid` | An item isn't plain text. |
+| `carrier_unknown` | The carrier isn't text, or isn't a carrier Parcels knows. |
+| `carrier_not_in_email` | The carrier didn't send the e-mail, and the e-mail neither names it nor has a number whose format identifies it as that carrier's. |
+| `eta_start_unparsed`, `eta_end_unparsed` | A date can't be read. |
+| `eta_start_out_of_range`, `eta_end_out_of_range` | A date isn't between 2 days before and 60 days after the day the e-mail arrived. |
+| `eta_end_before_start` | The last delivery day is before the first. |
+| `eta_not_delivery_date` | The date overlaps no delivery date in the e-mail, and it had passed when the e-mail arrived or the e-mail gives it as another date: a deadline, or an order, shipping, offer or replaced date. |
+| `eta_not_in_text` | The e-mail has no date, weekday or span at all. A delivery today, in an out-for-delivery e-mail, is allowed. |
+| `window_start_unparsed`, `window_end_unparsed` | A time can't be read. |
+| `window_end_before_start` | The time window doesn't end after it starts. |
+| `window_without_date` | A time window comes without a date. |
+| `not_parcel_has_tracking` | The answer says the e-mail isn't about a parcel, but gives a tracking number, or the e-mail has one whose format identifies it. |
+
+The `tracking_is_*` checks skip numbers whose format identifies them, such
+as `EA123456785PT`, and Paack's order IDs.
 
 ## Results
 

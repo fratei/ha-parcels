@@ -202,6 +202,7 @@ export const STRINGS = {
   copied: "Copied.",
   copyFailed: "Couldn't copy automatically. The number is selected, so you can copy it yourself.",
   merchant: "Merchant",
+  seller: "Sold by",
   parcelAppName: "Name in the Parcel app",
   orders: "Orders",
   references: "Shipment reference",

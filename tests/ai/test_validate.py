@@ -589,6 +589,19 @@ def test_shop_sender_name_is_not_a_carrier() -> None:
     assert result.shipments[0].carrier is None
 
 
+def test_shop_relaying_its_carrier_names_it() -> None:
+    """A shop that forwards its carrier's notices sends them in its name."""
+    result = checked(
+        answer(kind="shipped", tracking_numbers=[GLS_NUMBER]),
+        f"O volume {GLS_NUMBER} foi expedido e está a caminho.",
+        sender="encomendas@leroymerlin.pt",
+        sender_name="GLS PT Informa",
+    )
+    assert result.notes == ()
+    (shipment,) = result.shipments
+    assert (shipment.carrier, shipment.tracking_number) == ("gls", GLS_NUMBER)
+
+
 @pytest.mark.parametrize(
     ("ai_carrier", "text", "carrier", "error"),
     [

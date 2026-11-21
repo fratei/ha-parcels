@@ -91,7 +91,12 @@ from ..parsers.lang import (
     detect_language,
     fold,
 )
-from ..parsers.senders import KNOWN_SENDERS, lookup, organizational_domain
+from ..parsers.senders import (
+    KNOWN_SENDERS,
+    lookup,
+    organizational_domain,
+    relays_carrier_mail,
+)
 from ..parsers.tracking import (
     PAACK_ID_RE,
     PAACK_STEM_RE,
@@ -1449,12 +1454,16 @@ class _Checker:
         """Return the carrier named as the sender ("DPD Portugal").
 
         Shops and platforms known by their domain are skipped: their sender
-        name is the shop's.
+        name is the shop's. Shops that forward their carrier's notices from
+        their own domain ("GLS PT Informa") send those in the carrier's name.
         """
         domain = self.message.sender_domain
         info = lookup(domain) if domain else None
         if info is not None and info.kind != "carrier":
-            return None
+            if not relays_carrier_mail(domain):
+                return None
+            brands = brand_carriers(self.message.sender_name or "")
+            return brands[0] if len(brands) == 1 else None
         return map_carrier(self.message.sender_name or "", prefix=False)
 
     def carrier(self) -> str | None:

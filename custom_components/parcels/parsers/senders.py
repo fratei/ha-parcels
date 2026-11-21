@@ -119,6 +119,8 @@ KNOWN_SENDERS: dict[str, SenderInfo] = {
         "amazon",
         "amazon",
     ),
+    # Its carriers' notices come from its own domain, under the carrier's name.
+    **_entries(("leroymerlin.pt",), "Leroy Merlin", "merchant", None, "leroymerlin"),
     # Platforms
     **_entries(("shop.app",), "Shop", "platform", None, "shop"),
     **_entries(("shopify.com",), "Shopify", "platform", None, "shopify"),
@@ -303,6 +305,19 @@ def ships_with_many(domain: str) -> bool:
     tell who delivers the next.
     """
     return (info := lookup(domain)) is not None and info.kind == "merchant"
+
+
+# Shops that send their carriers' notices from their own domain.
+_RELAYING_PARSERS = frozenset({"leroymerlin"})
+
+
+def relays_carrier_mail(domain: str) -> bool:
+    """Return True for a shop whose e-mails also relay its carriers' notices.
+
+    Such a shop's e-mail about a package is about the carrier's delivery, as
+    much as a carrier's own e-mail would be.
+    """
+    return (info := lookup(domain)) is not None and info.parser in _RELAYING_PARSERS
 
 
 # Free mail providers: anyone can send from them, so they can't be trusted

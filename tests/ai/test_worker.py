@@ -57,6 +57,7 @@ from custom_components.parcels.const import (
 from custom_components.parcels.convert import fill_origin_id, message_origin_id
 from custom_components.parcels.engine import (
     FILL_CHECK_KEY,
+    LEROYMERLIN_CHECK_KEY,
     PAACK_CHECK_KEY,
     ParcelsEngine,
 )
@@ -1569,6 +1570,7 @@ async def async_rejected(
     engine.add_review(item, record)
     if not checked:
         engine.data.engine.pop(PAACK_CHECK_KEY, None)
+        engine.data.engine.pop(LEROYMERLIN_CHECK_KEY, None)
     return item
 
 
@@ -1726,6 +1728,37 @@ async def test_paack_check_runs_after_the_fill_check(
     assert not engine.ai.queue
     assert engine.data.engine[FILL_CHECK_KEY]
     assert engine.data.engine[PAACK_CHECK_KEY]
+
+
+def leroy_merlin_message() -> MailMessage:
+    """Return Leroy Merlin's e-mail about a parcel out for delivery."""
+    return dataclasses.replace(
+        load_message("leroymerlin/out_for_delivery_pt.eml"),
+        date=RECEIVED,
+        received=RECEIVED,
+    )
+
+
+async def test_update_reads_rejected_leroy_merlin_emails_again(
+    hass: HomeAssistant, client: FakeMailClient
+) -> None:
+    """After the update, Leroy Merlin's e-mails whose AI reading was rejected
+    are read once more by its parser."""
+    message = leroy_merlin_message()
+    engine = await async_setup(hass, client, message)
+    await async_rejected(hass, engine, message, carrier="gls")
+
+    await async_sync_again(hass, engine)
+
+    assert not engine.data.review
+    (parcel,) = engine.data.parcels.values()
+    assert parcel.state.status is ParcelStatus.OUT_FOR_DELIVERY
+    assert (parcel.state.merchant, parcel.state.carrier) == ("Leroy Merlin", "gls")
+    assert parcel.state.order_numbers == ("51800012",)
+    assert parcel.state.seller == "Loja Exemplo (Exemplo Lda)"
+    assert engine.data.messages[message.hash].state is MessageState.APPLIED
+    assert not engine.ai.queue
+    assert engine.data.engine[LEROYMERLIN_CHECK_KEY]
 
 
 # -- Diagnostics and counters -------------------------------------------------
