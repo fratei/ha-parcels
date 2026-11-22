@@ -1,5 +1,6 @@
 import { CARRIER_NAMES, carrierName } from "./carriers.ts";
 import {
+  CHECK_MEANINGS,
   KIND_LABELS,
   MERGE_REASON_LABELS,
   NOTE_MEANINGS,
@@ -118,10 +119,19 @@ export function reasonLabel(reason: unknown): string {
   return lookup(REASON_LABELS, reason);
 }
 
+function meaning(meanings: Readonly<Record<string, string>>, code: unknown): string | null {
+  const value = clean(code);
+  return value && Object.hasOwn(meanings, value) ? (meanings[value] ?? null) : null;
+}
+
 /** What a note on an AI answer means, in one line; null for a code without a meaning. */
 export function noteMeaning(code: unknown): string | null {
-  const value = clean(code);
-  return value && Object.hasOwn(NOTE_MEANINGS, value) ? (NOTE_MEANINGS[value] ?? null) : null;
+  return meaning(NOTE_MEANINGS, code);
+}
+
+/** What a failed check on an AI answer means, in one line; null for a code without a meaning. */
+export function checkMeaning(code: unknown): string | null {
+  return meaning(CHECK_MEANINGS, code);
 }
 
 /** Why a parcel was merged automatically, for use inside a sentence; "" without a reason. */

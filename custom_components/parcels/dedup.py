@@ -75,6 +75,7 @@ from homeassistant.util import dt as dt_util
 from .ai.validate import NOTE_CARRIER_UNPROVEN
 from .const import MailKind, ParcelStatus
 from .models import (
+    FILL_ORIGIN_SUFFIX,
     AutoMerge,
     Order,
     Origin,
@@ -83,6 +84,7 @@ from .models import (
     ParcelsData,
     ParcelState,
     Source,
+    carrier_like,
     check_codes,
     date_from_str,
     day_known,
@@ -133,6 +135,9 @@ RECENT_AMAZON = timedelta(days=30)
 _ORDER_STAGE = frozenset(
     {MailKind.ORDER, MailKind.CANCELLED, MailKind.RETURN, MailKind.CUSTOMER_RETURN}
 )
+# How long before a Paack e-mail the diagnostics look for Amazon's e-mail
+# with a shipment ID.
+PAACK_AFTER_AMAZON = timedelta(days=7)
 # A shop's parcel up to this many days late, or due this many days later,
 # could still be the package a carrier delivers: shops deliver early too.
 LATE_DAYS = timedelta(days=14)
@@ -411,19 +416,40 @@ def paack_amazon_counts(data: ParcelsData) -> dict[str, dict[str, int]]:
     Each e-mail counts once: "matched" when the part of its order ID before
     "_" (or the order number it gives alone) is the shipment ID of an Amazon
     e-mail, "unmatched" when no Amazon shipment fits, "without_id" when no
-    order ID was read. The counts hold no ID or shop name.
+    order ID was read. Apart from those, "matched_ignoring_case" counts the
+    e-mails that match when case is ignored, the matched ones included, and
+    "amazon_id_7_days_before" the e-mails that came at most 7 days after an
+    e-mail from Amazon that gave a shipment ID, whichever shipment it named.
+    The counts hold no ID or shop name.
     """
     shipments = {
         origin.amazon_shipment_id
         for origin in _all_origins(data)
         if origin.amazon_shipment_id
     }
+    folded = {shipment.casefold() for shipment in shipments}
+    amazon_times = [
+        origin.time
+        for origin in _all_origins(data)
+        if origin.amazon_shipment_id
+        and (info := lookup(origin.label)) is not None
+        and info.parser == "amazon"
+    ]
     emails: defaultdict[str, list[Origin]] = defaultdict(list)
     for origin in _all_origins(data):
         if (info := lookup(origin.label)) is not None and info.carrier == "paack":
             emails[origin.message or origin.id].append(origin)
     counts = {
-        group: {"matched": 0, "unmatched": 0, "without_id": 0}
+        group: dict.fromkeys(
+            (
+                "matched",
+                "unmatched",
+                "without_id",
+                "matched_ignoring_case",
+                "amazon_id_7_days_before",
+            ),
+            0,
+        )
         for group in ("naming_amazon", "not_naming_amazon")
     }
     for origins in emails.values():
@@ -433,7 +459,13 @@ def paack_amazon_counts(data: ParcelsData) -> dict[str, dict[str, int]]:
         else:
             result = "unmatched" if stems else "without_id"
         amazon = any(merchant_key(origin.merchant) == "amazon" for origin in origins)
-        counts["naming_amazon" if amazon else "not_naming_amazon"][result] += 1
+        group = counts["naming_amazon" if amazon else "not_naming_amazon"]
+        group[result] += 1
+        if {stem.casefold() for stem in stems} & folded:
+            group["matched_ignoring_case"] += 1
+        sent = min(origin.time for origin in origins)
+        if any(sent - PAACK_AFTER_AMAZON <= time <= sent for time in amazon_times):
+            group["amazon_id_7_days_before"] += 1
     return counts
 
 
@@ -1301,6 +1333,33 @@ def add_owner(
         if found is not None and owner not in found.owners:
             found.owners = tuple(sorted({*found.owners, owner}))
             entry.updated = now
+    return affected
+
+
+def fill_shop(
+    data: ParcelsData, message_hash: str, merchant: str, now: datetime
+) -> set[str]:
+    """Name the shop where an e-mail's own readings name none, or the carrier.
+
+    For e-mails an earlier release couldn't read the shop of. A filled-in
+    gap of the local AI, or the user's edit, keeps what it says. Returns the
+    IDs of the parcels that changed.
+    """
+    affected: set[str] = set()
+    for parcel in data.parcels.values():
+        changed = False
+        for origin in parcel.origins.values():
+            if (
+                origin.message == message_hash
+                and not origin.id.endswith(FILL_ORIGIN_SUFFIX)
+                and (not origin.merchant or carrier_like(origin.merchant))
+            ):
+                origin.merchant = merchant
+                changed = True
+        if changed:
+            parcel.touch(now)
+            _record_orders(data, parcel, now)
+            affected.add(parcel.id)
     return affected
 
 

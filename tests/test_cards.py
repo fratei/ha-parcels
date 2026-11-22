@@ -15,6 +15,7 @@ from pytest_homeassistant.typing import ClientSessionGenerator
 
 from custom_components.parcels import const
 from custom_components.parcels.ai import validate
+from custom_components.parcels.ai.prompt import ANSWER_CAPS
 from custom_components.parcels.cards import (
     CARDS_FILE,
     FRONTEND_DIR,
@@ -97,4 +98,58 @@ def test_review_card_explains_every_ai_note() -> None:
     section = docs.split("\n### Notes\n", 1)[1].split("\n## ", 1)[0]
     documented = dict(re.findall(r"^\| `(\w+)` \| (.+) \|$", section, re.MULTILINE))
     assert set(meanings) == notes
+    assert meanings == documented
+
+
+def _failed_check_codes() -> set[str]:
+    """Return the code of every check the validator can fail.
+
+    Most codes are written out; the rest are a field's name plus a suffix.
+    """
+    source = Path(validate.__file__).read_text(encoding="utf-8")
+    codes = set(re.findall(r'self\.error\("(\w+)"\)', source))
+    codes |= set(re.findall(r'Validation\(None, \("(\w+)",\)\)', source))
+    built = set(re.findall(r'self\.error\(f"\{(\w+)\}(\w+)"\)', source))
+    passed = set(re.findall(r"self\.error\((\w+)\)", source))
+    assert built == {
+        ("name", "_cut"),
+        ("field", "_unparsed"),
+        ("field", "_out_of_range"),
+    }
+    assert passed == {"reason"}
+    codes |= {
+        f"{name}_cut"
+        for name, cap in ANSWER_CAPS.items()
+        if "max_length" in cap and name != "items"
+    }
+    dates = ("eta_start", "eta_end")
+    codes |= {f"{field}_unparsed" for field in (*dates, "window_start", "window_end")}
+    codes |= {f"{field}_out_of_range" for field in dates}
+    codes |= set(re.findall(r'return "(tracking_is_\w+)"', source))
+    return codes
+
+
+def test_review_card_explains_every_failed_check() -> None:
+    """The card explains each failed check in one line, as the docs do.
+
+    A check without one would show as its bare code.
+    """
+    source = STRINGS.read_text(encoding="utf-8")
+    block = source.split("export const CHECK_MEANINGS", 1)[1].split("};", 1)[0]
+    meanings = {
+        code: text.replace('\\"', '"')
+        for code, text in re.findall(
+            r'^\s*(\w+): "((?:[^"\\]|\\.)+)",$', block, re.MULTILINE
+        )
+    }
+    docs = BENCHMARK.read_text(encoding="utf-8")
+    section = docs.split("\n## Check codes\n", 1)[1].split("\n### ", 1)[0]
+    documented = {
+        code: text
+        for codes, text in re.findall(
+            r"^\| (`\w+`(?:, `\w+`)*) \| (.+) \|$", section, re.MULTILINE
+        )
+        for code in re.findall(r"`(\w+)`", codes)
+    }
+    assert set(meanings) == _failed_check_codes()
     assert meanings == documented

@@ -316,12 +316,20 @@ checks: every e-mail gets the same input as with 0.1.8, byte for byte, and
 the same 656 variants give the same results. Administrators now also see the
 [notes](#notes) on an answer in **Needs review**.
 
+### What changed in 0.1.11
+
+0.1.11 keeps the instructions, the answer's structure, the input and the
+checks: every e-mail gets the same input as with 0.1.10, byte for byte, and
+the same 656 variants give the same results. In **Needs review**,
+administrators now also see what each [failed check](#check-codes) means.
+
 ## Check codes
 
 An answer that fails a check waits in **Needs review**, as "The local AI's
 answer didn't pass the checks". Administrators see the codes of the failed
-checks under **Checks the AI answer failed**, never the values. "Plain
-text" below means no link, e-mail address, HTML or control character.
+checks under **Checks the AI answer failed**, each with its meaning from
+this table, never the values. "Plain text" below means no link, e-mail
+address, HTML or control character.
 
 | Code | The check that failed |
 |---|---|

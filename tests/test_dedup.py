@@ -407,7 +407,9 @@ def test_paack_amazon_counts() -> None:
     """Paack's e-mails are counted by whether their ID names a shipment.
 
     Each e-mail counts once, with no ID or shop name, so users can share the
-    counts.
+    counts. Two more counts per group: e-mails whose ID names a shipment
+    when case is ignored, and e-mails that came at most 7 days after an
+    Amazon e-mail that gave a shipment ID.
     """
     data = ParcelsData()
     sent = [
@@ -447,13 +449,48 @@ def test_paack_amazon_counts() -> None:
             reference=SHIPMENT,
             merchant="Amazon",
         ),
+        # A day before Amazon's e-mail with the shipment ID.
+        contribution(
+            "msg:p7#0",
+            label="paack.co",
+            kind=MailKind.IN_TRANSIT,
+            carrier="paack",
+            number=f"{SHIPMENT}_3",
+            merchant="Amazon",
+            time=at(days=-1),
+        ),
+        # Amazon's e-mail without a shipment ID, half a day before Paack's.
+        contribution(
+            "msg:a2#0", label="amazon.es", merchant="Amazon.es", time=at(days=7.5)
+        ),
+        # Eight days after Amazon's e-mail with the shipment ID.
+        contribution(
+            "msg:p8#0",
+            label="paack.co",
+            kind=MailKind.IN_TRANSIT,
+            carrier="paack",
+            number="Tq3Zr8Lm2_1",
+            time=at(days=8),
+        ),
     ]
     for index, item in enumerate(sent):
-        apply_contribution(data, item, at(hours=index))
+        apply_contribution(data, item, at(days=9, hours=index))
 
     assert paack_amazon_counts(data) == {
-        "naming_amazon": {"matched": 2, "unmatched": 1, "without_id": 1},
-        "not_naming_amazon": {"matched": 1, "unmatched": 1, "without_id": 0},
+        "naming_amazon": {
+            "matched": 3,
+            "unmatched": 1,
+            "without_id": 1,
+            "matched_ignoring_case": 4,
+            "amazon_id_7_days_before": 4,
+        },
+        "not_naming_amazon": {
+            "matched": 1,
+            "unmatched": 2,
+            "without_id": 0,
+            "matched_ignoring_case": 1,
+            "amazon_id_7_days_before": 2,
+        },
     }
 
 

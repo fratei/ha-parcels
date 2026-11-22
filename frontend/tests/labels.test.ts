@@ -4,6 +4,7 @@ import { describe, test } from "node:test";
 import { errorMessage } from "../src/errors.ts";
 import {
   carrierLabel,
+  checkMeaning,
   humanize,
   inferredNotice,
   etaSourceLabel,
@@ -167,6 +168,17 @@ describe("labels", () => {
     assert.equal(noteMeaning("__proto__"), null);
     assert.equal(noteMeaning(""), null);
     assert.equal(noteMeaning(null), null);
+  });
+
+  test("a failed check on an AI answer has a one-line meaning; an unknown one has none", () => {
+    assert.match(checkMeaning("tracking_not_in_email") ?? "", /^A tracking number isn't in the e-mail/);
+    assert.equal(checkMeaning("merchant_cut"), checkMeaning("pickup_code_cut"));
+    assert.match(checkMeaning("merchant_cut") ?? "", /cut item ends with "…"\.$/);
+    assert.equal(checkMeaning("carrier_unproven"), null);
+    assert.equal(checkMeaning("brand_new_check"), null);
+    assert.equal(checkMeaning("__proto__"), null);
+    assert.equal(checkMeaning(""), null);
+    assert.equal(checkMeaning(null), null);
   });
 
   test("an inferred delivery says why", () => {

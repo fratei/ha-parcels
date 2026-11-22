@@ -628,7 +628,10 @@ How they behave:
   13:00–14:00 · DPD". On the lock screen a countdown takes its place only in
   the last hour of the window (all of a shorter one), started by one silent
   update. A window with only an end ("by 14:00") counts down only while the
-  parcel is out for delivery.
+  parcel is out for delivery. A shared activity shows no countdown while one
+  of its packages has a failed attempt or a problem, so its text says so
+  ("2 of 5 delivered · 1 problem · next: Amazon via DPD 13–14h"); a parcel's
+  own activity keeps its countdown.
 - Updates are sent only when something changes, and silently unless the
   status changed.
 - Tapping a parcel's activity or notification opens its details on the
@@ -926,10 +929,10 @@ e-mails the part before `_`, given alone as the order number, becomes the
 shipment reference. [docs/ai-benchmark.md](docs/ai-benchmark.md) lists the
 checks. An answer that fails one waits in **Needs review**, which only
 administrators see. There, **Checks the AI answer failed** names the checks
-it failed, such as `tracking_not_in_email`, without any values; the
-[list of codes](docs/ai-benchmark.md#check-codes) explains each one. Below
-it, on any of the local AI's answers there, **Notes on the AI answer** lists
-what the checks changed in an answer they let through, such as
+it failed, such as `tracking_not_in_email`, each with its meaning and
+without any values (see the [list of codes](docs/ai-benchmark.md#check-codes)).
+Below it, on any of the local AI's answers there, **Notes on the AI answer**
+lists what the checks changed in an answer they let through, such as
 `carrier_unproven` when the shop was given as the carrier, each with its
 meaning. Notes aren't failed checks: the rest of the answer is used (see the
 [list of notes](docs/ai-benchmark.md#notes)).
@@ -1080,13 +1083,28 @@ actions:
   for them. After the update, Parcels reads once more the Leroy Merlin
   e-mails whose local AI reading was rejected, and adds the ones it now
   understands. The others stay in **Needs review**.
+- **A Paack parcel shows only "Paack" as its shop.** Versions before 0.1.7
+  couldn't read the shop Paack's e-mails name. After the update, when its
+  first mail check ends, Parcels downloads once more the Paack e-mails of the
+  last 14 days whose parcels it added without a shop, at most 50 and newest
+  first, and reads them with its parsers, never the local AI. Only the shop
+  is filled in, where the e-mail's own reading named none or named Paack:
+  what you typed, merged or split stays, and a parcel can then pair with its
+  shop's order. E-mails from ignored senders are skipped. The hub's
+  diagnostics count the e-mails read, those whose shop was filled in or
+  kept, those deleted since, those that couldn't be downloaded and those
+  over the limit (`paack_shop_check`).
 - **A Paack parcel shows apart from its Amazon parcel.** Select one and merge
   them. The hub's diagnostics count Paack's e-mails whose order ID matched an
   Amazon shipment, and those that didn't (`paack_amazon`), without any ID.
-  They also count the last 30 days' Amazon e-mails by site and by whether
-  they gave a shipment ID, with each ID's length and kinds of characters
-  only (`amazon_shipment_ids`, such as `len9:Aa0` for nine capitals, small
-  letters and digits).
+  Apart from those, they count the e-mails that match when capitals and
+  small letters count as the same, the matched ones included
+  (`matched_ignoring_case`), and those that came at most 7 days after an
+  Amazon e-mail with a shipment ID, whichever shipment it named
+  (`amazon_id_7_days_before`). They also count the last 30 days' Amazon
+  e-mails by site and by whether they gave a shipment ID, with each ID's
+  length and kinds of characters only (`amazon_shipment_ids`, such as
+  `len9:Aa0` for nine capitals, small letters and digits).
 - **A delivery from Parcel shows apart from its parcel, or doesn't update
   it.** Select both and merge them, or select **Undo** on a pairing Parcels
   made. Parcels leaves a delivery out when your Parcel list has two
@@ -1150,7 +1168,9 @@ actions:
   senders other than known or trusted ones counted as "other"
   (`recent_emails`), where working days come from (`working_days`), the
   refunds ignored (`refunds_dropped`), the check after updating to 0.1.5
-  (`returns_check`), Paack's matches (`paack_amazon`), the shapes of
+  (`returns_check`), Paack's matches (`paack_amazon`), the check that named
+  the shops of Paack's parcels after updating to 0.1.11
+  (`paack_shop_check`), the shapes of
   Amazon's shipment IDs (`amazon_shipment_ids`), the parcels whose Parcel
   app events the update to 0.1.7 placed again (`parcel_app_dates_repaired`)
   and the sources, senders and answers whose unproven Amazon carrier the

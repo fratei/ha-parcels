@@ -34,6 +34,7 @@ from custom_components.parcels.dedup import (
     apply_contribution,
     boxes_of_day,
     dismiss_suggestion,
+    fill_shop,
     infer_deliveries,
     keep_apart,
     merge_parcels,
@@ -329,6 +330,87 @@ def test_delivery_before_the_shipping_mail_stays_apart(
     else:
         assert not result.removed
         assert set(data.parcels) == {ctt, amazon}
+
+
+def _paack_delivered(
+    origin_id: str, number: str, merchant: str | None = None, **kwargs: Any
+) -> Contribution:
+    """Paack's e-mail about a parcel it delivered: the shop, if read, no order."""
+    return contribution(
+        origin_id,
+        kind=MailKind.DELIVERED,
+        time=_nov(25, 11),
+        carrier="paack",
+        number=number,
+        merchant=merchant,
+        label="paack.co",
+        **kwargs,
+    )
+
+
+def test_fill_shop_names_the_shop_where_the_email_named_none() -> None:
+    """Only the e-mail's own readings that name no shop, or the carrier, change."""
+    data = ParcelsData()
+    now = _nov(26, 9)
+    unnamed = _apply(data, _paack_delivered("msg:p1#0", "Hx7Kp2Wd9_1"))
+    assert _apply(
+        data, _paack_delivered("msg:p1#ai", "Hx7Kp2Wd9_1", source=Source.AI)
+    ) == (unnamed)
+    carrier = _apply(data, _paack_delivered("msg:p1#1", "Hx7Kp2Wd9_2", "PAACK"))
+    named = _apply(data, _paack_delivered("msg:p1#2", "Hx7Kp2Wd9_3", "Zara"))
+    other = _apply(data, _paack_delivered("msg:p2#0", "Hx7Kp2Wd9_4"))
+
+    assert fill_shop(data, "p1", SHOP_NAME, now) == {unnamed, carrier}
+
+    merchants = {
+        origin.id: origin.merchant
+        for parcel in data.parcels.values()
+        for origin in parcel.origins.values()
+    }
+    assert merchants == {
+        "msg:p1#0": SHOP_NAME,
+        "msg:p1#ai": None,
+        "msg:p1#1": SHOP_NAME,
+        "msg:p1#2": "Zara",
+        "msg:p2#0": None,
+    }
+    assert [data.parcels[pid].state.merchant for pid in (unnamed, carrier)] == [
+        SHOP_NAME,
+        SHOP_NAME,
+    ]
+    assert data.parcels[unnamed].updated == now
+    assert data.parcels[named].updated != now
+    assert data.parcels[other].state.merchant is None
+    assert fill_shop(data, "p1", SHOP_NAME, now) == set()
+
+
+@pytest.mark.parametrize("apart", [False, True])
+def test_shop_filled_in_pairs_the_box_unless_kept_apart(apart: bool) -> None:
+    """Once Paack's box names the shop, it joins the shop's order of its day.
+
+    Unless the user split them before: they stay apart.
+    """
+    data = ParcelsData()
+    order = _apply(data, _shop_order("msg:o1#0", _nov(23, 20, 30)))
+    box = _apply(data, _paack_delivered("msg:p1#0", "Hx7Kp2Wd9_1"))
+    now = _nov(26, 9)
+    assert not reconcile(data, now).removed
+    if apart:
+        keep_apart(data, data.parcels[order], data.parcels[box])
+
+    assert fill_shop(data, "p1", SHOP_NAME, now) == {box}
+    result = reconcile(data, now)
+
+    assert data.parcels[box].state.merchant == SHOP_NAME
+    if apart:
+        assert not result.removed
+        assert set(data.parcels) == {order, box}
+    else:
+        assert result.removed == {order}
+        parcel = data.parcels[box]
+        assert parcel.state.order_numbers == (SHOP_ORDER,)
+        assert parcel.auto_merged is not None
+        assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_DAY
 
 
 @pytest.mark.parametrize(

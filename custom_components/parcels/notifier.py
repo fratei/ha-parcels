@@ -56,8 +56,11 @@ Live Activities
     then a problem, then a pickup; green once all are delivered. The message
     always shows the delivery window; the countdown runs only in the last
     hour of the window (all of a shorter one) and starts with one quiet
-    update. Tapping an activity or a notification opens the parcel on the
-    dashboard (``<path>?parcel=<id>``); the combined activity opens the week.
+    update. The combined activity shows no countdown while one of its
+    parcels has a missed attempt or a problem, so its text can say so; a
+    parcel's own activity keeps its countdown. Tapping an activity or a
+    notification opens the parcel on the dashboard
+    (``<path>?parcel=<id>``); the combined activity opens the week.
 
 Packages
     The day counts packages, not records. An order without a carrier's
@@ -804,7 +807,8 @@ def _combined_content(parcels: list[Parcel], ctx: _Context) -> _Content:
             parts.append(f"next: {label} {short}")
         elif upcoming.status is S.OUT_FOR_DELIVERY:
             parts.append(f"{label} out for delivery")
-        if (end := _chronometer_end(upcoming, ctx)) is not None:
+        # The timer would hide the text that names a problem.
+        if not problems and (end := _chronometer_end(upcoming, ctx)) is not None:
             when = int(end.timestamp())
     # The most urgent parcel leads the icon and the colour.
     if out:

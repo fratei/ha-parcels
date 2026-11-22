@@ -266,8 +266,20 @@ async def test_paack_amazon(
 
     engine_data = diagnostics["engine"]
     assert engine_data["paack_amazon"] == {
-        "naming_amazon": {"matched": 1, "unmatched": 0, "without_id": 0},
-        "not_naming_amazon": {"matched": 0, "unmatched": 0, "without_id": 0},
+        "naming_amazon": {
+            "matched": 1,
+            "unmatched": 0,
+            "without_id": 0,
+            "matched_ignoring_case": 1,
+            "amazon_id_7_days_before": 1,
+        },
+        "not_naming_amazon": {
+            "matched": 0,
+            "unmatched": 0,
+            "without_id": 0,
+            "matched_ignoring_case": 0,
+            "amazon_id_7_days_before": 0,
+        },
     }
     # Amazon's e-mail gave a shipment ID: only its shape shows.
     assert engine_data["amazon_shipment_ids"] == {

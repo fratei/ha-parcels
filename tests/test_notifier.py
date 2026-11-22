@@ -1675,6 +1675,71 @@ async def test_countdown_in_the_last_hour(
     assert notifier.diagnostics()["today"]["activity_starts"] == 1
 
 
+@pytest.mark.parametrize("problem", [S.ATTEMPTED, S.EXCEPTION])
+@pytest.mark.parametrize("combined", [True, False])
+async def test_problem_stops_the_combined_countdown(
+    env: Env, problem: ParcelStatus, combined: bool
+) -> None:
+    """While a parcel has a problem, the combined activity says so, not a timer.
+
+    Its text keeps the window, and the timer runs again once no parcel has a
+    problem. A parcel's own activity keeps its timer.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1 if combined else 9})
+    moving = env.parcel(
+        S.OUT_FOR_DELIVERY, eta=window(13, 15), merchant="Zalando", carrier="ctt"
+    )
+    other = env.parcel(eta=on(), merchant="IKEA", carrier="correos")
+    await env.start()
+    await env.goto(at(8))
+    phone.take()
+    await env.goto(at(14))
+    timers = {
+        payload["data"]["tag"]: payload["data"].get("when") for payload in phone.take()
+    }
+    assert timers == {COMBINED if combined else tag_of(moving): int(at(15).timestamp())}
+
+    await env.goto(at(14, 10))
+    env.change(other, problem)
+    await env.settle()
+    sent = phone.take()
+
+    if not combined:
+        assert [payload["data"]["tag"] for payload in sent] == [tag_of(other)]
+        return
+    next_up = f"next: Zalando via CTT 13{DASH}15h"
+    assert sent == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"0 of 2 delivered{SEP}1 problem{SEP}{next_up}",
+            "0/2",
+            0,
+            OUT,
+            1.0,
+            progress_max=2,
+        )
+    ]
+
+    await env.goto(at(14, 20))
+    env.change(other, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"1 of 2 delivered{SEP}{next_up}",
+            "1/2",
+            1,
+            OUT,
+            1.0,
+            progress_max=2,
+            when=at(15),
+        )
+    ]
+
+
 @pytest.mark.parametrize(
     ("merchant", "carrier", "label"),
     [

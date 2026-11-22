@@ -89,6 +89,7 @@ from .dedup import (
     apply_contribution,
     archive_parcel,
     dismiss_suggestion,
+    fill_shop,
     infer_deliveries,
     manual_origin_id,
     mark_delivered,
@@ -124,6 +125,7 @@ from .models import (
     ReviewItem,
     Source,
     Suggestion,
+    carrier_like,
     dt_from_str,
     dt_to_str,
     is_carrier_mail,
@@ -209,6 +211,15 @@ REASON_UNTRUSTED_SERVER = "untrusted_authserv"
 PAACK_CHECK_KEY = "paack_check"
 # The same for Leroy Merlin's e-mails, which earlier releases had no parser for.
 LEROYMERLIN_CHECK_KEY = "leroymerlin_check"
+# Set when the store of an earlier release is loaded. Once the mailboxes were
+# read, Paack's recent e-mails whose parcels name no shop are read again by
+# the parsers: releases before 0.1.7 couldn't read the shop. Then it holds
+# what the check found.
+PAACK_SHOP_CHECK_KEY = "paack_shop_check"
+# The check reads Paack's e-mails of this many recent days...
+PAACK_SHOP_CHECK_WINDOW = timedelta(days=14)
+# ... at most this many, newest first.
+PAACK_SHOP_CHECK_MAX = 50
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -436,10 +447,13 @@ class ParcelsEngine:
         if not (data.parcels or data.review):
             # Nothing stored by an earlier release to check after the update.
             data.engine.setdefault(FILL_CHECK_KEY, True)
-        data.engine.setdefault(
-            RETURNS_CHECK_KEY,
-            {"before": dt_to_str(now)} if data.messages else {"done": dt_to_str(now)},
-        )
+        for key in (RETURNS_CHECK_KEY, PAACK_SHOP_CHECK_KEY):
+            data.engine.setdefault(
+                key,
+                {"before": dt_to_str(now)}
+                if data.messages
+                else {"done": dt_to_str(now)},
+            )
         self._statuses = {pid: p.state.status for pid, p in data.parcels.items()}
         self._started = True
         self._run_retention(now)
@@ -536,20 +550,28 @@ class ParcelsEngine:
         before = None
         if isinstance(check, dict) and not {"started", "done"} & check.keys():
             before = dt_from_str(check.get("before"))
+        shop_check = engine.get(PAACK_SHOP_CHECK_KEY)
+        shops = None
+        if isinstance(shop_check, dict) and not {"started", "done"} & shop_check.keys():
+            shops = dt_from_str(shop_check.get("before"))
         fill = not engine.get(FILL_CHECK_KEY)
         paack = not engine.get(PAACK_CHECK_KEY)
         leroymerlin = not engine.get(LEROYMERLIN_CHECK_KEY)
-        if before is None and not (fill or paack or leroymerlin):
+        if before is None and shops is None and not (fill or paack or leroymerlin):
             return
         if before is not None:
             check["started"] = dt_to_str(dt_util.utcnow())
             check["relisted"] = self._relist()
+        if shops is not None:
+            shop_check["started"] = dt_to_str(dt_util.utcnow())
         engine[FILL_CHECK_KEY] = True
         engine[PAACK_CHECK_KEY] = True
         engine[LEROYMERLIN_CHECK_KEY] = True
         self.async_schedule_save()
         self.async_create_task(
-            self._async_checks(before, fill=fill, paack=paack, leroymerlin=leroymerlin),
+            self._async_checks(
+                before, shops=shops, fill=fill, paack=paack, leroymerlin=leroymerlin
+            ),
             "parcels checks",
         )
 
@@ -1890,6 +1912,7 @@ class ParcelsEngine:
         self,
         before: datetime | None,
         *,
+        shops: datetime | None,
         fill: bool,
         paack: bool,
         leroymerlin: bool,
@@ -1898,7 +1921,8 @@ class ParcelsEngine:
 
         Returns first, as they can remove parcels. Paack's and Leroy Merlin's
         e-mails last, so that what the parsers read then isn't filled in by
-        the local AI.
+        the local AI; the shops of Paack's parcels at the very end, once the
+        e-mails under review were read.
         """
         if before is not None:
             await self._async_returns_check(before)
@@ -1908,6 +1932,86 @@ class ParcelsEngine:
             await self._async_rejected_check(_paack_rejected, "Paack")
         if leroymerlin:
             await self._async_rejected_check(_leroymerlin_rejected, "Leroy Merlin")
+        if shops is not None:
+            await self._async_paack_shop_check(shops)
+
+    def _paack_shop_check_keys(self, before: datetime, now: datetime) -> list[str]:
+        """Return Paack's e-mails whose parcels name no shop, newest first.
+
+        Those of the last 14 days that an earlier release, before ``before``,
+        added to parcels, where none of the e-mail's own readings names the
+        shop: no name, or the carrier's. Senders the user ignores never count.
+        """
+        data = self.data
+        named: dict[str, bool] = {}
+        for parcel in data.parcels.values():
+            for origin in parcel.origins.values():
+                if not origin.message or origin.id.endswith(FILL_ORIGIN_SUFFIX):
+                    continue
+                shop = bool(origin.merchant) and not carrier_like(origin.merchant)
+                named[origin.message] = named.get(origin.message, False) or shop
+        since = now - PAACK_SHOP_CHECK_WINDOW
+
+        def received(key: str) -> datetime:
+            record = data.messages[key]
+            return record.received or record.seen
+
+        keys = [
+            key
+            for key, record in data.messages.items()
+            if record.state is MessageState.APPLIED
+            and named.get(key) is False
+            and record.seen < before
+            and received(key) >= since
+            and (info := lookup(record.sender_domain)) is not None
+            and info.carrier == "paack"
+            and not self.is_ignored(record.sender_domain)
+        ]
+        return sorted(keys, key=received, reverse=True)
+
+    async def _async_paack_shop_check(self, before: datetime) -> None:
+        """Name the shop of Paack's parcels, once after the update.
+
+        Releases before 0.1.7 couldn't read the shop Paack's e-mails name.
+        Each e-mail is downloaded and read again by the parsers, never the
+        AI, and only the shop is filled in, where the e-mail's own reading
+        named none: what the user set, merged or split stays as it is.
+        Nothing changes when the e-mail changed state while it was read.
+        """
+        data = self.data
+        keys = self._paack_shop_check_keys(before, dt_util.utcnow())
+        counts = dict.fromkeys(("read", "filled", "kept", "gone", "failed"), 0)
+        counts["skipped"] = max(0, len(keys) - PAACK_SHOP_CHECK_MAX)
+        for key in keys[:PAACK_SHOP_CHECK_MAX]:
+            if (record := data.messages.get(key)) is None:
+                continue
+            fetched = await self.async_refetch(record)
+            if fetched.message is None or fetched.mailbox is None:
+                counts["gone" if fetched.gone else "failed"] += 1
+                continue
+            counts["read"] += 1
+            verdict = self.verify(fetched.message)
+            result = await self.async_parse(fetched.message, verdict)
+            shop = result.merchant
+            if (
+                data.messages.get(key) is record
+                and record.state is MessageState.APPLIED
+                and verdict.verified
+                and is_confident(result)
+                and shop
+                and not carrier_like(shop)
+                and fill_shop(data, key, shop, dt_util.utcnow())
+            ):
+                counts["filled"] += 1
+            else:
+                counts["kept"] += 1
+        check = data.engine.setdefault(PAACK_SHOP_CHECK_KEY, {})
+        check["done"] = dt_to_str(dt_util.utcnow())
+        check["counts"] = counts
+        if counts["filled"]:
+            self.async_changed()
+        else:
+            self.async_schedule_save()
 
     def _returns_check_keys(self, before: datetime, now: datetime) -> list[str]:
         """Return the e-mails for the returns check, in the order to read them.
@@ -2341,6 +2445,7 @@ class ParcelsEngine:
             "kept_apart": len(data.engine.get("kept_apart") or ()),
             "refunds_dropped": int(data.engine.get(REFUNDS_KEY) or 0),
             "returns_check": data.engine.get(RETURNS_CHECK_KEY),
+            "paack_shop_check": data.engine.get(PAACK_SHOP_CHECK_KEY),
             "recent_emails": self._recent_emails(dt_util.utcnow()),
             "working_days": self.workdays.source,
             "paack_amazon": paack_amazon_counts(data),

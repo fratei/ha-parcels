@@ -25,7 +25,7 @@ import {
   type FormProblem,
   type SuggestionForm,
 } from "./forms.ts";
-import { carrierLabel, kindLabel, mergeReasonLabel, noteMeaning, reasonLabel } from "./labels.ts";
+import { carrierLabel, checkMeaning, kindLabel, mergeReasonLabel, noteMeaning, reasonLabel } from "./labels.ts";
 import { compareLikelihood, etaRange } from "./parcels.ts";
 import { defineElement, registerCard } from "./register.ts";
 import {
@@ -806,7 +806,10 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     return html`<details class="checks">
       <summary>${STRINGS.failedChecks}</summary>
       <ul class="codes">
-        ${errors.map((code) => html`<li><code>${code}</code></li>`)}
+        ${errors.map((code) => {
+          const meaning = checkMeaning(code);
+          return html`<li><code>${code}</code>${meaning ? `: ${meaning}` : nothing}</li>`;
+        })}
       </ul>
     </details>`;
   }
