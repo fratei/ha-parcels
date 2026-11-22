@@ -9,10 +9,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from custom_components.parcels.parcelapp.dates import (
+    EventDate,
     date_shape,
     is_future_date,
     parse_event_date,
     parse_expected,
+    read_event_date,
 )
 from custom_components.parcels.parsers.base import Eta
 
@@ -60,6 +62,152 @@ def test_event_dates(value: str, expected: datetime) -> None:
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
+        # Portuguese, as the app shows it on a 12-hour clock.
+        ("sábado, 7 de novembro 3:15 da tarde", _utc(2026, 11, 7, 15, 15)),
+        ("sábado, 7 de novembro às 3:15 da tarde", _utc(2026, 11, 7, 15, 15)),
+        ("sábado, 7 de novembro 9:05 da manhã", _utc(2026, 11, 7, 9, 5)),
+        ("sábado, 7 de novembro 12:30 da tarde", _utc(2026, 11, 7, 12, 30)),
+        ("sábado, 7 de novembro 12:30 da madrugada", _utc(2026, 11, 7, 0, 30)),
+        ("sábado, 7 de novembro 12:30 da manhã", _utc(2026, 11, 7, 0, 30)),
+        ("sábado, 7 de novembro 2:10 da madrugada", _utc(2026, 11, 7, 2, 10)),
+        ("sábado, 7 de novembro 12:00 meio-dia", _utc(2026, 11, 7, 12, 0)),
+        ("sábado, 7 de novembro 12:00 meia-noite", _utc(2026, 11, 7, 0, 0)),
+        ("sábado, 7 de novembro 4:20 à tarde", _utc(2026, 11, 7, 16, 20)),
+        ("sexta-feira, 13 de novembro 9:26 da noite", _utc(2026, 11, 13, 21, 26)),
+        ("sábado, 7 de novembro 15:15 da tarde", _utc(2026, 11, 7, 15, 15)),
+        # Spanish.
+        ("sábado, 7 de noviembre 9:05 de la mañana", _utc(2026, 11, 7, 9, 5)),
+        ("sábado, 7 de noviembre 4:20 de la tarde", _utc(2026, 11, 7, 16, 20)),
+        ("sábado, 7 de noviembre 11:15 de la noche", _utc(2026, 11, 7, 23, 15)),
+        ("sábado, 7 de noviembre 12:00 de la noche", _utc(2026, 11, 7, 0, 0)),
+        ("sábado, 7 de noviembre 1:30 de la madrugada", _utc(2026, 11, 7, 1, 30)),
+        ("sábado, 7 de noviembre 12:10 del mediodía", _utc(2026, 11, 7, 12, 10)),
+        ("sábado, 7 de noviembre 1:15 del mediodía", _utc(2026, 11, 7, 13, 15)),
+        # French.
+        ("samedi 7 novembre 9:05 du matin", _utc(2026, 11, 7, 9, 5)),
+        ("samedi 7 novembre 4:20 de l\u2019après-midi", _utc(2026, 11, 7, 16, 20)),
+        ("samedi 7 novembre 4:20 de l'après-midi", _utc(2026, 11, 7, 16, 20)),
+        ("samedi 7 novembre 8:45 du soir", _utc(2026, 11, 7, 20, 45)),
+        ("samedi 7 novembre 12:30 de la nuit", _utc(2026, 11, 7, 0, 30)),
+        ("samedi 7 novembre 12:00 midi", _utc(2026, 11, 7, 12, 0)),
+        # Italian.
+        ("sabato 7 novembre 9:05 di mattina", _utc(2026, 11, 7, 9, 5)),
+        ("sabato 7 novembre 4:20 del pomeriggio", _utc(2026, 11, 7, 16, 20)),
+        ("sabato 7 novembre 8:45 di sera", _utc(2026, 11, 7, 20, 45)),
+        ("sabato 7 novembre 2:10 di notte", _utc(2026, 11, 7, 2, 10)),
+        ("sabato 7 novembre 12:00 mezzanotte", _utc(2026, 11, 7, 0, 0)),
+        # German.
+        ("Samstag, 14. November 9:05 morgens", _utc(2026, 11, 14, 9, 5)),
+        ("Samstag, 14. November 1:00 mittags", _utc(2026, 11, 14, 13, 0)),
+        ("Samstag, 14. November 4:20 nachmittags", _utc(2026, 11, 14, 16, 20)),
+        ("Samstag, 14. November 8:45 abends", _utc(2026, 11, 14, 20, 45)),
+        ("Samstag, 14. November 2:10 nachts", _utc(2026, 11, 14, 2, 10)),
+        # A German "am" before the day isn't a.m.
+        ("15:25 am 14. November", _utc(2026, 11, 14, 15, 25)),
+        # Dutch.
+        ("zaterdag 14 november 9:05 \u2019s ochtends", _utc(2026, 11, 14, 9, 5)),
+        ("zaterdag 14 november 4:20 's middags", _utc(2026, 11, 14, 16, 20)),
+        ("zaterdag 14 november 8:45 \u2019s avonds", _utc(2026, 11, 14, 20, 45)),
+        ("zaterdag 14 november 2:10 \u2019s nachts", _utc(2026, 11, 14, 2, 10)),
+        # English.
+        ("Saturday, 14 November 9:05 in the morning", _utc(2026, 11, 14, 9, 5)),
+        ("Saturday, 14 November 4:20 in the afternoon", _utc(2026, 11, 14, 16, 20)),
+        ("Saturday, 14 November 8:45 in the evening", _utc(2026, 11, 14, 20, 45)),
+        ("Saturday, 14 November 11:30 at night", _utc(2026, 11, 14, 23, 30)),
+        ("Saturday, 14 November 12:00 noon", _utc(2026, 11, 14, 12, 0)),
+        ("Saturday, 14 November 12:00 midnight", _utc(2026, 11, 14, 0, 0)),
+    ],
+)
+def test_parts_of_the_day(value: str, expected: datetime) -> None:
+    """A 12-hour time takes its part of the day, in the seven languages."""
+    assert parse_event_date(value, NOW, LISBON) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Saturday, 14 November 3:21 pm WET", _utc(2026, 11, 14, 15, 21)),
+        ("Saturday, 14 November 3:21 pm GMT", _utc(2026, 11, 14, 15, 21)),
+        ("Saturday, 14 November 15:21 CET", _utc(2026, 11, 14, 14, 21)),
+        ("Samstag, 14. November 15:21 MEZ", _utc(2026, 11, 14, 14, 21)),
+        ("Saturday, 14 November 15:21 GMT+1", _utc(2026, 11, 14, 14, 21)),
+        ("Saturday, 14 November 15:21 UTC+01:00", _utc(2026, 11, 14, 14, 21)),
+        ("Saturday, 14 November 15:21 +0100", _utc(2026, 11, 14, 14, 21)),
+        ("Saturday, 14 November 15:21 (GMT-3)", _utc(2026, 11, 14, 18, 21)),
+        ("Saturday, 14 November 15:21 GMT +2", _utc(2026, 11, 14, 13, 21)),
+        # Lisbon's summer time.
+        ("Thursday, 16 July 3:21 pm WEST", _utc(2026, 7, 16, 14, 21)),
+        ("sábado, 7 de novembro 3:15 da tarde WET", _utc(2026, 11, 7, 15, 15)),
+        ("16/11/2026 15:10 UTC", _utc(2026, 11, 16, 15, 10)),
+    ],
+)
+def test_time_zones(value: str, expected: datetime) -> None:
+    """A time zone after the time wins over Home Assistant's."""
+    assert parse_event_date(value, NOW, LISBON) == expected
+
+
+def test_read_event_date() -> None:
+    """A reading keeps the local day, and the words that set the time."""
+    assert read_event_date(
+        "sábado, 7 de novembro 3:15 da tarde", NOW, LISBON
+    ) == EventDate(_utc(2026, 11, 7, 15, 15), date(2026, 11, 7), ("da tarde",))
+    assert read_event_date(
+        "Saturday, 14 November 3:21 pm WET", NOW, LISBON
+    ) == EventDate(_utc(2026, 11, 14, 15, 21), date(2026, 11, 14), ("pm", "wet"))
+    assert read_event_date("2026-07-16", NOW, LISBON) == EventDate(
+        _utc(2026, 7, 15, 23, 0), date(2026, 7, 16)
+    )
+    assert read_event_date("18/11/2026 09:00", NOW, LISBON) == EventDate(
+        NOW, date(2026, 11, 17)
+    )
+    assert read_event_date("soon", NOW, LISBON) is None
+    assert read_event_date("2026-11-19", NOW, LISBON) is None
+
+
+@pytest.mark.parametrize(
+    ("value", "day"),
+    [
+        # Words after the time that aren't understood: the time is unsure.
+        ("sábado, 7 de novembro 3:15 qwerty", date(2026, 11, 7)),
+        ("sábado, 7 de novembro 3:15 qwerty uiop", date(2026, 11, 7)),
+        ("16/11/2026 15:10 extra", date(2026, 11, 16)),
+        ("Saturday, 14 November 15:21 pst", date(2026, 11, 14)),
+        ("Saturday, 14 November 3:21 pm (estimated)", date(2026, 11, 14)),
+        ("Saturday, 14 November 3:21 pm at the depot", date(2026, 11, 14)),
+        # A part of the day that contradicts the time.
+        ("sábado, 7 de novembro 1:30 da noite", date(2026, 11, 7)),
+        ("14 November 0:30 pm", date(2026, 11, 14)),
+        # Tomorrow is today: a carrier's clock ahead of ours.
+        ("18/11/2026 10:00 xyz", date(2026, 11, 17)),
+    ],
+)
+def test_day_only_event_dates(value: str, day: date) -> None:
+    """When only the time is unsure, the day is still read."""
+    assert read_event_date(value, NOW, LISBON) == EventDate(None, day)
+    assert parse_event_date(value, NOW, LISBON) is None
+    assert not is_future_date(value, NOW, LISBON)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "14 November near 3 pm",
+        "15:21 xyz, Saturday 14 November",
+        "Saturday, 14 November 15:21 by 16 November",
+        "Wednesday, 14 November 3:15 xyz",
+        "15:21 GMT+25, 14 November",
+        "Saturday, 14 November 15:21 GMT+25",
+        "Saturday, 14 November 3:15 da tarde 16:00",
+    ],
+)
+def test_no_day_when_unsure(value: str) -> None:
+    """Text not understood gives no day when it could hold the date."""
+    assert read_event_date(value, NOW, LISBON) is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
         # Tomorrow is still this year (a carrier ahead of us), but not later.
         ("18 November", NOW),
         ("19 November", _utc(2025, 11, 19, 0, 0)),
@@ -88,6 +236,7 @@ def test_event_dates_never_in_the_future() -> None:
         "19/11/2026",
         "Thursday, 19 November 2026",
         "2027-01-05T08:00:00Z",
+        "19/11/2026 10:00 xyz",
     ],
 )
 def test_future_event_dates_give_no_date(value: str) -> None:
@@ -172,6 +321,22 @@ def test_unreadable_numeric_dates(value: str) -> None:
         ("20 Nov → 14:05", "99 nov ? 99:99"),
         ("1" * 80, "9" * 60 + "..."),
         ("x" * 300, "x..."),
+        # Parts of the day and time zones stay, and a short last word.
+        ("sábado, 7 de novembro 3:15 da tarde", "sabado, 9 de novembro 9:99 da tarde"),
+        ("Saturday, 14 November 3:21 pm WET", "saturday, 99 november 9:99 pm wet"),
+        (
+            "zaterdag 14 november 8:45 \u2019s avonds",
+            "zaterdag 99 november 9:99 ?s avonds",
+        ),
+        (
+            "samedi 7 novembre 4:20 de l'après-midi",
+            "samedi 9 novembre 9:99 de l'apres-midi",
+        ),
+        ("sábado, 7 de novembro 3:15 qwerty", "sabado, 9 de novembro 9:99 qwerty"),
+        ("sábado, 7 de novembro 3:15 abcdefg", "sabado, 9 de novembro 9:99 x"),
+        ("sábado, 7 de novembro 3:15 qwerty uiop", "sabado, 9 de novembro 9:99 x uiop"),
+        ("14/11/2026 3:15 (est.)", "99/99/9999 9:99 (est.)"),
+        ("Order placed", "x"),
     ],
 )
 def test_date_shapes(value: Any, expected: str) -> None:

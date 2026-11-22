@@ -170,6 +170,30 @@ describe("rankMergeCandidates", () => {
     const ordered = makeParcel({ ...self, ordered_at: "2026-07-13T08:00:00Z" });
     assert.deepEqual(ids(rankMergeCandidates([ordered, parcels[1]!], ordered, ctx).older), ["before"]);
   });
+
+  test("a delivery known only by its day counts on that day", () => {
+    const sent = makeParcel({ ...self, shipped_at: "2026-07-13T08:00:00Z" });
+    const dayOnly = (id: string, at: string): Parcel =>
+      makeParcel({
+        id,
+        merchant: "Example Shop",
+        status: "delivered",
+        delivered_at: at,
+        delivered_undated: true,
+        delivered_timeless: true,
+        status_time: at,
+        status_undated: true,
+        status_timeless: true,
+      });
+    const parcels = [
+      sent,
+      dayOnly("day-before", "2026-07-11T23:00:00.000020Z"),
+      dayOnly("same-day", "2026-07-12T23:00:00.000020Z"),
+    ];
+    const { likely, older } = rankMergeCandidates(parcels, sent, ctx);
+    assert.deepEqual(ids(likely), ["same-day"]);
+    assert.deepEqual(ids(older), ["day-before"]);
+  });
 });
 
 describe("searchCandidates", () => {

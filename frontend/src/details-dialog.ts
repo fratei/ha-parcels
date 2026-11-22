@@ -20,8 +20,10 @@ import {
   formatDate,
   formatDateRange,
   formatDateTime,
+  formatDayWithoutTime,
   formatWindow,
   localeOptions,
+  MEDIUM_DATE,
   type LocaleOptions,
 } from "./format.ts";
 import {
@@ -1041,8 +1043,9 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const returns = this._returnsOf(parcel);
     const row = (label: string, value: unknown): TemplateResult =>
       html`<div><dt>${label}</dt><dd>${value}</dd></div>`;
+    const sinceDay = parcel.status_timeless ? formatDayWithoutTime(parcel.status_time, locale, MEDIUM_DATE) : "";
     const since = parcel.status_undated
-      ? ` · ${STRINGS.dateNotKnownInline}`
+      ? ` · ${sinceDay ? fmt(STRINGS.sinceDate, { date: sinceDay }) : STRINGS.dateNotKnownInline}`
       : parcel.status_time
         ? ` · ${fmt(STRINGS.sinceDate, { date: formatDateTime(parcel.status_time, locale) })}`
         : "";
@@ -1051,7 +1054,11 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     return html`<dl class="facts">
       ${row(STRINGS.status, `${statusLabel(parcel.status)}${since}`)}
       ${parcel.delivered_undated
-        ? row(STRINGS.delivered, STRINGS.dateNotKnown)
+        ? row(
+            STRINGS.delivered,
+            (parcel.delivered_timeless && formatDayWithoutTime(parcel.delivered_at, locale, MEDIUM_DATE)) ||
+              STRINGS.dateNotKnown,
+          )
         : parcel.delivered_at
           ? row(STRINGS.delivered, formatDateTime(parcel.delivered_at, locale))
           : nothing}
@@ -1182,7 +1189,8 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const name = item.tracking_number?.trim() || parcelTitle(item);
     const eta = etaRange(item);
     const when = item.delivered_undated
-      ? STRINGS.dateNotKnownInline
+      ? (item.delivered_timeless && formatDayWithoutTime(item.delivered_at, locale, MEDIUM_DATE)) ||
+        STRINGS.dateNotKnownInline
       : item.delivered_at
         ? formatDateTime(item.delivered_at, locale)
         : eta
@@ -1216,7 +1224,9 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
       ${newestFirst(timeline).map((entry) => {
         const status = statusLabel(entry.status);
         const label = entry.label.trim();
-        const time = entry.undated ? STRINGS.dateNotKnown : formatDateTime(entry.time, locale);
+        const time = entry.undated
+          ? (entry.timeless && formatDayWithoutTime(entry.time, locale, MEDIUM_DATE)) || STRINGS.dateNotKnown
+          : formatDateTime(entry.time, locale);
         const meta = [time, sourceLabel(entry.source)]
           .filter(Boolean)
           .join(" · ");

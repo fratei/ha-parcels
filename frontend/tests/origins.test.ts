@@ -125,6 +125,19 @@ describe("the e-mails of a parcel", () => {
     assert.equal(same.said, "Delivered");
     const undated = one(email({ time: T3, status: "delivered", event_time: T3, undated: true }));
     assert.equal(undated.said, "Delivered · date not known");
+    const dayOnly = one(
+      makeOrigin({
+        id: "pa:2",
+        source: "parcelapp",
+        label: "Parcel app",
+        time: T4,
+        status: "delivered",
+        event_time: "2026-07-14T23:00:00.000010Z",
+        undated: true,
+        timeless: true,
+      }),
+    );
+    assert.equal(dayOnly.said, "Delivered · Wed 15 Jul, time not known");
     const window = one(email({ status: "out_for_delivery", window_start: "13:00", window_end: null }));
     assert.equal(window.said, "Out for delivery · from 13:00");
   });

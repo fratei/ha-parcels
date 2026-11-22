@@ -460,11 +460,13 @@ class ParcelEvent:
     inferred: bool = False
     # The source gave no date it could read: ``time`` only places the event
     # after the last thing known to have come before it, on that day. With
-    # ``dayless``, nothing did: the day isn't known either. It had happened
-    # ``by`` then, when it was first seen.
+    # ``dayless``, nothing did: the day isn't known either. With
+    # ``timeless``, the source gave the day but not the time: ``time`` is on
+    # that day. It had happened ``by`` then, when it was first seen.
     undated: bool = False
     dayless: bool = False
     by: datetime | None = None
+    timeless: bool = False
     id: str = field(default_factory=lambda: secrets.token_hex(6))
 
     def as_dict(self) -> dict[str, Any]:
@@ -485,6 +487,7 @@ class ParcelEvent:
                 "undated": self.undated,
                 "dayless": self.dayless,
                 "by": dt_to_str(self.by),
+                "timeless": self.timeless,
             }
         )
 
@@ -506,6 +509,7 @@ class ParcelEvent:
             undated=bool(data.get("undated", False)),
             dayless=bool(data.get("dayless", False)),
             by=dt_from_str(data.get("by")),
+            timeless=bool(data.get("timeless", False)),
         )
 
 
@@ -564,8 +568,10 @@ class TimelineEntry:
     accepted: bool
     eta: Eta | None
     inferred: bool = False
-    # When it happened isn't known, see ParcelEvent.undated.
+    # When it happened isn't known, see ParcelEvent.undated, or only its day
+    # is, see ParcelEvent.timeless.
     undated: bool = False
+    timeless: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -608,6 +614,9 @@ class ParcelState:
     # last known day (see ParcelEvent.undated), or None when no day is known.
     status_undated: bool = False
     delivered_undated: bool = False
+    # It came with its day but not its time: the time is only on that day.
+    status_timeless: bool = False
+    delivered_timeless: bool = False
     # The marketplace seller, see Origin.seller.
     seller: str | None = None
 
@@ -779,9 +788,10 @@ def _event_sort_key(event: ParcelEvent) -> tuple[datetime, int, str]:
 def day_known(event: ParcelEvent) -> bool:
     """Return whether an event's day is known.
 
-    An undated event's is when the times it's placed between share a day.
+    An undated event's is when its source gave the day, or when the times
+    it's placed between share a day.
     """
-    if not event.undated:
+    if not event.undated or event.timeless:
         return True
     return (
         not event.dayless
@@ -919,11 +929,13 @@ def derive_state(parcel: Parcel) -> ParcelState:
     # When an undated status had happened by.
     status_by: datetime | None = None
     status_undated = False
+    status_timeless = False
     status_inferred = False
     inferred_by: InferredReason | None = None
     delivered_at: datetime | None = None
     delivered_found = False
     delivered_undated = False
+    delivered_timeless = False
     eta: Eta | None = None
     eta_time: datetime | None = None
     eta_source: Source | None = None
@@ -934,6 +946,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
             status = new_status
             status_time = None if event.dayless else event.time
             status_undated = event.undated
+            status_timeless = event.undated and event.timeless
             status_by = event.by if event.undated else None
             status_inferred = event.inferred
             inferred_by = (
@@ -943,6 +956,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
                 delivered_found = True
                 delivered_at = status_time
                 delivered_undated = event.undated
+                delivered_timeless = status_timeless
         elif accepted and not event.inferred:
             # A real e-mail confirming an inferred status makes it a fact.
             status_inferred = False
@@ -956,12 +970,14 @@ def derive_state(parcel: Parcel) -> ParcelState:
                 # day it had happened by: the best time known.
                 replaced = status_time
                 status_time, status_undated = event.time, False
+                status_timeless = False
                 if (
                     status is ParcelStatus.DELIVERED
                     and delivered_undated
                     and delivered_at == replaced
                 ):
                     delivered_at, delivered_undated = event.time, False
+                    delivered_timeless = False
         event_eta = event.eta
         if (
             event_eta is None
@@ -990,6 +1006,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
                 eta=event.eta,
                 inferred=event.inferred,
                 undated=event.undated,
+                timeless=event.undated and event.timeless,
             )
         )
     if status is None:
@@ -1044,6 +1061,8 @@ def derive_state(parcel: Parcel) -> ParcelState:
         references=tuple(references),
         status_undated=status_undated,
         delivered_undated=delivered_undated,
+        status_timeless=status_timeless,
+        delivered_timeless=delivered_timeless,
         seller=next((o.seller for o in reversed(origins) if o.seller), None),
     )
 

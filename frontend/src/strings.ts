@@ -216,6 +216,8 @@ export const STRINGS = {
   /** For a status or delivery whose source gave no date that could be read. */
   dateNotKnown: "Date not known",
   dateNotKnownInline: "date not known",
+  /** For one whose source gave its day but no time that could be read. */
+  dayTimeNotKnown: "{day}, time not known",
   carrier: "Delivered by",
   notKnownYet: "Not known yet",
   trackOnline: "Track on the carrier's site",

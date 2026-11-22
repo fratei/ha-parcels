@@ -532,6 +532,52 @@ async def test_parcel_app_name_and_date(
     assert seen[parcel_id]["eta_start"] == "2026-11-19"
 
 
+async def test_parcel_app_day_only_delivery(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket
+) -> None:
+    """A delivery the Parcel app gives the day of, but not the time, says so.
+
+    The parcel, its timeline and the row of its source tell the time isn't
+    known, so the card shows the day alone.
+    """
+    (parcel_id,) = engine.data.parcels
+    now = dt_util.utcnow()
+    origin = Origin(
+        id=PARCELAPP_PREFIX + CTT_NUMBER,
+        source=Source.PARCELAPP,
+        time=now,
+        carrier="ctt",
+        tracking_number=CTT_NUMBER,
+    )
+    delivery = Contribution(
+        origin=origin,
+        events=[
+            ParcelEvent(
+                time=now - timedelta(hours=1),
+                source=Source.PARCELAPP,
+                status=ParcelStatus.DELIVERED,
+                undated=True,
+                timeless=True,
+                by=now,
+            )
+        ],
+    )
+    assert apply_contribution(engine.data, delivery, now).parcel_id == parcel_id
+
+    listed = {p["id"]: p for p in (await result(ws, "parcels/list"))["parcels"]}
+    shown = listed[parcel_id]
+    assert (shown["status_undated"], shown["status_timeless"]) == (True, True)
+    assert (shown["delivered_undated"], shown["delivered_timeless"]) == (True, True)
+    details = await result(ws, "parcels/get", parcel_id=parcel_id)
+    assert [
+        (entry["status"], entry["undated"], entry["timeless"])
+        for entry in details["timeline"]
+    ] == [("in_transit", False, False), ("delivered", True, True)]
+    assert [
+        (row["source"], row["undated"], row["timeless"]) for row in details["origins"]
+    ] == [("parser", False, False), ("parcelapp", True, True)]
+
+
 async def test_marketplace_seller(
     hass: HomeAssistant,
     engine: ParcelsEngine,
@@ -764,6 +810,7 @@ async def test_get(
             "kind": "in_transit",
             "event_time": "2026-11-17T08:05:00+00:00",
             "undated": False,
+            "timeless": False,
             "dayless": False,
             "eta_start": "2026-11-19",
             "eta_end": "2026-11-19",
@@ -796,6 +843,7 @@ async def test_get(
             "kind": "delivered",
             "event_time": "2026-11-17T10:10:00+00:00",
             "undated": False,
+            "timeless": False,
             "dayless": False,
             "eta_start": "2026-11-19",
             "eta_end": "2026-11-19",
@@ -825,6 +873,7 @@ async def test_get(
             "source": "parser",
             "label": "",
             "undated": False,
+            "timeless": False,
         },
         {
             "time": "2026-11-17T10:10:00+00:00",
@@ -832,9 +881,11 @@ async def test_get(
             "source": "manual",
             "label": "",
             "undated": False,
+            "timeless": False,
         },
     ]
     assert (shown["status_undated"], shown["delivered_undated"]) == (False, False)
+    assert (shown["status_timeless"], shown["delivered_timeless"]) == (False, False)
     assert details["orders"] == []
 
 

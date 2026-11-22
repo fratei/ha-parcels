@@ -61,6 +61,7 @@ from custom_components.parcels.models import (
     ParcelEvent,
     ParcelsData,
     Source,
+    day_known,
     dt_to_str,
 )
 from custom_components.parcels.parcelapp.api import ADD_URL, DELIVERIES_URL
@@ -1144,6 +1145,152 @@ async def test_undated_delivery_waits_for_a_dated_report(
         assert fired == []
 
 
+async def test_day_only_delivery_stays_on_its_day(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A date whose time isn't understood still gives the event its day.
+
+    The delivery goes on its own day, with its time not known: not on the
+    day of an older event, nor on the expected day. It's news while it can
+    have happened in the last day.
+    """
+    add_parcel(engine, "a", age=timedelta(days=7), eta=Eta(day(18), day(18)))
+    await hass.async_block_till_done()
+    fired = capture_news(hass)
+    parcel_app.deliveries = [
+        delivery(
+            status=0,
+            events=(
+                ("Delivered", "Monday, 16 November 4:20 qwerty"),
+                ("In transit", "2026-11-13 09:05:00"),
+            ),
+        )
+    ]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    placed = at(16, 0) + MAX_HISTORY * MICROSECOND
+    delivered = [event for event in own_events(parcel) if event.status is not None]
+    assert [
+        (event.time, event.status, event.undated, event.timeless) for event in delivered
+    ] == [(placed, ParcelStatus.DELIVERED, True, True)]
+    assert day_known(delivered[0])
+    state = parcel.state
+    assert state.status is ParcelStatus.DELIVERED
+    assert (state.status_time, state.status_undated, state.status_timeless) == (
+        placed,
+        True,
+        True,
+    )
+    assert (
+        state.delivered_at,
+        state.delivered_undated,
+        state.delivered_timeless,
+    ) == (placed, True, True)
+    newest = record(engine)["history"][0]
+    assert (newest["at"], newest["day"]) == (None, "2026-11-16")
+    assert fired == [
+        (EVENT_STATUS_CHANGED, ParcelStatus.DELIVERED.value),
+        (EVENT_DELIVERED, ParcelStatus.DELIVERED.value),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("written", "when"),
+    [
+        ("sábado, 14 de novembro 3:15 da tarde", at(14, 15, 15)),
+        ("sexta-feira, 13 de novembro 12:30 da madrugada", at(13, 0, 30)),
+        ("Saturday, 14 November 3:15 pm WET", at(14, 15, 15)),
+        ("Saturday, 14 November 4:15 pm GMT+1", at(14, 15, 15)),
+    ],
+)
+async def test_dates_with_the_part_of_the_day(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    written: str,
+    when: datetime,
+) -> None:
+    """A date with the part of the day or a time zone after its time is read."""
+    add_parcel(engine, "a", age=timedelta(days=7))
+    parcel_app.deliveries = [delivery(status=0, events=(("Delivered", written),))]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    assert [
+        (event.time, event.status, event.undated, event.timeless)
+        for event in own_events(parcel)
+    ] == [(when, ParcelStatus.DELIVERED, False, False)]
+    assert (parcel.state.delivered_at, parcel.state.delivered_undated) == (
+        when,
+        False,
+    )
+    newest = record(engine)["history"][0]
+    assert newest["at"] == dt_to_str(when)
+    assert "day" not in newest
+
+
+async def test_dates_read_later_keep_what_was_seen(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Events stored before their dates could be read stay the same events.
+
+    They keep the statuses they had and when they were first seen.
+    """
+    add_parcel(engine, "a", age=timedelta(days=7))
+    parcel_app.deliveries = [
+        delivery(
+            status=0,
+            events=(
+                ("Delivered", "Monday, 16 November 4:20 qwerty"),
+                ("Out for delivery", "segunda-feira, 16 de novembro 7:50 da manhã"),
+            ),
+        )
+    ]
+    await read(hass, freezer, parcel_app)
+    # As an earlier version kept them, without their dates.
+    seen = dt_to_str(at(16, 11))
+    stored = record(engine)
+    stored["history"] = [
+        {"info": entry["info"], "at": None, "status": status, "seen": seen}
+        for entry, status in zip(
+            stored["history"], ("delivered", "out_for_delivery"), strict=True
+        )
+    ]
+    stored.pop("fp")
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    out = at(16, 7, 50)
+    assert [
+        (event.time, event.status, event.timeless, event.by)
+        for event in own_events(parcel)
+        if event.status is not None
+    ] == [
+        (out, ParcelStatus.OUT_FOR_DELIVERY, False, None),
+        (out + MAX_HISTORY * MICROSECOND, ParcelStatus.DELIVERED, True, at(16, 11)),
+    ]
+    history = record(engine)["history"]
+    assert [entry["status"] for entry in history] == [
+        "delivered",
+        "out_for_delivery",
+    ]
+    assert history[0]["seen"] == seen
+
+
 async def test_diagnostics_tell_the_dates_not_read(
     hass: HomeAssistant,
     freezer: FrozenDateTimeFactory,
@@ -1191,6 +1338,56 @@ async def test_diagnostics_tell_the_dates_not_read(
     ]
     text = json.dumps(diagnostics)
     for secret in ("Secret", "garbage", "Today", "abc", NUMBER, SHOP, PLACE):
+        assert secret not in text
+
+
+async def test_diagnostics_tell_the_dates_read_in_part(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Diagnostics count the dates read without their time apart.
+
+    Their shapes keep a short last word as it is. The shapes of the dates
+    read with a part of the day or a time zone after the time are kept too.
+    """
+    dates = [
+        "garbage",
+        "Monday, 16 November 4:20 qwerty",
+        "Monday, 16 November 4:20 qwerty",
+        "Monday, 16 November 4:20 Hidden remarks",
+        "sábado, 14 de novembro 3:15 da tarde",
+        "sexta-feira, 13 de novembro 9:05 da manhã",
+        "sexta-feira, 13 de novembro 9:05 da manhã",
+        "Saturday, 14 November 3:15 pm WET",
+        "2026-11-16 18:30:00",
+    ]
+    parcel_app.deliveries = [
+        delivery(
+            events=[
+                (f"Secret note {index}", value) for index, value in enumerate(dates)
+            ]
+        )
+    ]
+
+    await read(hass, freezer, parcel_app)
+
+    diagnostics = sync_of(engine).diagnostics()
+    found = diagnostics["event_dates"]
+    assert (found["unparsed"], found["day_only"], found["future"]) == (1, 3, 0)
+    assert found["shapes"] == {"x": 1}
+    assert list(found["day_only_shapes"].items()) == [
+        ("monday, 99 november 9:99 qwerty", 2),
+        ("monday, 99 november 9:99 x", 1),
+    ]
+    assert list(found["marked"].items()) == [
+        ("sexta-feira, 99 de novembro 9:99 da manha", 2),
+        ("sabado, 99 de novembro 9:99 da tarde", 1),
+        ("saturday, 99 november 9:99 pm wet", 1),
+    ]
+    text = json.dumps(diagnostics)
+    for secret in ("Secret", "garbage", "Hidden", "remarks", NUMBER, SHOP, PLACE):
         assert secret not in text
 
 

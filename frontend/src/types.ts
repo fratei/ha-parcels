@@ -68,6 +68,11 @@ export interface Parcel {
    * when no day is.
    */
   status_undated: boolean;
+  /**
+   * Of an undated status, the source gave the day but not the time:
+   * `status_time` is on that day.
+   */
+  status_timeless: boolean;
   eta_start: string | null;
   eta_end: string | null;
   window_start: string | null;
@@ -77,6 +82,8 @@ export interface Parcel {
   delivered_at: string | null;
   /** Like `status_undated`, for `delivered_at`. */
   delivered_undated: boolean;
+  /** Like `status_timeless`, for `delivered_at`. */
+  delivered_timeless: boolean;
   /** Delivered only by inference, until the user keeps or undoes it. */
   inferred: boolean;
   /**
@@ -279,6 +286,8 @@ export interface TimelineEntry {
   label: string;
   /** The source gave no date that could be read: `time` only orders the entry. */
   undated: boolean;
+  /** Of an undated entry, the source gave the day but not the time: `time` is on that day. */
+  timeless: boolean;
 }
 
 export interface OrderInfo {
@@ -309,6 +318,8 @@ export interface OriginInfo {
   event_time: string | null;
   /** The source gave no date for it that could be read. */
   undated: boolean;
+  /** Of an undated status, the source gave the day but not the time: `event_time` is on that day. */
+  timeless: boolean;
   /** Not even the day is known. */
   dayless: boolean;
   eta_start: string | null;

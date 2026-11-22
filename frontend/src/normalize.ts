@@ -130,6 +130,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     status: text(raw.status) as ParcelStatus,
     status_time: str(raw.status_time),
     status_undated: raw.status_undated === true,
+    status_timeless: raw.status_timeless === true,
     eta_start: str(raw.eta_start),
     eta_end: str(raw.eta_end),
     window_start: str(raw.window_start),
@@ -137,6 +138,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     eta_source: etaSource(raw.eta_source),
     delivered_at: str(raw.delivered_at),
     delivered_undated: raw.delivered_undated === true,
+    delivered_timeless: raw.delivered_timeless === true,
     inferred: raw.inferred === true,
     inferred_reason: inferredReason(raw.inferred_reason),
     pickup_point: str(raw.pickup_point),
@@ -379,6 +381,7 @@ function timelineEntry(raw: unknown): TimelineEntry | null {
     source: timelineSource(raw.source),
     label: text(raw.label),
     undated: raw.undated === true,
+    timeless: raw.timeless === true,
   };
 }
 
@@ -423,6 +426,7 @@ function originInfo(raw: unknown): OriginInfo | null {
     kind: id(raw.kind),
     event_time: id(raw.event_time),
     undated: raw.undated === true,
+    timeless: raw.timeless === true,
     dayless: raw.dayless === true,
     eta_start: isYmd(raw.eta_start) ? raw.eta_start : null,
     eta_end: isYmd(raw.eta_end) ? raw.eta_end : null,

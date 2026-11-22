@@ -654,7 +654,13 @@ class ParcelsEngine:
                 or state.inferred
             ):
                 continue
-            old = state.status_time is None or now - state.status_time > EVENT_MAX_AGE
+            happened = state.status_time
+            if happened is not None and state.status_timeless:
+                # Only its day is known: it can have happened until that day ended.
+                happened = dt_util.start_of_local_day(
+                    dt_util.as_local(happened).date() + timedelta(days=1)
+                )
+            old = happened is None or now - happened > EVENT_MAX_AGE
             if state.status_undated and old:
                 # When it happened isn't known: a dated report may tell later,
                 # and then it's news.

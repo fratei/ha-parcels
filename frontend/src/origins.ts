@@ -5,7 +5,7 @@
  */
 import { parseInstant } from "./dates.ts";
 import { numberTail } from "./describe.ts";
-import { formatDateRange, formatDayTime, formatWindow, type LocaleOptions } from "./format.ts";
+import { formatDateRange, formatDayTime, formatDayWithoutTime, formatWindow, type LocaleOptions } from "./format.ts";
 import { carrierLabel, kindLabel, sourceLabel, statusLabel } from "./labels.ts";
 import { STRINGS, fmt } from "./strings.ts";
 import type { OriginInfo } from "./types.ts";
@@ -69,6 +69,7 @@ function combine(lead: OriginInfo, fills: OriginInfo[]): OriginInfo {
     kind: said.kind,
     event_time: said.event_time,
     undated: said.undated,
+    timeless: said.timeless,
     dayless: said.dayless,
     eta_start: estimate.eta_start,
     eta_end: estimate.eta_end,
@@ -107,7 +108,7 @@ function saidText(origin: OriginInfo, locale: LocaleOptions): string {
     const at = origin.event_time ? parseInstant(origin.event_time) : null;
     const arrived = origin.time ? parseInstant(origin.time) : null;
     if (origin.undated) {
-      parts.push(STRINGS.dateNotKnownInline);
+      parts.push((origin.timeless && formatDayWithoutTime(origin.event_time, locale)) || STRINGS.dateNotKnownInline);
     } else if (at !== null && (arrived === null || Math.abs(at - arrived) >= SAME_TIME_MS)) {
       parts.push(formatDayTime(origin.event_time, locale));
     }

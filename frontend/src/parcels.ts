@@ -78,7 +78,8 @@ function sellerKey(parcel: Parcel): string {
 
 /** Delivered on a known day, not just inferred from another parcel. */
 function deliveredDay(parcel: Parcel, timeZone: string): string | null {
-  if (parcel.status !== "delivered" || parcel.inferred || parcel.delivered_undated) {
+  const unknown = parcel.delivered_undated && !parcel.delivered_timeless;
+  if (parcel.status !== "delivered" || parcel.inferred || unknown) {
     return null;
   }
   return localDateOf(parcel.delivered_at, timeZone);

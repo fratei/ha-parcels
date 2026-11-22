@@ -389,6 +389,28 @@ describe("merge candidates", () => {
     assert.equal(candidateLines(dayless, GB).when, "Delivered · date not known");
   });
 
+  test("a delivery whose source gave only its day shows that day, without a time", () => {
+    const dayOnly = makeParcel({
+      ...kettle,
+      status: "delivered",
+      status_time: "2026-07-12T23:00:00.000010Z",
+      status_undated: true,
+      status_timeless: true,
+      delivered_at: "2026-07-12T23:00:00.000010Z",
+      delivered_undated: true,
+      delivered_timeless: true,
+    });
+    assert.equal(candidateLines(dayOnly, GB).when, "Delivered · Mon 13 Jul, time not known");
+    const returned = makeParcel({
+      ...kettle,
+      status: "returned",
+      status_time: "2026-07-14T16:00:00.000020Z",
+      status_undated: true,
+      status_timeless: true,
+    });
+    assert.equal(candidateLines(returned, GB).when, "Returned to sender · Tue 14 Jul, time not known");
+  });
+
   test("say what isn't known yet", () => {
     const bare = makeParcel({ tracking_number: "TEST0002", status: "ordered" });
     assert.deepEqual(candidateLines(bare, GB), {

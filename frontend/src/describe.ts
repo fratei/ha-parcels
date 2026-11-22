@@ -7,6 +7,7 @@ import {
   formatDate,
   formatDateRange,
   formatDayTime,
+  formatDayWithoutTime,
   formatWindow,
   type LocaleOptions,
 } from "./format.ts";
@@ -369,8 +370,9 @@ function noItemsText(parcel: Parcel): string {
 function closedWhen(parcel: Parcel, locale: LocaleOptions): string | null {
   const at = parcel.delivered_at ?? parcel.status_time;
   const undated = parcel.delivered_at ? parcel.delivered_undated : parcel.status_undated;
+  const timeless = parcel.delivered_at ? parcel.delivered_timeless : parcel.status_timeless;
   if (undated) {
-    return STRINGS.dateNotKnownInline;
+    return (timeless && formatDayWithoutTime(at, locale)) || STRINGS.dateNotKnownInline;
   }
   if (!parcel.inferred) {
     const dayTime = formatDayTime(at, locale);

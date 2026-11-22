@@ -783,15 +783,22 @@ and answers from its cache: a read doesn't make Parcel check the carrier
 ([Parcel's API](https://parcelapp.net/help/api-view-deliveries.html)).
 
 **Dates.** Parcel gives events' dates without a time zone; Parcels reads
-them in Home Assistant's. It reads ISO dates, dates as the app shows them,
-and day-first dates such as 16/11/2026, 16-11-2026 or 16.11.2026. An event
-whose date it can't read, or dated after tomorrow, never takes the time of
-the read. It goes on the last day known before Parcels saw it: the day of
-the parcel's last dated news, or its expected day if that's later, and its
-details say "Date not known". With no such day, the event has no day
-either: a parcel delivered then says "Date not known" and isn't in the
-calendar. News of the same status from another source, such as an e-mail,
-dated no later than the day Parcels first saw the event, gives it its time.
+them in Home Assistant's, unless a time zone or offset follows the time,
+such as WET, CET or GMT+1. It reads ISO dates, dates as the app shows them,
+and day-first dates such as 16/11/2026, 16-11-2026 or 16.11.2026. A 12-hour
+time takes its part of the day in the seven languages, such as pm, "da
+tarde", "da madrugada", "de la noche", "du soir", "di sera", "abends" or
+"'s nachts": "12:30 da tarde" is 12:30, "12:30 da madrugada" is 00:30. When
+words after the time aren't understood, or contradict it, Parcels reads the
+day without the time: the event stays on its day, and its details say "time
+not known" after the day. An event whose date it can't read, or dated after
+tomorrow, never takes the time of the read. It goes on the last day known
+before Parcels saw it: the day of the parcel's last dated news, or its
+expected day if that's later, and its details say "Date not known". With no
+such day, the event has no day either: a parcel delivered then says "Date
+not known" and isn't in the calendar. News of the same status from another
+source, such as an e-mail, dated no later than the day Parcels first saw the
+event, and on the event's day when only that is known, gives it its time.
 
 **Adding.** After each read, Parcels adds the tracking numbers of its open
 parcels to your list, the parcels due soonest first, with at most **Parcels
@@ -999,7 +1006,8 @@ News without a date that Parcels can read, such as some events from the
 Parcel app, goes on the parcel's last known day (see
 [Parcel app](#parcel-app)). When that day is more than a day back, or isn't
 known, its event waits until dated news, such as an e-mail, gives it a time,
-and fires only if that time is less than a day old. For example:
+and fires only if that time is less than a day old. News with its day but
+no time Parcels can read fires until a day after that day ends. For example:
 
 ```yaml
 triggers:
@@ -1097,6 +1105,15 @@ actions:
   delivered on the wrong day. After the update, Parcels places them again
   once, and the next read checks them (`parcel_app_dates_repaired` counts
   the parcels that changed).
+- **A Parcel app event says "time not known".** Its date had words after
+  the time that Parcels doesn't understand, so it kept only the day (see
+  [Parcel app](#parcel-app)). The hub's diagnostics show the forms of such
+  dates (`day_only_shapes` in `event_dates`), with a short last word as
+  written. Before 0.1.10, Parcels couldn't read a date with words such as
+  "da tarde" or a time zone after the time ("3:15 da tarde", "15:20 WET"),
+  and put its event on the parcel's last known day, which could be days
+  early. The first read after the update dates such events again, for the
+  deliveries still in your Parcel list.
 - **Repair: "The Parcel app refused the API key".** The key may have been
   replaced, or the Parcel account may no longer have Premium. Enter the key
   from web.parcelapp.net again in the Parcels options, or clear it. Parcels
@@ -1143,9 +1160,11 @@ actions:
   (`not_found_by_carrier`); its Parcel app part (`parcelapp`) counts the
   deliveries read, matched, shown on their own and left out, and today's
   adds, lists the carrier codes in use, and counts the last read's event
-  dates that Parcels couldn't read or that were after tomorrow, with the
-  forms of the first, digits as 9 and words as x but for date words
-  (`event_dates`), all without tracking numbers or event text.
+  dates that Parcels couldn't read or that were after tomorrow, and those it
+  read without their time, with the forms of both and of those read with a
+  part of the day or a time zone (`event_dates`): digits as 9, other words
+  as x but for date words, and a last word of up to six letters and dots as
+  written, all without tracking numbers or event text.
 
 ## Development
 

@@ -7,8 +7,10 @@ import {
   formatDateRange,
   formatDateTime,
   formatDayTime,
+  formatDayWithoutTime,
   formatWindow,
   localeOptions,
+  MEDIUM_DATE,
 } from "../src/format.ts";
 import type { LocaleOptions } from "../src/format.ts";
 
@@ -124,5 +126,14 @@ describe("times", () => {
     assert.equal(formatDayTime("2026-07-13T23:00:00Z", GB), "Tue 14 Jul");
     assert.equal(formatDayTime("2026-07-13T23:00:00.001Z", GB), "Tue 14 Jul at 00:00");
     assert.match(formatDayTime("2026-11-20T05:00:00Z", US), /^Fri, Nov 20$/u);
+  });
+
+  test("a day whose time isn't known says so", () => {
+    assert.equal(formatDayWithoutTime("2026-07-13T23:00:00.000010Z", GB), "Tue 14 Jul, time not known");
+    assert.equal(formatDayWithoutTime("2026-07-14T19:40:00Z", GB), "Tue 14 Jul, time not known");
+    assert.match(formatDayWithoutTime("2026-07-14T03:30:00Z", US), /^Mon, Jul 13, time not known$/u);
+    assert.equal(formatDayWithoutTime("2026-07-14T19:40:00Z", GB, MEDIUM_DATE), "14 Jul 2026, time not known");
+    assert.equal(formatDayWithoutTime(null, GB), "");
+    assert.equal(formatDayWithoutTime("whenever", GB), "");
   });
 });

@@ -103,6 +103,9 @@ export const RANGE_FORMAT: Intl.DateTimeFormatOptions = {
   year: "numeric",
 };
 
+/** The day as `formatDateTime` shows it, e.g. "14 Nov 2026". */
+export const MEDIUM_DATE: Intl.DateTimeFormatOptions = { dateStyle: "medium" };
+
 /** Formats a "YYYY-MM-DD" calendar date (never shifted by a time zone). */
 export function formatDate(
   value: string,
@@ -206,4 +209,17 @@ export function formatDayTime(value: string | null, locale: LocaleOptions): stri
     day,
     time: formatter(locale, { timeStyle: "short" }, false).format(ms),
   });
+}
+
+/** "Sat 14 Nov, time not known": the day of a time that isn't known; "" when invalid. */
+export function formatDayWithoutTime(
+  value: string | null,
+  locale: LocaleOptions,
+  options: Intl.DateTimeFormatOptions = DAY_FORMAT,
+): string {
+  const ms = value ? parseInstant(value) : null;
+  if (ms === null) {
+    return "";
+  }
+  return fmt(STRINGS.dayTimeNotKnown, { day: formatter(locale, options, false).format(ms) });
 }

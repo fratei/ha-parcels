@@ -9,7 +9,14 @@ import {
 } from "lit";
 import { callParcelsCommand } from "./api.ts";
 import { OPEN_PARCEL_EVENT, ParcelsDialogBase, type ReturnFocus } from "./dialog-base.ts";
-import { formatDate, formatDateTime, localeOptions, type LocaleOptions } from "./format.ts";
+import {
+  formatDate,
+  formatDateTime,
+  formatDayWithoutTime,
+  localeOptions,
+  MEDIUM_DATE,
+  type LocaleOptions,
+} from "./format.ts";
 import { carrierLabel, parcelTitle, sourceLabel, statusLabel } from "./labels.ts";
 import { defineElement } from "./register.ts";
 import { RETURN_ICON, pickupRuleText, returnState, returnTitle } from "./returns.ts";
@@ -233,7 +240,8 @@ export class ParcelsReturnDialog extends ParcelsDialogBase {
   private _renderParcel(parcel: Parcel): TemplateResult {
     const name = parcelTitle(parcel);
     const when = parcel.delivered_undated
-      ? STRINGS.dateNotKnownInline
+      ? (parcel.delivered_timeless && formatDayWithoutTime(parcel.delivered_at, this.locale, MEDIUM_DATE)) ||
+        STRINGS.dateNotKnownInline
       : parcel.delivered_at
         ? formatDateTime(parcel.delivered_at, this.locale)
         : "";

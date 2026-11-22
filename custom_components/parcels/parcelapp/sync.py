@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import Iterator, Mapping
-from datetime import datetime, timedelta, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 import hashlib
 import json
 import logging
@@ -103,7 +103,7 @@ from .carriers import (
     parcel_codes,
     parcels_carrier,
 )
-from .dates import date_shape, is_future_date, parse_event_date, parse_expected
+from .dates import date_shape, is_future_date, parse_expected, read_event_date
 
 if TYPE_CHECKING:
     from ..engine import ParcelsEngine
@@ -333,46 +333,85 @@ def _known_times(
     ]
     eta = expected or (base_state.eta if base_state is not None else None)
     if eta is not None:
-        times.extend(
-            dt_util.as_utc(datetime(day.year, day.month, day.day, tzinfo=tz))
-            for day in (eta.start, eta.end)
-        )
+        times.extend(_day_start(day, tz) for day in (eta.start, eta.end))
     return times
 
 
+def _day_start(day: date, tz: tzinfo) -> datetime:
+    """Return when a day starts in Home Assistant's time zone, in UTC."""
+    return dt_util.as_utc(datetime(day.year, day.month, day.day, tzinfo=tz))
+
+
+def _stored_day(entry: Mapping[str, Any]) -> date | None:
+    """Return the day of a stored event that gave no time, if it gave one."""
+    value = entry.get("day")
+    if entry.get("at") is not None or not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
 def _history_events(
-    history: list[dict[str, Any]], known: list[datetime], now: datetime
+    history: list[dict[str, Any]],
+    known: list[datetime],
+    now: datetime,
+    tz: tzinfo,
 ) -> list[ParcelEvent]:
     """Return a delivery's stored events, newest first, as its parcel's events.
 
     An event without a date never takes the time it was read at, which can
     be days after it happened. It goes just after the latest time known to
-    come before it: an older dated event, or a time of ``known``, no later
-    than when it was first seen with its status, nor than a newer event.
-    With none, its day isn't known either.
+    come before it: an older event, or a time of ``known``, no later than
+    when it was first seen with its status, nor than a newer event. With
+    none, its day isn't known either. An event that gave only its day stays
+    on that day: just after the latest such time on it, else at its start.
     """
     times = [dt_from_str(entry.get("at")) for entry in history]
+    days = [_stored_day(entry) for entry in history]
+    # The earliest each event can have happened.
+    floors = [
+        time if time is not None else _day_start(day, tz) if day is not None else None
+        for time, day in zip(times, days, strict=True)
+    ]
     events: list[ParcelEvent] = []
     bound: datetime | None = None
     for index, entry in enumerate(history):
         when = times[index]
-        undated = dayless = False
+        day = days[index]
+        undated = dayless = timeless = False
         limit: datetime | None = None
+        offset = timedelta(microseconds=MAX_HISTORY - index)
         if when is not None:
             bound = when if bound is None else min(bound, when)
+        elif day is not None:
+            start = floors[index] or _day_start(day, tz)
+            end = _day_start(day + timedelta(days=1), tz) - timedelta(microseconds=1)
+            seen = dt_from_str(entry.get("seen")) or now
+            limit = min(end, seen) if bound is None else min(end, seen, bound)
+            limit = max(start, limit)
+            bound = limit if bound is None else min(bound, limit)
+            before = [
+                value
+                for value in (*known, *floors[index + 1 :])
+                if value is not None and start <= value <= limit
+            ]
+            undated = timeless = True
+            when = min(max(before) + offset, end) if before else start + offset
         else:
             seen = dt_from_str(entry.get("seen")) or now
             limit = seen if bound is None else min(bound, seen)
             bound = limit
             before = [
                 value
-                for value in (*known, *times[index + 1 :])
+                for value in (*known, *floors[index + 1 :])
                 if value is not None and value <= limit
             ]
             undated = True
             if before:
                 # Newer events go after older ones, on the same day.
-                when = max(before) + timedelta(microseconds=MAX_HISTORY - index)
+                when = max(before) + offset
             else:
                 when = limit - timedelta(microseconds=index)
                 dayless = True
@@ -389,9 +428,16 @@ def _history_events(
                     undated=undated,
                     dayless=dayless,
                     by=limit,
+                    timeless=timeless,
                 )
             )
     return events
+
+
+def _common(shapes: Counter[str]) -> dict[str, int]:
+    """Return the most common shapes, most common first."""
+    ranked = sorted(shapes.items(), key=lambda pair: (-pair[1], pair[0]))
+    return dict(ranked[:MAX_DATE_SHAPES])
 
 
 def _date_stats(
@@ -399,10 +445,14 @@ def _date_stats(
 ) -> dict[str, Any]:
     """Count the event dates of a read Parcels couldn't use, and their shapes.
 
-    A shape keeps only the date words and the layout, see ``date_shape``.
+    Apart from those, the dates read without their time, and the shapes of
+    those read with a part of the day or a time zone after the time. A shape
+    keeps only the date words and the layout, see ``date_shape``.
     """
-    unparsed = future = 0
+    unparsed = future = day_only = 0
     shapes: Counter[str] = Counter()
+    day_shapes: Counter[str] = Counter()
+    marked: Counter[str] = Counter()
     for delivery in deliveries:
         if not isinstance(delivery, dict) or not isinstance(
             events := delivery.get("events"), list
@@ -412,18 +462,25 @@ def _date_stats(
             if not isinstance(item, Mapping):
                 continue
             value = item.get("date")
-            if parse_event_date(value, now, tz) is not None:
+            if (found := read_event_date(value, now, tz)) is not None:
+                if found.at is None:
+                    day_only += 1
+                    day_shapes[date_shape(value)] += 1
+                elif found.marks:
+                    marked[date_shape(value)] += 1
                 continue
             if is_future_date(value, now, tz):
                 future += 1
                 continue
             unparsed += 1
             shapes[date_shape(value) if "date" in item else "missing"] += 1
-    common = sorted(shapes.items(), key=lambda pair: (-pair[1], pair[0]))
     return {
         "unparsed": unparsed,
         "future": future,
-        "shapes": dict(common[:MAX_DATE_SHAPES]),
+        "shapes": _common(shapes),
+        "day_only": day_only,
+        "day_only_shapes": _common(day_shapes),
+        "marked": _common(marked),
     }
 
 
@@ -471,6 +528,7 @@ def repair_parcel_dates(data: ParcelsData, now: datetime, tz: tzinfo) -> int:
             history,
             _known_times(base, base.state if base is not None else None, expected, tz),
             now,
+            tz,
         )
         for event in events:
             event.origin = oid
@@ -978,7 +1036,7 @@ class ParcelAppSync:
         expected = parse_expected(delivery, tz)
         history = self._history(record, delivery, now, tz)
         events = _history_events(
-            history, _known_times(base, base_state, expected, tz), now
+            history, _known_times(base, base_state, expected, tz), now, tz
         )
         if (eta := self._eta(record, expected, base, base_state, now)) is not None:
             events.append(eta)
@@ -1043,36 +1101,55 @@ class ParcelAppSync:
         An event keeps the status it had when first read. The newest takes
         the delivery's status: Parcel gives one for the whole delivery. An
         event without a date keeps when it was first seen with its status:
-        it happened by then.
+        it happened by then. An event whose date gave only its day keeps it.
         """
-        read: list[tuple[str | None, datetime | None]] = []
+        # An event's text, its time, and its day when only that was read.
+        read: list[tuple[str | None, datetime | None, date | None]] = []
         for item in delivery.get("events") or ():
             if not isinstance(item, Mapping):
                 continue
             info = _event_text(item)
-            at = parse_event_date(item.get("date"), now, tz)
-            if info is not None or at is not None:
-                read.append((info, at))
-        if read and all(at is not None for _, at in read):
+            found = read_event_date(item.get("date"), now, tz)
+            at = found.at if found is not None else None
+            day = found.day if found is not None and at is None else None
+            if info is not None or found is not None:
+                read.append((info, at, day))
+        if read and all(at is not None for _, at, _ in read):
             read.sort(key=lambda entry: entry[1] or now, reverse=True)
-        entries: list[tuple[str | None, datetime | None]] = []
+        elif read and all(at is not None or day is not None for _, at, day in read):
+            # Newest day first; on one day, as Parcel lists them.
+            read.sort(
+                key=lambda entry: (
+                    entry[1].astimezone(tz).date()
+                    if entry[1] is not None
+                    else entry[2] or date.min
+                ),
+                reverse=True,
+            )
+        entries: list[tuple[str | None, datetime | None, date | None]] = []
         for entry in read:
             if entry not in entries:
                 entries.append(entry)
             if len(entries) == MAX_HISTORY:
                 break
         if not entries:
-            entries.append((None, None))
+            entries.append((None, None, None))
         kept = {
-            (item.get("info"), item.get("at")): item
+            (item.get("info"), item.get("at"), item.get("day")): item
             for item in record.get("history") or ()
             if isinstance(item, dict)
         }
         code = status_code(delivery.get("status_code"))
         mapped = STATUSES.get(code) if code is not None else None
         history: list[dict[str, Any]] = []
-        for index, (info, at) in enumerate(entries):
-            old = kept.get((info, dt_to_str(at))) or {}
+        for index, (info, at, day) in enumerate(entries):
+            iso = day.isoformat() if day is not None else None
+            # Before 0.1.10, a date read now may not have been read at all.
+            old = (
+                kept.get((info, dt_to_str(at), iso))
+                or kept.get((info, None, None))
+                or {}
+            )
             stored = _stored_status(old.get("status"))
             status = stored
             if index == 0 and mapped is not None:
@@ -1082,6 +1159,8 @@ class ParcelAppSync:
                 "at": dt_to_str(at),
                 "status": status.value if status else None,
             }
+            if iso is not None:
+                item["day"] = iso
             if at is None:
                 # 0.1.6 kept when it was first read as "time".
                 seen = dt_from_str(old.get("seen") or old.get("time"))
@@ -1459,6 +1538,8 @@ class ParcelAppSync:
         dates = state.get("dates")
         dates = dates if isinstance(dates, dict) else {}
         shapes = dates.get("shapes")
+        day_shapes = dates.get("day_only_shapes")
+        marked = dates.get("marked")
         return {
             "enabled": self.enabled,
             "last_refresh": dt_to_str(self.last_refresh),
@@ -1487,5 +1568,8 @@ class ParcelAppSync:
                 "unparsed": _count(dates.get("unparsed")),
                 "future": _count(dates.get("future")),
                 "shapes": shapes if isinstance(shapes, dict) else {},
+                "day_only": _count(dates.get("day_only")),
+                "day_only_shapes": day_shapes if isinstance(day_shapes, dict) else {},
+                "marked": marked if isinstance(marked, dict) else {},
             },
         }
