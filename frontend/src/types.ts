@@ -30,6 +30,11 @@ export type TimelineSource = ParcelSource | "inferred" | "inferred_return" | "qu
 /** Why a delivery was inferred; see `TimelineSource`. */
 export type InferredReason = "shop" | "return" | "quiet";
 
+/** Where a delivered parcel was left: fixed categories, never names or numbers. */
+export const LEFT_AT = ["neighbour", "mailbox", "door", "reception", "garage", "locker"] as const;
+
+export type LeftAt = (typeof LEFT_AT)[number];
+
 export type AiMode = "off" | "suggest" | "auto";
 
 /** Who told about a parcel: a sender of e-mails, 17TRACK or the Parcel app. */
@@ -84,6 +89,20 @@ export interface Parcel {
   delivered_undated: boolean;
   /** Like `status_timeless`, for `delivered_at`. */
   delivered_timeless: boolean;
+  /**
+   * `status_time` is when an e-mail reported the status, not when it
+   * happened: the e-mail didn't say.
+   */
+  status_reported: boolean;
+  /** The day of the next attempt ("YYYY-MM-DD"), after a missed one. */
+  next_attempt: string | null;
+  /**
+   * The last day to collect it at its pickup point ("YYYY-MM-DD"), while it
+   * waits there or after a missed attempt; null when not known or restricted.
+   */
+  collect_by: string | null;
+  /** Where it was left once delivered; null when not known or restricted. */
+  left_at: LeftAt | null;
   /** Delivered only by inference, until the user keeps or undoes it. */
   inferred: boolean;
   /**

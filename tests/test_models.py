@@ -10,7 +10,7 @@ import logging
 from homeassistant.util import dt as dt_util
 import pytest
 
-from custom_components.parcels.const import MailKind, ParcelStatus
+from custom_components.parcels.const import LeftAt, MailKind, ParcelStatus
 from custom_components.parcels.models import (
     AutoMerge,
     FilteredItem,
@@ -21,6 +21,7 @@ from custom_components.parcels.models import (
     Parcel,
     ParcelEvent,
     ParcelsData,
+    ParcelState,
     ReviewItem,
     SenderPrefs,
     Source,
@@ -319,6 +320,163 @@ def test_provisional_until_tracked() -> None:
     parcel.origins["o1"].tracking_number = "05212345678901"
     parcel.touch(at())
     assert not parcel.state.provisional
+
+
+def _details(state: ParcelState) -> tuple[date | None, date | None, LeftAt | None]:
+    return state.collect_by, state.next_attempt, state.left_at
+
+
+def test_a_collect_by_date_holds_while_the_carrier_keeps_the_parcel() -> None:
+    """A missed attempt's date carries to the pickup notice, a later one wins.
+
+    It goes once the parcel is delivered, which has its own place.
+    """
+    first, later = date(2026, 11, 9), date(2026, 11, 10)
+    transit = _event(S.IN_TRANSIT, at(days=-1))
+    missed = _event(S.ATTEMPTED, at(hours=2), collect_by=first)
+    notice = _event(S.READY_FOR_PICKUP, at(hours=5))
+    reminder = _event(S.READY_FOR_PICKUP, at(days=1), collect_by=later)
+    delivered = _event(S.DELIVERED, at(days=2), left_at=LeftAt.LOCKER)
+
+    assert _details(_parcel(transit, missed).state) == (first, None, None)
+    state = _parcel(transit, missed, notice).state
+    assert (state.status, state.collect_by) == (S.READY_FOR_PICKUP, first)
+    assert _parcel(transit, missed, notice, reminder).state.collect_by == later
+    # Event times decide, not the order the e-mails came in.
+    assert _parcel(reminder, notice, missed, transit).state.collect_by == later
+    state = _parcel(transit, missed, notice, reminder, delivered).state
+    assert _details(state) == (None, None, LeftAt.LOCKER)
+
+
+def test_a_new_status_starts_afresh() -> None:
+    """Details belong to their status: a new attempt has none of the last's."""
+    missed = _event(
+        S.ATTEMPTED,
+        at(),
+        collect_by=date(2026, 11, 9),
+        next_attempt=date(2026, 11, 3),
+    )
+    again = _event(S.OUT_FOR_DELIVERY, at(days=1))
+    missed_again = _event(S.ATTEMPTED, at(days=1, hours=3))
+    assert _details(_parcel(missed, again).state) == (None, None, None)
+    assert _details(_parcel(missed, again, missed_again).state) == (None, None, None)
+    # Details sent with another status count for nothing.
+    stray = _event(
+        S.IN_TRANSIT,
+        at(),
+        collect_by=date(2026, 11, 9),
+        next_attempt=date(2026, 11, 3),
+        left_at=LeftAt.DOOR,
+    )
+    assert _details(_parcel(stray).state) == (None, None, None)
+
+
+def test_a_next_attempt_lasts_until_news_from_its_day() -> None:
+    """A report from the day of the next attempt or later ends it."""
+    tuesday, thursday = date(2026, 11, 3), date(2026, 11, 5)
+    missed = _event(S.ATTEMPTED, at(hours=2), next_attempt=tuesday)
+    same_day = _event(S.ATTEMPTED, at(hours=6))
+    next_day = _event(S.ATTEMPTED, at(days=1, hours=3))
+    moved = _event(S.ATTEMPTED, at(days=1, hours=4), next_attempt=thursday)
+    # Placed on Tuesday, but seen by Wednesday: its day isn't known.
+    undated = _event(S.ATTEMPTED, at(days=1), undated=True, by=at(days=2))
+
+    assert _parcel(missed).state.next_attempt == tuesday
+    assert _parcel(missed, same_day).state.next_attempt == tuesday
+    assert _parcel(missed, next_day).state.next_attempt is None
+    assert _parcel(missed, next_day, moved).state.next_attempt == thursday
+    assert _parcel(missed, undated).state.next_attempt == tuesday
+
+
+def test_where_a_delivered_parcel_was_left() -> None:
+    """A later report adds or corrects the place; one without keeps it."""
+    delivered = _event(S.DELIVERED, at(), left_at=LeftAt.NEIGHBOUR)
+    confirmed = _event(S.DELIVERED, at(hours=1))
+    corrected = _event(S.DELIVERED, at(hours=2), left_at=LeftAt.MAILBOX)
+    returned = _event(S.RETURNED, at(days=3))
+
+    assert _parcel(delivered).state.left_at is LeftAt.NEIGHBOUR
+    assert _parcel(delivered, confirmed).state.left_at is LeftAt.NEIGHBOUR
+    assert _parcel(delivered, confirmed, corrected).state.left_at is LeftAt.MAILBOX
+    assert _parcel(confirmed, corrected).state.left_at is LeftAt.MAILBOX
+    assert _parcel(delivered, returned).state.left_at is None
+
+
+def test_a_status_reported_without_its_time() -> None:
+    """The status's time is only the e-mail's when the e-mail gave none."""
+    # The e-mail's own time: it didn't say when it happened.
+    assert _parcel(_event(S.ATTEMPTED, T0)).state.status_reported
+    ai = _origin(source=Source.AI)
+    assert _parcel(
+        _event(S.ATTEMPTED, T0, source=Source.AI), origins=(ai,)
+    ).state.status_reported
+    # A time the e-mail gave.
+    assert not _parcel(_event(S.ATTEMPTED, at(hours=-2))).state.status_reported
+    # Trackers give the time it happened, and inferred deliveries aren't news.
+    tracker = _origin("o2", source=Source.SEVENTEENTRACK)
+    tracked = _event(S.ATTEMPTED, T0, source=Source.SEVENTEENTRACK, origin="o2")
+    assert not _parcel(tracked, origins=(tracker,)).state.status_reported
+    inferred = _event(S.DELIVERED, T0, origin=None, inferred=True)
+    assert not _parcel(inferred).state.status_reported
+    # The first report gives the status its time; a later one changes nothing.
+    first = _event(S.ATTEMPTED, at(hours=-2))
+    assert not _parcel(first, _event(S.ATTEMPTED, T0)).state.status_reported
+
+    # A report that dates an undated status gives it its time, as reported.
+    app = _origin("pa", source=Source.PARCELAPP, time=at(days=-1))
+    undated = _event(
+        S.DELIVERED,
+        at(days=-1),
+        source=Source.PARCELAPP,
+        origin="pa",
+        undated=True,
+        by=at(hours=8),
+    )
+    state = _parcel(undated, _event(S.DELIVERED, T0), origins=(app, _origin())).state
+    assert (state.status_time, state.status_reported) == (T0, True)
+    state = _parcel(
+        undated, _event(S.DELIVERED, at(hours=-1)), origins=(app, _origin())
+    ).state
+    assert (state.status_time, state.status_reported) == (at(hours=-1), False)
+
+
+def test_details_are_stored() -> None:
+    """Details survive the store; events without them add no keys."""
+    missed = _event(
+        S.ATTEMPTED,
+        at(),
+        collect_by=date(2026, 11, 9),
+        next_attempt=date(2026, 11, 3),
+    )
+    delivered = _event(S.DELIVERED, at(days=1), left_at=LeftAt.GARAGE)
+    for event in (missed, delivered):
+        stored = json.loads(json.dumps(event.as_dict()))
+        assert ParcelEvent.from_dict(stored) == event
+    assert missed.as_dict()["collect_by"] == "2026-11-09"
+    assert missed.as_dict()["next_attempt"] == "2026-11-03"
+    assert delivered.as_dict()["left_at"] == "garage"
+    assert not {"collect_by", "next_attempt", "left_at"} & set(
+        _event(S.SHIPPED, at()).as_dict()
+    )
+    # A place this release doesn't know is dropped, not guessed.
+    assert (
+        ParcelEvent.from_dict({**delivered.as_dict(), "left_at": "roof"}).left_at
+        is None
+    )
+
+    suggestion = Suggestion(
+        kind=MailKind.ATTEMPTED,
+        tracking_numbers=("RR123456785PT",),
+        collect_by=date(2026, 11, 9),
+        next_attempt=date(2026, 11, 3),
+    )
+    stored = json.loads(json.dumps(suggestion.as_dict()))
+    assert Suggestion.from_dict(stored) == suggestion
+    place = Suggestion(kind=MailKind.DELIVERED, left_at=LeftAt.RECEPTION)
+    assert Suggestion.from_dict(place.as_dict()) == place
+    assert (
+        Suggestion.from_dict({"kind": "delivered", "left_at": "roof"}).left_at is None
+    )
 
 
 def test_items_are_unique_and_capped() -> None:

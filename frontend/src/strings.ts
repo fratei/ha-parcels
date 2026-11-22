@@ -213,6 +213,8 @@ export const STRINGS = {
   details: "Parcel details",
   status: "Status",
   sinceDate: "since {date}",
+  /** For a status whose time is only when its e-mail reported it. */
+  reportedDate: "reported {date}",
   /** For a status or delivery whose source gave no date that could be read. */
   dateNotKnown: "Date not known",
   dateNotKnownInline: "date not known",
@@ -234,8 +236,10 @@ export const STRINGS = {
   references: "Shipment reference",
   items: "Items",
   expected: "Expected",
+  nextAttempt: "Next attempt",
   timeWindow: "Time window",
   pickupPoint: "Pickup point",
+  collectBy: "Collect by",
   pickupCode: "PIN or pickup code",
   packagesInShipment: "Packages",
   showPackage: "Show package {name}",
@@ -392,6 +396,16 @@ export const STATUS_LABELS: Readonly<Record<string, string>> = {
   ready_for_pickup: "Ready for pickup",
   returned: "Returned to sender",
   cancelled: "Cancelled",
+};
+
+/** Where a delivered parcel was left, after its delivery time (the integration's LeftAt values). */
+export const LEFT_AT_LABELS: Readonly<Record<string, string>> = {
+  neighbour: "with a neighbour",
+  mailbox: "in the mailbox",
+  door: "at the door",
+  reception: "at reception",
+  garage: "in the garage",
+  locker: "in a locker",
 };
 
 /** What an e-mail is about (the integration's MailKind values). */

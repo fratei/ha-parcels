@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 import pytest
 
-from custom_components.parcels.const import CONFIDENCE_APPLY, MailKind, ParcelStatus
+from custom_components.parcels.const import (
+    CONFIDENCE_APPLY,
+    LeftAt,
+    MailKind,
+    ParcelStatus,
+)
 from custom_components.parcels.convert import (
     fill_contribution,
     fill_gaps,
@@ -384,6 +390,113 @@ def test_reference_suggestion_round_trip() -> None:
     assert suggestion_from_result(
         _result(MailKind.UNKNOWN, ParsedShipment(reference="Wx4Hn8Tz3"))
     ) == Suggestion(kind=MailKind.UNKNOWN, reference="Wx4Hn8Tz3")
+
+
+COLLECT_BY = date(2026, 11, 23)
+NEXT_ATTEMPT = date(2026, 11, 17)
+
+
+def test_details_reach_the_parcel() -> None:
+    """What an e-mail says besides the status reaches the parcel's events."""
+    missed = _parsed(
+        MailKind.ATTEMPTED,
+        tracking_number=NUMBER,
+        collect_by=COLLECT_BY,
+        next_attempt=NEXT_ATTEMPT,
+    )
+    [item] = result_contributions(
+        missed, message_hash="h1", time=SENT, source=Source.PARSER
+    )
+    [event] = item.events
+    assert (event.collect_by, event.next_attempt, event.left_at) == (
+        COLLECT_BY,
+        NEXT_ATTEMPT,
+        None,
+    )
+    state = _state(item)
+    assert (state.status, state.collect_by, state.next_attempt) == (
+        ParcelStatus.ATTEMPTED,
+        COLLECT_BY,
+        NEXT_ATTEMPT,
+    )
+    # The e-mail didn't say when the attempt was, so it has the e-mail's time.
+    assert state.status_reported
+
+    delivered = _parsed(
+        MailKind.DELIVERED,
+        tracking_number=NUMBER,
+        left_at=LeftAt.NEIGHBOUR,
+        event_time=SENT + timedelta(days=1, hours=-2),
+    )
+    later = result_contributions(
+        delivered,
+        message_hash="h2",
+        time=SENT + timedelta(days=1),
+        source=Source.PARSER,
+    )
+    state = _state(item, *later)
+    assert (state.status, state.left_at) == (ParcelStatus.DELIVERED, LeftAt.NEIGHBOUR)
+    assert (state.collect_by, state.next_attempt) == (None, None)
+    assert not state.status_reported
+
+
+def test_a_suggestion_keeps_the_details() -> None:
+    """A reading offered for review keeps the e-mail's details."""
+    result = _result(
+        MailKind.ATTEMPTED,
+        ParsedShipment(tracking_number=NUMBER),
+        ParsedShipment(
+            tracking_number=OTHER_NUMBER,
+            collect_by=COLLECT_BY,
+            next_attempt=NEXT_ATTEMPT,
+        ),
+    )
+    suggestion = suggestion_from_result(result)
+    assert suggestion is not None
+    assert (suggestion.collect_by, suggestion.next_attempt, suggestion.left_at) == (
+        COLLECT_BY,
+        NEXT_ATTEMPT,
+        None,
+    )
+    # Accepted as read, the details reach every parcel of the e-mail.
+    for shipment in suggestion_result(suggestion, Source.AI).shipments:
+        assert (shipment.collect_by, shipment.next_attempt) == (
+            COLLECT_BY,
+            NEXT_ATTEMPT,
+        )
+    single = dataclasses.replace(suggestion, tracking_numbers=(NUMBER,))
+    assert suggestion_from_result(suggestion_result(single, Source.AI)) == single
+
+    place = Suggestion(
+        kind=MailKind.DELIVERED, tracking_numbers=(NUMBER,), left_at=LeftAt.LOCKER
+    )
+    [shipment] = suggestion_result(place, Source.AI).shipments
+    assert shipment.left_at is LeftAt.LOCKER
+    assert suggestion_from_result(suggestion_result(place, Source.AI)) == place
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        (MailKind.ATTEMPTED, (COLLECT_BY, NEXT_ATTEMPT, None)),
+        (MailKind.READY_FOR_PICKUP, (COLLECT_BY, None, None)),
+        (MailKind.DELIVERED, (None, None, LeftAt.DOOR)),
+        (MailKind.OUT_FOR_DELIVERY, (None, None, None)),
+    ],
+)
+def test_details_follow_the_accepted_kind(
+    kind: MailKind, expected: tuple[date | None, date | None, LeftAt | None]
+) -> None:
+    """A user who changes the kind keeps only the new kind's details."""
+    suggestion = Suggestion(
+        kind=kind,
+        tracking_numbers=(NUMBER,),
+        collect_by=COLLECT_BY,
+        next_attempt=NEXT_ATTEMPT,
+        left_at=LeftAt.DOOR,
+    )
+    [shipment] = suggestion_result(suggestion, Source.MANUAL).shipments
+    assert (shipment.collect_by, shipment.next_attempt, shipment.left_at) == expected
 
 
 def test_suggestion_with_two_numbers() -> None:

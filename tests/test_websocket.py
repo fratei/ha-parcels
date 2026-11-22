@@ -30,6 +30,7 @@ from custom_components.parcels.const import (
     DOMAIN,
     REASON_AI_FILL,
     SIGNAL_AI_UPDATED,
+    LeftAt,
     MailKind,
     ParcelStatus,
 )
@@ -102,6 +103,8 @@ HIDDEN = {
     "pickup_point": None,
     "pickup_code": None,
     "has_code": False,
+    "collect_by": None,
+    "left_at": None,
     "order_numbers": [],
     "references": [],
     "items": [],
@@ -605,6 +608,59 @@ async def test_marketplace_seller(
     seen = {p["id"]: p for p in (await result(sam_ws, "parcels/list"))["parcels"]}
     assert seen[parcel_id]["restricted"]
     assert seen[parcel_id]["seller"] is None
+
+
+async def test_attempt_pickup_and_delivery_details(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    sam_ws: MockHAClientWebSocket,
+) -> None:
+    """A parcel shows its next attempt, its collect-by day and where it was left.
+
+    Someone who may not see the parcel sees only when it comes again.
+    """
+    (parcel_id,) = engine.data.parcels
+    now = dt_util.utcnow()
+
+    def news(index: int, status: ParcelStatus, minutes: int, **details: Any) -> None:
+        mail = contribution(
+            f"msg:ctt{index}#0",
+            time=now - timedelta(minutes=minutes),
+            carrier="ctt",
+            number=CTT_NUMBER,
+            status=status,
+        )
+        mail.events[0] = replace(mail.events[0], **details)
+        assert apply_contribution(engine.data, mail, now).parcel_id == parcel_id
+
+    async def shown(socket: MockHAClientWebSocket) -> tuple[Any, ...]:
+        listed = (await result(socket, "parcels/list"))["parcels"]
+        (parcel,) = (p for p in listed if p["id"] == parcel_id)
+        return (
+            parcel["status"],
+            parcel["status_reported"],
+            parcel["next_attempt"],
+            parcel["collect_by"],
+            parcel["left_at"],
+        )
+
+    # The e-mail gives no time for the attempt: its own time stands in.
+    news(
+        1,
+        ParcelStatus.ATTEMPTED,
+        60,
+        next_attempt=date(2026, 11, 18),
+        collect_by=date(2026, 11, 25),
+    )
+    missed = ("attempted", True, "2026-11-18", "2026-11-25", None)
+    assert await shown(ws) == missed
+    await call(hass, "update", {"parcel_id": parcel_id, "private": True})
+    assert await shown(sam_ws) == ("attempted", True, "2026-11-18", None, None)
+
+    news(2, ParcelStatus.DELIVERED, 30, left_at=LeftAt.NEIGHBOUR)
+    assert await shown(ws) == ("delivered", True, None, None, "neighbour")
+    assert await shown(sam_ws) == ("delivered", True, None, None, None)
 
 
 async def test_check_again(

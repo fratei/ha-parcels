@@ -131,6 +131,9 @@ def result_contributions(
                     # Placed on the parcel's last known day when applied.
                     undated=shipment.undated,
                     by=event_time if shipment.undated else None,
+                    collect_by=shipment.collect_by,
+                    next_attempt=shipment.next_attempt,
+                    left_at=shipment.left_at,
                 )
             )
         contributions.append(
@@ -185,6 +188,9 @@ def suggestion_from_result(result: ParseResult | None) -> Suggestion | None:
             (s.amazon_shipment_id for s in shipments if s.amazon_shipment_id), None
         ),
         reference=next((s.reference for s in shipments if s.reference), None),
+        collect_by=next((s.collect_by for s in shipments if s.collect_by), None),
+        next_attempt=next((s.next_attempt for s in shipments if s.next_attempt), None),
+        left_at=next((s.left_at for s in shipments if s.left_at), None),
     )
     if (
         kind is MailKind.UNKNOWN
@@ -232,6 +238,9 @@ def suggestion_result(suggestion: Suggestion, source: Source) -> ParseResult:
     eta = _suggestion_eta(suggestion)
     numbers: list[str | None] = list(suggestion.tracking_numbers) or [None]
     single = len(numbers) == 1
+    # The e-mail's details, for the kind they belong to: the user may have
+    # changed it.
+    held = kind in (MailKind.ATTEMPTED, MailKind.READY_FOR_PICKUP)
     shipments = [
         ParsedShipment(
             carrier=suggestion.carrier,
@@ -242,6 +251,11 @@ def suggestion_result(suggestion: Suggestion, source: Source) -> ParseResult:
             pickup_code=suggestion.pickup_code if single else None,
             amazon_shipment_id=suggestion.amazon_shipment_id if single else None,
             reference=suggestion.reference if single else None,
+            collect_by=suggestion.collect_by if held else None,
+            next_attempt=(
+                suggestion.next_attempt if kind is MailKind.ATTEMPTED else None
+            ),
+            left_at=suggestion.left_at if kind is MailKind.DELIVERED else None,
         )
         for number in numbers
     ]

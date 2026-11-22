@@ -11,8 +11,10 @@ from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.parsers.eta import (
     add_business_days,
     date_expressions,
+    find_collect_by,
     find_delivery_eta,
     find_eta,
+    find_next_attempt,
     parse_eta,
     parse_time_window,
 )
@@ -23,6 +25,8 @@ REF = datetime(2026, 11, 17, 9, 12, tzinfo=UTC)
 REF_YEAR_END = datetime(2026, 12, 30, 10, 0, tzinfo=UTC)
 # Friday 20 November 2026.
 REF_FRIDAY = datetime(2026, 11, 20, 10, 0, tzinfo=UTC)
+# Monday 15 June 2026; Lisbon is on UTC+1 in June.
+REF_JUNE = datetime(2026, 6, 15, 8, 30, tzinfo=UTC)
 
 
 def _day(day: int, month: int = 11, year: int = 2026) -> date:
@@ -645,3 +649,227 @@ def test_find_delivery_eta(
 ) -> None:
     """Replaced dates are skipped; the delivery date is still found."""
     assert _dates(find_delivery_eta(text, REF, tz, lang)) == expected
+
+
+def _june(day: int, month: int = 6) -> date:
+    return date(2026, month, day)
+
+
+@pytest.mark.parametrize(
+    ("text", "lang", "expected"),
+    [
+        ("A sua encomenda está no cacifo. Levante até 26/06.", "pt", _june(26)),
+        ("Prazo de levantamento: 23/06/2026", "pt", _june(23)),
+        ("O seu pacote está disponível na loja até 22/06.", "pt", _june(22)),
+        (
+            "Disponível para levantamento a partir de amanhã, 16-06-2026, "
+            "durante 10 dias úteis.",
+            "pt",
+            _june(29),
+        ),
+        (
+            "Tu paquete te espera en el punto de recogida. "
+            "Recógelo antes del 25 de junio.",
+            "es",
+            _june(25),
+        ),
+        ("Plazo de recogida: 25/06/2026", "es", _june(25)),
+        (
+            "Your parcel is waiting at the locker. Collect it by Friday.",
+            "en",
+            _june(19),
+        ),
+        ("Please pick up your package before 26 June.", "en", _june(26)),
+        ("Ihr Paket liegt bis zum 23.06. zur Abholung bereit.", "de", _june(23)),
+        ("Abholfrist: 26.06.2026", "de", _june(26)),
+        ("Lagerfrist bis 26.06.2026", "de", _june(26)),
+        ("Votre colis est à retirer avant le 27 juin.", "fr", _june(27)),
+        ("Délai de retrait : 25/06/2026", "fr", _june(25)),
+        ("Il pacco resterà in giacenza fino al 29 giugno.", "it", _june(29)),
+        ("Termine per il ritiro: 26/06/2026", "it", _june(26)),
+        ("Je pakket ligt tot 25 juni klaar om op te halen.", "nl", _june(25)),
+        ("Uiterste ophaaldatum: 25-06-2026", "nl", _june(25)),
+        (
+            "Votre colis est mis à disposition au point relais jusqu'au 25 juin.",
+            "fr",
+            _june(25),
+        ),
+        ("Ihr Paket liegt in der Filiale bis zum 26.06. bereit.", "de", _june(26)),
+        (
+            "Je pakket ligt voor je klaar bij het afhaalpunt tot en met 25 juni.",
+            "nl",
+            _june(25),
+        ),
+    ],
+)
+def test_find_collect_by(text: str, lang: str, expected: date, tz: ZoneInfo) -> None:
+    """The last day to collect a parcel, in the 7 languages."""
+    assert find_collect_by(text, REF_JUNE, tz, lang, pickup=True) == expected
+    assert find_collect_by(text, REF_JUNE, tz, lang) == expected
+    assert find_collect_by(text, REF_JUNE, tz, None, pickup=True) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Data limite: 23/06/2026", _june(23)),
+        ("Disponível até 01/07/2026", _june(1, 7)),
+    ],
+)
+def test_collect_by_needs_a_pickup_for_plain_deadlines(
+    text: str, expected: date, tz: ZoneInfo
+) -> None:
+    """A deadline that doesn't say "collect" counts only on pickup notices."""
+    assert find_collect_by(text, REF_JUNE, tz, "pt", pickup=True) == expected
+    assert find_collect_by(text, REF_JUNE, tz, "pt") is None
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        ("Desconto de 10% disponível até 30/06.", "pt"),
+        ("Pague os direitos aduaneiros até 25/06 para receber a encomenda.", "pt"),
+        ("Pode devolver o artigo até 30/06.", "pt"),
+        ("Disponível para devolução até 30/06.", "pt"),
+        ("Prazo de entrega: 19/06/2026", "pt"),
+        ("Lieferfrist: 19.06.2026", "de"),
+        ("Levante até 30/09/2026.", "pt"),
+        ("Levante até 10/06/2026.", "pt"),
+        ("Disponível desde hoje às 09:15.", "pt"),
+        ("Free delivery on orders until 30 June.", "en"),
+        (
+            "Envía tus paquetes desde cualquier punto pickup con un 25% de "
+            "descuento hasta el 30/06.",
+            "es",
+        ),
+    ],
+)
+def test_collect_by_skips_other_deadlines(text: str, lang: str, tz: ZoneInfo) -> None:
+    """Offers, duties, returns, delivery deadlines, past and far dates."""
+    assert find_collect_by(text, REF_JUNE, tz, lang, pickup=True) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        (
+            "Your parcel will be available for collection at the locker by "
+            "Tuesday 23 June.",
+            "en",
+        ),
+        ("Your parcel will be available for pickup by 23/06.", "en"),
+        (
+            "A sua encomenda estará disponível para levantamento o mais tardar "
+            "a 23/06.",
+            "pt",
+        ),
+        ("Tu paquete estará disponible para recoger antes del 23/06.", "es"),
+        (
+            "Ihr Paket wird spätestens am 23.06. in der Filiale zur Abholung "
+            "bereitliegen.",
+            "de",
+        ),
+        ("Votre colis sera disponible en point relais au plus tard le 23/06.", "fr"),
+        (
+            "Votre colis sera mis à disposition dans votre point relais au plus "
+            "tard le 23/06.",
+            "fr",
+        ),
+        ("Il pacco sarà disponibile per il ritiro entro il 23/06.", "it"),
+        ("Je pakket ligt uiterlijk 23 juni klaar bij het afhaalpunt.", "nl"),
+    ],
+)
+def test_available_by_is_an_arrival(text: str, lang: str, tz: ZoneInfo) -> None:
+    """Available "by" a date is when it arrives, not the last day to collect."""
+    assert find_collect_by(text, REF_JUNE, tz, lang, pickup=True) is None
+    assert find_collect_by(text, REF_JUNE, tz, None) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "lang", "expected"),
+    [
+        (
+            "Não foi possível entregar a sua encomenda. "
+            "Nova tentativa: quarta-feira, 17 de junho.",
+            "pt",
+            _june(17),
+        ),
+        (
+            "No hemos podido entregar tu paquete. Volveremos a intentarlo el 17/06.",
+            "es",
+            _june(17),
+        ),
+        ("We missed you today. We'll try again tomorrow.", "en", _june(16)),
+        ("Next attempt:\nWednesday 17 June", "en", _june(17)),
+        (
+            "Wir haben Sie nicht angetroffen. "
+            "Der nächste Zustellversuch erfolgt am 17.06.",
+            "de",
+            _june(17),
+        ),
+        (
+            "Nous sommes passés en votre absence. "
+            "Nouvelle tentative de livraison le 17 juin.",
+            "fr",
+            _june(17),
+        ),
+        (
+            "Non eri in casa. "
+            "Il prossimo tentativo di consegna è previsto per il 17 giugno.",
+            "it",
+            _june(17),
+        ),
+        (
+            "We hebben je gemist. De volgende bezorgpoging is op woensdag 17 juni.",
+            "nl",
+            _june(17),
+        ),
+        ("Ausente. Nueva entrega mañana.", "es", _june(16)),
+        ("Volveremos a pasar el miércoles.", "es", _june(17)),
+        ("Destinatário ausente. Voltaremos a passar amanhã.", "pt", _june(16)),
+        ("Le livreur repassera demain.", "fr", _june(16)),
+        ("Il corriere ripasserà mercoledì.", "it", _june(17)),
+        ("Wir versuchen es morgen erneut.", "de", _june(16)),
+        ("We proberen het morgen opnieuw.", "nl", _june(16)),
+    ],
+)
+def test_find_next_attempt(text: str, lang: str, expected: date, tz: ZoneInfo) -> None:
+    """The day of the next delivery attempt, in the 7 languages."""
+    assert find_next_attempt(text, REF_JUNE, tz, lang) == expected
+    assert find_next_attempt(text, REF_JUNE, tz, None) == expected
+    # The date in the text wins over the parser's estimate.
+    assert find_next_attempt(text, REF_JUNE, tz, lang, eta_start=_june(18)) == expected
+
+
+def test_next_attempt_without_a_date_takes_the_estimate(tz: ZoneInfo) -> None:
+    """A planned attempt with no date of its own is on the estimated day."""
+    text = "We'll try again soon."
+    assert find_next_attempt(text, REF_JUNE, tz, "en", eta_start=_june(18)) == _june(18)
+    assert find_next_attempt(text, REF_JUNE, tz, "en") is None
+    # Not too far ahead.
+    assert find_next_attempt(text, REF_JUNE, tz, "en", eta_start=_june(3, 7)) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        ("Não haverá nova tentativa de entrega. A encomenda foi devolvida.", "pt"),
+        ("Pode solicitar uma nova tentativa até 19/06.", "pt"),
+        ("Request a redelivery by Friday.", "en"),
+        ("No further attempts will be made.", "en"),
+        ("If you would like a new attempt, choose a date.", "en"),
+        ("Ein weiterer Zustellversuch erfolgt nicht.", "de"),
+        ("Pide una nueva entrega antes del 19/06.", "es"),
+        ("Agende uma nova entrega no nosso site.", "pt"),
+        ("Le livreur ne repassera pas.", "fr"),
+        ("Bitte versuchen Sie es später erneut.", "de"),
+    ],
+)
+def test_no_next_attempt(text: str, lang: str, tz: ZoneInfo) -> None:
+    """Denied, offered or conditional attempts aren't planned ones."""
+    assert find_next_attempt(text, REF_JUNE, tz, lang, eta_start=_june(18)) is None
+
+
+def test_next_attempt_too_far_ahead(tz: ZoneInfo) -> None:
+    """An attempt more than 14 days ahead isn't read."""
+    assert find_next_attempt("Next attempt: 3 July.", REF_JUNE, tz, "en") is None

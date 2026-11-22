@@ -34,7 +34,12 @@ from pytest_homeassistant.common import (
     mock_platform,
 )
 
-from custom_components.parcels.const import CONF_SEVENTEENTRACK, MailKind, ParcelStatus
+from custom_components.parcels.const import (
+    CONF_SEVENTEENTRACK,
+    LeftAt,
+    MailKind,
+    ParcelStatus,
+)
 from custom_components.parcels.dedup import (
     apply_contribution,
     archive_parcel,
@@ -628,6 +633,70 @@ async def test_package_text_and_time(
     assert records(engine)[CTT]["history"] == [
         {"status": "in_transit", "info": info, "at": at, "time": at or NOW_ISO}
     ]
+
+
+async def test_package_text_gives_details(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """The carrier's text says until when to collect, the next attempt and where.
+
+    Its days count from the package's own time.
+    """
+    pickup = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    missed = add_parcel(engine, "other", OTHER, carrier="ctt")
+    delivered = add_parcel(engine, "ups", UPS, carrier="ups")
+    await tracker.async_refresh()
+    track.put(
+        CTT,
+        "Ready to be picked up",
+        info="Disponível para levantamento até 19/11",
+        timestamp="2026-11-17T09:45:00+00:00",
+    )
+    track.put(
+        OTHER,
+        "Undelivered",
+        info="Destinatário ausente. Nova entrega amanhã",
+        timestamp="2026-11-16T18:10:00+00:00",
+    )
+    track.put(
+        UPS,
+        "Delivered",
+        info="Delivered - Front door",
+        timestamp="2026-11-17T09:40:00+00:00",
+    )
+
+    await tracker.async_refresh()
+
+    state = engine.data.parcels[pickup.id].state
+    assert (state.status, state.collect_by) == (
+        ParcelStatus.READY_FOR_PICKUP,
+        date(2026, 11, 19),
+    )
+    state = engine.data.parcels[missed.id].state
+    assert (state.status, state.next_attempt) == (ParcelStatus.ATTEMPTED, TODAY)
+    state = engine.data.parcels[delivered.id].state
+    assert (state.status, state.left_at) == (ParcelStatus.DELIVERED, LeftAt.DOOR)
+    assert [event.left_at for event in news(engine, delivered.id, UPS)] == [LeftAt.DOOR]
+
+
+async def test_package_without_a_time_gives_no_days(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """Without the package's time, its text's days aren't read."""
+    pickup = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    missed = add_parcel(engine, "other", OTHER, carrier="ctt")
+    await tracker.async_refresh()
+    track.put(
+        CTT, "Ready to be picked up", info="Disponível para levantamento até 19/11"
+    )
+    track.put(OTHER, "Undelivered", info="Destinatário ausente. Nova entrega amanhã")
+
+    await tracker.async_refresh()
+
+    state = engine.data.parcels[pickup.id].state
+    assert (state.status, state.collect_by) == (ParcelStatus.READY_FOR_PICKUP, None)
+    state = engine.data.parcels[missed.id].state
+    assert (state.status, state.next_attempt) == (ParcelStatus.ATTEMPTED, None)
 
 
 async def test_history_keeps_the_last_statuses(

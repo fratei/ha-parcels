@@ -72,7 +72,7 @@ from .models import (
     dt_to_str,
     new_id,
 )
-from .parsers import is_refund, sort_returns
+from .parsers import add_details, is_refund, sort_returns
 from .parsers.senders import organizational_domain
 
 if TYPE_CHECKING:
@@ -790,11 +790,14 @@ class AIWorker:
         still offered for review. ``notes`` say what the checks changed, for
         administrators. ``parser`` names the parser that recognised the
         sender: the answer is sorted the same way as the parser's, so a
-        refund is dropped and a customer return told apart.
+        refund is dropped and a customer return told apart. The details a
+        parser's result gets (collect-by date, next attempt, where it was
+        left) are read from the e-mail for the answer too.
         """
         engine = self.engine
         if result is not None:
             result = sort_returns(result, message, engine.tz, parser=parser)
+            result = add_details(result, message, engine.tz)
         if result is None or result.kind is MailKind.UNKNOWN:
             self._to_review(entry, now, reason=REASON_UNKNOWN_FORMAT)
             return

@@ -47,6 +47,7 @@ from .dedup import Contribution, apply_contribution
 from .models import Origin, Parcel, ParcelEvent, Source, dt_from_str, dt_to_str
 from .parsers.carriers._common import fold_text, phrase_regex
 from .parsers.carriers._phrases import KIND_PHRASES
+from .parsers.details import tracker_details
 from .parsers.tracking import PAACK_ID_RE, detect_carrier, normalize_tracking_number
 from .quiet import is_quiet
 
@@ -581,6 +582,13 @@ class SeventeenTrackSync:
                     source=Source.SEVENTEENTRACK,
                     status=status,
                     label=entry.get("info"),
+                    # Relative days count from the package's own time only.
+                    **tracker_details(
+                        entry.get("info"),
+                        status,
+                        dt_from_str(entry.get("at")),
+                        self.engine.tz,
+                    ),
                 )
             )
         first = min((event.time for event in events), default=now)

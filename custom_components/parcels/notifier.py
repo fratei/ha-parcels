@@ -62,6 +62,12 @@ Live Activities
     notification opens the parcel on the dashboard
     (``<path>?parcel=<id>``); the combined activity opens the week.
 
+    The text says what comes next: where and until when a parcel can be
+    collected, when a missed attempt happened ("reported" when that's only
+    its e-mail's time) and the next attempt or where the carrier took the
+    parcel, and where a delivered parcel was left. iPads and Android phones
+    get the same text.
+
 Packages
     The day counts packages, not records. An order without a carrier's
     number that one of the day's packages may hold rides along with it (see
@@ -72,15 +78,15 @@ Packages
 
 Persistent notification
     ``parcels_today`` lists the day's parcels from the start time until the
-    next morning's start time, without item names; private parcels are only
-    counted.
+    next morning's start time, without item names, with the same details as
+    the activities; private parcels are only counted.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
@@ -120,6 +126,7 @@ from .const import (
     DOMAIN,
     PERSISTENT_NOTIFICATION_ID,
     STATUS_RANK,
+    LeftAt,
     ParcelStatus,
 )
 from .dedup import boxes_of_day
@@ -150,6 +157,7 @@ TEST_TAG = "parcels-test"
 MAX_TAG = 64
 MAX_TEXT = 40
 MAX_NAME = 20
+MAX_PLACE = 28
 # The query parameters the dashboard opens details from.
 LINK_KEYS = frozenset({"parcel", "return"})
 
@@ -479,6 +487,19 @@ def _day_word(day: date, today: date) -> str:
     return _day_text(day)
 
 
+def _short_day(day: date, today: date) -> str:
+    """Return a date for the lock screen: today, tomorrow, yesterday or Thu 19."""
+    if abs((day - today).days) <= 1:
+        return _day_word(day, today)
+    return f"{_WEEKDAYS[day.weekday()]} {day.day}"
+
+
+def _place(value: str | None) -> str:
+    """Return the name of a pickup point for the lock screen, without its address."""
+    text = _SPACES.sub(" ", str(value or "")).strip()
+    return _clean(text.split(",", 1)[0].strip() or text, MAX_PLACE)
+
+
 def _window_text(eta: Eta | None) -> str | None:
     """Return a delivery window such as 13:00-14:00, by 14:00 or from 13:00."""
     if eta is None:
@@ -625,6 +646,56 @@ _STATUS_TEXT: dict[ParcelStatus, str] = {
     S.CANCELLED: "Cancelled",
 }
 
+# Where a delivered parcel was left, after its delivery time.
+LEFT_AT_TEXT: dict[LeftAt, str] = {
+    LeftAt.NEIGHBOUR: "with a neighbour",
+    LeftAt.MAILBOX: "in the mailbox",
+    LeftAt.DOOR: "at the door",
+    LeftAt.RECEPTION: "at reception",
+    LeftAt.GARAGE: "in the garage",
+    LeftAt.LOCKER: "in a locker",
+}
+
+
+def _attempt_time(
+    state: ParcelState, day: date, today: date, day_text: Callable[[date, date], str]
+) -> tuple[str | None, bool]:
+    """Return when a missed attempt happened, and whether that's only its e-mail's time.
+
+    The time when it was on ``day``, else its day; nothing when only its day
+    is known and that is ``day``, or when not even its day is.
+    """
+    moment = state.status_time
+    if moment is None or (state.status_undated and not state.status_timeless):
+        return None, False
+    happened = local_date(moment)
+    if state.status_timeless:
+        return (None if happened == day else day_text(happened, today)), False
+    if happened != day:
+        return day_text(happened, today), state.status_reported
+    return _local_hm(moment), state.status_reported
+
+
+def _attempt_tail(
+    state: ParcelState,
+    today: date,
+    day_text: Callable[[date, date], str],
+    place_text: Callable[[str | None], str],
+) -> list[str]:
+    """Return what follows a missed attempt.
+
+    The next attempt; else where the carrier took the parcel and until when
+    it can be collected.
+    """
+    if state.next_attempt is not None and state.next_attempt >= today:
+        return [f"next attempt {day_text(state.next_attempt, today)}"]
+    tail: list[str] = []
+    if place := place_text(state.pickup_point):
+        tail.append(f"taken to {place}")
+    if state.collect_by is not None:
+        tail.append(f"collect by {day_text(state.collect_by, today)}")
+    return tail
+
 
 @dataclass(frozen=True, slots=True)
 class _Content:
@@ -658,11 +729,26 @@ def _status_texts(state: ParcelState, today: date) -> tuple[str, str]:
         at = _local_hm(delivered) if delivered is not None else None
         text = f"Delivered {CHECK} {at}" if at else f"Delivered {CHECK}"
         critical = f"{CHECK} {at}" if at else CHECK
+        if state.left_at is not None:
+            text += f"{SEP}{LEFT_AT_TEXT[state.left_at]}"
     elif status is S.READY_FOR_PICKUP:
-        text, critical = "Ready for pickup", "Pickup"
-    elif status in PROBLEMS:
-        text = _STATUS_TEXT[status]
-        critical = "Missed" if status is S.ATTEMPTED else "Problem"
+        place = _place(state.pickup_point)
+        text = f"Ready at {place}" if place else "Ready for pickup"
+        critical = "Pickup"
+        if state.collect_by is not None:
+            text += f"{SEP}collect by {_short_day(state.collect_by, today)}"
+    elif status is S.ATTEMPTED:
+        # The time stays apart from "Missed" when it's only the e-mail's.
+        when, reported = _attempt_time(state, today, today, _short_day)
+        text, critical = "Missed", "Missed"
+        if when is not None:
+            text += f"{SEP}reported {when}" if reported else f" {when}"
+        if tail := _attempt_tail(state, today, _short_day, _place):
+            text += SEP + SEP.join(tail)
+        elif later is not None:
+            text += f"{SEP}Expected {_day_word(later, today)}"
+    elif status is S.EXCEPTION:
+        text, critical = _STATUS_TEXT[status], "Problem"
         if later is not None:
             text += f"{SEP}Expected {_day_word(later, today)}"
     elif expected_today:
@@ -694,8 +780,6 @@ def _parcel_content(
     text, critical = _status_texts(state, ctx.today)
     title = _title(state)
     parts = [text]
-    if state.status is S.READY_FOR_PICKUP and (point := _clean(state.pickup_point)):
-        parts.append(point)
     carrier = _clean(state.carrier_name)
     if carrier and carrier.casefold() != title.casefold():
         parts.append(carrier)
@@ -967,16 +1051,28 @@ def _persistent_status(state: ParcelState, day: date, today: date) -> str:
         text = "Out for delivery"
     elif status is S.DELIVERED:
         delivered = _delivered_time(state)
-        text = (
-            f"Delivered {_local_hm(delivered)} {CHECK}"
-            if delivered is not None
-            else f"Delivered {CHECK}"
-        )
+        text = "Delivered"
+        if delivered is not None:
+            text += f" {_local_hm(delivered)}"
+        if state.left_at is not None:
+            text += f" {LEFT_AT_TEXT[state.left_at]}"
+        text += f" {CHECK}"
     elif status is S.READY_FOR_PICKUP:
         text = "Ready for pickup"
         if point := _clean(state.pickup_point):
             text += f" at {point}"
-    elif status in PROBLEMS:
+        if state.collect_by is not None:
+            text += f", collect by {_day_word(state.collect_by, today)}"
+    elif status is S.ATTEMPTED:
+        text = _STATUS_TEXT[status]
+        when, reported = _attempt_time(state, day, today, _day_word)
+        if when is not None:
+            text += f", reported {when}" if reported else f" {when}"
+        if tail := _attempt_tail(state, today, _day_word, _clean):
+            text += ", " + ", ".join(tail)
+        elif eta is not None and eta.end > day:
+            text += f", expected {_day_word(eta.end, today)}"
+    elif status is S.EXCEPTION:
         text = _STATUS_TEXT[status]
         if eta is not None and eta.end > day:
             text += f", expected {_day_word(eta.end, today)}"

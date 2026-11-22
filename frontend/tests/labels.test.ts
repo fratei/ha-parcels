@@ -9,6 +9,7 @@ import {
   inferredNotice,
   etaSourceLabel,
   kindLabel,
+  leftAtLabel,
   mergeReasonLabel,
   noteMeaning,
   parcelAppName,
@@ -20,7 +21,7 @@ import {
 } from "../src/labels.ts";
 import { STATUS_COLORS, isActiveStatus, statusColor, statusRank } from "../src/status.ts";
 import { fmt } from "../src/strings.ts";
-import { PARCEL_STATUSES } from "../src/types.ts";
+import { LEFT_AT, PARCEL_STATUSES } from "../src/types.ts";
 import { safeHttpsUrl } from "../src/url.ts";
 import { makeParcel } from "./helpers.ts";
 
@@ -191,6 +192,16 @@ describe("labels", () => {
     assert.match(sentBack, /sending its items back/);
     // Parcels sent before the reason existed.
     assert.equal(inferredNotice(makeParcel({ inferred: true })), shop);
+  });
+
+  test("every place a parcel can be left has words; anything else has none", () => {
+    for (const place of LEFT_AT) {
+      assert.match(leftAtLabel(place) ?? "", /^(with|in|at) (a|the|reception)/, place);
+    }
+    assert.equal(leftAtLabel("neighbour"), "with a neighbour");
+    assert.equal(leftAtLabel("with the cat"), null);
+    assert.equal(leftAtLabel("__proto__"), null);
+    assert.equal(leftAtLabel(null), null);
   });
 
   test("fmt fills placeholders and leaves unknown ones", () => {

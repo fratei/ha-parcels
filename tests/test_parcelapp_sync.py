@@ -44,6 +44,7 @@ from custom_components.parcels.const import (
     EVENT_PARCEL_ADDED,
     EVENT_STATUS_CHANGED,
     ISSUE_PARCEL_APP_KEY,
+    LeftAt,
     MailKind,
     ParcelStatus,
 )
@@ -1236,6 +1237,80 @@ async def test_dates_with_the_part_of_the_day(
     newest = record(engine)["history"][0]
     assert newest["at"] == dt_to_str(when)
     assert "day" not in newest
+
+
+@pytest.mark.parametrize(
+    ("code", "text", "written", "details"),
+    [
+        (
+            0,
+            "Entregue - Caixa de correio",
+            "2026-11-16 18:30:00",
+            {"left_at": LeftAt.MAILBOX},
+        ),
+        (0, "Entregue - Caixa de correio", "garbage", {"left_at": LeftAt.MAILBOX}),
+        (
+            3,
+            "Disponível para levantamento até 19/11",
+            "2026-11-16 18:30:00",
+            {"collect_by": date(2026, 11, 19)},
+        ),
+        (
+            3,
+            "Disponível para levantamento até 19/11",
+            "Monday, 16 November 4:20 qwerty",
+            {"collect_by": date(2026, 11, 19)},
+        ),
+        (3, "Disponível para levantamento até 19/11", "garbage", {}),
+        (
+            6,
+            "Destinatário ausente. Nova entrega amanhã",
+            "2026-11-16 18:30:00",
+            {"next_attempt": TODAY},
+        ),
+        (6, "Destinatário ausente. Nova entrega amanhã", "garbage", {}),
+    ],
+    ids=[
+        "left",
+        "left-undated",
+        "collect",
+        "collect-day-only",
+        "collect-undated",
+        "attempt",
+        "attempt-undated",
+    ],
+)
+async def test_event_text_gives_details(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    code: int,
+    text: str,
+    written: str,
+    details: dict[str, Any],
+) -> None:
+    """An event's text says until when to collect, the next attempt and where.
+
+    Its days count from the event's own day, so an event whose day isn't
+    known gives none; where a parcel was left needs no day.
+    """
+    add_parcel(engine, "a", age=timedelta(days=7))
+    parcel_app.deliveries = [delivery(status=code, events=((text, written),))]
+
+    await read(hass, freezer, parcel_app)
+
+    parcel = holder(engine)
+    assert parcel is not None
+    fields = ("collect_by", "next_attempt", "left_at")
+    assert [
+        {name: getattr(event, name) for name in fields if getattr(event, name)}
+        for event in own_events(parcel)
+    ] == [details]
+    state = parcel.state
+    assert {name: getattr(state, name) for name in fields if getattr(state, name)} == (
+        details
+    )
 
 
 async def test_dates_read_later_keep_what_was_seen(

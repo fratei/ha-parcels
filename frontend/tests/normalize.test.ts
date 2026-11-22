@@ -147,6 +147,10 @@ describe("normalizeParcel", () => {
       eta_source: "parcelapp",
       delivered_undated: true,
       delivered_timeless: true,
+      status_reported: true,
+      next_attempt: "2026-07-15",
+      collect_by: "2026-07-21",
+      left_at: "locker",
       inferred: true,
       inferred_reason: "return",
       pickup_point: "Example Locker 12",
@@ -220,6 +224,10 @@ describe("normalizeParcel", () => {
       delivered_undated: 1,
       status_timeless: "yes",
       delivered_timeless: 1,
+      status_reported: "yes",
+      next_attempt: "tomorrow",
+      collect_by: 20260721,
+      left_at: "with the cat",
     });
     assert.ok(parcel);
     assert.equal(parcel.status, "teleported");
@@ -239,6 +247,12 @@ describe("normalizeParcel", () => {
     assert.equal(parcel.delivered_undated, false);
     assert.equal(parcel.status_timeless, false);
     assert.equal(parcel.delivered_timeless, false);
+    assert.equal(parcel.status_reported, false);
+    assert.equal(parcel.next_attempt, null);
+    assert.equal(parcel.collect_by, null);
+    assert.equal(parcel.left_at, null);
+    assert.equal(normalizeParcel({ id: "p1", left_at: "Neighbour" })?.left_at, null);
+    assert.equal(normalizeParcel({ id: "p1", collect_by: "2026-02-30" })?.collect_by, null);
     assert.equal(normalizeParcel({ id: "p1", eta_source: 3 })?.eta_source, null);
     assert.equal(normalizeParcel({ id: "p1", eta_source: "" })?.eta_source, null);
     assert.equal(normalizeParcel([]), null);

@@ -503,6 +503,32 @@ async def test_return_answer_keeps_the_pickup_day(
     assert not engine.data.returns
 
 
+@pytest.mark.parametrize("mode", ["suggest", "auto"])
+async def test_answer_gets_the_emails_details(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock, mode: str
+) -> None:
+    """An answer gets what the e-mail says besides the status, as parsers do."""
+    message = ctt_message(
+        "Olá, não o encontrámos. Nova tentativa amanhã.",
+        subject=f"Não foi possível entregar o seu objeto {TRACKING}",
+    )
+    engine = await async_setup(hass, client, message, mode=mode)
+    assert engine.ai.queue_size == 1
+    generate.return_value = result(kind="attempted")
+
+    await engine.ai._async_step()
+
+    next_day = date(2026, 11, 18)
+    if mode == "suggest":
+        (item,) = engine.data.review.values()
+        assert item.suggestion is not None
+        assert item.suggestion.next_attempt == next_day
+    else:
+        (parcel,) = engine.data.parcels.values()
+        assert parcel.state.status is ParcelStatus.ATTEMPTED
+        assert parcel.state.next_attempt == next_day
+
+
 async def test_unknown_answer_goes_to_review(
     hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
 ) -> None:

@@ -82,6 +82,7 @@ from ..models import (
     order_key,
 )
 from ..parsers.base import Eta
+from ..parsers.details import tracker_details
 from ..parsers.tracking import normalize_tracking_number, validate_tracking_number
 from ..quiet import is_quiet
 from ..seventeentrack import add_order, clip_text, refine_status
@@ -418,6 +419,8 @@ def _history_events(
         status = _stored_status(entry.get("status"))
         info = entry.get("info")
         label = info if isinstance(info, str) and info else None
+        # Days in its text are read only when the event's own day is known.
+        reference = when if times[index] is not None or day is not None else None
         if status is not None or label is not None:
             events.append(
                 ParcelEvent(
@@ -429,6 +432,7 @@ def _history_events(
                     dayless=dayless,
                     by=limit,
                     timeless=timeless,
+                    **tracker_details(label, status, reference, tz),
                 )
             )
     return events

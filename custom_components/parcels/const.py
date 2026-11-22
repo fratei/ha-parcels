@@ -8,7 +8,7 @@ from typing import Final
 
 DOMAIN: Final = "parcels"
 NAME: Final = "Parcels"
-VERSION: Final = "0.1.11"
+VERSION: Final = "0.1.12"
 
 STORAGE_KEY: Final = "parcels"
 STORAGE_VERSION: Final = 1
@@ -221,6 +221,17 @@ class MailKind(StrEnum):
     CUSTOMER_RETURN = "customer_return"
     NOT_PARCEL = "not_parcel"
     UNKNOWN = "unknown"
+
+
+class LeftAt(StrEnum):
+    """Where a delivered parcel was left: fixed categories, never details."""
+
+    NEIGHBOUR = "neighbour"
+    MAILBOX = "mailbox"
+    DOOR = "door"
+    RECEPTION = "reception"
+    GARAGE = "garage"
+    LOCKER = "locker"
 
 
 # Status that a mail kind moves a parcel to. Delayed keeps the parcel in

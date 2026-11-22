@@ -132,6 +132,15 @@ api.parcel.app, which Parcels contacts itself with your API key.
   **Filtered**; the hub's diagnostics only count them. Carriers' e-mails, and
   e-mails read as about an order, a shipment, a delivery or a cancellation,
   are read as usual.
+- **Pickups, missed deliveries and where it was left**: from shipping
+  e-mails, 17TRACK and the Parcel app, in the seven languages, Parcels reads
+  the last day to collect a parcel from its pickup point, the day of the next
+  attempt after a missed delivery and where a delivered parcel was left: with
+  a neighbour, in the mailbox, at the door, at reception, in the garage or in
+  a locker. Only these categories are kept, never names, house numbers or
+  photos. From e-mails, it also reads the pickup point a carrier took a
+  missed parcel to. These show in the parcel's details, its Live Activity
+  and notifications, and the persistent notification.
 - **Delivery PINs**: delivery PINs, one-time codes and pickup codes found in
   e-mails are shown on the parcel's box until it's delivered, and in its
   details (see [Privacy and safety](#privacy-and-safety)).
@@ -162,13 +171,14 @@ api.parcel.app, which Parcels contacts itself with your API key.
 - **E-mails aren't kept.** Parcels downloads the e-mails of the shops and
   carriers it knows or you trust, and other e-mails that look like shipping
   e-mails, reads them in memory and keeps only what it found, such as the
-  shop, carrier, tracking and order numbers, items, dates and status. For
-  each e-mail it keeps a hash of its ID, the ID your mailbox gives it, the
-  sender's domain, when it arrived and what Parcels did with it, to recognize
-  the e-mails it has read and to download one again when needed. E-mails in
-  **Needs review** and **Filtered** also keep their sender's address and
-  subject until they leave the list; those removed from a parcel keep only
-  the sender's domain. E-mail bodies are never stored or logged.
+  shop, carrier, tracking and order numbers, items, dates, status and where
+  a parcel was left. For each e-mail it keeps a hash of its ID, the ID your
+  mailbox gives it, the sender's domain, when it arrived and what Parcels did
+  with it, to recognize the e-mails it has read and to download one again
+  when needed. E-mails in **Needs review** and **Filtered** also keep their
+  sender's address and subject until they leave the list; those removed from
+  a parcel keep only the sender's domain. E-mail bodies are never stored or
+  logged.
 - **No remote content.** Images, tracking pixels and links in e-mails are
   never loaded. Tracking links are built from each carrier's public URL
   pattern.
@@ -184,8 +194,11 @@ api.parcel.app, which Parcels contacts itself with your API key.
   AI task of the Ollama integration whose model runs on the Home Assistant
   host, and refuses cloud models and remote hosts.
 - **Lock screen.** Live Activities and notifications show the shop, carrier,
-  status and time window, never item names unless you turn that on. With item
-  names on, a parcel without items shows its name in the Parcel app instead.
+  status and time window, a pickup point's name and the last day to collect,
+  the next attempt after a missed one, and where a delivered parcel was left
+  (only "with a neighbour", "in the mailbox" and the like), never item names
+  unless you turn that on. With item names on, a parcel without items shows
+  its name in the Parcel app instead.
   A parcel marked private notifies only its owner and is only counted in the
   shared persistent notification. The link that opens a parcel from them
   carries only its ID in Parcels.
@@ -431,11 +444,14 @@ add a resource.
   the carrier, the parcel its items came in and its e-mails; administrators
   can remove it there. A parcel's details list its returns.
   Select a parcel for its timeline, carrier and carrier link, tracking
-  number, shipment reference, the shipment's other packages, pickup point,
-  PIN or pickup code, marketplace seller ("Sold by"), name in the Parcel app
-  and parcel ID, and to mark it delivered, edit it,
-  make it private, merge, split or archive it. Its expected date ends in
-  "· Parcel app" when it comes from the Parcel app. Merges and deliveries
+  number, shipment reference, the shipment's other packages, when it was
+  delivered and where it was left, the next attempt after a missed one,
+  pickup point and the last day to collect it, PIN or pickup code,
+  marketplace seller ("Sold by"), name in the Parcel app and parcel ID, and
+  to mark it delivered, edit it, make it private, merge, split or archive it.
+  Its expected date ends in "· Parcel app" when it comes from the Parcel app.
+  When the e-mail about a missed attempt doesn't say when it happened, its
+  status gives the e-mail's time as "reported …". Merges and deliveries
   that Parcels guessed are marked there, to keep or undo.
   **E-mails**, closed until you open it, lists the parcel's e-mails and
   other sources, oldest first: where each came from (the sender, 17TRACK,
@@ -529,7 +545,10 @@ views:
 For a month view, add Home Assistant's own calendar card with
 `calendar.parcels`. It has no week grid, which is why Parcels brings its own.
 
-Parcels marked private show only to their owner. A return of a private parcel
+A parcel marked private shows in full only to its owners. Others see
+"Private parcel" on its day, with its status and time window, but not its
+shop, carrier, items, pickup point, the last day to collect it or where it
+was left, and can't open its details. A return of a private parcel
 is private too: others see only "Private return" on its day. The review card,
 with **Needs review** and **Filtered**, shows only to administrators.
 
@@ -634,6 +653,15 @@ How they behave:
   own activity keeps its countdown.
 - Updates are sent only when something changes, and silently unless the
   status changed.
+- The text says what comes next. A pickup says where and until when, such as
+  "Ready at Locker 12 · collect by Wed 24", with the pickup point's name up to
+  its first comma. A missed delivery says when and what next: "Missed 11:20 ·
+  next attempt Mon 22", or "Missed 11:20 · taken to Shop 7 · collect by Thu
+  25" when the carrier took it to a pickup point. When the e-mail doesn't say
+  when the carrier came, the time is the e-mail's, and says so: "Missed ·
+  reported 11:50". A delivered parcel says where it was left when the carrier
+  said so: "Delivered ✓ 10:25 · with a neighbour". iPad and Android
+  notifications say the same.
 - Tapping a parcel's activity or notification opens its details on the
   Parcels page; the shared activity opens the week.
 - A delivered parcel shows "Delivered ✓" with the time when it's known, and
@@ -656,8 +684,11 @@ days.
 
 From the start time until the next morning, a persistent notification in Home
 Assistant (`parcels_today`) lists the day's parcels with their shop, carrier,
-status and time window, and links to the Parcels page. Packages of one shipment
-with the same status share a line, with their count ("4 packages"); delivered
+status and time window, and links to the Parcels page. It also gives the
+pickup point and the last day to collect, the time of a missed attempt and
+what comes next, and where a delivered parcel was left, such as "Delivered
+10:25 with a neighbour ✓". Packages of one shipment with the same status
+share a line, with their count ("4 packages"); delivered
 ones keep their own line, with the time when it's known. Orders that ride
 along with a package aren't in the count: a shop's orders that the same
 packages may hold share a line, such as "Amazon · 2 orders · Possibly in a
@@ -676,7 +707,9 @@ own tracking in between.
 
 - **What it adds**: the carrier's status between e-mails, such as in transit,
   out for delivery, delivered, a failed attempt or ready for pickup, with the
-  carrier's own wording in the parcel's history.
+  carrier's own wording in the parcel's history. When that wording says so
+  clearly, also the last day to collect, the next attempt and where a
+  delivered parcel was left.
 - **What it doesn't add**: delivery dates. Home Assistant's 17TRACK integration
   gives no expected date, so a parcel without one stays under **No date yet**.
 - **What it leaves out**, so they don't take up places in your account:
@@ -741,6 +774,8 @@ enter an API key, Parcels itself contacts api.parcel.app.
 
 - **What it adds**: the status and events of your deliveries, and their
   expected date or time window, which fills in what the e-mails didn't give.
+  When an event's text says so clearly, also the last day to collect, the
+  next attempt and where a delivered parcel was left.
   When an e-mail and Parcel disagree, the newer news wins. In a parcel's
   details, a date from Parcel ends in "· Parcel app", and the delivery's name
   in Parcel is shown.
@@ -924,6 +959,9 @@ answer that a parcel was returned is then sorted by the e-mail's own wording,
 as the parsers' readings are: an item sent back to the shop becomes a return,
 a parcel going back to its sender stays one, and a refund is dropped, as is a
 refund e-mail that the answer says with confidence isn't about a parcel.
+The last day to collect, the next attempt and where a parcel was left are
+read from the e-mail's own wording, as for the parsers, never from the
+answer.
 Paack's order IDs are kept as the e-mail writes them, and in Paack's own
 e-mails the part before `_`, given alone as the order number, becomes the
 shipment reference. [docs/ai-benchmark.md](docs/ai-benchmark.md) lists the
@@ -1154,6 +1192,14 @@ actions:
   the day's packages may hold ride along with it (see
   [How the day is counted](#how-the-day-is-counted)). The notifications part
   of the hub's diagnostics counts today's (`orders_in_a_box`).
+- **A missed delivery says "reported 11:50".** The e-mail didn't say when
+  the carrier came, so the time is when the e-mail was sent, not the
+  attempt's. 17TRACK or the Parcel app may give the attempt's time later.
+- **No collect-by day, next attempt or place it was left.** Parcels shows
+  them only when an e-mail, 17TRACK or the Parcel app says them clearly, and
+  only for the parcel's current status: a new status clears them, apart from
+  the last day to collect, which stays while the parcel waits to be
+  collected.
 - **Amazon shows as the carrier, but didn't deliver.** Before 0.1.8, Amazon
   became the carrier whenever the local AI, the Parcel app or 17TRACK named
   it, which kept Amazon's orders apart from their carrier's deliveries. After

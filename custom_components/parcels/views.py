@@ -242,7 +242,8 @@ def parcel_json(
 
     ``shipment`` is the parcel's group from :func:`shipment_groups`. The PIN
     or pickup code is only included with ``code``, and never for a viewer who
-    may not see the parcel.
+    may not see the parcel. Such a viewer sees when it comes, including the
+    next attempt, but not where it waits or was left, nor until when.
     """
     state = parcel.state
     eta = state.eta
@@ -270,6 +271,13 @@ def parcel_json(
         "status_timeless": state.status_timeless,
         "delivered_undated": state.delivered_undated,
         "delivered_timeless": state.delivered_timeless,
+        # The status time is when an e-mail reported it, not when it happened.
+        "status_reported": state.status_reported,
+        "next_attempt": (
+            state.next_attempt.isoformat() if state.next_attempt else None
+        ),
+        "collect_by": state.collect_by.isoformat() if state.collect_by else None,
+        "left_at": state.left_at.value if state.left_at else None,
         "inferred": state.inferred,
         "inferred_reason": state.inferred_reason,
         "pickup_point": state.pickup_point,
@@ -306,6 +314,8 @@ def parcel_json(
             pickup_point=None,
             pickup_code=None,
             has_code=False,
+            collect_by=None,
+            left_at=None,
             order_numbers=[],
             references=[],
             items=[],

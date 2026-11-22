@@ -1488,6 +1488,7 @@ _POINT_LINE_RE = re.compile(
     rf"(?:(?P<strong>{_POINT_STRONG})|(?:{_POINT_WEAK}))"
     r"(?:\s*\([^)]*\))?\s*(?:(?P<colon>:)\s*(?P<rest>.*?))?\s*$"
 )
+_DELIVERY_POINT_RE = re.compile(r"(?:ponto|punto)\s+(?:de\s+)?entrega")
 _POINT_STRIP = " \t-\u2013\u2014\u2022*|>:"
 _POINT_LOOKAHEAD_LINES = 3
 
@@ -1505,12 +1506,20 @@ def _clean_point(value: str) -> str | None:
     return value[:MAX_POINT_CHARS].rstrip()
 
 
-def _pickup_point(text: str) -> str | None:
-    """Return the pickup point after a label ("Pickup point: ...")."""
+def _pickup_point(text: str, *, redirect: bool = False) -> str | None:
+    """Return the pickup point after a label ("Pickup point: ...").
+
+    For a missed attempt (``redirect``) only a pickup label counts: there a
+    shop row names the shop and a delivery point the home address.
+    """
     lines = text.splitlines()
     for index, line in enumerate(lines):
         match = _POINT_LINE_RE.match(fold_aligned(line))
         if match is None or (match["strong"] is None and match["colon"] is None):
+            continue
+        if redirect and (
+            match["strong"] is None or _DELIVERY_POINT_RE.match(match["strong"])
+        ):
             continue
         if match["rest"]:
             point = _clean_point(line[match.start("rest") : match.end("rest")])
@@ -1747,8 +1756,8 @@ def parse_generic(
         message_eta(message, kind, tz, language) if kind is not MailKind.CODE else None
     )
     point: str | None = None
-    if kind is MailKind.READY_FOR_PICKUP and len(numbers) <= 1:
-        point = _pickup_point(text)
+    if kind in _LOCKER_KINDS and len(numbers) <= 1:
+        point = _pickup_point(text, redirect=kind is MailKind.ATTEMPTED)
 
     order_numbers = tuple(orders)
     if numbers:

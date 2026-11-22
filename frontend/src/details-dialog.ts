@@ -17,6 +17,13 @@ import { candidateLabel, candidateLines, couldAlsoBe } from "./describe.ts";
 import { ParcelsDialogBase, OPEN_RETURN_EVENT, type ReturnFocus } from "./dialog-base.ts";
 import { errorMessage } from "./errors.ts";
 import {
+  collectByFact,
+  deliveredFact,
+  EXPECTED_FORMAT,
+  nextAttemptFact,
+  statusFact,
+} from "./facts.ts";
+import {
   formatDate,
   formatDateRange,
   formatDateTime,
@@ -95,13 +102,6 @@ interface OriginNotice {
   /** A parcel the notice can show. */
   show: string | null;
 }
-
-const EXPECTED_FORMAT: Intl.DateTimeFormatOptions = {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-};
 
 const EMPTY_DATE_FORM: DateForm = { eta_start: "", eta_end: "", window_start: "", window_end: "" };
 /** The merge picker gets a search field above this many candidates. */
@@ -1043,25 +1043,15 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const returns = this._returnsOf(parcel);
     const row = (label: string, value: unknown): TemplateResult =>
       html`<div><dt>${label}</dt><dd>${value}</dd></div>`;
-    const sinceDay = parcel.status_timeless ? formatDayWithoutTime(parcel.status_time, locale, MEDIUM_DATE) : "";
-    const since = parcel.status_undated
-      ? ` · ${sinceDay ? fmt(STRINGS.sinceDate, { date: sinceDay }) : STRINGS.dateNotKnownInline}`
-      : parcel.status_time
-        ? ` · ${fmt(STRINGS.sinceDate, { date: formatDateTime(parcel.status_time, locale) })}`
-        : "";
+    const delivered = deliveredFact(parcel, locale);
+    const nextAttempt = nextAttemptFact(parcel, this.snapshot?.settings.today ?? "", locale);
+    const collectBy = collectByFact(parcel, locale);
     const etaSource = etaSourceLabel(parcel);
     const name = parcelAppName(parcel);
     return html`<dl class="facts">
-      ${row(STRINGS.status, `${statusLabel(parcel.status)}${since}`)}
-      ${parcel.delivered_undated
-        ? row(
-            STRINGS.delivered,
-            (parcel.delivered_timeless && formatDayWithoutTime(parcel.delivered_at, locale, MEDIUM_DATE)) ||
-              STRINGS.dateNotKnown,
-          )
-        : parcel.delivered_at
-          ? row(STRINGS.delivered, formatDateTime(parcel.delivered_at, locale))
-          : nothing}
+      ${row(STRINGS.status, statusFact(parcel, locale))}
+      ${delivered ? row(STRINGS.delivered, delivered) : nothing}
+      ${nextAttempt ? row(STRINGS.nextAttempt, nextAttempt) : nothing}
       ${eta
         ? row(
             STRINGS.expected,
@@ -1149,6 +1139,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
           )
         : nothing}
       ${parcel.pickup_point ? row(STRINGS.pickupPoint, parcel.pickup_point) : nothing}
+      ${collectBy ? row(STRINGS.collectBy, collectBy) : nothing}
       ${code ? row(STRINGS.pickupCode, code) : nothing}
       ${parcel.restricted ? nothing : row(STRINGS.parcelId, parcel.id)}
     </dl>`;

@@ -177,6 +177,60 @@ def test_pickup_point_on_next_line(tz: ZoneInfo) -> None:
     assert shipment.pickup_code == "482913"
 
 
+@pytest.mark.parametrize(
+    ("subject", "text"),
+    [
+        (
+            "We missed you",
+            "We tried to deliver your parcel RR123456785PT but nobody was home."
+            "\nCollection point: Papelaria Exemplo, Rua Exemplo 1",
+        ),
+        (
+            "Tentativa de entrega",
+            "Tentámos entregar a sua encomenda RR123456785PT.\n"
+            "Local de levantamento\nPapelaria Exemplo\nRua Exemplo 1",
+        ),
+        (
+            "Zustellversuch",
+            "Ihr Paket RR123456785PT konnte leider nicht zugestellt werden.\n"
+            "Abholstelle: Papelaria Exemplo",
+        ),
+    ],
+)
+def test_missed_attempt_names_where_it_was_taken(
+    subject: str, text: str, tz: ZoneInfo
+) -> None:
+    """A missed attempt's pickup point label names where the parcel went."""
+    result = _parse(_message(subject, text), tz)
+    assert result is not None
+    assert result.kind is MailKind.ATTEMPTED
+    [shipment] = result.shipments
+    assert shipment.pickup_point is not None
+    assert shipment.pickup_point.startswith("Papelaria Exemplo")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Shop: Loja Exemplo",
+        "Loja: Loja Exemplo",
+        "Ponto de entrega: Rua Exemplo 1",
+        "Punto de entrega: Calle Ejemplo 1",
+    ],
+)
+def test_missed_attempt_shop_or_address_is_no_place(line: str, tz: ZoneInfo) -> None:
+    """On a missed attempt a shop row or the delivery address isn't a place."""
+    message = _message(
+        "We missed you",
+        f"We tried to deliver your parcel RR123456785PT.\n{line}",
+    )
+    result = _parse(message, tz)
+    assert result is not None
+    assert result.kind is MailKind.ATTEMPTED
+    [shipment] = result.shipments
+    assert shipment.pickup_point is None
+
+
 def test_carrier_sender_has_no_merchant(tz: ZoneInfo) -> None:
     """A carrier is not a merchant; a number without check digit caps at 0.5."""
     message = _message(

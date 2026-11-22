@@ -3,12 +3,14 @@
  * missing or malformed field can never break rendering.
  */
 import { isYmd, localDateOf } from "./dates.ts";
+import { LEFT_AT } from "./types.ts";
 import type {
   AiMode,
   AutoMerged,
   CustomerReturn,
   FilteredItem,
   InferredReason,
+  LeftAt,
   MergeSuggestion,
   OrderInfo,
   OriginInfo,
@@ -76,6 +78,14 @@ function inferredReason(value: unknown): InferredReason | null {
   return value === "shop" || value === "return" || value === "quiet" ? value : null;
 }
 
+function leftAt(value: unknown): LeftAt | null {
+  return (LEFT_AT as readonly unknown[]).includes(value) ? (value as LeftAt) : null;
+}
+
+function day(value: unknown): string | null {
+  return isYmd(value) ? value : null;
+}
+
 function source(value: unknown): ParcelSource {
   return value === "ai" || value === "manual" || value === "seventeentrack" || value === "parcelapp"
     ? value
@@ -139,6 +149,10 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     delivered_at: str(raw.delivered_at),
     delivered_undated: raw.delivered_undated === true,
     delivered_timeless: raw.delivered_timeless === true,
+    status_reported: raw.status_reported === true,
+    next_attempt: day(raw.next_attempt),
+    collect_by: day(raw.collect_by),
+    left_at: leftAt(raw.left_at),
     inferred: raw.inferred === true,
     inferred_reason: inferredReason(raw.inferred_reason),
     pickup_point: str(raw.pickup_point),

@@ -12,7 +12,7 @@ from datetime import date, datetime, time
 import hashlib
 from typing import Any
 
-from ..const import MailKind
+from ..const import LeftAt, MailKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +162,11 @@ class ParsedShipment:
     attach_only: bool = False
     # The e-mail says what happened but not when: by the time it was sent.
     undated: bool = False
+    # Read by parsers.details: the last day to collect the parcel at its
+    # pickup point, the day of the next delivery attempt, where it was left.
+    collect_by: date | None = None
+    next_attempt: date | None = None
+    left_at: LeftAt | None = None
 
 
 @dataclass(slots=True)

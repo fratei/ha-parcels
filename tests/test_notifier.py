@@ -36,6 +36,7 @@ from custom_components.parcels.const import (
     CONF_TEST_MODE,
     DOMAIN,
     PERSISTENT_NOTIFICATION_ID,
+    LeftAt,
     ParcelStatus,
 )
 from custom_components.parcels.dedup import repair_store
@@ -357,18 +358,41 @@ class Env:
         eta: Eta | None = None,
         when: datetime | None = None,
         undated: bool = False,
+        timeless: bool = False,
+        sent: datetime | None = None,
+        pickup_point: str | None = None,
+        collect_by: date | None = None,
+        next_attempt: date | None = None,
+        left_at: LeftAt | None = None,
     ) -> None:
-        """Add an event to a parcel and tell the notifier."""
+        """Add an event to a parcel and tell the notifier.
+
+        With ``sent``, the event comes from an e-mail sent then, which may
+        name a pickup point; an event at the time its e-mail was sent has
+        only that time. ``timeless`` gives the day without the time.
+        """
         moment = when or dt_util.utcnow()
+        origin: str | None = None
+        if sent is not None:
+            origin = f"origin-{next(self._numbers)}"
+            parcel.origins[origin] = Origin(
+                id=origin, source=Source.PARSER, time=sent, pickup_point=pickup_point
+            )
+        assert pickup_point is None or origin is not None
         parcel.events.append(
             ParcelEvent(
                 time=moment,
                 source=Source.PARSER,
+                origin=origin,
                 status=status,
                 eta=eta,
                 force=True,
-                undated=undated,
-                by=moment if undated else None,
+                undated=undated or timeless,
+                timeless=timeless,
+                by=moment if undated or timeless else None,
+                collect_by=collect_by,
+                next_attempt=next_attempt,
+                left_at=left_at,
             )
         )
         parcel.touch(moment)
@@ -1121,7 +1145,7 @@ async def test_pickup(env: Env, hass: HomeAssistant) -> None:
         activity(
             tag_of(parcel),
             "Decathlon",
-            f"Ready for pickup{SEP}Locker 12{SEP}CTT",
+            f"Ready at Locker 12{SEP}CTT",
             "Pickup",
             3,
             SHOP,
@@ -1141,6 +1165,156 @@ async def test_pickup(env: Env, hass: HomeAssistant) -> None:
         "",
         f"[Open Parcels]({PATH})",
     )
+
+
+async def test_pickup_says_where_and_until_when(env: Env, hass: HomeAssistant) -> None:
+    """A pickup names its point without the address, and the last day to collect."""
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    android = env.phone("Sam Pixel", SAM, "android")
+    parcel = env.parcel(eta=on(), merchant="Decathlon", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert len(iphone.take()) == 1
+
+    await env.goto(at(10, 15))
+    env.change(
+        parcel,
+        S.READY_FOR_PICKUP,
+        sent=at(10, 15),
+        pickup_point="Papelaria Exemplo do Bairro Alto, Rua Inventada 7, Lisboa",
+    )
+    await env.settle()
+    ready = f"Ready at Papelaria Exemplo do Bairro{ELLIPSIS}"
+    assert iphone.take() == [
+        activity(
+            tag_of(parcel), "Decathlon", f"{ready}{SEP}CTT", "Pickup", 3, SHOP, 0.7
+        )
+    ]
+    assert (
+        summary(ipad.take())
+        == summary(android.take())
+        == [(tag_of(parcel), f"{ready}{SEP}CTT")]
+    )
+
+    # A later e-mail gives the last day: a quiet update and no new notification.
+    await env.goto(at(10, 50))
+    env.change(
+        parcel, S.READY_FOR_PICKUP, sent=at(10, 50), collect_by=date(2026, 6, 24)
+    )
+    await env.settle()
+    assert iphone.take() == [
+        activity(
+            tag_of(parcel),
+            "Decathlon",
+            f"{ready}{SEP}collect by Wed 24{SEP}CTT",
+            "Pickup",
+            3,
+            SHOP,
+            0.7,
+            silent=True,
+        )
+    ]
+    assert ipad.take() == android.take() == []
+    assert (
+        f"- Decathlon{SEP}CTT{SEP}Ready for pickup at Papelaria Exemplo do Bairro "
+        f"Alto, Rua I{ELLIPSIS}, collect by Wed 24 Jun"
+    ) in str(persistent(hass)).splitlines()
+
+
+@pytest.mark.parametrize(
+    ("details", "message", "listed"),
+    [
+        # The carrier said when it tried.
+        (
+            {"when": at(11, 20), "sent": at(11, 50), "next_attempt": date(2026, 6, 22)},
+            f"Missed 11:20{SEP}next attempt Mon 22",
+            "Delivery attempted 11:20, next attempt Mon 22 Jun",
+        ),
+        # Only the e-mail's time is known: it doesn't pass for the attempt's.
+        (
+            {"when": at(11, 50), "sent": at(11, 50), "next_attempt": NEXT_DAY},
+            f"Missed{SEP}reported 11:50{SEP}next attempt tomorrow",
+            "Delivery attempted, reported 11:50, next attempt tomorrow",
+        ),
+        # The carrier took it to a pickup point.
+        (
+            {
+                "when": at(11, 20),
+                "sent": at(11, 50),
+                "pickup_point": "Loja Exemplo, Avenida Inventada 3",
+                "collect_by": date(2026, 6, 25),
+            },
+            f"Missed 11:20{SEP}taken to Loja Exemplo{SEP}collect by Thu 25",
+            "Delivery attempted 11:20, taken to Loja Exemplo, Avenida Inventada 3, "
+            "collect by Thu 25 Jun",
+        ),
+        (
+            {"when": at(11, 20), "sent": at(11, 50), "collect_by": date(2026, 6, 25)},
+            f"Missed 11:20{SEP}collect by Thu 25",
+            "Delivery attempted 11:20, collect by Thu 25 Jun",
+        ),
+        # Only its day is known, and that's today.
+        ({"timeless": True}, "Missed", "Delivery attempted"),
+        (
+            {"when": at(11, 20), "eta": on(NEXT_DAY)},
+            f"Missed 11:20{SEP}Expected tomorrow",
+            "Delivery attempted 11:20, expected tomorrow",
+        ),
+    ],
+)
+async def test_missed_attempt(
+    env: Env, hass: HomeAssistant, details: dict[str, Any], message: str, listed: str
+) -> None:
+    """A missed attempt says when it happened and what comes next."""
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert len(iphone.take()) == 1
+
+    await env.goto(at(11, 50))
+    env.change(parcel, S.ATTEMPTED, **details)
+    await env.settle()
+    shown = [(tag_of(parcel), f"{message}{SEP}DPD")]
+    assert summary(iphone.take()) == summary(ipad.take()) == shown
+    assert f"- Amazon{SEP}DPD{SEP}{listed}" in str(persistent(hass)).splitlines()
+
+
+@pytest.mark.parametrize(
+    ("details", "message", "listed"),
+    [
+        (
+            {"left_at": LeftAt.NEIGHBOUR},
+            f"Delivered {CHECK} 10:25{SEP}with a neighbour",
+            f"Delivered 10:25 with a neighbour {CHECK}",
+        ),
+        # Only its day is known.
+        (
+            {"left_at": LeftAt.MAILBOX, "timeless": True},
+            f"Delivered {CHECK}{SEP}in the mailbox",
+            f"Delivered in the mailbox {CHECK}",
+        ),
+    ],
+)
+async def test_delivered_says_where_it_was_left(
+    env: Env, hass: HomeAssistant, details: dict[str, Any], message: str, listed: str
+) -> None:
+    """The final state says where the parcel was left."""
+    iphone = env.phone("Alex iPhone", ALEX)
+    android = env.phone("Sam Pixel", SAM, "android")
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert len(iphone.take()) == 1
+
+    await env.goto(at(10, 25))
+    env.change(parcel, S.DELIVERED, **details)
+    await env.settle()
+    shown = [(tag_of(parcel), f"{message}{SEP}DPD")]
+    assert summary(iphone.take()) == summary(android.take()) == shown
+    assert f"- Amazon{SEP}DPD{SEP}{listed}" in str(persistent(hass)).splitlines()
 
 
 def _amazon_said_it_delivers(order: Parcel, source: Source) -> None:

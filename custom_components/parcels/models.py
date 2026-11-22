@@ -31,6 +31,7 @@ from .const import (
     CARRIER_NAMES,
     STATUS_RANK,
     TERMINAL_STATUSES,
+    LeftAt,
     MailKind,
     ParcelStatus,
 )
@@ -171,6 +172,19 @@ def time_from_str(value: Any) -> time | None:
     except ValueError:
         return None
     return parsed.replace(second=0, microsecond=0, tzinfo=None)
+
+
+def date_to_str(value: date | None) -> str | None:
+    """Serialise a date as ``YYYY-MM-DD``."""
+    return value.isoformat() if value else None
+
+
+def left_at_from_str(value: Any) -> LeftAt | None:
+    """Parse where a parcel was left; None for anything else."""
+    try:
+        return LeftAt(value) if value else None
+    except ValueError:
+        return None
 
 
 def eta_to_dict(eta: Eta | None) -> dict[str, str | None] | None:
@@ -467,6 +481,12 @@ class ParcelEvent:
     dayless: bool = False
     by: datetime | None = None
     timeless: bool = False
+    # What the source said besides the status: the last day to collect the
+    # parcel at its pickup point, the day of the next attempt after a missed
+    # one, and where a delivered parcel was left.
+    collect_by: date | None = None
+    next_attempt: date | None = None
+    left_at: LeftAt | None = None
     id: str = field(default_factory=lambda: secrets.token_hex(6))
 
     def as_dict(self) -> dict[str, Any]:
@@ -488,6 +508,9 @@ class ParcelEvent:
                 "dayless": self.dayless,
                 "by": dt_to_str(self.by),
                 "timeless": self.timeless,
+                "collect_by": date_to_str(self.collect_by),
+                "next_attempt": date_to_str(self.next_attempt),
+                "left_at": self.left_at.value if self.left_at else None,
             }
         )
 
@@ -510,6 +533,9 @@ class ParcelEvent:
             dayless=bool(data.get("dayless", False)),
             by=dt_from_str(data.get("by")),
             timeless=bool(data.get("timeless", False)),
+            collect_by=date_from_str(data.get("collect_by")),
+            next_attempt=date_from_str(data.get("next_attempt")),
+            left_at=left_at_from_str(data.get("left_at")),
         )
 
 
@@ -619,6 +645,16 @@ class ParcelState:
     delivered_timeless: bool = False
     # The marketplace seller, see Origin.seller.
     seller: str | None = None
+    # The last day to collect the parcel at its pickup point: while it's
+    # ready for pickup, or after a missed attempt.
+    collect_by: date | None = None
+    # The day of the next attempt, after a missed one.
+    next_attempt: date | None = None
+    # Where the parcel was left, once delivered.
+    left_at: LeftAt | None = None
+    # The status's time is when an e-mail reported it, not when it happened:
+    # the e-mail didn't say.
+    status_reported: bool = False
 
     @property
     def carrier_name(self) -> str | None:
@@ -939,6 +975,10 @@ def derive_state(parcel: Parcel) -> ParcelState:
     eta: Eta | None = None
     eta_time: datetime | None = None
     eta_source: Source | None = None
+    status_reported = False
+    collect_by: date | None = None
+    next_attempt: date | None = None
+    left_at: LeftAt | None = None
     timeline: list[TimelineEntry] = []
     for event in sorted(parcel.events, key=_event_sort_key):
         accepted, new_status = _accepts(status, event)
@@ -948,6 +988,15 @@ def derive_state(parcel: Parcel) -> ParcelState:
             status_undated = event.undated
             status_timeless = event.undated and event.timeless
             status_by = event.by if event.undated else None
+            status_reported = _reported(parcel, event)
+            # Each status has its own details: a new attempt, pickup or
+            # delivery starts afresh.
+            if new_status not in _COLLECT_STATUSES:
+                collect_by = None
+            next_attempt = (
+                event.next_attempt if new_status is ParcelStatus.ATTEMPTED else None
+            )
+            left_at = None
             status_inferred = event.inferred
             inferred_by = (
                 inference_reason(event.kind, event.label) if event.inferred else None
@@ -971,6 +1020,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
                 replaced = status_time
                 status_time, status_undated = event.time, False
                 status_timeless = False
+                status_reported = _reported(parcel, event)
                 if (
                     status is ParcelStatus.DELIVERED
                     and delivered_undated
@@ -978,6 +1028,10 @@ def derive_state(parcel: Parcel) -> ParcelState:
                 ):
                     delivered_at, delivered_undated = event.time, False
                     delivered_timeless = False
+        if accepted:
+            collect_by, next_attempt, left_at = _details(
+                status, event, collect_by, next_attempt, left_at
+            )
         event_eta = event.eta
         if (
             event_eta is None
@@ -1064,7 +1118,54 @@ def derive_state(parcel: Parcel) -> ParcelState:
         status_timeless=status_timeless,
         delivered_timeless=delivered_timeless,
         seller=next((o.seller for o in reversed(origins) if o.seller), None),
+        collect_by=collect_by if status in _COLLECT_STATUSES else None,
+        next_attempt=next_attempt if status is ParcelStatus.ATTEMPTED else None,
+        left_at=left_at if status is ParcelStatus.DELIVERED else None,
+        status_reported=status_reported and status_time is not None,
     )
+
+
+# The statuses a collect-by date belongs to: a parcel the carrier holds.
+_COLLECT_STATUSES = frozenset({ParcelStatus.READY_FOR_PICKUP, ParcelStatus.ATTEMPTED})
+# Sources whose event times are an e-mail's when it didn't say when.
+_MAIL_SOURCES = frozenset({Source.PARSER, Source.AI})
+
+
+def _reported(parcel: Parcel, event: ParcelEvent) -> bool:
+    """Return True when an event's time is only when its e-mail was sent."""
+    if event.source not in _MAIL_SOURCES or event.undated or event.origin is None:
+        return False
+    origin = parcel.origins.get(event.origin)
+    return origin is not None and origin.time == event.time
+
+
+def _details(
+    status: ParcelStatus | None,
+    event: ParcelEvent,
+    collect_by: date | None,
+    next_attempt: date | None,
+    left_at: LeftAt | None,
+) -> tuple[date | None, date | None, LeftAt | None]:
+    """Fold an accepted event's details into the parcel's.
+
+    A later report of the same status adds what it says; one that says
+    nothing keeps what an earlier one did. A next attempt is over once
+    news comes from its day or later.
+    """
+    if status in _COLLECT_STATUSES and event.collect_by is not None:
+        collect_by = event.collect_by
+    if status is ParcelStatus.ATTEMPTED:
+        if event.next_attempt is not None:
+            next_attempt = event.next_attempt
+        elif (
+            next_attempt is not None
+            and day_known(event)
+            and local_date(event.time) >= next_attempt
+        ):
+            next_attempt = None
+    if status is ParcelStatus.DELIVERED and event.left_at is not None:
+        left_at = event.left_at
+    return collect_by, next_attempt, left_at
 
 
 def origin_paack_stem(origin: Origin) -> str | None:
@@ -1178,6 +1279,11 @@ class Suggestion:
     items: tuple[str, ...] = ()
     amazon_shipment_id: str | None = None
     reference: str | None = None
+    # The details the e-mail gave besides the status, see ParcelEvent. Not
+    # edited in review: kept for the kind they belong to.
+    collect_by: date | None = None
+    next_attempt: date | None = None
+    left_at: LeftAt | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the suggestion in the WebSocket format."""
@@ -1196,6 +1302,9 @@ class Suggestion:
             "items": list(self.items),
             "amazon_shipment_id": self.amazon_shipment_id,
             "reference": self.reference,
+            "collect_by": date_to_str(self.collect_by),
+            "next_attempt": date_to_str(self.next_attempt),
+            "left_at": self.left_at.value if self.left_at else None,
         }
 
     @classmethod
@@ -1225,6 +1334,9 @@ class Suggestion:
             items=_tuple(data.get("items")),
             amazon_shipment_id=data.get("amazon_shipment_id") or None,
             reference=data.get("reference") or None,
+            collect_by=date_from_str(data.get("collect_by")),
+            next_attempt=date_from_str(data.get("next_attempt")),
+            left_at=left_at_from_str(data.get("left_at")),
         )
 
 

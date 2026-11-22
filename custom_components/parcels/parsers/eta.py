@@ -11,7 +11,7 @@ Everything is matched on folded text (lowercase, no accents; see
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 import contextlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
@@ -1177,8 +1177,9 @@ class DateExpression:
 # What a deadline is about. Stems match the start of a word; a stem only
 # makes a deadline with a limit word ("until", "até", "bis zum", ...) right
 # before the date, or before a number of days.
-_DEADLINE_STEMS = (
-    # Collect.
+#
+# Collect.
+_COLLECT_STEMS = (
     "collect",
     "pick up",
     "pick it up",
@@ -1197,7 +1198,9 @@ _DEADLINE_STEMS = (
     "ophal",
     "afhal",
     "op te halen",
-    # Hold.
+)
+# Hold.
+_HOLD_STEMS = (
     "held",
     "kept",
     "stored",
@@ -1210,7 +1213,9 @@ _DEADLINE_STEMS = (
     "gelagert",
     "bewaar",
     "bewaren",
-    # Pay.
+)
+# Pay.
+_PAY_STEMS = (
     "pay",
     "paid",
     "paga",
@@ -1234,7 +1239,9 @@ _DEADLINE_STEMS = (
     "betaal",
     "voldoen",
     "settle",
-    # Duties and taxes.
+)
+# Duties and taxes.
+_DUTY_STEMS = (
     "duty",
     "duties",
     "import fee",
@@ -1259,12 +1266,25 @@ _DEADLINE_STEMS = (
     "invoerrecht",
     "inklaringskosten",
     "heffing",
-    # Available (at a pickup point).
+)
+# Available (at a pickup point).
+_AVAILABLE_STEMS = (
     "availab",
     "dispon",
     "verfugbar",
     "beschikbaar",
-    # Return.
+)
+# Ready, read as "available" for collect-by dates only: in delivery dates
+# they'd hide the date ("ist bereit für den Versand und wird bis 23.06.
+# geliefert").
+_READY_STEMS = (
+    "mis a disposition",
+    "mise a disposition",
+    "bereit",
+    "klaar",
+)
+# Return.
+_RETURN_STEMS = (
     "return",
     "send back",
     "send it back",
@@ -1282,7 +1302,9 @@ _DEADLINE_STEMS = (
     "inlever",
     "depos",
     "abgeb",
-    # Refund.
+)
+# Refund.
+_REFUND_STEMS = (
     "refund",
     "reembols",
     "erstatt",
@@ -1292,12 +1314,16 @@ _DEADLINE_STEMS = (
     "rimbors",
     "terugbetal",
     "terugstort",
-    # Cancel.
+)
+# Cancel.
+_CANCEL_STEMS = (
     "cancel",
     "annul",
     "anula",
     "storn",
-    # Expire.
+)
+# Expire.
+_EXPIRE_STEMS = (
     "expir",
     "valid",
     "gultig",
@@ -1312,18 +1338,22 @@ _DEADLINE_STEMS = (
     "verval",
     "geldig",
 )
-_DEADLINE_WORDS = (
-    "hole",
-    "holen",
-    "haal",
-    "garde",
-    "gardee",
-    "gardons",
-    "garder",
-    "pago",
-    "reso",
-    "resi",
+_DEADLINE_STEMS = (
+    *_COLLECT_STEMS,
+    *_HOLD_STEMS,
+    *_PAY_STEMS,
+    *_DUTY_STEMS,
+    *_AVAILABLE_STEMS,
+    *_RETURN_STEMS,
+    *_REFUND_STEMS,
+    *_CANCEL_STEMS,
+    *_EXPIRE_STEMS,
 )
+# Whole words, by the same groups.
+_COLLECT_WORDS = ("hole", "holen", "haal", "garde", "gardee", "gardons", "garder")
+_PAY_WORDS = ("pago",)
+_RETURN_WORDS = ("reso", "resi")
+_DEADLINE_WORDS = (*_COLLECT_WORDS, *_PAY_WORDS, *_RETURN_WORDS)
 # These make a deadline on their own.
 _DEADLINE_NOUNS = (
     "deadline",
@@ -1628,6 +1658,10 @@ _DEADLINE_STEM_RE = re.compile(
     rf"(?<![a-z])(?:{_alternation(_DEADLINE_STEMS)}"
     rf"|(?:{_alternation(_DEADLINE_WORDS)})(?![a-z]))"
 )
+_PURPOSE_STEM_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation((*_DEADLINE_STEMS, *_READY_STEMS))}"
+    rf"|(?:{_alternation(_DEADLINE_WORDS)})(?![a-z]))"
+)
 _DEADLINE_NOUN_RE = re.compile(
     rf"(?<![a-z])(?:{_alternation(_DEADLINE_NOUNS)})(?![a-z])"
 )
@@ -1735,8 +1769,12 @@ def _date_dot(text: str, pos: int) -> bool:
     return bool(match and text[match.end()].islower())
 
 
-def _is_deadline(before: str, after: str, atom: _Atom) -> bool:
-    """Return True when the words around a date make it a deadline."""
+def _is_deadline(before: str, after: str, atom: _Atom, *, ready: bool = False) -> bool:
+    """Return True when the words around a date make it a deadline.
+
+    ``ready`` also counts the words for a ready parcel, as collect-by dates do.
+    """
+    stems = _PURPOSE_STEM_RE if ready else _DEADLINE_STEM_RE
     tail = _last_words(_after_anchor(before), DEADLINE_MAX_WORDS)
     if _DEADLINE_NOUN_RE.search(tail):
         return True
@@ -1747,12 +1785,12 @@ def _is_deadline(before: str, after: str, atom: _Atom) -> bool:
         )
     if not limited:
         return False
-    if _DEADLINE_STEM_RE.search(tail):
+    if stems.search(tail):
         return True
     # "hasta el 28/11 para recogerlo", "until 30 November to collect it".
     following = _first_words(after, AFTER_MAX_WORDS)
     return bool(
-        _DEADLINE_STEM_RE.search(following)
+        stems.search(following)
         and not _STRONG_RE.search(following)
         and not _WEAK_RE.search(following)
     )
@@ -1792,15 +1830,31 @@ def _is_other(before: str, after: str, atom: _Atom) -> bool:
     return atom.kind == "weekday" and bool(_SALE_DAY_RE.search(before))
 
 
-def _located_expressions(
+@dataclass(frozen=True, slots=True)
+class _Located:
+    """A date expression with the words around it, in folded text."""
+
+    start: date
+    end: date
+    atom: _Atom
+    span_start: int
+    span_end: int
+    # The clause's words before the date, from the previous date on.
+    before: str
+    # The words after the date, up to the next break.
+    after: str
+    # The clause's words before the date, earlier dates included.
+    clause: str
+
+
+def _located(
     text: str, reference: datetime, tz: tzinfo, lang: str | None
-) -> list[tuple[DateExpression, int, int]]:
-    """Return the date expressions in ``text`` with where each one is."""
+) -> Iterator[_Located]:
+    """Yield the date expressions in ``text`` with the words around each."""
     text = text[:MAX_FIND_CHARS]
     s = _prepare(text)
     ref = _reference_date(reference, tz)
     atoms = _find_atoms(s, text, 0, len(s), lang)
-    found: list[tuple[DateExpression, int, int]] = []
     previous_end = 0
     for index, atom in enumerate(atoms):
         if atom.start < previous_end:
@@ -1809,25 +1863,40 @@ def _located_expressions(
         if expression is None:
             continue
         first, last, span_start, span_end = expression
-        before = s[max(previous_end, _clause_start(s, text, span_start)) : span_start]
+        clause_start = _clause_start(s, text, span_start)
         rest = s[span_end : span_end + CLAUSE_MAX_CHARS]
         if _date_dot(text, span_end):
             rest = " " + rest[1:]
-        after = _AFTER_BREAK_RE.split(rest)[0]
-        found.append(
-            (
-                DateExpression(
-                    first,
-                    last,
-                    deadline=_is_deadline(before, after, atom),
-                    other=_is_other(before, after, atom),
-                ),
-                span_start,
-                span_end,
-            )
+        yield _Located(
+            first,
+            last,
+            atom,
+            span_start,
+            span_end,
+            before=s[max(previous_end, clause_start) : span_start],
+            after=_AFTER_BREAK_RE.split(rest)[0],
+            clause=s[clause_start:span_start],
         )
         previous_end = span_end
-    return found
+
+
+def _located_expressions(
+    text: str, reference: datetime, tz: tzinfo, lang: str | None
+) -> list[tuple[DateExpression, int, int]]:
+    """Return the date expressions in ``text`` with where each one is."""
+    return [
+        (
+            DateExpression(
+                found.start,
+                found.end,
+                deadline=_is_deadline(found.before, found.after, found.atom),
+                other=_is_other(found.before, found.after, found.atom),
+            ),
+            found.span_start,
+            found.span_end,
+        )
+        for found in _located(text, reference, tz, lang)
+    ]
 
 
 def date_expressions(
@@ -1859,6 +1928,550 @@ def find_delivery_eta(
         if found.deadline or found.other:
             chars[start:end] = " " * (end - start)
     return find_eta("".join(chars), reference, tz, lang)
+
+
+# Collect-by dates (see find_collect_by). A stem's group says what a
+# deadline is for; expiry stems ("valid until") say nothing.
+_COLLECT_PURPOSE_RE = re.compile(
+    rf"{_alternation((*_COLLECT_STEMS, *_HOLD_STEMS))}"
+    rf"|{_alternation(_COLLECT_WORDS)}"
+)
+_AVAILABLE_PURPOSE_RE = re.compile(_alternation((*_AVAILABLE_STEMS, *_READY_STEMS)))
+_EXPIRE_PURPOSE_RE = re.compile(_alternation(_EXPIRE_STEMS))
+# With "by" rather than "until", an available parcel's date is when it
+# arrives ("will be available for collection by Tuesday", "sarà
+# disponibile per il ritiro entro il 23/06"), not the last day to collect.
+_BY_WORDS = (
+    "by",
+    "before",
+    "no later than",
+    "at the latest",
+    "antes de",
+    "antes do",
+    "antes da",
+    "o mais tardar",
+    "antes del",
+    "a mas tardar",
+    "spatestens",
+    "bis spatestens",
+    "vor",
+    "avant",
+    "au plus tard",
+    "entro",
+    "prima del",
+    "prima di",
+    "al piu tardi",
+    "voor",
+    "uiterlijk",
+)
+_BY_END_RE = re.compile(
+    rf"(?<![a-z'/])(?:{_alternation(_BY_WORDS)})"
+    rf"(?:\s+{_LIMIT_FILLERS})*\s*[,:]?\s*\Z"
+)
+# These name a collect deadline on their own.
+_COLLECT_NOUNS = (
+    "prazo de levantamento",
+    "prazo para levantamento",
+    "prazo para levantar",
+    "prazo de recolha",
+    "plazo de recogida",
+    "plazo para recoger",
+    "collection deadline",
+    "pickup deadline",
+    "pick-up deadline",
+    "abholfrist",
+    "lagerfrist",
+    "aufbewahrungsfrist",
+    "delai de retrait",
+    "termine per il ritiro",
+    "termine di giacenza",
+    "ophaaltermijn",
+    "bewaartermijn",
+    "uiterste ophaaldatum",
+)
+_COLLECT_NOUN_RE = re.compile(rf"(?<![a-z])(?:{_alternation(_COLLECT_NOUNS)})(?![a-z])")
+# "Available until" is a collect deadline only for a parcel or at a
+# pickup point, never for an offer.
+_PICKUP_CONTEXT = (
+    "encomenda",
+    "encomendas",
+    "pacote",
+    "objeto",
+    "envio",
+    "paquete",
+    "parcel",
+    "package",
+    "shipment",
+    "paket",
+    "sendung",
+    "colis",
+    "pacco",
+    "spedizione",
+    "pakket",
+    "zending",
+    "locker",
+    "cacifo",
+    "taquilla",
+    "packstation",
+    "paketshop",
+    "parcelshop",
+    "point relais",
+    "armadietto",
+    "pakketpunt",
+    "servicepunt",
+    "access point",
+)
+_PICKUP_CONTEXT_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation(_PICKUP_CONTEXT)})(?![a-z])"
+    rf"|(?<![a-z])(?:{_COLLECT_PURPOSE_RE.pattern})"
+)
+_PROMO_RE = re.compile(
+    r"%|(?<![a-z])(?:desconto|descuento|discount|rabatt|remise|reduction|sconto"
+    r"|korting|cupao|cupom|cupon|coupon|gutschein|voucher|saldos|promo[a-z]*"
+    r"|oferta|offer|angebot|offre|offerta|aanbieding)(?![a-z])"
+)
+_WORD_END_RE = re.compile(r"[a-z0-9']*")
+# A pickup point keeps a parcel for days or weeks, never months.
+MAX_COLLECT_DAYS = 30
+
+
+def _purpose(word: str) -> str | None:
+    """Return what a deadline stem is for: collect, available or other."""
+    if _COLLECT_PURPOSE_RE.fullmatch(word):
+        return "collect"
+    if _AVAILABLE_PURPOSE_RE.fullmatch(word):
+        return "available"
+    if _EXPIRE_PURPOSE_RE.fullmatch(word):
+        return None
+    return "other"
+
+
+def _purposes(s: str) -> list[tuple[int, int, str]]:
+    """Return (word start, word end, purpose) for each deadline stem in ``s``."""
+    found = []
+    for match in _PURPOSE_STEM_RE.finditer(s):
+        purpose = _purpose(" ".join(match.group(0).split()))
+        if purpose is not None:
+            end = _WORD_END_RE.match(s, match.end())
+            found.append((match.start(), end.end() if end else match.end(), purpose))
+    return found
+
+
+def _nearest_purpose(tail: str, following: str) -> str | None:
+    """Return the purpose of the deadline stem nearest the date.
+
+    ``tail`` ends at the date and ``following`` starts after it; a tie
+    goes to the words before the date.
+    """
+    before = _purposes(tail)
+    after = _purposes(following)
+    if not before and not after:
+        return None
+    if not after:
+        return before[-1][2]
+    if not before:
+        return after[0][2]
+    before_gap = len(_WORD_RE.findall(tail[before[-1][1] :]))
+    after_gap = len(_WORD_RE.findall(following[: after[0][0]]))
+    return before[-1][2] if before_gap <= after_gap else after[0][2]
+
+
+def _collect_purpose(purpose: str | None, context: str, pickup: bool) -> bool | None:
+    """Return True for a collect deadline, False for another, None if unsure."""
+    if purpose is None:
+        return None
+    if purpose == "available":
+        return pickup or bool(_PICKUP_CONTEXT_RE.search(context))
+    return purpose == "collect"
+
+
+def _limited(found: _Located) -> bool:
+    """Return True when a limit word or a number of days makes an end date."""
+    if _LIMIT_END_RE.search(found.before):
+        return True
+    atom = found.atom
+    return atom.kind == "span" and (
+        atom.within or atom.bare or bool(_PERIOD_END_RE.search(found.before))
+    )
+
+
+def _arrives_by(found: _Located) -> bool:
+    """Return True when a date says by when an available parcel arrives."""
+    if not _BY_END_RE.search(found.before):
+        return False
+    near = _after_anchor(found.clause).rsplit(",", 1)[-1]
+    following = found.after.split(",", 1)[0]
+    return any(
+        purpose == "available"
+        for _, _, purpose in (*_purposes(near), *_purposes(following))
+    )
+
+
+def _collects(found: _Located, pickup: bool) -> bool:
+    """Return True when the words around a date make it a collect-by date."""
+    context = f"{found.clause} {found.after}"
+    if _PROMO_RE.search(context):
+        return False
+    tail = _last_words(_after_anchor(found.before), DEADLINE_MAX_WORDS)
+    if _COLLECT_NOUN_RE.search(tail):
+        return True
+    if _arrives_by(found):
+        return False
+    following = _first_words(found.after, AFTER_MAX_WORDS)
+    if _is_deadline(found.before, found.after, found.atom, ready=True):
+        purpose = _nearest_purpose(tail, following)
+        verdict = _collect_purpose(purpose, context, pickup)
+        if verdict is not None:
+            return verdict
+        # A pickup notice's only deadline ("Data limite: 30/06") is its own.
+        if pickup:
+            return True
+    if not _limited(found) or _purposes(tail) or _purposes(following):
+        return False
+    # "disponível para levantamento a partir de amanhã, 18/06, durante 10
+    # dias úteis": the clause's last stem says what the period is for, or
+    # else its first one after the date ("ligt tot 26 juni klaar om op te
+    # halen") unless a delivery phrase comes first.
+    stems = _purposes(_after_anchor(found.clause))
+    if stems:
+        return bool(_collect_purpose(stems[-1][2], context, pickup))
+    later = _purposes(found.after)
+    if not later:
+        return False
+    if _STRONG_RE.search(found.after, 0, later[0][0]) or _WEAK_RE.search(
+        found.after, 0, later[0][0]
+    ):
+        return False
+    return bool(_collect_purpose(later[0][2], context, pickup))
+
+
+def find_collect_by(
+    text: str,
+    reference: datetime,
+    tz: tzinfo,
+    lang: str | None = None,
+    *,
+    pickup: bool = False,
+) -> date | None:
+    """Return the last day to collect a parcel from a pickup point.
+
+    Reads the deadline of a pickup notice in any of the 7 languages
+    ("Levante até 24/06", "Collect by Friday", "Abholfrist: 26.06.",
+    "à retirer avant le 27/06", "disponível durante 10 dias úteis"). Pay,
+    return, refund and cancel deadlines, offers and other dates don't
+    count; nor does a date more than 30 days after the e-mail. With
+    ``pickup`` (the text says the parcel waits at a pickup point), a bare
+    "available until" or deadline is the collect-by date too.
+    """
+    ref = _reference_date(reference, tz)
+    for found in _located(text, reference, tz, lang):
+        if not ref <= found.end <= ref + timedelta(days=MAX_COLLECT_DAYS):
+            continue
+        if _is_other(found.before, found.after, found.atom):
+            continue
+        if _collects(found, pickup):
+            return found.end
+    return None
+
+
+# Next delivery attempts (see find_next_attempt).
+_NEXT_ATTEMPT_PHRASES = (
+    "nova tentativa",
+    "proxima tentativa",
+    "segunda tentativa",
+    "voltaremos a tentar",
+    "voltaremos a passar",
+    "tentaremos novamente",
+    "tentaremos de novo",
+    "nova entrega",
+    "nuevo intento",
+    "proximo intento",
+    "segundo intento",
+    "volveremos a intentar",
+    "volveremos a intentarlo",
+    "volvera a intentar",
+    "volvera a intentarlo",
+    "volveremos a pasar",
+    "volvera a pasar",
+    "intentaremos de nuevo",
+    "intentaremos nuevamente",
+    "nueva entrega",
+    "new attempt",
+    "next attempt",
+    "another attempt",
+    "second attempt",
+    "further attempt",
+    "new delivery attempt",
+    "next delivery attempt",
+    "another delivery attempt",
+    "second delivery attempt",
+    "try again",
+    "attempt again",
+    "attempt delivery again",
+    "redeliver",
+    "re-deliver",
+    "redelivery",
+    "re-delivery",
+    "nachste zustellversuch",
+    "nachster zustellversuch",
+    "nachsten zustellversuch",
+    "neue zustellversuch",
+    "neuer zustellversuch",
+    "neuen zustellversuch",
+    "erneute zustellversuch",
+    "erneuter zustellversuch",
+    "erneuten zustellversuch",
+    "zweite zustellversuch",
+    "zweiter zustellversuch",
+    "zweiten zustellversuch",
+    "weitere zustellversuch",
+    "weiterer zustellversuch",
+    "weiteren zustellversuch",
+    "erneut zustellen",
+    "erneute zustellung",
+    "versuchen es",
+    "nouvelle tentative",
+    "prochaine tentative",
+    "deuxieme tentative",
+    "nouvelle presentation",
+    "reessaierons",
+    "repasserons",
+    "repassera",
+    "nuovo tentativo",
+    "prossimo tentativo",
+    "secondo tentativo",
+    "riproveremo",
+    "ripasseremo",
+    "ripassera",
+    "ritenteremo",
+    "sara ritentata",
+    "verra ritentata",
+    "proberen het",
+    "nieuwe poging",
+    "volgende poging",
+    "tweede poging",
+    "nieuwe bezorgpoging",
+    "volgende bezorgpoging",
+    "opnieuw bezorgen",
+    "opnieuw aanbieden",
+)
+_NEXT_ATTEMPT_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation(_NEXT_ATTEMPT_PHRASES)})(?![a-z])"
+)
+# Before or right after the phrase: "não haverá nova tentativa", "no
+# further attempt", "ein weiterer Zustellversuch erfolgt nicht".
+_ATTEMPT_NEGATIONS = frozenset(
+    {
+        "no",
+        "not",
+        "never",
+        "won't",
+        "wont",
+        "cannot",
+        "can't",
+        "nao",
+        "sem",
+        "nenhuma",
+        "nenhum",
+        "nunca",
+        "sin",
+        "ninguna",
+        "ningun",
+        "kein",
+        "keine",
+        "keinen",
+        "keiner",
+        "nicht",
+        "nie",
+        "aucune",
+        "aucun",
+        "pas",
+        "plus",
+        "jamais",
+        "non",
+        "nessun",
+        "nessuna",
+        "nessuno",
+        "geen",
+        "niet",
+        "nooit",
+    }
+)
+# Before the phrase anywhere in its part of the sentence: "if you would
+# like a new attempt".
+_ATTEMPT_CONDITIONALS = frozenset(
+    {"if", "should", "caso", "si", "wenn", "falls", "indien"}
+)
+# A request or an offer to book one is no planned attempt.
+_ATTEMPT_REQUESTS = frozenset(
+    {
+        "please",
+        "would",
+        "want",
+        "wish",
+        "prefer",
+        "can",
+        "could",
+        "may",
+        "request",
+        "schedule",
+        "arrange",
+        "book",
+        "choose",
+        "select",
+        "pode",
+        "solicite",
+        "solicitar",
+        "agende",
+        "agendar",
+        "reagende",
+        "reagendar",
+        "marque",
+        "marcar",
+        "pedir",
+        "escolha",
+        "peca",
+        "deseja",
+        "pretende",
+        "prefere",
+        "quer",
+        "puede",
+        "solicita",
+        "pide",
+        "pida",
+        "programa",
+        "programar",
+        "reprograma",
+        "reprogramar",
+        "elige",
+        "desea",
+        "deseas",
+        "quieres",
+        "prefieres",
+        "kann",
+        "konnen",
+        "beantragen",
+        "anfordern",
+        "buchen",
+        "wahlen",
+        "vereinbaren",
+        "mochten",
+        "wunschen",
+        "peut",
+        "pouvez",
+        "demander",
+        "demandez",
+        "programmer",
+        "programmez",
+        "reprogrammer",
+        "reprogrammez",
+        "planifiez",
+        "choisir",
+        "choisissez",
+        "souhaitez",
+        "voulez",
+        "preferez",
+        "puo",
+        "puoi",
+        "richiedi",
+        "richiedere",
+        "chiedi",
+        "chiedere",
+        "prenota",
+        "prenotare",
+        "programmare",
+        "riprogramma",
+        "scegli",
+        "desideri",
+        "vuoi",
+        "preferisci",
+        "kan",
+        "kunt",
+        "aanvragen",
+        "vraag",
+        "plannen",
+        "inplannen",
+        "kies",
+        "kiezen",
+        "wilt",
+        "wil",
+    }
+)
+_ATTEMPT_SCOPE_RE = re.compile(r"[,.;:!?\n|()\u2022]")
+ATTEMPT_WORDS_BEFORE = 4
+ATTEMPT_WORDS_AFTER = 3
+ATTEMPT_LABEL_WORDS = 10
+# A next attempt is days away, never weeks.
+MAX_ATTEMPT_DAYS = 14
+
+
+def _planned_attempts(s: str) -> list[re.Match[str]]:
+    """Return the next-attempt phrases in ``s`` that state a planned attempt."""
+    found = []
+    for match in _NEXT_ATTEMPT_RE.finditer(s):
+        before = _ATTEMPT_SCOPE_RE.split(s[max(0, match.start() - 80) : match.start()])
+        after = _ATTEMPT_SCOPE_RE.split(s[match.end() : match.end() + 60])
+        scope = _WORD_RE.findall(before[-1])
+        if any(w in _ATTEMPT_CONDITIONALS for w in scope):
+            continue
+        words = scope[-ATTEMPT_WORDS_BEFORE:]
+        if any(w in _ATTEMPT_NEGATIONS or w in _ATTEMPT_REQUESTS for w in words):
+            continue
+        following = _WORD_RE.findall(after[0])[:ATTEMPT_WORDS_AFTER]
+        if any(w in _ATTEMPT_NEGATIONS for w in following):
+            continue
+        found.append(match)
+    return found
+
+
+def _label_before(found: _Located, s: str) -> str:
+    """Return the words that introduce a date: its clause, or the line above.
+
+    "Next attempt:\\nMonday 22 June" puts the label on the line above.
+    """
+    words = _last_words(found.clause, ATTEMPT_LABEL_WORDS)
+    if _WORD_RE.search(words):
+        return words
+    line_start = s.rfind("\n", 0, found.span_start)
+    if line_start <= 0:
+        return ""
+    previous = s.rfind("\n", 0, line_start)
+    return _last_words(s[previous + 1 : line_start], ATTEMPT_LABEL_WORDS)
+
+
+def find_next_attempt(
+    text: str,
+    reference: datetime,
+    tz: tzinfo,
+    lang: str | None = None,
+    eta_start: date | None = None,
+) -> date | None:
+    """Return the day of the next delivery attempt after a missed one.
+
+    A date right after a new-attempt phrase in any of the 7 languages
+    ("Nova tentativa: segunda-feira", "We'll try again on Monday") gives
+    it. A phrase with no date of its own takes ``eta_start``, the delivery
+    date read from the e-mail. Negated phrases ("no further attempt") and
+    offers to book one ("request a redelivery") don't count, nor do days
+    before the e-mail or more than 14 days after it.
+    """
+    text = text[:MAX_FIND_CHARS]
+    s = _prepare(text)
+    planned = _planned_attempts(s)
+    if not planned:
+        return None
+    ref = _reference_date(reference, tz)
+    last = ref + timedelta(days=MAX_ATTEMPT_DAYS)
+    for found in _located(text, reference, tz, lang):
+        if not ref <= found.start <= last:
+            continue
+        if _is_other(found.before, found.after, found.atom):
+            continue
+        if _planned_attempts(_label_before(found, s)):
+            return found.start
+    if eta_start is not None and ref <= eta_start <= last:
+        return eta_start
+    return None
 
 
 _TIME = (

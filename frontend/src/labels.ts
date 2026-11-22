@@ -2,6 +2,7 @@ import { CARRIER_NAMES, carrierName } from "./carriers.ts";
 import {
   CHECK_MEANINGS,
   KIND_LABELS,
+  LEFT_AT_LABELS,
   MERGE_REASON_LABELS,
   NOTE_MEANINGS,
   REASON_LABELS,
@@ -132,6 +133,11 @@ export function noteMeaning(code: unknown): string | null {
 /** What a failed check on an AI answer means, in one line; null for a code without a meaning. */
 export function checkMeaning(code: unknown): string | null {
   return meaning(CHECK_MEANINGS, code);
+}
+
+/** Where a delivered parcel was left, e.g. "with a neighbour"; null when not known. */
+export function leftAtLabel(value: unknown): string | null {
+  return meaning(LEFT_AT_LABELS, value);
 }
 
 /** Why a parcel was merged automatically, for use inside a sentence; "" without a reason. */

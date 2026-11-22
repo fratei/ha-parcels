@@ -20,6 +20,11 @@ Every result but a carrier's then goes through ``sort_returns``: a refund
 becomes ``NOT_PARCEL`` with the ``refund`` note (the engine drops it), and
 a customer return becomes ``CUSTOMER_RETURN``, apart from parcels going
 back to their sender.
+
+Last, ``add_details`` (``parsers.details``) adds what the e-mail says
+besides the status: the last day to collect a parcel at its pickup point,
+the day of the next attempt after a missed one, and where a delivered
+parcel was left.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ from . import (
     shopify,
 )
 from .base import MailMessage, ParseResult, SenderVerdict
+from .details import add_details
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,7 +87,7 @@ def parse_message(
     except Exception as exc:
         _LOGGER.debug("Parser dispatch failed: %s", type(exc).__name__)
         return ParseResult(parser=PARSER_NONE, kind=MailKind.UNKNOWN, confidence=0.0)
-    return sort_returns(result, message, tz)
+    return add_details(sort_returns(result, message, tz), message, tz)
 
 
 def sort_returns(
