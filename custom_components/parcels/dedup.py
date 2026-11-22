@@ -61,7 +61,10 @@ not merged.
 
 :func:`boxes_of_day` tells delivery day which of the day's orders without a
 carrier's number a carrier's package of the day may hold, so it counts
-packages rather than records. That is a guess, never a merge.
+packages rather than records. That is a guess, never a merge. Amazon's
+tracking narrows it before the link: a shipment goes with the packages
+repeating its times, and not with a delivered package that the Parcel app
+showed while still showing the shipment on its way.
 """
 
 from __future__ import annotations
@@ -81,6 +84,7 @@ from .ai.validate import NOTE_CARRIER_UNPROVEN
 from .const import MailKind, ParcelStatus
 from .models import (
     FILL_ORIGIN_SUFFIX,
+    PARCELAPP_PREFIX,
     AutoMerge,
     Order,
     Origin,
@@ -93,6 +97,7 @@ from .models import (
     check_codes,
     date_from_str,
     day_known,
+    dt_from_str,
     is_carrier_mail,
     local_date,
     merchant_key,
@@ -160,6 +165,10 @@ AGREE_AFTER = timedelta(minutes=2)
 # A package delivered this long before or after Amazon's tracking says the
 # shipment came, or marked delivered by hand this long before, didn't hold it.
 CONTRADICTION_GAP = timedelta(hours=2)
+# Amazon's tracking shows a carrier's scan within this long. A shipment still
+# not delivered when the Parcel app had shown news this long after a package
+# came wasn't in that package: see boxes_of_day().
+AMAZON_CATCH_UP = timedelta(hours=1)
 # What doesn't come to the door on a day, and the orders that need the user.
 _NOT_COMING = frozenset(
     {ParcelStatus.READY_FOR_PICKUP, ParcelStatus.RETURNED, ParcelStatus.CANCELLED}
@@ -2328,16 +2337,22 @@ def _own_origin(origin: Origin) -> bool:
     )
 
 
+def _codes(part: str) -> bool:
+    """Return whether a part of a label is only two-letter codes: "PT PT"."""
+    words = part.split()
+    return bool(words) and all(len(word) == 2 and word.isalpha() for word in words)
+
+
 def _place(event: ParcelEvent) -> str | None:
     """Return the place a Parcel app event names, or None.
 
     The app writes an event as "<what>, <place>", maybe followed by the
-    country's code: "Entregue, Vila Exemplo, PT".
+    country's code, even twice: "Entregue, Vila Exemplo, PT PT".
     """
     if event.source is not Source.PARCELAPP or not event.label:
         return None
     parts = [part.strip() for part in event.label.split(",")]
-    if len(parts) > 2 and len(parts[-1]) == 2 and parts[-1].isalpha():
+    while len(parts) > 1 and _codes(parts[-1]):
         parts.pop()
     if len(parts) < 2:
         return None
@@ -2412,9 +2427,21 @@ def _amazon_marks(parcel: Parcel) -> tuple[_Mark | None, list[_Mark]]:
     Several packages in one van leave and come together; only their other
     news tells them apart.
     """
-    tracking = {
-        oid for oid, origin in parcel.origins.items() if _amazon_tracking(origin)
-    }
+    return _tracking_marks(parcel, _tracking_of(parcel))
+
+
+def _tracking_of(parcel: Parcel) -> set[str]:
+    """Return the origins of a parcel that are Amazon's tracking."""
+    return {oid for oid, origin in parcel.origins.items() if _amazon_tracking(origin)}
+
+
+def _tracking_marks(
+    parcel: Parcel, tracking: Collection[str]
+) -> tuple[_Mark | None, list[_Mark]]:
+    """Return the delivery some of Amazon's tracking tells, and its other news.
+
+    Its other news leaves out the van leaving, see :func:`_amazon_marks`.
+    """
     events = [
         event for event in parcel.events if event.origin in tracking and _exact(event)
     ]
@@ -2502,9 +2529,7 @@ def amazon_evidence(parcel: Parcel) -> AmazonEvidence | None:
     """Return when and where Amazon's tracking says a shipment was delivered."""
     if not _is_shipment(parcel):
         return None
-    tracking = {
-        oid for oid, origin in parcel.origins.items() if _amazon_tracking(origin)
-    }
+    tracking = _tracking_of(parcel)
     found = [
         event
         for event in parcel.events
@@ -2858,6 +2883,91 @@ def _box_rank(order: Parcel, box: Parcel) -> tuple[int, int]:
     )
 
 
+def _agreement(marks: tuple[_Mark | None, list[_Mark]], box: Parcel) -> int:
+    """Return how many of a shipment's kinds of time a package repeats.
+
+    Its delivery, and its other news but the van leaving: a point each, as
+    :func:`_link_amazon_shipments` asks both.
+    """
+    mark, extra = marks
+    delivered, further = _box_evidence(box)
+    return int(mark is not None and any(_agrees(mark, own) for own in delivered)) + int(
+        any(_agrees(theirs, own) for theirs in extra for own in further)
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _Read:
+    """What the Parcel app last showed of some of Amazon's tracking, and when."""
+
+    at: datetime
+    delivered: _Mark | None
+    further: tuple[_Mark, ...]
+    latest: datetime | None
+
+
+def _read_at(data: ParcelsData, oid: str) -> datetime | None:
+    """Return when Parcels last read a delivery in the Parcel app, if known."""
+    records = data.parcelapp.get("records")
+    if not oid.startswith(PARCELAPP_PREFIX) or not isinstance(records, Mapping):
+        return None
+    record = records.get(oid.removeprefix(PARCELAPP_PREFIX))
+    return dt_from_str(record.get("seen")) if isinstance(record, Mapping) else None
+
+
+def _shipment_read(data: ParcelsData, shipment: Parcel) -> datetime | None:
+    """Return when Parcels last read Amazon's tracking of a shipment."""
+    reads = [_read_at(data, oid) for oid in _tracking_of(shipment)]
+    return max((at for at in reads if at is not None), default=None)
+
+
+def _amazon_reads(data: ParcelsData) -> list[_Read]:
+    """Return what the Parcel app last showed of each of Amazon's tracking."""
+    reads: list[_Read] = []
+    for parcel in data.parcels.values():
+        for oid in _tracking_of(parcel):
+            if (at := _read_at(data, oid)) is None:
+                continue
+            delivered, further = _tracking_marks(parcel, (oid,))
+            latest = max(
+                (
+                    event.time
+                    for event in parcel.events
+                    if event.origin == oid and _exact(event) and event.time <= at
+                ),
+                default=None,
+            )
+            reads.append(_Read(at, delivered, tuple(further), latest))
+    return reads
+
+
+def _shown_elsewhere(box: Parcel, read: datetime, reads: list[_Read]) -> bool:
+    """Return whether a read of the Parcel app would show a package's delivery.
+
+    The Parcel app reads Amazon's tracking on the user's phone, when it can,
+    so the time of a read proves nothing. Amazon's tracking read then or
+    before does: a shipment delivered with the package, its times agreeing
+    as :func:`_link_amazon_shipments` asks, or news at least
+    ``AMAZON_CATCH_UP`` after the package came.
+    """
+    came = _real_delivery(box)
+    if came is None:
+        return False
+    delivered, further = _box_evidence(box)
+    for other in reads:
+        if other.at > read:
+            continue
+        if other.latest is not None and other.latest >= came + AMAZON_CATCH_UP:
+            return True
+        if (
+            other.delivered is not None
+            and any(_agrees(other.delivered, own) for own in delivered)
+            and any(_agrees(theirs, own) for theirs in other.further for own in further)
+        ):
+            return True
+    return False
+
+
 def boxes_of_day(
     data: ParcelsData, parcels: Iterable[Parcel], day: date
 ) -> dict[str, tuple[str, ...]]:
@@ -2868,8 +2978,15 @@ def boxes_of_day(
     names, apart from the Amazon shipments it carries, may hold it, see
     :func:`_box_may_hold`: shops pack orders together, so one package may
     hold several. Only the likeliest packages are kept, every one of them on
-    a tie. An order that no package may hold, or with a problem, is left
-    out.
+    a tie: the shop's, then the carrier's. An order that no package may
+    hold, or with a problem, is left out.
+
+    Amazon's tracking of a shipment, which the Parcel app follows, tells
+    more before :func:`reconcile` links it. When packages repeat some of
+    its times, but the van leaving, only those repeating the most may hold
+    it, whatever their shop. Otherwise a delivered package may not while
+    the shipment still isn't, once the Parcel app read with the shipment
+    had shown that delivery: see :func:`_shown_elsewhere`.
     """
     apart = _apart_checker(data)
     today = [parcel for parcel in parcels if _of_day(parcel.state, day)]
@@ -2877,11 +2994,29 @@ def boxes_of_day(
     covered: dict[str, tuple[str, ...]] = {}
     if not boxes:
         return covered
+    reads: list[_Read] | None = None
     for order in today:
         state = order.state
         if state.tracking_number or state.status in _PROBLEMS or not _shop_keys(order):
             continue
         fits = [box for box in boxes if _box_may_hold(order, box, apart)]
+        if fits and _is_shipment(order):
+            marks = _amazon_marks(order)
+            scores = {box.id: _agreement(marks, box) for box in fits}
+            if top := max(scores.values()):
+                covered[order.id] = tuple(
+                    box.id for box in fits if scores[box.id] == top
+                )
+                continue
+            read = _shipment_read(data, order)
+            if (
+                read is not None
+                and marks[0] is None
+                and state.status is not ParcelStatus.DELIVERED
+            ):
+                if reads is None:
+                    reads = _amazon_reads(data)
+                fits = [box for box in fits if not _shown_elsewhere(box, read, reads)]
         if fits:
             best = min(_box_rank(order, box) for box in fits)
             covered[order.id] = tuple(

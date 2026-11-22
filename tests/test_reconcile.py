@@ -21,6 +21,7 @@ from custom_components.parcels.const import (
     ParcelStatus,
 )
 from custom_components.parcels.dedup import (
+    AMAZON_CATCH_UP,
     AMAZON_LINKS_KEY,
     AMAZON_REPAIR_KEY,
     REASON_AMAZON_TRACKING,
@@ -62,6 +63,7 @@ from custom_components.parcels.models import (
     ReviewItem,
     Source,
     Suggestion,
+    dt_to_str,
     order_key,
 )
 from custom_components.parcels.parsers.base import Eta
@@ -2038,10 +2040,11 @@ def _shipment(
     sent: datetime,
     *events: ParcelEvent,
     carrier: str | None = None,
+    eta: Eta | None = None,
 ) -> str:
     """Amazon's e-mail about a shipment due on 10 June, and its tracking."""
     mail = f"msg:a{key}#0"
-    eta = Eta(start=JUNE_10, end=JUNE_10)
+    eta = eta or Eta(start=JUNE_10, end=JUNE_10)
     parcel = _apply(
         data, _amazon(mail, order, sent, eta, shipment_id=shipment, carrier=carrier)
     )
@@ -2084,24 +2087,24 @@ def _own_scans(data: ParcelsData, box: str, *events: ParcelEvent) -> None:
     assert _apply(data, tracking) == box
 
 
-def _ctt_box(data: ParcelsData) -> str:
+def _ctt_box(data: ParcelsData, *, delivered: bool = True) -> str:
     """CTT's package of 10 June: its e-mail, and its own tracking."""
     box = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.SHIPPED, _jun(9, 15)))
-    _own_scans(
-        data,
-        box,
+    scans = (
         _scan(_jun(10, 1, 41), ParcelStatus.IN_TRANSIT, CTT_ARRIVED),
         _scan(_jun(10, 7, 12), ParcelStatus.OUT_FOR_DELIVERY, "Em entrega"),
         _scan(_jun(10, 9, 27), ParcelStatus.DELIVERED, "Entregue"),
     )
+    _own_scans(data, box, *(scans if delivered else scans[:2]))
     return box
 
 
-def _ctt_with_two(data: ParcelsData) -> tuple[str, str, str]:
+def _ctt_with_two(data: ParcelsData, *, delivered: bool = True) -> tuple[str, str, str]:
     """Shipments of two orders, then CTT's package that carried both."""
-    third = _shipment(data, 3, ORDER_1, SHIPMENT_3, _jun(8, 9), *_at_center())
-    fourth = _shipment(data, 4, ORDER_2, SHIPMENT_4, _jun(8, 10), *_at_center())
-    return _ctt_box(data), third, fourth
+    end = None if delivered else 2
+    third = _shipment(data, 3, ORDER_1, SHIPMENT_3, _jun(8, 9), *_at_center()[:end])
+    fourth = _shipment(data, 4, ORDER_2, SHIPMENT_4, _jun(8, 10), *_at_center()[:end])
+    return _ctt_box(data, delivered=delivered), third, fourth
 
 
 def _mail_box(
@@ -2129,23 +2132,23 @@ def _paack_box(
     )
 
 
-def _two_paack_boxes(data: ParcelsData) -> tuple[str, str, str, str]:
+def _two_paack_boxes(
+    data: ParcelsData, *, delivered: bool = True
+) -> tuple[str, str, str, str]:
     """Two shipments, each in its own Paack package, delivered the same minute."""
     shipments = []
     for key, order, shipment, sent, arrived in (
         (1, ORDER_1, SHIPMENT_1, _jun(8, 9), _jun(9, 12, 36)),
         (2, ORDER_2, SHIPMENT_2, _jun(8, 10), _jun(9, 17, 18)),
     ):
+        news = (
+            _scan(arrived, ParcelStatus.IN_TRANSIT, ARRIVED),
+            _scan(_jun(10, 6, 41), ParcelStatus.OUT_FOR_DELIVERY, VAN_OUT),
+            _scan(_jun(10, 10, 14), ParcelStatus.DELIVERED, HANDED),
+        )
         shipments.append(
             _shipment(
-                data,
-                key,
-                order,
-                shipment,
-                sent,
-                _scan(arrived, ParcelStatus.IN_TRANSIT, ARRIVED),
-                _scan(_jun(10, 6, 41), ParcelStatus.OUT_FOR_DELIVERY, VAN_OUT),
-                _scan(_jun(10, 10, 14), ParcelStatus.DELIVERED, HANDED),
+                data, key, order, shipment, sent, *(news if delivered else news[:2])
             )
         )
     first, second = shipments
@@ -2157,12 +2160,13 @@ def _two_paack_boxes(data: ParcelsData) -> tuple[str, str, str, str]:
         data,
         _paack_box("msg:p2#0", PAACK_2, MailKind.IN_TRANSIT, _jun(9, 17, 18, 47)),
     )
-    for origin_id, number, kind, when, box in (
+    mails = (
         ("msg:p3#0", PAACK_1, MailKind.OUT_FOR_DELIVERY, _jun(10, 6, 52), one),
         ("msg:p4#0", PAACK_2, MailKind.OUT_FOR_DELIVERY, _jun(10, 6, 59), two),
         ("msg:p5#0", PAACK_1, MailKind.DELIVERED, _jun(10, 10, 14, 22), one),
         ("msg:p6#0", PAACK_2, MailKind.DELIVERED, _jun(10, 10, 14, 48), two),
-    ):
+    )
+    for origin_id, number, kind, when, box in mails if delivered else mails[:2]:
         assert _apply(data, _paack_box(origin_id, number, kind, when)) == box
     assert len({one, two, first, second}) == 4
     return one, two, first, second
@@ -2529,6 +2533,124 @@ def test_marked_delivered_means_delivered_by_then(
     assert boxes_of_day(data, data.parcels.values(), JUNE_10) == expected
 
 
+@pytest.mark.parametrize(
+    ("ctt", "paack"), [(False, False), (True, False), (True, True)]
+)
+def test_amazon_tracking_narrows_the_packages_a_shipment_rides_in(
+    ctt: bool, paack: bool
+) -> None:
+    """A shipment rides along only in the packages repeating most of its times.
+
+    CTT's package names Amazon and Paack's name no shop, so the shop alone
+    would put all four shipments in CTT's: before anything came, once CTT's
+    came, and once both of Paack's came the same minute. Each shipment
+    reached the carrier when its own package did; the van tells nothing.
+    """
+    data = ParcelsData()
+    one, two, first, second = _two_paack_boxes(data, delivered=paack)
+    box, third, fourth = _ctt_with_two(data, delivered=ctt)
+    assert len({one, two, first, second, box, third, fourth}) == 7
+
+    assert boxes_of_day(data, data.parcels.values(), JUNE_10) == {
+        first: (one,),
+        second: (two,),
+        third: (box,),
+        fourth: (box,),
+    }
+
+
+def _sixth(data: ParcelsData) -> str:
+    """A shipment on its way whose tracking repeats no package's times."""
+    return _shipment(
+        data,
+        6,
+        ORDER_3,
+        SHIPMENT_6,
+        _jun(8, 11),
+        _scan(_jun(9, 11, 11), ParcelStatus.IN_TRANSIT, ARRIVED),
+        _scan(_jun(10, 6, 41), ParcelStatus.OUT_FOR_DELIVERY, VAN_OUT),
+    )
+
+
+def _seen(data: ParcelsData, **reads: datetime) -> None:
+    """When Parcels last read each delivery in the Parcel app."""
+    records = data.parcelapp.setdefault("records", {})
+    for key, when in reads.items():
+        records[key] = {"seen": dt_to_str(when)}
+
+
+@pytest.mark.parametrize("linked", [False, True])
+@pytest.mark.parametrize(
+    ("reads", "in_ctt"),
+    [
+        # Read with the shipments in CTT's package, which it showed delivered.
+        ({"t3": _jun(10, 9, 40), "t4": _jun(10, 9, 40), "t6": _jun(10, 9, 40)}, False),
+        # Read before that read: it may not have shown CTT's delivery yet.
+        ({"t3": _jun(10, 9, 40), "t4": _jun(10, 9, 40), "t6": _jun(10, 9, 35)}, True),
+        # Not read since.
+        ({"t3": _jun(10, 9, 40), "t4": _jun(10, 9, 40)}, True),
+        ({}, True),
+    ],
+)
+def test_a_shipment_on_its_way_wasnt_in_a_package_shown_delivered(
+    reads: dict[str, datetime], in_ctt: bool, linked: bool
+) -> None:
+    """A shipment still on its way wasn't in a package delivered before.
+
+    The Parcel app read Amazon's tracking on the user's phone, so its reads
+    tell only what Amazon's tracking showed then. That read showed CTT's
+    package delivered with the shipments it carried, their times agreeing,
+    and this one still on its way: it may only be in one of Paack's.
+    Otherwise CTT's, which names its shop, still comes first.
+    """
+    data = ParcelsData()
+    one, two, _first, _second = _two_paack_boxes(data, delivered=False)
+    box, third, fourth = _ctt_with_two(data)
+    sixth = _sixth(data)
+    _seen(data, **reads)
+    if linked:
+        result = reconcile(data, _jun(10, 9, 45))
+        assert result.removed == {third, fourth}
+        assert _linked(data.parcels[box])
+
+    riding = boxes_of_day(data, data.parcels.values(), JUNE_10)
+
+    assert set(riding[sixth]) == ({box} if in_ctt else {one, two})
+
+
+@pytest.mark.parametrize(
+    ("after", "in_ctt"),
+    [(AMAZON_CATCH_UP, False), (AMAZON_CATCH_UP - timedelta(minutes=1), True)],
+)
+def test_amazon_tracking_an_hour_after_a_package_came_shows_it(
+    after: timedelta, in_ctt: bool
+) -> None:
+    """Amazon's tracking read with news an hour after a package came shows it.
+
+    Another order's shipment, due later, had news then: the shipment still
+    on its way, read with it, wasn't in CTT's package. A minute less proves
+    nothing.
+    """
+    data = ParcelsData()
+    one, two, _first, _second = _two_paack_boxes(data, delivered=False)
+    box = _ctt_box(data)
+    sixth = _sixth(data)
+    _shipment(
+        data,
+        5,
+        ORDER_1,
+        SHIPMENT_5,
+        _jun(8, 9),
+        _scan(_jun(10, 9, 27) + after, ParcelStatus.IN_TRANSIT, ARRIVED),
+        eta=Eta(start=date(2026, 6, 12), end=date(2026, 6, 12)),
+    )
+    _seen(data, t5=_jun(10, 10, 40), t6=_jun(10, 10, 40))
+
+    riding = boxes_of_day(data, data.parcels.values(), JUNE_10)
+
+    assert set(riding[sixth]) == ({box} if in_ctt else {one, two})
+
+
 def test_amazon_tracking_needs_the_parcel_app() -> None:
     """Without the Parcel app, Amazon's e-mails give no tracking to match."""
     data = ParcelsData()
@@ -2616,6 +2738,13 @@ def test_amazon_evidence() -> None:
     assert _evidence(*_came()) == AmazonEvidence(_jun(10, 9, 27), False, None)
     assert _evidence(*_came(delivered=HANDED)) == AmazonEvidence(
         _jun(10, 9, 27), False, "Vila Exemplo"
+    )
+    # The country's code may come twice; a label of codes alone names no place.
+    assert _evidence(*_came(delivered="Entregue, Vila Exemplo, PT PT")) == (
+        AmazonEvidence(_jun(10, 9, 27), False, "Vila Exemplo")
+    )
+    assert _evidence(*_came(delivered="Entregue, PT PT")) == AmazonEvidence(
+        _jun(10, 9, 27), False, None
     )
     # The day without the time, then no day at all.
     timeless = _scan(_jun(10, 12), delivered, "Entregue", undated=True, timeless=True)

@@ -69,6 +69,7 @@ from custom_components.parcels.seventeentrack import (
     MAX_ADDS,
     MAX_HISTORY,
     NOT_FOUND_ARCHIVE,
+    PICKUPS_REPAIR_KEY,
     SEVENTEENTRACK_DOMAIN,
     SeventeenTrackSync,
     friendly_name,
@@ -101,6 +102,27 @@ PAACK_ID = "Qm7Rt2Kp9_2"
 PAACK_BARCODE = "534000077712340056"
 GLS = "61234567890"
 SEUR = "04512345678912"
+# Carriers' short texts under 17TRACK's pickup status that name the place
+# the parcel waits at, without collect wording.
+PICKUP_PLACE_TEXTS = (
+    "Entregue no cacifo",
+    "Depositado no cacifo",
+    "O envio está no cacifo",
+    "Entregue em Locker",
+    "Entregue no Ponto CTT",
+    "Entregue em Ponto de Recolha",
+    "Depositado en el Citypaq",
+    "Disponible en Citypaq",
+    "Entregado en punto de conveniencia",
+    "Votre colis est disponible dans la consigne Pickup Station",
+    "Déposé en consigne",
+    "Il pacco è disponibile nel locker",
+    "Consegnato al Punto Poste Locker",
+    "Je pakket ligt in de pakketautomaat",
+    "Delivered to parcel locker",
+    "Parcel is in the locker",
+    "In der Packstation eingelegt",
+)
 
 
 class FakeSeventeenTrack:
@@ -445,6 +467,35 @@ def logged_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
             "Destinatário ausente, aviso deixado",
             ParcelStatus.ATTEMPTED,
         ),
+        # A pickup place named without collect wording is a pickup.
+        *(
+            ("Ready to be picked up", info, ParcelStatus.READY_FOR_PICKUP)
+            for info in PICKUP_PLACE_TEXTS
+        ),
+        # Unless the parcel is still on its way there, or out for delivery,
+        # or the carrier missed the user; and only under the pickup status.
+        (
+            "Ready to be picked up",
+            "Será entregue no cacifo",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "On its way to the parcel locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Out for delivery to the parcel locker",
+            ParcelStatus.OUT_FOR_DELIVERY,
+        ),
+        (
+            "Ready to be picked up",
+            "Destinatário ausente, enviado para o cacifo",
+            ParcelStatus.ATTEMPTED,
+        ),
+        ("In Transit", "Parcel is in the locker", ParcelStatus.IN_TRANSIT),
+        ("Ready to be picked up", "Pickup Scan", ParcelStatus.IN_TRANSIT),
         ("Delivered", "Em distribuição", ParcelStatus.DELIVERED),
         ("Returned", None, ParcelStatus.RETURNED),
         ("Not Found", "Em distribuição", None),
@@ -459,7 +510,7 @@ async def test_map_status(
     """The carrier's text refines vague statuses, never a final one.
 
     17TRACK's "ready to be picked up" also means out for delivery: it's a
-    pickup only when the carrier's text says so.
+    pickup only when the carrier's text says so or names a pickup place.
     """
     assert map_status(package_status, info) is expected
 
@@ -648,6 +699,128 @@ async def test_update_takes_back_pickups_17track_alone_gave(
 
     assert len(records(engine)[CTT]["history"]) == 1
     assert status(engine, ids[CTT]) is ParcelStatus.OUT_FOR_DELIVERY
+
+
+async def test_update_gives_back_pickups_at_a_named_place(
+    hass: HomeAssistant, hass_storage: dict[str, Any], track: FakeSeventeenTrack
+) -> None:
+    """Once, the pickups 0.1.13 took back whose text names a pickup place return.
+
+    Only a package's latest news, while 17TRACK still says "ready to be
+    picked up": not earlier news, nor a package 17TRACK has in transit, nor
+    a text naming no place. The next refresh adds nothing new.
+    """
+    data = ParcelsData()
+    shipped = NOW_DT - timedelta(hours=6)
+    packages: dict[str, dict[str, Any]] = {}
+    ids: dict[str, str] = {}
+    stored = (
+        (
+            CTT,
+            "ctt",
+            "ready_to_be_picked_up",
+            ("Depositado no cacifo", "Entregue no cacifo"),
+        ),
+        (OTHER, "ctt", "in_transit", ("Parcel is in the locker",)),
+        (UPS, "ups", "ready_to_be_picked_up", ("Arrived at the local depot",)),
+    )
+    for number, carrier, raw, texts in stored:
+        applied = apply_contribution(
+            data,
+            contribution(
+                f"msg:{number}#0", time=shipped, carrier=carrier, number=number
+            ),
+            shipped,
+        )
+        assert applied.parcel_id is not None
+        ids[number] = applied.parcel_id
+        times = [
+            datetime(2026, 11, 17, 9, 0, tzinfo=UTC) + timedelta(minutes=10 * index)
+            for index in range(len(texts))
+        ]
+        apply_contribution(
+            data,
+            Contribution(
+                origin=Origin(
+                    id=origin_id(number),
+                    source=Source.SEVENTEENTRACK,
+                    time=times[0],
+                    label="17TRACK",
+                    carrier=carrier,
+                    tracking_number=number,
+                ),
+                events=[
+                    ParcelEvent(
+                        time=time,
+                        source=Source.SEVENTEENTRACK,
+                        status=ParcelStatus.IN_TRANSIT,
+                        label=info,
+                    )
+                    for info, time in zip(texts, times, strict=True)
+                ],
+            ),
+            times[-1],
+        )
+        packages[number] = {
+            "parcel": applied.parcel_id,
+            "own": True,
+            "status": raw,
+            "history": [
+                {
+                    "status": "in_transit",
+                    "info": info,
+                    "at": dt_to_str(time),
+                    "time": dt_to_str(time),
+                }
+                for info, time in zip(texts, times, strict=True)
+            ],
+        }
+    data.seventeentrack["packages"] = packages
+    data.engine[REPAIR_KEY] = REPAIR_VERSION
+    data.engine[PICKUPS_REPAIR_KEY] = 0
+    hass_storage[DOMAIN] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": DOMAIN,
+        "data": data.as_dict(),
+    }
+    add_hub(hass)
+
+    engine = await async_setup_parcels(hass)
+    tracker = engine.tracker
+    assert tracker is not None
+    await tracker.async_stop()
+
+    assert {number: status(engine, ids[number]) for number in (CTT, OTHER, UPS)} == {
+        CTT: ParcelStatus.READY_FOR_PICKUP,
+        OTHER: ParcelStatus.IN_TRANSIT,
+        UPS: ParcelStatus.IN_TRANSIT,
+    }
+    assert {
+        number: [entry["status"] for entry in record["history"]]
+        for number, record in records(engine).items()
+    } == {
+        CTT: ["in_transit", "ready_for_pickup"],
+        OTHER: ["in_transit"],
+        UPS: ["in_transit"],
+    }
+    assert [event.status for event in news(engine, ids[CTT], CTT)] == [
+        ParcelStatus.IN_TRANSIT,
+        ParcelStatus.READY_FOR_PICKUP,
+    ]
+    assert engine.diagnostics()["seventeentrack_pickups_restored"] == 1
+
+    track.put(
+        CTT,
+        "Ready to be picked up",
+        info="Entregue no cacifo",
+        timestamp="2026-11-17T09:10:00+00:00",
+    )
+    await tracker.async_refresh()
+
+    assert len(records(engine)[CTT]["history"]) == 2
+    assert len(news(engine, ids[CTT], CTT)) == 2
+    assert status(engine, ids[CTT]) is ParcelStatus.READY_FOR_PICKUP
 
 
 async def test_adds_the_numbers_of_active_parcels(

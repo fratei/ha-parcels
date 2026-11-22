@@ -640,6 +640,18 @@ only that it had come by then. Parcels doesn't guess that package, the
 shipment doesn't ride along in it, and **Merge with…** marks it. Parcels
 never joins parcels you kept apart with **Not this one**.
 
+Before that link, Amazon's tracking already narrows the packages a shipment
+rides along with, and merges nothing. When some of the day's packages repeat
+its times as above, the van leaving apart, it rides along only with those
+repeating the most of them, even if another package names its shop.
+Otherwise the shop and the carrier decide, as above, but a package delivered
+while Amazon's tracking still shows the shipment on its way didn't carry it,
+once the Parcel app had shown that delivery: the same read of the shipment,
+or an earlier one, showed another shipment delivered with that package,
+their times agreeing as above, or news in Amazon's tracking at least an hour
+after the package came. Parcel updates Amazon's tracking on your phone (see
+[Parcel app](#parcel-app)), so the time of a read alone proves nothing.
+
 ### Live Activities
 
 [Live Activities](https://companion.home-assistant.io/docs/notifications/live-activities/)
@@ -745,8 +757,10 @@ own tracking in between.
   clearly, also the last day to collect, the next attempt and where a
   delivered parcel was left. 17TRACK's "ready to be picked up" also stands
   for out for delivery, so it's a pickup only when the carrier's wording
-  says so; otherwise the parcel takes the status that wording gives, or in
-  transit.
+  says so, or names a place where parcels wait to be collected, such as a
+  locker, a pickup point or a Packstation, without saying the parcel is
+  still on its way there; otherwise the parcel takes the status that
+  wording gives, or in transit.
 - **What it doesn't add**: delivery dates. Home Assistant's 17TRACK integration
   gives no expected date, so a parcel without one stays under **No date yet**.
 - **What it leaves out**, so they don't take up places in your account:
@@ -849,7 +863,8 @@ the delivery out when the order has several parcels, or when another of the
 order's shipments waits for its parcel too. A delivery without a shipment
 ID joins the order's parcel only when it's the order's one delivery in your
 list. Amazon's tracking also tells which carrier's package carried a
-shipment (see [How the day is counted](#how-the-day-is-counted)). Like
+shipment, and before that which of the day's packages it may be in (see
+[How the day is counted](#how-the-day-is-counted)). Like
 e-mails, a delivery from a shop that Parcels can tell, such as Amazon,
 can also join a parcel of that shop without a tracking number, by the
 guesses described in [What it does](#what-it-does): marked, with **Undo**,
@@ -864,6 +879,9 @@ twice within 10 minutes, restarts and the `parcels.refresh` action included.
 Parcel allows 20 reads an hour, which other tools using your key may share,
 and answers from its cache: a read doesn't make Parcel check the carrier
 ([Parcel's API](https://parcelapp.net/help/api-view-deliveries.html)).
+Parcel updates Amazon's tracking on your phone, not on its server: when you
+open the app, or when iOS lets it refresh in the background
+([Parcel's FAQ](https://parcelapp.net/docs/FAQ/EN/)).
 
 **Dates.** Parcel gives events' dates without a time zone; Parcels reads
 them in Home Assistant's, unless a time zone or offset follows the time,
@@ -1246,6 +1264,15 @@ actions:
   the day's packages may hold ride along with it (see
   [How the day is counted](#how-the-day-is-counted)). The notifications part
   of the hub's diagnostics counts today's (`orders_in_a_box`).
+- **A Live Activity or notification says "Possibly: …" for an order the
+  package didn't hold.** That's a guess (see
+  [How the day is counted](#how-the-day-is-counted)). For an Amazon shipment
+  that the Parcel app follows, Amazon's tracking narrows it once a package
+  repeats the shipment's times, or once the Parcel app has shown a package
+  delivered while the shipment was still on its way. Until then, and for
+  other shops, the shop and the carrier decide. Merge the order with the
+  package that holds it or, when the package's details suggest the order,
+  select **Not this one** there.
 - **A missed delivery says "reported 11:50".** The e-mail didn't say when
   the carrier came, so the time is when the e-mail was sent, not the
   attempt's. 17TRACK or the Parcel app may give the attempt's time later.
@@ -1261,6 +1288,13 @@ actions:
   takes back once the pickups that the carrier's wording doesn't confirm
   (see [17TRACK](#17track)). The hub's diagnostics count the parcels that
   changed (`seventeentrack_pickups_repaired`).
+- **A parcel waiting in a locker or at a pickup point showed as in
+  transit.** 0.1.13 also took back 17TRACK's pickups whose wording named
+  the place, such as "Entregue no cacifo" or "Delivered to parcel locker",
+  without collect wording. After the update, Parcels gives them back once,
+  for the latest news of each package that 17TRACK still has as ready to be
+  picked up. The hub's diagnostics count the parcels that changed
+  (`seventeentrack_pickups_restored`).
 - **Amazon shows as the carrier, but didn't deliver.** Before 0.1.8, Amazon
   became the carrier whenever the local AI, the Parcel app or 17TRACK named
   it, which kept Amazon's orders apart from their carrier's deliveries. After
@@ -1284,8 +1318,10 @@ actions:
   whose Parcel app events the update to 0.1.7 placed again
   (`parcel_app_dates_repaired`) and the sources, senders and answers whose
   unproven Amazon carrier the update to 0.1.8 dropped
-  (`amazon_carrier_repaired`) and the parcels whose 17TRACK pickups the
-  update to 0.1.13 took back (`seventeentrack_pickups_repaired`); its
+  (`amazon_carrier_repaired`), the parcels whose 17TRACK pickups the
+  update to 0.1.13 took back (`seventeentrack_pickups_repaired`) and those
+  whose pickups at a named place the update to 0.1.14 gave back
+  (`seventeentrack_pickups_restored`); its
   notifications part counts today's orders that ride along with a package
   (`orders_in_a_box`); its 17TRACK part counts the numbers 17TRACK can't
   find, by carrier (`not_found_by_carrier`); its Parcel app part
