@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, tzinfo
 import logging
 import re
 from typing import TYPE_CHECKING, Any, Final
@@ -44,7 +44,15 @@ from .const import (
     ParcelStatus,
 )
 from .dedup import Contribution, apply_contribution
-from .models import Origin, Parcel, ParcelEvent, Source, dt_from_str, dt_to_str
+from .models import (
+    Origin,
+    Parcel,
+    ParcelEvent,
+    ParcelsData,
+    Source,
+    dt_from_str,
+    dt_to_str,
+)
 from .parsers.carriers._common import fold_text, phrase_regex
 from .parsers.carriers._phrases import KIND_PHRASES
 from .parsers.details import tracker_details
@@ -60,6 +68,9 @@ SEVENTEENTRACK_DOMAIN: Final = "seventeentrack"
 ORIGIN_PREFIX: Final = "17t:"
 NAME_PREFIX: Final = "parcels-"
 ORIGIN_LABEL: Final = "17TRACK"
+# The engine state key of the repair of 17TRACK's pickups, see
+# :func:`repair_pickups`.
+PICKUPS_REPAIR_KEY: Final = "seventeentrack_pickups"
 
 INTERVAL: Final = timedelta(minutes=30)
 # While a parcel is out for delivery or due today.
@@ -94,7 +105,9 @@ _NEEDS_POSTCODE_IN: Final[Mapping[str, frozenset[str]]] = {
 }
 
 # Package statuses of the core integration, as slugs (see its package_state
-# selector). Not found and expired carry no news.
+# selector). Not found and expired carry no news. "Ready to be picked up" is
+# 17TRACK's old "Pick Up" status, which also stands for out for delivery, so
+# it counts as a pickup only when the carrier's text says so (pickup_status).
 _STATUSES: Final[dict[str, ParcelStatus]] = {
     "in_transit": ParcelStatus.IN_TRANSIT,
     "ready_to_be_picked_up": ParcelStatus.READY_FOR_PICKUP,
@@ -129,21 +142,89 @@ def friendly_name(parcel_id: str) -> str:
 
 
 def map_status(status: Any, info: str | None) -> ParcelStatus | None:
-    """Turn a 17TRACK package status and its carrier text into a status."""
+    """Turn a 17TRACK package status and its carrier text into a status.
+
+    17TRACK's "ready to be picked up" is its old "Pick Up" status, which also
+    means out for delivery: see :func:`pickup_status`.
+    """
     mapped = _STATUSES.get(slugify(str(status or "")))
     if mapped is None:
         return None
+    if mapped is ParcelStatus.READY_FOR_PICKUP:
+        return pickup_status(info)
     return refine_status(mapped, info)
+
+
+def pickup_status(info: str | None) -> ParcelStatus:
+    """Return what 17TRACK's "ready to be picked up" means, by the carrier's text.
+
+    It's a pickup only when the text says so; otherwise it's what the text
+    says, such as out for delivery, or in transit.
+    """
+    return _text_status(info) or ParcelStatus.IN_TRANSIT
 
 
 def refine_status(status: ParcelStatus, info: str | None) -> ParcelStatus:
     """Return the more precise status a tracker's carrier text tells, if any."""
-    if status in _REFINED and info:
-        text = fold_text(info)
-        for kind, refined in _INFO_RULES:
-            if phrase_regex(KIND_PHRASES[kind]).search(text):
-                return refined
+    if status in _REFINED:
+        return _text_status(info) or status
     return status
+
+
+def _text_status(info: str | None) -> ParcelStatus | None:
+    """Return the status a carrier's text tells, if it tells one."""
+    if info:
+        text = fold_text(info)
+        for kind, status in _INFO_RULES:
+            if phrase_regex(KIND_PHRASES[kind]).search(text):
+                return status
+    return None
+
+
+def repair_pickups(data: ParcelsData, now: datetime, tz: tzinfo) -> int:
+    """Take back the pickups that 17TRACK's pickup status alone gave.
+
+    Before 0.1.13, 17TRACK's "ready to be picked up" was always a pickup, see
+    :func:`pickup_status`. Its events whose text doesn't say so get the
+    status the text tells, or in transit, in the stored packages and on
+    their parcels, with the details read again as the sync reads them.
+    Returns how many parcels changed.
+    """
+    pickup = ParcelStatus.READY_FOR_PICKUP
+    packages = data.seventeentrack.get("packages")
+    # When each package event happened, by its origin, text and stored time.
+    happened: dict[tuple[str, Any, Any], datetime | None] = {}
+    for number, record in (packages if isinstance(packages, dict) else {}).items():
+        if not isinstance(record, dict) or not isinstance(
+            history := record.get("history"), list
+        ):
+            continue
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("status") == pickup.value:
+                entry["status"] = pickup_status(entry.get("info")).value
+            key = (origin_id(str(number)), entry.get("info"), entry.get("time"))
+            happened[key] = dt_from_str(entry.get("at"))
+    changed = 0
+    for parcel in data.parcels.values():
+        dirty = False
+        for event in parcel.events:
+            if event.source is not Source.SEVENTEENTRACK or event.status is not pickup:
+                continue
+            status = pickup_status(event.label)
+            if status is pickup:
+                continue
+            key = (event.origin or "", event.label, dt_to_str(event.time))
+            details = tracker_details(event.label, status, happened.get(key), tz)
+            event.status = status
+            event.collect_by = details.get("collect_by")
+            event.next_attempt = details.get("next_attempt")
+            dirty = True
+        if dirty:
+            parcel.touch(now)
+            changed += 1
+    return changed
 
 
 def current_number(parcel: Parcel) -> str | None:

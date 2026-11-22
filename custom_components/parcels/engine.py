@@ -77,6 +77,7 @@ from .customer_returns import (
     return_origin,
 )
 from .dedup import (
+    AMAZON_LINKS_KEY,
     AMAZON_REPAIR_KEY,
     REPAIR_KEY,
     REPAIR_VERSION,
@@ -94,7 +95,6 @@ from .dedup import (
     manual_origin_id,
     mark_delivered,
     merge_parcels,
-    paack_amazon_counts,
     reconcile,
     remove_message,
     remove_origins,
@@ -149,6 +149,7 @@ from .parsers.tracking import (
     normalize_tracking_number,
 )
 from .quiet import infer_quiet_deliveries
+from .seventeentrack import PICKUPS_REPAIR_KEY, repair_pickups
 from .store import ParcelsStore, apply_retention
 from .workdays import WorkingDays
 
@@ -443,6 +444,9 @@ class ParcelsEngine:
             data.engine[DATES_REPAIR_KEY] = fixed
             if fixed:
                 _LOGGER.info("Parcels placed Parcel app events on %d parcels", fixed)
+            self.store.async_schedule_save()
+        if PICKUPS_REPAIR_KEY not in data.engine:
+            data.engine[PICKUPS_REPAIR_KEY] = repair_pickups(data, now, self.tz)
             self.store.async_schedule_save()
         if not (data.parcels or data.review):
             # Nothing stored by an earlier release to check after the update.
@@ -2448,11 +2452,12 @@ class ParcelsEngine:
             "paack_shop_check": data.engine.get(PAACK_SHOP_CHECK_KEY),
             "recent_emails": self._recent_emails(dt_util.utcnow()),
             "working_days": self.workdays.source,
-            "paack_amazon": paack_amazon_counts(data),
             "amazon_shipment_ids": amazon_shipment_id_counts(data, dt_util.utcnow()),
+            "amazon_links": data.engine.get(AMAZON_LINKS_KEY),
             "repair": data.engine.get(REPAIR_KEY),
             "amazon_carrier_repaired": data.engine.get(AMAZON_REPAIR_KEY),
             "parcel_app_dates_repaired": data.engine.get(DATES_REPAIR_KEY),
+            "seventeentrack_pickups_repaired": data.engine.get(PICKUPS_REPAIR_KEY),
             "reconcile_waiting": len(self._syncing | self._more),
             # How the sender checks went for the newest e-mails under review:
             # the shop's domain and the servers that wrote the headers only.

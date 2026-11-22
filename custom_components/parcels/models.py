@@ -544,13 +544,17 @@ class AutoMerge:
     """A heuristic merge that the user should check, with the origins to undo.
 
     ``origin`` is the origin the heuristic linked; ``origins`` lists more
-    origins that leave with it, when a whole parcel was merged.
+    origins that leave with it, when a whole parcel was merged. ``groups``
+    is set when several merges share the flag, such as Amazon shipments
+    linked one by one to the package that carried them: on undo, each group
+    leaves as its own parcel.
     """
 
     origin: str
     at: datetime
     reason: str
     origins: tuple[str, ...] = ()
+    groups: tuple[tuple[str, ...], ...] = ()
 
     @property
     def all_origins(self) -> set[str]:
@@ -566,6 +570,8 @@ class AutoMerge:
         }
         if self.origins:
             data["origins"] = list(self.origins)
+        if self.groups:
+            data["groups"] = [list(group) for group in self.groups]
         return data
 
     @classmethod
@@ -573,11 +579,17 @@ class AutoMerge:
         """Parse a serialised flag."""
         if not isinstance(data, Mapping) or not data.get("origin"):
             return None
+        groups = data.get("groups")
         return cls(
             origin=str(data["origin"]),
             at=dt_from_str(data.get("at")) or dt_util.utcnow(),
             reason=str(data.get("reason", "")),
             origins=_tuple(data.get("origins")),
+            groups=tuple(
+                group
+                for value in (groups if isinstance(groups, list) else ())
+                if isinstance(value, list) and (group := _tuple(value))
+            ),
         )
 
 

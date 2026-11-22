@@ -151,7 +151,7 @@ _PLACE_RE = re.compile(
         "hausmeister",
         "empfangsbereich",
         "accueil",
-        "gardienne?",
+        "gardien(?:ne)?s?",
         "loge",
         "conciergerie",
         "portineria",
@@ -209,7 +209,8 @@ _OWN_PREPOSITION = frozenset({"neighbourp", "receptionp", "doorp"})
 _BARE_DOOR = "doorx"
 
 # Verbs that say where a parcel went. "by" forms name who took it ("Recebido
-# por"); labels name the place ("Zustellort: Haustür"); "left" forms are
+# por", "Ha ritirato:"), which counts only when a place follows, never a
+# name; labels name the place ("Zustellort: Haustür"); "left" forms are
 # verbs of leaving.
 _PARTICIPLE_RE = re.compile(
     r"(?<![a-z0-9])(?:"
@@ -221,14 +222,26 @@ _PARTICIPLE_RE = re.compile(
         "accepted by",
         "taken in by",
         "recebid[oa]s? por",
+        "assinad[oa]s? por",
         "recibid[oa]s? por",
         "recogid[oa]s? por",
+        "firmad[oa]s? por",
         "entgegengenommen von",
         "angenommen von",
+        "unterschrieben von",
         "recue?s? par",
+        "receptionnee?s? par",
+        "signee?s? par",
         "ricevut[oaie] da",
+        "ritirat[oaie] da",
+        "ha ritirato",
+        "hanno ritirato",
+        "firmat[oaie] da",
         "ontvangen door",
+        "in ontvangst genomen door",
         "aangenomen door",
+        "getekend door",
+        "ondertekend door",
     )
     + r")|(?P<label>"
     + _phrases(

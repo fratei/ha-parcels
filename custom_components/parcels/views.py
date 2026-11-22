@@ -27,6 +27,8 @@ from .const import CARRIER_NAMES, CONF_DASHBOARD_PATH, CONF_SEVENTEENTRACK
 from .customer_returns import linked_parcels, order_index
 from .dedup import (
     MergeSuggestion,
+    amazon_disagree,
+    amazon_evidence,
     first_news,
     is_shop_sender,
     manual_origin_id,
@@ -231,6 +233,21 @@ def shipment_groups(parcels: Iterable[Parcel]) -> dict[str, str]:
     return {parcel_id: root(parcel_id) for parcel_id in parent}
 
 
+def _amazon_tracking(parcel: Parcel) -> dict[str, Any] | None:
+    """Return when and where Amazon's tracking says a shipment was delivered.
+
+    With "timeless", Amazon gave the day but not the time.
+    """
+    evidence = amazon_evidence(parcel)
+    if evidence is None:
+        return None
+    return {
+        "delivered": dt_to_str(evidence.delivered),
+        "timeless": evidence.timeless,
+        "place": evidence.place,
+    }
+
+
 def parcel_json(
     parcel: Parcel,
     viewer: Viewer,
@@ -301,6 +318,7 @@ def parcel_json(
         "senders": parcel_senders(parcel),
         "ordered_at": dt_to_str(ordered_at(parcel)),
         "shipped_at": dt_to_str(shipped_at(parcel)),
+        "amazon_tracking": _amazon_tracking(parcel),
         "restricted": restricted,
     }
     if restricted:
@@ -332,6 +350,7 @@ def parcel_json(
             senders=[],
             ordered_at=None,
             shipped_at=None,
+            amazon_tracking=None,
         )
     return result
 
@@ -602,7 +621,10 @@ def _timeline_source(entry: TimelineEntry) -> str:
 def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, Any]:
     """Return a parcel with its timeline, orders and origins.
 
-    Callers check ``viewer.can_see`` first.
+    "contradicted" lists the parcels the viewer may see that Amazon's
+    tracking rules out as the same package: one is an Amazon shipment and
+    the other a carrier's package delivered at another time. Callers check
+    ``viewer.can_see`` first.
     """
     data = engine.data
     state = parcel.state
@@ -651,6 +673,13 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
         "timeline": timeline,
         "orders": orders,
         "origins": origin_rows(engine, parcel, viewer),
+        "contradicted": sorted(
+            other.id
+            for other in data.parcels.values()
+            if other.id != parcel.id
+            and viewer.can_see(other)
+            and amazon_disagree(parcel, other)
+        ),
     }
 
 

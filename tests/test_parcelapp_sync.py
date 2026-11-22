@@ -53,6 +53,7 @@ from custom_components.parcels.dedup import (
     REPAIR_VERSION,
     Contribution,
     apply_contribution,
+    split_parcel,
 )
 from custom_components.parcels.engine import ParcelsEngine, get_engine
 from custom_components.parcels.models import (
@@ -369,6 +370,7 @@ def add_parcel(
     owner: str | None = OWNER,
     private: bool = False,
     items: Iterable[str] = (),
+    shipment: str | None = None,
 ) -> Parcel:
     """Add a parcel from an e-mail of ``owner``, received ``age`` ago."""
     now = dt_util.utcnow()
@@ -382,6 +384,7 @@ def add_parcel(
             number=number,
             merchant=merchant,
             orders=orders,
+            shipment_id=shipment,
             eta=eta,
             owner=owner,
             status=status,
@@ -2109,6 +2112,40 @@ def amazon_order(
     )
 
 
+def amazon_shipment(
+    engine: ParcelsEngine, name: str, shipment: str, number: str = ORDER
+) -> Parcel:
+    """Add the parcel of an Amazon shipping e-mail that names its shipment."""
+    return add_parcel(
+        engine,
+        name,
+        None,
+        carrier=None,
+        merchant="Amazon",
+        orders=(number,),
+        shipment=shipment,
+    )
+
+
+def shipment_holder(engine: ParcelsEngine, shipment: str) -> Parcel | None:
+    """Return the parcel that holds the Parcel app's delivery of a shipment."""
+    return next(
+        (
+            parcel
+            for parcel in engine.data.parcels.values()
+            for oid, origin in parcel.origins.items()
+            if oid.startswith(PARCELAPP_PREFIX)
+            and origin.amazon_shipment_id == shipment
+        ),
+        None,
+    )
+
+
+def parcel_app_origins(parcel: Parcel) -> list[str]:
+    """Return the IDs of a parcel's deliveries."""
+    return [oid for oid in parcel.origins if oid.startswith(PARCELAPP_PREFIX)]
+
+
 async def test_delivery_leaving_keeps_the_other_delivery(
     hass: HomeAssistant,
     freezer: FrozenDateTimeFactory,
@@ -2342,6 +2379,348 @@ async def test_amazon_delivery_with_two_parcels_due_is_a_suggestion(
     assert suggestion.candidates == (first.id, second.id)
     assert suggestion.reason == "same_merchant_day"
     assert suggestion.day == TODAY
+
+
+# -- Amazon shipments ----------------------------------------------------------
+# Parcel follows each shipment of an order as a delivery of its own, numbered
+# by the order, with the shipment ID as its extra information.
+
+SHIPMENT = "Tq4Wz8Lm1"
+OTHER_SHIPMENT = "Hb7Np2Xc5"
+SECOND_ORDER = "405-7654321-7654321"
+THIRD_ORDER = "403-1111111-2222222"
+FOURTH_ORDER = "171-3333333-4444444"
+
+
+async def test_shipments_of_an_order_join_their_parcels(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Each shipment of an order joins the parcel of its Amazon e-mail."""
+    first = amazon_shipment(engine, "a", SHIPMENT)
+    second = amazon_shipment(engine, "b", OTHER_SHIPMENT)
+    assert first.id != second.id
+    parcel_app.deliveries = [
+        amazon(extra_information=SHIPMENT),
+        amazon(
+            extra_information=OTHER_SHIPMENT,
+            status=4,
+            events=(("Out for delivery", "2026-11-17 09:30:00"),),
+        ),
+    ]
+
+    await read(hass, freezer, parcel_app)
+
+    joined = shipment_holder(engine, SHIPMENT)
+    other = shipment_holder(engine, OTHER_SHIPMENT)
+    assert joined is not None
+    assert other is not None
+    assert (joined.id, other.id) == (first.id, second.id)
+    assert joined.state.status is ParcelStatus.IN_TRANSIT
+    assert other.state.status is ParcelStatus.OUT_FOR_DELIVERY
+    assert len(engine.data.parcels) == 2
+    assert counts(engine) == (2, 2, 0, 0)
+
+
+async def test_shipment_joins_the_parcel_that_names_it(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Of an order's parcels, a delivery joins the one with its shipment."""
+    amazon_shipment(engine, "a", SHIPMENT)
+    second = amazon_shipment(engine, "b", OTHER_SHIPMENT)
+    parcel_app.deliveries = [amazon(extra_information=OTHER_SHIPMENT)]
+
+    await read(hass, freezer, parcel_app)
+
+    joined = shipment_holder(engine, OTHER_SHIPMENT)
+    assert joined is not None
+    assert joined.id == second.id
+    assert len(engine.data.parcels) == 2
+    assert counts(engine) == (1, 1, 0, 0)
+
+
+async def test_followed_order_learns_its_shipment(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery followed by its order stays put once its shipment is known.
+
+    Its news isn't added twice.
+    """
+    parcel = amazon_order(engine, "a")
+    parcel_app.deliveries = [amazon()]
+    await read(hass, freezer, parcel_app)
+    assert holder(engine, ORDER_KEY) is not None
+
+    parcel_app.deliveries = [amazon(extra_information=SHIPMENT)]
+    await read(hass, freezer, parcel_app)
+
+    joined = shipment_holder(engine, SHIPMENT)
+    assert joined is not None
+    assert joined.id == parcel.id
+    assert parcel_app_origins(joined) == [PARCELAPP_PREFIX + ORDER_KEY]
+    assert len(own_events(joined, ORDER_KEY)) == 1
+    assert joined.state.amazon_shipment_ids == (SHIPMENT,)
+    assert counts(engine) == (1, 1, 0, 0)
+
+
+async def test_delivery_of_another_shipment_leaves_the_parcel(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery followed by its order leaves a parcel of another shipment."""
+    parcel = amazon_shipment(engine, "a", SHIPMENT)
+    parcel_app.deliveries = [amazon()]
+    await read(hass, freezer, parcel_app)
+    joined = holder(engine, ORDER_KEY)
+    assert joined is not None
+    assert joined.id == parcel.id
+
+    parcel_app.deliveries = [amazon(extra_information=OTHER_SHIPMENT)]
+    await read(hass, freezer, parcel_app)
+
+    moved = shipment_holder(engine, OTHER_SHIPMENT)
+    assert moved is not None
+    assert moved.id != parcel.id
+    assert list(engine.data.parcels[parcel.id].origins) == ["msg:a#0"]
+    assert counts(engine) == (1, 0, 1, 0)
+
+
+async def test_two_shipments_and_one_parcel_of_the_order_are_left(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """With two shipments and one parcel of the order, which is which is unclear."""
+    parcel = amazon_order(engine, "a")
+    parcel_app.deliveries = [
+        amazon(extra_information=SHIPMENT),
+        amazon(extra_information=OTHER_SHIPMENT),
+    ]
+
+    await read(hass, freezer, parcel_app)
+
+    assert list(engine.data.parcels) == [parcel.id]
+    assert list(engine.data.parcels[parcel.id].origins) == ["msg:a#0"]
+    assert counts(engine) == (2, 0, 0, 2)
+
+
+async def test_two_shipments_without_parcels_become_two(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """An order's two shipments become two parcels; each e-mail joins its own.
+
+    A shipment that leaves the list takes its parcel along; the other stays.
+    """
+    parcel_app.deliveries = [
+        amazon(extra_information=SHIPMENT),
+        amazon(extra_information=OTHER_SHIPMENT),
+    ]
+    await read(hass, freezer, parcel_app)
+
+    first = shipment_holder(engine, SHIPMENT)
+    second = shipment_holder(engine, OTHER_SHIPMENT)
+    assert first is not None
+    assert second is not None
+    assert first.id != second.id
+    assert counts(engine) == (2, 0, 2, 0)
+
+    joined = amazon_shipment(engine, "b", OTHER_SHIPMENT)
+    assert joined.id == second.id
+    await read(hass, freezer, parcel_app)
+    assert counts(engine) == (2, 1, 1, 0)
+
+    parcel_app.deliveries = [amazon(extra_information=OTHER_SHIPMENT)]
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+
+    assert shipment_holder(engine, SHIPMENT) is None
+    assert list(engine.data.parcels) == [second.id]
+    kept = shipment_holder(engine, OTHER_SHIPMENT)
+    assert kept is not None
+    assert kept.id == second.id
+    assert counts(engine) == (1, 1, 0, 0)
+
+
+async def test_shipment_leaves_the_order_for_the_parcel_that_names_it(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """Once its shipment is known, a delivery moves to the parcel naming it.
+
+    Here the user had split the shipping e-mail from the order's parcel.
+    """
+    parcel = amazon_order(engine, "a")
+    amazon_shipment(engine, "b", SHIPMENT)
+    assert list(parcel.origins) == ["msg:a#0", "msg:b#0"]
+    parcel_app.deliveries = [amazon()]
+    await read(hass, freezer, parcel_app)
+    named = split_parcel(engine.data, parcel.id, ["msg:b#0"], dt_util.utcnow())
+
+    parcel_app.deliveries = [amazon(extra_information=SHIPMENT)]
+    await read(hass, freezer, parcel_app)
+
+    joined = shipment_holder(engine, SHIPMENT)
+    assert joined is not None
+    assert joined.id == named.id
+    assert list(engine.data.parcels[parcel.id].origins) == ["msg:a#0"]
+    assert counts(engine) == (1, 1, 0, 0)
+    assert sync_of(engine).diagnostics()["deliveries"]["amazon"]["by_shipment_id"] == 1
+
+
+async def test_order_delivery_becomes_the_shipment_its_parcel_names(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery followed by its order stays as the shipment its parcel names.
+
+    The order's other shipment becomes a parcel of its own.
+    """
+    parcel = amazon_shipment(engine, "a", SHIPMENT)
+    parcel_app.deliveries = [amazon()]
+    await read(hass, freezer, parcel_app)
+
+    parcel_app.deliveries = [
+        amazon(extra_information=SHIPMENT),
+        amazon(extra_information=OTHER_SHIPMENT),
+    ]
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app_origins(engine.data.parcels[parcel.id]) == [
+        PARCELAPP_PREFIX + ORDER_KEY
+    ]
+    other = shipment_holder(engine, OTHER_SHIPMENT)
+    assert other is not None
+    assert other.id != parcel.id
+    assert counts(engine) == (2, 1, 1, 0)
+
+
+async def test_order_delivery_that_cannot_be_told_leaves_its_parcel(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery followed by its order leaves when the order has two shipments.
+
+    Its parcel names neither, so which one it followed is unclear.
+    """
+    parcel = amazon_order(engine, "a")
+    parcel_app.deliveries = [amazon()]
+    await read(hass, freezer, parcel_app)
+
+    parcel_app.deliveries = [
+        amazon(extra_information=SHIPMENT),
+        amazon(extra_information=OTHER_SHIPMENT),
+    ]
+    await read(hass, freezer, parcel_app)
+
+    assert list(engine.data.parcels) == [parcel.id]
+    assert list(engine.data.parcels[parcel.id].origins) == ["msg:a#0"]
+    assert counts(engine) == (2, 0, 0, 2)
+
+
+async def test_shipment_beside_a_delivery_without_one_is_left(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A shipment doesn't join its order's parcel by the order number.
+
+    Not while the order has another delivery whose shipment isn't known.
+    """
+    parcel = amazon_order(engine, "a")
+    parcel_app.deliveries = [amazon()]
+    await read(hass, freezer, parcel_app)
+
+    parcel_app.deliveries = [amazon(), amazon(extra_information=SHIPMENT)]
+    await read(hass, freezer, parcel_app)
+
+    assert shipment_holder(engine, SHIPMENT) is None
+    assert parcel_app_origins(engine.data.parcels[parcel.id]) == [
+        PARCELAPP_PREFIX + ORDER_KEY
+    ]
+    assert counts(engine) == (2, 1, 0, 1)
+
+
+async def test_delivery_without_a_shipment_leaves_the_known_one_alone(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A new delivery of the order without a shipment isn't taken for it.
+
+    The known shipment keeps its parcel and its news.
+    """
+    parcel = amazon_order(engine, "a")
+    parcel_app.deliveries = [amazon(extra_information=SHIPMENT)]
+    await read(hass, freezer, parcel_app)
+    assert shipment_holder(engine, SHIPMENT) is parcel
+
+    parcel_app.deliveries = [
+        amazon(
+            extra_information=SHIPMENT,
+            status=4,
+            events=(("Out for delivery", "2026-11-17 09:30:00"),),
+        ),
+        amazon(),
+    ]
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app_origins(engine.data.parcels[parcel.id]) == [
+        PARCELAPP_PREFIX + ORDER_KEY
+    ]
+    assert parcel.state.status is ParcelStatus.OUT_FOR_DELIVERY
+    assert counts(engine) == (2, 1, 0, 1)
+
+
+async def test_diagnostics_count_amazon_deliveries(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """The diagnostics count how Amazon's deliveries found their parcels."""
+    amazon_shipment(engine, "a", SHIPMENT)
+    amazon_order(engine, "b", SECOND_ORDER)
+    amazon_order(engine, "c", THIRD_ORDER)
+    parcel_app.deliveries = [
+        amazon(extra_information=SHIPMENT),
+        amazon(SECOND_ORDER, extra_information=OTHER_SHIPMENT),
+        amazon(THIRD_ORDER, extra_information="Wd2Fh9Qa4"),
+        amazon(THIRD_ORDER, extra_information="Zr5Kc8Pv3"),
+        amazon(FOURTH_ORDER),
+        delivery(),
+    ]
+
+    await read(hass, freezer, parcel_app)
+
+    assert sync_of(engine).diagnostics()["deliveries"]["amazon"] == {
+        "by_shipment_id": 1,
+        "by_order": 1,
+        "imported": 1,
+        "other": 0,
+        "unmatched": 2,
+    }
 
 
 @pytest.mark.parametrize(
@@ -3603,12 +3982,16 @@ async def test_diagnostics_count_without_numbers(
     hass.config.country = "PT"
     sync = sync_of(engine)
     no_adds = {"sent": 0, "added": 0, "stopped": False, "error": None}
+    no_amazon = dict.fromkeys(
+        ("by_shipment_id", "by_order", "imported", "other", "unmatched"), 0
+    )
     before = sync.diagnostics()
     assert before["deliveries"] == {
         "listed": 0,
         "matched": 0,
         "imported": 0,
         "unmatched": 0,
+        "amazon": no_amazon,
     }
     assert before["added_today"] == no_adds
     assert before["carriers"]["learned"] == {}
@@ -3646,6 +4029,7 @@ async def test_diagnostics_count_without_numbers(
         "matched": 3,
         "imported": 2,
         "unmatched": 1,
+        "amazon": no_amazon,
     }
     assert diagnostics["added_today"] == {
         "sent": 2,

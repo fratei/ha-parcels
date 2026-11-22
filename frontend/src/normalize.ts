@@ -6,6 +6,7 @@ import { isYmd, localDateOf } from "./dates.ts";
 import { LEFT_AT } from "./types.ts";
 import type {
   AiMode,
+  AmazonTracking,
   AutoMerged,
   CustomerReturn,
   FilteredItem,
@@ -103,6 +104,17 @@ function autoMerged(value: unknown): AutoMerged | null {
   return { origin: text(value.origin), at: text(value.at), reason: text(value.reason) };
 }
 
+function amazonTracking(value: unknown): AmazonTracking | null {
+  if (!isObj(value)) {
+    return null;
+  }
+  const delivered = id(value.delivered);
+  if (!delivered) {
+    return null;
+  }
+  return { delivered, timeless: value.timeless === true, place: id(value.place) };
+}
+
 function sender(raw: unknown): ParcelSender | null {
   if (!isObj(raw)) {
     return null;
@@ -175,6 +187,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     senders: list(raw.senders, sender),
     ordered_at: id(raw.ordered_at),
     shipped_at: id(raw.shipped_at),
+    amazon_tracking: amazonTracking(raw.amazon_tracking),
   };
 }
 
@@ -477,5 +490,6 @@ export function normalizeDetails(raw: unknown): ParcelDetails | null {
     timeline: list(raw.timeline, timelineEntry),
     orders: list(raw.orders, orderInfo),
     origins: list(raw.origins, originInfo),
+    contradicted: list(raw.contradicted, id),
   };
 }

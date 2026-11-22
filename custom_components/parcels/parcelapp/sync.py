@@ -8,6 +8,9 @@ which other tools using the key may share:
 - matches the deliveries in his list to parcels by tracking number and turns
   their status and events into events of the parcel; their expected date fills
   a missing date or window, and the newer news wins;
+- follows each shipment of an Amazon order, which Parcel lists by the order
+  number with the shipment ID as extra information: it joins the parcel with
+  that shipment, else its order's parcel when which one is clear;
 - shows the deliveries that are only in Parcel as parcels, named after their
   description, unless the user turned that off;
 - learns the carrier code Parcel gave each carrier in the deliveries he added;
@@ -29,7 +32,7 @@ import hashlib
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from homeassistant.core import CALLBACK_TYPE, callback
 from homeassistant.helpers import issue_registry as ir
@@ -64,7 +67,9 @@ from ..dedup import (
     find_parcels_by_number,
     number_key_text,
     order_parcels,
+    origin_order_keys,
     remove_origins,
+    shipment_parcels,
 )
 from ..models import (
     PARCELAPP_PREFIX,
@@ -166,6 +171,21 @@ _LEARN_SOURCES: Final = frozenset({Source.PARSER, Source.AI})
 _MATCHED: Final = "matched"
 _IMPORTED: Final = "imported"
 _UNMATCHED: Final = "unmatched"
+# How each Amazon delivery found its parcel, for the diagnostics.
+_AMAZON_COUNTS: Final = ("by_shipment_id", "by_order", "imported", "other", "unmatched")
+# Between an order number and a shipment ID in the key of a delivery.
+SHIPMENT_SEPARATOR: Final = "#"
+
+
+class _Entry(NamedTuple):
+    """A delivery of the user's list Parcels can follow."""
+
+    delivery: dict[str, Any]
+    number: str
+    code: str | None
+    # Amazon's order number, and its shipment when Parcel gives it.
+    order: str | None
+    shipment: str | None
 
 
 def _fingerprint(key: str) -> str:
@@ -216,6 +236,57 @@ def order_number(raw: Any, key: str, code: str | None) -> str | None:
     if not _AMAZON_ORDER_RE.fullmatch(str(raw).strip()) and not amazon_store(code):
         return None
     return f"{key[:3]}-{key[3:10]}-{key[10:]}"
+
+
+def shipment_id(value: Any) -> str | None:
+    """Return the Amazon shipment ID an order's delivery gives, or None.
+
+    Parcel gives it as the delivery's extra information, as Amazon writes it.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not MIN_NUMBER <= len(text) <= MAX_NUMBER or not _KEY_RE.fullmatch(text):
+        return None
+    return text
+
+
+def _entries(deliveries: list[Any]) -> list[_Entry]:
+    """Return the deliveries with a number Parcels can follow."""
+    entries: list[_Entry] = []
+    for delivery in deliveries:
+        if not isinstance(delivery, dict):
+            continue
+        raw = delivery.get("tracking_number")
+        if (number := delivery_key(raw)) is None:
+            continue
+        code = normalize_code(delivery.get("carrier_code"))
+        order = order_number(raw, number, code)
+        shipment = (
+            shipment_id(delivery.get("extra_information"))
+            if order is not None
+            else None
+        )
+        entries.append(_Entry(delivery, number, code, order, shipment))
+    return entries
+
+
+def _record_shipment(record: Mapping[str, Any]) -> str | None:
+    """Return the shipment a delivery Parcels keeps is, if known."""
+    shipment = record.get("shipment")
+    return shipment if isinstance(shipment, str) and shipment else None
+
+
+def _own_shipments(parcel: Parcel) -> set[str]:
+    """Return the Amazon shipments a parcel's own news names.
+
+    Its e-mails, mostly: Parcel's deliveries don't count.
+    """
+    return {
+        origin.amazon_shipment_id
+        for oid, origin in parcel.origins.items()
+        if not oid.startswith(PARCELAPP_PREFIX) and origin.amazon_shipment_id
+    }
 
 
 def removable(parcel: Parcel) -> bool:
@@ -858,7 +929,11 @@ class ParcelAppSync:
 
     @property
     def _records(self) -> dict[str, dict[str, Any]]:
-        """Return what Parcels knows of each delivery, by number."""
+        """Return what Parcels knows of each delivery, by its key.
+
+        The key is the delivery's number, but an Amazon order's later
+        shipments each have their own: see ``_record_key``.
+        """
         records = self._state.get("records")
         if not isinstance(records, dict):
             records = self._state["records"] = {}
@@ -896,99 +971,292 @@ class ParcelAppSync:
         tz = dt_util.get_default_time_zone()
         records = self._records
         stamp = dt_to_str(now)
-        found: dict[str, dict[str, Any]] = {}
+        entries = _entries(deliveries)
+        changed = self._bind_shipments(entries, now)
+        several = Counter(entry.number for entry in entries)
+        found: dict[str, _Entry] = {}
         twice: set[str] = set()
-        for delivery in deliveries:
-            if not isinstance(delivery, dict):
-                continue
-            key = delivery_key(delivery.get("tracking_number"))
-            if key is None:
-                continue
+        for entry in entries:
+            key = self._record_key(entry, several=several[entry.number] > 1)
             if key in found:
                 twice.add(key)
-            found[key] = delivery
-        counts = {
+            found[key] = entry
+        counts: dict[str, Any] = {
             "deliveries": len(deliveries),
             _MATCHED: 0,
             _IMPORTED: 0,
             _UNMATCHED: 0,
         }
+        amazon = dict.fromkeys(_AMAZON_COUNTS, 0)
         # Two deliveries with one number: which one to believe is unclear.
         for key in twice:
-            del found[key]
+            if found.pop(key).order is not None:
+                amazon["unmatched"] += 1
             if isinstance(record := records.get(key), dict):
                 record["seen"] = stamp
                 record["missing"] = 0
             counts[_UNMATCHED] += 1
-        changed = not self.importing and self._remove_imports(now)
+        changed |= not self.importing and self._remove_imports(now)
+        unplaced = self._unplaced(found)
         orders: set[str] = set()
-        for key, delivery in found.items():
+        for key, entry in found.items():
             record = records.get(key)
             if not isinstance(record, dict):
                 record = records[key] = {}
             record.setdefault("since", stamp)
             record["seen"] = stamp
             record["missing"] = 0
-            record["code"] = normalize_code(delivery.get("carrier_code"))
-            record["status"] = status_code(delivery.get("status_code"))
-            order = order_number(delivery.get("tracking_number"), key, record["code"])
-            if order is not None:
+            record["code"] = entry.code
+            record["status"] = status_code(entry.delivery.get("status_code"))
+            if entry.shipment is not None:
+                record["shipment"] = entry.shipment
+            if entry.order is not None:
                 orders.add(key)
-            moved, outcome = self._read_delivery(key, record, delivery, order, now, tz)
+            # A delivery without its shipment goes by the order when it's the
+            # order's only one, as before Parcel gave shipments.
+            alone = entry.order is None or (
+                unplaced[entry.order] <= 1
+                if entry.shipment is not None
+                else several[entry.number] == 1
+            )
+            moved, outcome = self._read_delivery(key, record, entry, alone, now, tz)
             changed |= moved
             counts[outcome] += 1
-        listed = set(found) | twice
-        changed |= self._missing(listed, now)
-        self._learn(found, orders, now)
+        changed |= self._missing(set(found) | twice, now)
+        self._learn({key: entry.delivery for key, entry in found.items()}, orders, now)
+        self._amazon_counts(found, orders, amazon)
+        counts["amazon"] = amazon
         self._state["counts"] = counts
         self._state["dates"] = _date_stats(deliveries, now, tz)
-        return changed, listed
+        return changed, {entry.number for entry in entries}
+
+    def _record_key(self, entry: _Entry, *, several: bool) -> str:
+        """Return the key Parcels keeps a delivery under.
+
+        Its number; but Parcel lists each shipment of an Amazon order under
+        the order number. The first shipment Parcels saw keeps the number,
+        the others take it with their shipment ID after ``#``.
+        """
+        number, shipment = entry.number, entry.shipment
+        records = self._records
+        if shipment is None:
+            plain = records.get(number)
+            if several and isinstance(plain, dict) and _record_shipment(plain):
+                # The number is a shipment's: this one has none yet.
+                return f"{number}{SHIPMENT_SEPARATOR}"
+            return number
+        split = f"{number}{SHIPMENT_SEPARATOR}{shipment}"
+        if split in records:
+            return split
+        plain = records.get(number)
+        if isinstance(plain, dict):
+            return number if _record_shipment(plain) == shipment else split
+        if several:
+            return split
+        records[number] = {"shipment": shipment}
+        return number
+
+    def _bind_shipments(self, entries: list[_Entry], now: datetime) -> bool:
+        """Tell the deliveries kept by an order number which shipment they are.
+
+        Before 0.1.13 Parcels kept an order's delivery by the order number
+        alone. It becomes the shipment of the order's only delivery in the
+        list, or of the parcel holding it. It leaves a parcel that holds
+        another shipment, to be placed again, and so does one that can't be
+        told. Returns True when a parcel changed.
+        """
+        records = self._records
+        data = self.engine.data
+        groups: dict[str, list[str | None]] = {}
+        for entry in entries:
+            if entry.order is not None:
+                groups.setdefault(entry.number, []).append(entry.shipment)
+        changed = False
+        for number, shipments in groups.items():
+            record = records.get(number)
+            if (
+                not isinstance(record, dict)
+                or "shipment" in record
+                # It may still be the delivery without one.
+                or None in shipments
+            ):
+                continue
+            given = set(shipments)
+            oid = PARCELAPP_PREFIX + number
+            holder = self._holder(oid)
+            if len(shipments) == 1:
+                [shipment] = given
+                if (
+                    _count(record.get("missing")) >= MISSING_READS
+                    or f"{number}{SHIPMENT_SEPARATOR}{shipment}" in records
+                ):
+                    # It left the list: that was another delivery.
+                    continue
+                record["shipment"] = shipment
+                if (
+                    holder is not None
+                    and holder.archived is None
+                    and self._elsewhere(holder, shipment)
+                ):
+                    remove_origins(data, holder, {oid}, now)
+                    record["held"] = False
+                    record.pop("fp", None)
+                    changed = True
+                continue
+            if holder is None or holder.archived is not None:
+                continue
+            named = _own_shipments(holder) & given
+            if len(named) == 1:
+                record["shipment"] = next(iter(named))
+                continue
+            remove_origins(data, holder, {oid}, now)
+            del records[number]
+            changed = True
+        return changed
+
+    def _elsewhere(self, holder: Parcel, shipment: str) -> bool:
+        """Return True when a shipment's delivery doesn't belong in a parcel.
+
+        The parcel's e-mails name other shipments; or they name none, and
+        another parcel has it.
+        """
+        if own := _own_shipments(holder):
+            return shipment not in own
+        return any(
+            parcel is not holder and parcel.archived is None
+            for parcel in shipment_parcels(self.engine.data, shipment)
+        )
+
+    def _unplaced(self, found: dict[str, _Entry]) -> Counter[str]:
+        """Count the deliveries of each Amazon order no parcel holds yet.
+
+        A delivery without its shipment counts even when held: which of the
+        order's shipments it is stays unclear.
+        """
+        data = self.engine.data
+        held = {oid for parcel in data.parcels.values() for oid in parcel.origins}
+        shipments = {
+            shipment
+            for parcel in data.parcels.values()
+            for shipment in parcel.state.amazon_shipment_ids
+        }
+        records = self._records
+        tally: Counter[str] = Counter()
+        for key, entry in found.items():
+            if entry.order is None:
+                continue
+            record = records.get(key)
+            if isinstance(record, dict) and record.get("closed"):
+                continue
+            if entry.shipment is not None and (
+                PARCELAPP_PREFIX + key in held
+                or entry.shipment in shipments
+                or (isinstance(record, dict) and record.get("held"))
+            ):
+                continue
+            tally[entry.order] += 1
+        return tally
+
+    def _amazon_counts(
+        self, found: dict[str, _Entry], orders: set[str], amazon: dict[str, int]
+    ) -> None:
+        """Count how Amazon's deliveries found their parcels.
+
+        By the shipment an e-mail names, by the order, or as a parcel of
+        their own.
+        """
+        for key in orders:
+            entry = found[key]
+            oid = PARCELAPP_PREFIX + key
+            if (parcel := self._holder(oid)) is None:
+                amazon["unmatched"] += 1
+                continue
+            shipment = parcel.origins[oid].amazon_shipment_id
+            wanted = order_key("Amazon", entry.order or "")
+            others = [
+                origin
+                for other, origin in parcel.origins.items()
+                if not other.startswith(PARCELAPP_PREFIX)
+            ]
+            if shipment and any(
+                origin.amazon_shipment_id == shipment for origin in others
+            ):
+                amazon["by_shipment_id"] += 1
+            elif any(
+                wanted in origin_order_keys(origin, parcel.state.merchant)
+                for origin in others
+            ):
+                amazon["by_order"] += 1
+            elif removable(parcel):
+                amazon["imported"] += 1
+            else:
+                amazon["other"] += 1
 
     def _read_delivery(
         self,
         key: str,
         record: dict[str, Any],
-        delivery: dict[str, Any],
-        order: str | None,
+        entry: _Entry,
+        alone: bool,
         now: datetime,
         tz: tzinfo,
     ) -> tuple[bool, str]:
-        """Apply one delivery; return whether a parcel changed, and how it's held."""
+        """Apply one delivery; return whether a parcel changed, and how it's held.
+
+        ``alone`` is False for a shipment of an order with other deliveries
+        no parcel holds: which of them an order's parcel is, is unclear.
+        """
         data = self.engine.data
+        number, order, shipment = entry.number, entry.order, entry.shipment
         oid = PARCELAPP_PREFIX + key
         if (holder := self._holder(oid)) is not None:
             outcome = _IMPORTED if removable(holder) else _MATCHED
             if holder.archived is not None:
                 return False, outcome
-            if order is None and _corrected(holder, key):
+            if order is None and _corrected(holder, number):
                 # The user said the parcel has another number.
                 remove_origins(data, holder, {oid}, now)
                 self._close(record)
                 return True, _UNMATCHED
-            return self._apply(key, record, delivery, order, now, tz), outcome
+            return self._apply(key, record, entry, now, tz), outcome
         if record.get("held"):
             # Its parcel was purged after archiving: don't bring it back.
             self._close(record)
         if record.get("closed"):
             return False, _UNMATCHED
         if order is not None:
+            if shipment is not None:
+                parcels = shipment_parcels(data, shipment)
+                active = [parcel for parcel in parcels if parcel.archived is None]
+                if len(active) > 1:
+                    return False, _UNMATCHED
+                if active:
+                    applied = self._apply(key, record, entry, now, tz, anchor=active[0])
+                    return applied, _MATCHED
+                if parcels:
+                    return False, _MATCHED
             parcels = order_parcels(data, order_key("Amazon", order))
+            if shipment is not None:
+                # A parcel of another of the order's shipments isn't this one.
+                parcels = [
+                    parcel for parcel in parcels if not parcel.state.amazon_shipment_ids
+                ]
             active = [parcel for parcel in parcels if parcel.archived is None]
-            if len(active) > 1:
+            if len(active) > 1 or (active and not alone):
                 # Parcel follows the order as one delivery: which is unclear.
                 return False, _UNMATCHED
             if active:
-                applied = self._apply(
-                    key, record, delivery, order, now, tz, anchor=active[0]
-                )
+                applied = self._apply(key, record, entry, now, tz, anchor=active[0])
                 return applied, _MATCHED
             if parcels:
-                return False, _MATCHED
+                return False, _MATCHED if alone else _UNMATCHED
         else:
-            matches = find_parcels_by_number(data, key)
+            matches = find_parcels_by_number(data, number)
             active = [parcel for parcel in matches if parcel.archived is None]
-            if usable := [parcel for parcel in active if not _corrected(parcel, key)]:
-                wanted = number_key_text(key)
+            if usable := [
+                parcel for parcel in active if not _corrected(parcel, number)
+            ]:
+                wanted = number_key_text(number)
                 chosen = max(
                     usable,
                     key=lambda parcel: (
@@ -996,9 +1264,7 @@ class ParcelAppSync:
                         parcel.updated,
                     ),
                 )
-                applied = self._apply(
-                    key, record, delivery, order, now, tz, anchor=chosen
-                )
+                applied = self._apply(key, record, entry, now, tz, anchor=chosen)
                 return applied, _MATCHED
             if active:
                 self._close(record)
@@ -1008,7 +1274,7 @@ class ParcelAppSync:
         if not self.importing:
             return False, _UNMATCHED
         record["import"] = True
-        moved = self._apply(key, record, delivery, order, now, tz)
+        moved = self._apply(key, record, entry, now, tz)
         # The dedup may have joined it to a parcel from e-mails.
         if (holder := self._holder(oid)) is None:
             return moved, _UNMATCHED
@@ -1025,14 +1291,14 @@ class ParcelAppSync:
         self,
         key: str,
         record: dict[str, Any],
-        delivery: dict[str, Any],
-        order: str | None,
+        entry: _Entry,
         now: datetime,
         tz: tzinfo,
         *,
         anchor: Parcel | None = None,
     ) -> bool:
         """Apply a delivery to its parcel; return True when the parcel changed."""
+        delivery, number, order = entry.delivery, entry.number, entry.order
         oid = PARCELAPP_PREFIX + key
         holder = self._holder(oid)
         base = _without(holder or anchor, oid)
@@ -1063,10 +1329,13 @@ class ParcelAppSync:
             time=min([event.time for event in events] + [since]),
             label=ORIGIN_LABEL,
             carrier=(base_state.carrier if base_state else None)
-            or parcels_carrier(code, key),
-            tracking_number=None if order is not None else key,
+            or parcels_carrier(code, number),
+            tracking_number=None if order is not None else number,
             merchant=merchant,
             order_numbers=(order,) if order is not None else (),
+            amazon_shipment_id=(
+                _record_shipment(record) if order is not None else None
+            ),
             owners=(self.owner,) if imported and self.owner else (),
             name=(
                 None
@@ -1544,6 +1813,8 @@ class ParcelAppSync:
         shapes = dates.get("shapes")
         day_shapes = dates.get("day_only_shapes")
         marked = dates.get("marked")
+        amazon = counts.get("amazon")
+        amazon = amazon if isinstance(amazon, dict) else {}
         return {
             "enabled": self.enabled,
             "last_refresh": dt_to_str(self.last_refresh),
@@ -1556,6 +1827,8 @@ class ParcelAppSync:
                 "matched": _count(counts.get(_MATCHED)),
                 "imported": _count(counts.get(_IMPORTED)),
                 "unmatched": _count(counts.get(_UNMATCHED)),
+                # Of those, Amazon's, by how each found its parcel.
+                "amazon": {name: _count(amazon.get(name)) for name in _AMAZON_COUNTS},
             },
             "added_today": {
                 "sent": _count(adds.get("sent")),

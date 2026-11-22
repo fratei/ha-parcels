@@ -385,6 +385,26 @@ function closedWhen(parcel: Parcel, locale: LocaleOptions): string | null {
   return day ? formatDateRange(day, day, locale) : null;
 }
 
+/**
+ * "Amazon's tracking: delivered Wed 10 Jun at 10:27 · <town>": when and where
+ * Amazon's tracking says a shipment was delivered; null without it.
+ */
+export function amazonTrackingLine(parcel: Parcel, locale: LocaleOptions): string | null {
+  const tracking = parcel.amazon_tracking;
+  if (!tracking) {
+    return null;
+  }
+  const when = tracking.timeless
+    ? formatDayWithoutTime(tracking.delivered, locale)
+    : formatDayTime(tracking.delivered, locale);
+  if (!when) {
+    return null;
+  }
+  return tracking.place
+    ? fmt(STRINGS.amazonTrackingAt, { when, place: tracking.place })
+    : fmt(STRINGS.amazonTracking, { when });
+}
+
 /** What tells one parcel from another in the merge picker and merge suggestions. */
 export function candidateLines(parcel: Parcel, locale: LocaleOptions): CandidateLines {
   const when: (string | null)[] = [statusLabel(parcel.status)];

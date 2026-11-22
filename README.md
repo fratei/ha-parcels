@@ -53,7 +53,8 @@ api.parcel.app, which Parcels contacts itself with your API key.
   could be the one, late parcels and those due in the next days included, and
   when the carriers named by the shop and the delivery agree. A delivery made
   on a day before the shop's package was shipped is another package, and
-  isn't suggested either. When several parcels could match, Parcels asks
+  isn't suggested either, nor is one that Amazon's tracking says came at
+  another time. When several parcels could match, Parcels asks
   in **Needs review** instead. Parcels with different tracking numbers are
   never merged.
 - **Parcels without a tracking number**: when a carrier delivers another
@@ -80,7 +81,10 @@ api.parcel.app, which Parcels contacts itself with your API key.
   yet". Amazon is the carrier (Amazon Logistics) only with one of its
   numbers (`TBA` and 12 digits) or an e-mail naming Amazon Logistics:
   Amazon's own e-mails name Amazon whoever delivers, and so do the Parcel
-  app's codes for Amazon's stores.
+  app's codes for Amazon's stores. With the [Parcel app](#parcel-app), an
+  Amazon shipment also joins the carrier's package that carried it, by the
+  times in Amazon's tracking (see
+  [How the day is counted](#how-the-day-is-counted)).
 - **Paack**: Paack's order IDs, nine letters and digits, `_` and the package
   number (such as `Ab3Cd4Ef5_1`), are kept as written, capitals included.
   The part before `_` is Paack's shipment reference, which the details show
@@ -89,9 +93,8 @@ api.parcel.app, which Parcels contacts itself with your API key.
   e-mail joins the parcel with that reference. When several parcels have
   it, Parcels guesses only if one of them is still open, and otherwise
   suggests merges in **Needs review**. A Paack e-mail joins Amazon's parcel
-  when the part of its ID before `_` is, letter for letter, the shipment ID
-  in Amazon's **Track package** link, or when both give the same label
-  barcode (`5340` and 14 digits), which Amazon shows as its tracking ID.
+  when both give the same label barcode (`5340` and 14 digits), which Amazon
+  shows as its tracking ID; Paack's order ID isn't Amazon's shipment ID.
   Otherwise the usual guesses apply. Parcels reads Paack's notices, delivery
   included, in Portuguese, Spanish, French, Italian and English, and takes
   the shop from them ("Order from", "Pedido de"). Paack's tracking page asks
@@ -137,7 +140,9 @@ api.parcel.app, which Parcels contacts itself with your API key.
   the last day to collect a parcel from its pickup point, the day of the next
   attempt after a missed delivery and where a delivered parcel was left: with
   a neighbour, in the mailbox, at the door, at reception, in the garage or in
-  a locker. Only these categories are kept, never names, house numbers or
+  a locker. A line saying who took the parcel, such as "Received by:
+  reception", counts when it names one of these; a person's name gives
+  nothing. Only these categories are kept, never names, house numbers or
   photos. From e-mails, it also reads the pickup point a carrier took a
   missed parcel to. These show in the parcel's details, its Live Activity
   and notifications, and the persistent notification.
@@ -216,8 +221,9 @@ api.parcel.app, which Parcels contacts itself with your API key.
 - **The Parcel app** is off until you enter an API key. Parcels then contacts
   api.parcel.app itself and sends the key only there. It reads the deliveries
   in your Parcel list and keeps their tracking number, carrier, name, status,
-  events (their text and place) and expected dates, never the postcode or
-  e-mail address Parcel may hold for a delivery. It adds parcels with their
+  events (their text and place), expected dates and, for Amazon's orders,
+  the shipment ID, never the postcode or e-mail address Parcel may hold for
+  a delivery. It adds parcels with their
   tracking number, Parcel's code for the carrier, the shop's name (or
   "Parcels") and Home Assistant's language, plus the postcode you entered,
   only for carriers that require one. It never sends item names, e-mails or
@@ -472,7 +478,10 @@ add a resource.
   close dates), each with its items, order number, carrier, tracking number,
   status, date and time, and who wrote about it, such as "2 e-mails from CTT
   Expresso". Older parcels, and deliveries made before the other parcel was
-  shipped, are behind **Show older** and the search. For administrators,
+  shipped, are behind **Show older** and the search. An Amazon shipment that
+  the Parcel app follows also shows when, and where if known, Amazon's
+  tracking says it was delivered, and the parcels that tracking rules out
+  are marked so and moved to the end of their list. For administrators,
   when a carrier's e-mails don't say which of a shop's parcels it's
   delivering, the box says "Possibly: …" with the candidates' items, and the
   details list them, nearest to the parcel's day first, to merge or rule out
@@ -588,13 +597,18 @@ order, so Parcels can't always tell which package holds which order. An
 order of the day without a tracking number rides along with the day's
 packages that may hold it:
 
-- a carrier's package that no order is linked to, from the order's shop or
-  from a shop that isn't known, preferring the shop's own;
+- a carrier's package that no order is linked to, apart from the Amazon
+  shipments it carried (see below), from the order's shop or from a shop
+  that isn't known, preferring the shop's own;
 - by the carrier the shop named, if it named one;
-- not one you kept apart from the order, with **Not this one**;
-- for an order that came, a package delivered within three hours of it.
-  An order whose first news came after the package was delivered, or that
-  had news since, wasn't in it.
+- not one you kept apart from the order, with **Not this one**, nor one
+  that Amazon's tracking of the order rules out (see below);
+- for an order that came, a package delivered within three hours of it. A
+  delivery you marked by hand had come by then, maybe hours before: an
+  order you marked may be in a package delivered earlier that day, and a
+  package you marked may hold an order that came earlier. An order whose
+  first news came after the package was delivered, or that had news since,
+  wasn't in it.
 
 One package may hold several orders, since shops pack orders together. An
 order that rides along doesn't count, and starts no Live Activity or
@@ -605,6 +619,26 @@ stays as it is. An order that no package may hold counts on its own, as
 "Expected today", and so does one with a failed attempt or a problem. When an
 order stops riding along, for example after **Not this one**, it counts on its
 own again.
+
+**Amazon's shipments.** With the [Parcel app](#parcel-app), Parcels knows
+when Amazon's tracking says each shipment reached the carrier and was
+delivered, which repeats the carrier's scans to the minute. A carrier's
+package carried a shipment when it was delivered at that minute (from a
+minute before to two after) and one more of its news agrees with Amazon's:
+a scan from 17TRACK or the Parcel app, or the carrier's first e-mail, sent
+when the package reached it. The van leaving doesn't count, since a van
+takes many packages, and when both name a place, it must be the same one.
+When exactly one package agrees, the shipment joins it, marked as merged
+automatically, with **Undo**; one package may carry several shipments. If
+another guess already merged either of them, Parcels suggests it instead.
+When several agree, Parcels doesn't guess: the shipment rides along with
+them as above, and **Needs review** and the details suggest each, to merge
+or rule out. A package delivered at another time didn't carry the shipment:
+more than two hours apart by the carrier's scans, or more than two hours
+before Amazon's delivery by the carrier's e-mails or your mark, which say
+only that it had come by then. Parcels doesn't guess that package, the
+shipment doesn't ride along in it, and **Merge with…** marks it. Parcels
+never joins parcels you kept apart with **Not this one**.
 
 ### Live Activities
 
@@ -709,7 +743,10 @@ own tracking in between.
   out for delivery, delivered, a failed attempt or ready for pickup, with the
   carrier's own wording in the parcel's history. When that wording says so
   clearly, also the last day to collect, the next attempt and where a
-  delivered parcel was left.
+  delivered parcel was left. 17TRACK's "ready to be picked up" also stands
+  for out for delivery, so it's a pickup only when the carrier's wording
+  says so; otherwise the parcel takes the status that wording gives, or in
+  transit.
 - **What it doesn't add**: delivery dates. Home Assistant's 17TRACK integration
   gives no expected date, so a parcel without one stays under **No date yet**.
 - **What it leaves out**, so they don't take up places in your account:
@@ -780,9 +817,9 @@ enter an API key, Parcels itself contacts api.parcel.app.
   details, a date from Parcel ends in "· Parcel app", and the delivery's name
   in Parcel is shown.
 - **What it reads**: the deliveries in your Parcel list. Parcels keeps their
-  tracking number, carrier, name, status, events (their text and place) and
-  expected dates, never the postcode or e-mail address Parcel may hold for a
-  delivery.
+  tracking number, carrier, name, status, events (their text and place),
+  expected dates and, for Amazon's orders, the shipment ID, never the
+  postcode or e-mail address Parcel may hold for a delivery.
 - **What it sends**: for each parcel it adds, the tracking number, Parcel's
   code for the carrier, the shop's name as the delivery's name ("Parcels"
   when there's none), Home Assistant's language, and the postcode you
@@ -802,10 +839,18 @@ parcels of the Parcel app user, named after the shop when Parcels can tell
 it, such as Amazon, and otherwise after their name in Parcel. Parcel's codes
 for Amazon's stores, such as `amzles` for Amazon Spain, name the shop, not
 the carrier: Parcel follows those orders whoever delivers them. When an e-mail
-with the same tracking number arrives, it joins that parcel. A delivery under
-an Amazon order number joins that order's parcel, and is left out when the
-order has several parcels, since Parcels can't tell which one Parcel follows.
-Like e-mails, a delivery from a shop that Parcels can tell, such as Amazon,
+with the same tracking number arrives, it joins that parcel. Parcel lists
+each shipment of an Amazon order as a delivery of its own, under the order
+number, with Amazon's shipment ID as its extra information. Such a delivery
+joins the parcel whose Amazon e-mails give that shipment ID in their **Track
+package** link, and otherwise the order's parcel when it can only be that
+one: the order's parcels of other shipments don't count, and Parcels leaves
+the delivery out when the order has several parcels, or when another of the
+order's shipments waits for its parcel too. A delivery without a shipment
+ID joins the order's parcel only when it's the order's one delivery in your
+list. Amazon's tracking also tells which carrier's package carried a
+shipment (see [How the day is counted](#how-the-day-is-counted)). Like
+e-mails, a delivery from a shop that Parcels can tell, such as Amazon,
 can also join a parcel of that shop without a tracking number, by the
 guesses described in [What it does](#what-it-does): marked, with **Undo**,
 or asked in **Needs review** when several parcels could match. If a delivery
@@ -1132,22 +1177,31 @@ actions:
   diagnostics count the e-mails read, those whose shop was filled in or
   kept, those deleted since, those that couldn't be downloaded and those
   over the limit (`paack_shop_check`).
-- **A Paack parcel shows apart from its Amazon parcel.** Select one and merge
-  them. The hub's diagnostics count Paack's e-mails whose order ID matched an
-  Amazon shipment, and those that didn't (`paack_amazon`), without any ID.
-  Apart from those, they count the e-mails that match when capitals and
-  small letters count as the same, the matched ones included
-  (`matched_ignoring_case`), and those that came at most 7 days after an
-  Amazon e-mail with a shipment ID, whichever shipment it named
-  (`amazon_id_7_days_before`). They also count the last 30 days' Amazon
-  e-mails by site and by whether they gave a shipment ID, with each ID's
-  length and kinds of characters only (`amazon_shipment_ids`, such as
-  `len9:Aa0` for nine capitals, small letters and digits).
+- **A carrier's package shows apart from its Amazon order.** Amazon's
+  e-mails rarely name the carrier's number. With the Parcel app, Parcels
+  links a shipment to its package by the times in Amazon's tracking (see
+  [How the day is counted](#how-the-day-is-counted)); otherwise, or when
+  several packages fit, select one and merge them. The hub's diagnostics
+  count the last 30 days' Amazon e-mails by site and by whether they gave a
+  shipment ID, with each ID's length and kinds of characters only
+  (`amazon_shipment_ids`, such as `len9:Aa0` for nine capitals, small
+  letters and digits), and the links Amazon's tracking made (`amazon_links`).
+- **A parcel was merged into the wrong package.** Select **Undo** on a merge
+  Parcels made, or **Split…** on one you made. Before you merge, check
+  **Merge with…**: for an Amazon shipment that the Parcel app follows, it
+  shows when, and where if known, Amazon's tracking says the shipment was
+  delivered, such as "Amazon's tracking: delivered Wed 10 Jun at 10:27 ·
+  Vila Exemplo", and it moves the parcels delivered at another time to the
+  end of its lists, marked "Amazon's tracking rules this out: delivered at
+  another time". You can still merge them if you know better. **Needs
+  review** shows the same line on its suggestions.
 - **A delivery from Parcel shows apart from its parcel, or doesn't update
   it.** Select both and merge them, or select **Undo** on a pairing Parcels
   made. Parcels leaves a delivery out when your Parcel list has two
-  deliveries with its tracking number, when its Amazon order has several
-  parcels, and once you've typed another tracking number on its parcel.
+  deliveries with its tracking number, when it can't tell which of an Amazon
+  order's parcels it is (see [Parcel app](#parcel-app)), and once you've
+  typed another tracking number on its parcel. The hub's diagnostics count
+  Amazon's deliveries by how they found their parcel (`amazon`).
 - **A parcel isn't added to Parcel.** See which parcels Parcels adds in
   [Parcel app](#parcel-app). A carrier with several codes in Parcel, such as
   GLS or DPD, is added only once Parcels has learned its code from a delivery
@@ -1200,6 +1254,13 @@ actions:
   only for the parcel's current status: a new status clears them, apart from
   the last day to collect, which stays while the parcel waits to be
   collected.
+- **A parcel showed as ready for pickup while it was out for delivery.**
+  Before 0.1.13, 17TRACK's "ready to be picked up" was always a pickup,
+  though 17TRACK also uses it for out for delivery, and the carrier's own
+  e-mails couldn't move the parcel on from there. After the update, Parcels
+  takes back once the pickups that the carrier's wording doesn't confirm
+  (see [17TRACK](#17track)). The hub's diagnostics count the parcels that
+  changed (`seventeentrack_pickups_repaired`).
 - **Amazon shows as the carrier, but didn't deliver.** Before 0.1.8, Amazon
   became the carrier whenever the local AI, the Parcel app or 17TRACK named
   it, which kept Amazon's orders apart from their carrier's deliveries. After
@@ -1214,23 +1275,30 @@ actions:
   senders other than known or trusted ones counted as "other"
   (`recent_emails`), where working days come from (`working_days`), the
   refunds ignored (`refunds_dropped`), the check after updating to 0.1.5
-  (`returns_check`), Paack's matches (`paack_amazon`), the check that named
-  the shops of Paack's parcels after updating to 0.1.11
-  (`paack_shop_check`), the shapes of
-  Amazon's shipment IDs (`amazon_shipment_ids`), the parcels whose Parcel
-  app events the update to 0.1.7 placed again (`parcel_app_dates_repaired`)
-  and the sources, senders and answers whose unproven Amazon carrier the
-  update to 0.1.8 dropped (`amazon_carrier_repaired`); its notifications part
-  counts today's orders that ride along with a package (`orders_in_a_box`);
-  its 17TRACK part counts the numbers 17TRACK can't find, by carrier
-  (`not_found_by_carrier`); its Parcel app part (`parcelapp`) counts the
-  deliveries read, matched, shown on their own and left out, and today's
-  adds, lists the carrier codes in use, and counts the last read's event
-  dates that Parcels couldn't read or that were after tomorrow, and those it
-  read without their time, with the forms of both and of those read with a
-  part of the day or a time zone (`event_dates`): digits as 9, other words
-  as x but for date words, and a last word of up to six letters and dots as
-  written, all without tracking numbers or event text.
+  (`returns_check`), the check that named the shops of Paack's parcels after
+  updating to 0.1.11 (`paack_shop_check`), the shapes of Amazon's shipment
+  IDs (`amazon_shipment_ids`), the Amazon shipments that Amazon's tracking
+  linked to a carrier's package since 0.1.13 (`made`), and at the last
+  check those that fit several packages (`ambiguous`) and the packages of
+  their day it ruled out (`contradicted`, in `amazon_links`), the parcels
+  whose Parcel app events the update to 0.1.7 placed again
+  (`parcel_app_dates_repaired`) and the sources, senders and answers whose
+  unproven Amazon carrier the update to 0.1.8 dropped
+  (`amazon_carrier_repaired`) and the parcels whose 17TRACK pickups the
+  update to 0.1.13 took back (`seventeentrack_pickups_repaired`); its
+  notifications part counts today's orders that ride along with a package
+  (`orders_in_a_box`); its 17TRACK part counts the numbers 17TRACK can't
+  find, by carrier (`not_found_by_carrier`); its Parcel app part
+  (`parcelapp`) counts the deliveries read, matched, shown on their own and
+  left out, with Amazon's by how they found their parcel: by shipment ID, by
+  order number, as a parcel of their own, another way such as a guess, or
+  not at all (`amazon`), and today's adds, lists the carrier codes in use,
+  and counts the last read's event dates that Parcels couldn't read or that
+  were after tomorrow, and those it read without their time, with the forms
+  of both and of those read with a part of the day or a time zone
+  (`event_dates`): digits as 9, other words as x but for date words, and a
+  last word of up to six letters and dots as written, all without tracking
+  numbers or event text.
 
 ## Development
 

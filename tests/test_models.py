@@ -742,6 +742,25 @@ def test_round_trip() -> None:
     assert loaded.trusted_domains() == ("example.com",)
 
 
+def test_auto_merge_groups() -> None:
+    """A merge of several shipments keeps each one's origins, to undo apart."""
+    flag = AutoMerge(
+        origin="o1",
+        at=at(),
+        reason="amazon_tracking",
+        origins=("o2", "o3"),
+        groups=(("o1", "o2"), ("o3",)),
+    )
+    stored = json.loads(json.dumps(flag.as_dict()))
+    assert AutoMerge.from_dict(stored) == flag
+    assert flag.all_origins == {"o1", "o2", "o3"}
+    stored["groups"] = [["o1", "o2"], [], "o3", 7, ["o3"]]
+    assert AutoMerge.from_dict(stored).groups == (("o1", "o2"), ("o3",))
+    single = AutoMerge(origin="o1", at=at(), reason="amazon_tracking")
+    assert "groups" not in single.as_dict()
+    assert AutoMerge.from_dict(single.as_dict()).groups == ()
+
+
 def test_references() -> None:
     """A parcel lists its shipment references, with the stem of Paack's ID."""
     parcel = _parcel(

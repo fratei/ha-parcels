@@ -13,7 +13,7 @@ import { styleMap } from "lit/directives/style-map.js";
 import { callParcelsCommand, callParcelsService, callParcelsServiceForParcel } from "./api.ts";
 import { canCheckAgain, checkAgainText, normalizeCheckAgain } from "./check-again.ts";
 import { parseInstant } from "./dates.ts";
-import { candidateLabel, candidateLines, couldAlsoBe } from "./describe.ts";
+import { amazonTrackingLine, candidateLabel, candidateLines, couldAlsoBe } from "./describe.ts";
 import { ParcelsDialogBase, OPEN_RETURN_EVENT, type ReturnFocus } from "./dialog-base.ts";
 import { errorMessage } from "./errors.ts";
 import {
@@ -189,6 +189,13 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
       }
       .merge-hint {
         color: var(--error-color, #db4437);
+      }
+      .merge-line.ruled-out {
+        display: flex;
+        align-items: flex-start;
+        gap: 4px;
+        color: var(--error-color, #db4437);
+        --mdc-icon-size: 16px;
       }
       .possible-list {
         display: flex;
@@ -1274,7 +1281,9 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const withSearch = total > SEARCH_FROM;
     const olderFirst = this._mergeOlder && !searching ? pool.likely.length : -1;
     const moreOlder = !searching && !this._mergeOlder && pool.older.length > 0;
+    const evidence = amazonTrackingLine(parcel, this.locale);
     return html`<p id="merge-intro">${STRINGS.mergeIntro}</p>
+      ${evidence ? html`<p class="hint" id="merge-evidence" data-amazon-tracking>${evidence}</p>` : nothing}
       ${withSearch
         ? html`<label class="field">
             <span class="field-label">${STRINGS.mergeSearch}</span>
@@ -1288,7 +1297,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
             />
           </label>`
         : nothing}
-      <fieldset class="merge-list" aria-describedby="merge-intro">
+      <fieldset class="merge-list" aria-describedby=${evidence ? "merge-intro merge-evidence" : "merge-intro"}>
         <legend class="sr-only">${STRINGS.mergeChoose}</legend>
         ${shown.map((candidate, index) =>
           this._renderCandidate(candidate, parcel.id, {
@@ -1334,8 +1343,9 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
   }
 
   /**
-   * A parcel the viewed one may be: shop, status and day, carrier and
-   * numbers, who wrote about it, and its items. Without items, why they
+   * A parcel the viewed one may be: shop, status and day, whether Amazon's
+   * tracking rules it out, carrier and numbers, when Amazon's tracking has it
+   * delivered, who wrote about it, and its items. Without items, why they
    * aren't known and which other orders it could also be.
    */
   private _renderCandidateLines(candidate: Parcel, parcelId: string): TemplateResult {
@@ -1343,9 +1353,17 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const also = lines.items
       ? null
       : couldAlsoBe(alsoPossible(this.snapshot?.merge_suggestions, candidate.id, parcelId));
+    const evidence = amazonTrackingLine(candidate, this.locale);
     return html`<span class="merge-lines">
       <span class="merge-line"><strong>${lines.title}</strong> · ${lines.when}</span>
+      ${this._ruledOut(parcelId).has(candidate.id)
+        ? html`<span class="merge-line ruled-out" data-ruled-out>
+            <ha-icon icon="mdi:alert-circle-outline" aria-hidden="true"></ha-icon>
+            <span>${STRINGS.amazonRulesOut}</span>
+          </span>`
+        : nothing}
       <span class="merge-line muted">${lines.carrier}</span>
+      ${evidence ? html`<span class="merge-line muted" data-amazon-tracking>${evidence}</span>` : nothing}
       ${lines.emails ? html`<span class="merge-line muted">${lines.emails}</span>` : nothing}
       <span class="merge-line items ${lines.items ? "" : "muted"}">
         ${lines.items ?? lines.noItems}
@@ -1658,13 +1676,19 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._parcelService("update", data, () => this._backToView());
   }
 
-  /** Every other parcel the viewer may see, likely matches first. */
+  /** Every other parcel the viewer may see, likely matches first and ruled-out ones last. */
   private _mergePool(parcel: Parcel): MergeCandidates {
     const snapshot = this.snapshot;
     if (!snapshot) {
       return { likely: [], older: [] };
     }
-    return rankMergeCandidates(snapshot.parcels, parcel, this._dayContext());
+    return rankMergeCandidates(snapshot.parcels, parcel, this._dayContext(), this._ruledOut(parcel.id));
+  }
+
+  /** The parcels Amazon's tracking rules out as the given parcel's package, once its details are in. */
+  private _ruledOut(parcelId: string): ReadonlySet<string> {
+    const details = this._details;
+    return new Set(details?.parcel.id === parcelId ? details.contradicted : []);
   }
 
   /** The candidates on show, and the chosen one while it is on show. */

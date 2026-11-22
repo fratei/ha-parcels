@@ -236,16 +236,16 @@ async def test_sender_checks(
     ]
 
 
-async def test_paack_amazon(
+async def test_amazon_shipment_ids(
     hass: HomeAssistant,
     freezer: FrozenDateTimeFactory,
     hub: MockConfigEntry,
     mailbox: MockConfigEntry,
 ) -> None:
-    """Paack's e-mails that name an Amazon shipment are counted, without IDs.
+    """Amazon's shipment IDs are counted by shape, without their values.
 
-    Paack's order ID is taken to be Amazon's shipment ID and a package
-    number; the counts show whether that holds.
+    Paack's ID isn't Amazon's shipment ID, even when they look alike, and
+    without the Parcel app nothing links Amazon's shipments to packages.
     """
     freezer.move_to("2026-11-25 09:00:00+00:00")
     raw = (EMAIL_FIXTURES / "carriers/paack_out_for_delivery_pt.eml").read_bytes()
@@ -265,22 +265,8 @@ async def test_paack_amazon(
         diagnostics = await async_get_config_entry_diagnostics(hass, hub)
 
     engine_data = diagnostics["engine"]
-    assert engine_data["paack_amazon"] == {
-        "naming_amazon": {
-            "matched": 1,
-            "unmatched": 0,
-            "without_id": 0,
-            "matched_ignoring_case": 1,
-            "amazon_id_7_days_before": 1,
-        },
-        "not_naming_amazon": {
-            "matched": 0,
-            "unmatched": 0,
-            "without_id": 0,
-            "matched_ignoring_case": 0,
-            "amazon_id_7_days_before": 0,
-        },
-    }
+    assert "paack_amazon" not in engine_data
+    assert engine_data["amazon_links"] is None
     # Amazon's e-mail gave a shipment ID: only its shape shows.
     assert engine_data["amazon_shipment_ids"] == {
         "amazon.es": {
@@ -290,8 +276,8 @@ async def test_paack_amazon(
             "shapes": {"len9:Aa0": 1},
         }
     }
-    # Paack's e-mail joined the Amazon parcel.
-    assert engine_data["parcels"] == {"out_for_delivery": 1}
+    # Paack's e-mail stayed its own parcel.
+    assert engine_data["parcels"] == {"shipped": 1, "out_for_delivery": 1}
     assert AMAZON_SHIPMENT not in json.dumps(diagnostics)
 
 

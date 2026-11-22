@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  amazonTrackingLine,
   candidateLabel,
   candidateLines,
   numberTail,
@@ -425,5 +426,30 @@ describe("merge candidates", () => {
       candidateLabel(bare, GB),
       "Unknown seller · Carrier not known yet · No. …T0002 · Ordered",
     );
+  });
+});
+
+describe("amazonTrackingLine", () => {
+  const tracking = { delivered: "2026-06-10T09:27:00+00:00", timeless: false, place: "Vila Exemplo" };
+
+  test("says when and where Amazon's tracking has a shipment delivered", () => {
+    assert.equal(
+      amazonTrackingLine(makeParcel({ amazon_tracking: tracking }), GB),
+      "Amazon's tracking: delivered Wed 10 Jun at 10:27 · Vila Exemplo",
+    );
+  });
+
+  test("gives the day alone when Amazon gave no time, and no place when it gave none", () => {
+    const dayOnly = { delivered: "2026-06-09T23:00:00+00:00", timeless: true, place: null };
+    assert.equal(
+      amazonTrackingLine(makeParcel({ amazon_tracking: dayOnly }), GB),
+      "Amazon's tracking: delivered Wed 10 Jun, time not known",
+    );
+  });
+
+  test("says nothing without Amazon's tracking or a readable time", () => {
+    assert.equal(amazonTrackingLine(makeParcel(), GB), null);
+    const unreadable = { ...tracking, delivered: "soon" };
+    assert.equal(amazonTrackingLine(makeParcel({ amazon_tracking: unreadable }), GB), null);
   });
 });

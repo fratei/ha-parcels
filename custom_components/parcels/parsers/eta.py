@@ -2184,6 +2184,9 @@ _NEXT_ATTEMPT_PHRASES = (
     "tentaremos novamente",
     "tentaremos de novo",
     "nova entrega",
+    # pt and es.
+    "proxima entrega",
+    "nova data de entrega",
     "nuevo intento",
     "proximo intento",
     "segundo intento",
@@ -2196,6 +2199,9 @@ _NEXT_ATTEMPT_PHRASES = (
     "intentaremos de nuevo",
     "intentaremos nuevamente",
     "nueva entrega",
+    "nueva fecha de entrega",
+    "nuevo reparto",
+    "proximo reparto",
     "new attempt",
     "next attempt",
     "another attempt",
@@ -2212,6 +2218,8 @@ _NEXT_ATTEMPT_PHRASES = (
     "re-deliver",
     "redelivery",
     "re-delivery",
+    "next delivery",
+    "new delivery date",
     "nachste zustellversuch",
     "nachster zustellversuch",
     "nachsten zustellversuch",
@@ -2229,17 +2237,35 @@ _NEXT_ATTEMPT_PHRASES = (
     "weiteren zustellversuch",
     "erneut zustellen",
     "erneute zustellung",
+    "neue zustellung",
+    "nachste zustellung",
+    "neuer zustelltermin",
+    "neuen zustelltermin",
+    "nachster zustelltermin",
+    "nachsten zustelltermin",
+    "neuer liefertermin",
+    "neuen liefertermin",
     "versuchen es",
     "nouvelle tentative",
     "prochaine tentative",
     "deuxieme tentative",
     "nouvelle presentation",
+    "nouvelle livraison",
+    "prochaine livraison",
+    "nouvelle date de livraison",
+    "nouveau passage",
+    "prochain passage",
     "reessaierons",
     "repasserons",
     "repassera",
     "nuovo tentativo",
     "prossimo tentativo",
     "secondo tentativo",
+    "nuova consegna",
+    "prossima consegna",
+    "nuova data di consegna",
+    "nuovo passaggio",
+    "prossimo passaggio",
     "riproveremo",
     "ripasseremo",
     "ripassera",
@@ -2252,6 +2278,12 @@ _NEXT_ATTEMPT_PHRASES = (
     "tweede poging",
     "nieuwe bezorgpoging",
     "volgende bezorgpoging",
+    "nieuwe bezorging",
+    "volgende bezorging",
+    "nieuwe bezorgdatum",
+    "nieuwe bezorgdag",
+    "volgende bezorgdag",
+    "nieuwe leverdatum",
     "opnieuw bezorgen",
     "opnieuw aanbieden",
 )
@@ -2449,11 +2481,12 @@ def find_next_attempt(
     """Return the day of the next delivery attempt after a missed one.
 
     A date right after a new-attempt phrase in any of the 7 languages
-    ("Nova tentativa: segunda-feira", "We'll try again on Monday") gives
-    it. A phrase with no date of its own takes ``eta_start``, the delivery
-    date read from the e-mail. Negated phrases ("no further attempt") and
-    offers to book one ("request a redelivery") don't count, nor do days
-    before the e-mail or more than 14 days after it.
+    ("Nova tentativa: segunda-feira", "We'll try again on Monday",
+    "Nouvelle livraison : lundi") gives it. A phrase with no date of its
+    own takes ``eta_start``, the delivery date read from the e-mail.
+    Negated phrases ("no further attempt") and offers to book one
+    ("request a redelivery") don't count, nor do days before the e-mail or
+    more than 14 days after it.
     """
     text = text[:MAX_FIND_CHARS]
     s = _prepare(text)

@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable, Generator
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 from homeassistant.util import dt as dt_util
@@ -20,23 +21,30 @@ from custom_components.parcels.const import (
     ParcelStatus,
 )
 from custom_components.parcels.dedup import (
+    AMAZON_LINKS_KEY,
     AMAZON_REPAIR_KEY,
+    REASON_AMAZON_TRACKING,
     REASON_SAME_MERCHANT_DAY,
     REASON_SAME_MERCHANT_DOMAIN,
     REASON_SAME_MERCHANT_ETA,
     REASON_SAME_ORDER,
     REASON_SAME_REFERENCE,
     REPAIR_VERSION,
+    AmazonEvidence,
     Applied,
     Contribution,
     DedupError,
     accept_suggestion,
+    amazon_contradicts,
+    amazon_disagree,
+    amazon_evidence,
     apply_contribution,
     boxes_of_day,
     dismiss_suggestion,
     fill_shop,
     infer_deliveries,
     keep_apart,
+    mark_delivered,
     merge_parcels,
     order_parcels,
     reconcile,
@@ -58,7 +66,13 @@ from custom_components.parcels.models import (
 )
 from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.parsers.tracking import tracking_url
-from custom_components.parcels.views import shipment_groups
+from custom_components.parcels.views import (
+    SYSTEM_VIEWER,
+    Viewer,
+    details,
+    parcel_json,
+    shipment_groups,
+)
 
 from .factories import contribution
 
@@ -1949,3 +1963,729 @@ def test_boxes_of_day() -> None:
     out = ParcelStatus.OUT_FOR_DELIVERY
     assert _boxes(_day_parcel("order", out, _nov(20, 12)), came) == {}
     assert _boxes(_day_parcel("order", out, _nov(20, 9)), came) == {"order": ("box",)}
+
+
+# Amazon's tracking of its shipments, which the Parcel app follows, against the
+# carriers' packages. All made up, in June, when Lisbon is on UTC+1.
+SHIPMENT_1 = "Kd3Fw9Qa2"
+SHIPMENT_2 = "Mv8Hc4Tn6"
+SHIPMENT_3 = "Wp5Gx2Rk8"
+SHIPMENT_4 = "Zc7Jt3Hn4"
+SHIPMENT_5 = "Yb2Ms6Lq9"
+SHIPMENT_6 = "Fq9Lr3Td7"
+PAACK_1 = "Gt5Rm8Vb3_1"
+PAACK_2 = "Jy6Ns1Qe9_1"
+ARRIVED = "o pedido chegou a uma instalação da transportadora, Cidade Exemplo, ES"
+VAN_OUT = "Entrega em curso, Vila Exemplo, PT"
+HANDED = "Entregue, Vila Exemplo, PT"
+CENTER = "(CO) C.O. Centro Exemplo"
+CTT_ARRIVED = f"Chegou ao centro operacional, 4321 - {CENTER}"
+AMAZON_AT_CENTER = f"o pedido chegou a uma instalação da transportadora, {CENTER}, PT"
+JUNE_10 = date(2026, 6, 10)
+NO_LINKS = {"made": 0, "ambiguous": 0, "contradicted": 0}
+
+
+def _jun(day: int, hour: int = 0, minute: int = 0, second: int = 0) -> datetime:
+    return datetime(2026, 6, day, hour, minute, second, tzinfo=UTC)
+
+
+def _scan(
+    time: datetime,
+    status: ParcelStatus | None = None,
+    label: str | None = None,
+    *,
+    eta: Eta | None = None,
+    undated: bool = False,
+    timeless: bool = False,
+    dayless: bool = False,
+) -> ParcelEvent:
+    """An event of a delivery in the Parcel app."""
+    return ParcelEvent(
+        time=time,
+        source=Source.PARCELAPP,
+        status=status,
+        label=label,
+        eta=eta,
+        undated=undated,
+        timeless=timeless,
+        dayless=dayless,
+        by=time if undated else None,
+    )
+
+
+def _parcel_app(
+    key: str, anchor: str, events: tuple[ParcelEvent, ...], **fields: Any
+) -> Contribution:
+    """A delivery in the Parcel app, joining the parcel its sync chose."""
+    return Contribution(
+        origin=Origin(
+            id=f"pa:{key}",
+            source=Source.PARCELAPP,
+            time=min(event.time for event in events),
+            label="Parcel app",
+            **fields,
+        ),
+        events=list(events),
+        anchor=anchor,
+    )
+
+
+def _shipment(
+    data: ParcelsData,
+    key: int,
+    order: str,
+    shipment: str,
+    sent: datetime,
+    *events: ParcelEvent,
+    carrier: str | None = None,
+) -> str:
+    """Amazon's e-mail about a shipment due on 10 June, and its tracking."""
+    mail = f"msg:a{key}#0"
+    eta = Eta(start=JUNE_10, end=JUNE_10)
+    parcel = _apply(
+        data, _amazon(mail, order, sent, eta, shipment_id=shipment, carrier=carrier)
+    )
+    if events:
+        tracking = _parcel_app(
+            f"t{key}", mail, events, order_numbers=(order,), amazon_shipment_id=shipment
+        )
+        assert _apply(data, tracking) == parcel
+    return parcel
+
+
+def _came(
+    arrived: datetime | None = None, delivered: str = "Entregue"
+) -> tuple[ParcelEvent, ...]:
+    """Amazon's tracking: at the carrier on 9 June, delivered on the 10th."""
+    return (
+        _scan(arrived or _jun(9, 15, 2), ParcelStatus.IN_TRANSIT, ARRIVED),
+        _scan(_jun(10, 9, 27), ParcelStatus.DELIVERED, delivered),
+    )
+
+
+def _fifth(data: ParcelsData, *events: ParcelEvent) -> str:
+    return _shipment(data, 5, ORDER_1, SHIPMENT_5, _jun(8, 9), *(events or _came()))
+
+
+def _at_center(arrived: datetime | None = None) -> tuple[ParcelEvent, ...]:
+    """Amazon's tracking of a shipment in CTT's package of 10 June."""
+    return (
+        _scan(arrived or _jun(10, 1, 41), ParcelStatus.IN_TRANSIT, AMAZON_AT_CENTER),
+        _scan(_jun(10, 7, 12), ParcelStatus.OUT_FOR_DELIVERY, "Entrega em curso"),
+        _scan(_jun(10, 9, 27), ParcelStatus.DELIVERED, "Entregue"),
+    )
+
+
+def _own_scans(data: ParcelsData, box: str, *events: ParcelEvent) -> None:
+    """CTT's own tracking of its package in the Parcel app."""
+    tracking = _parcel_app(
+        "c1", "msg:c1#0", events, carrier="ctt_expresso", tracking_number=CTT_1
+    )
+    assert _apply(data, tracking) == box
+
+
+def _ctt_box(data: ParcelsData) -> str:
+    """CTT's package of 10 June: its e-mail, and its own tracking."""
+    box = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.SHIPPED, _jun(9, 15)))
+    _own_scans(
+        data,
+        box,
+        _scan(_jun(10, 1, 41), ParcelStatus.IN_TRANSIT, CTT_ARRIVED),
+        _scan(_jun(10, 7, 12), ParcelStatus.OUT_FOR_DELIVERY, "Em entrega"),
+        _scan(_jun(10, 9, 27), ParcelStatus.DELIVERED, "Entregue"),
+    )
+    return box
+
+
+def _ctt_with_two(data: ParcelsData) -> tuple[str, str, str]:
+    """Shipments of two orders, then CTT's package that carried both."""
+    third = _shipment(data, 3, ORDER_1, SHIPMENT_3, _jun(8, 9), *_at_center())
+    fourth = _shipment(data, 4, ORDER_2, SHIPMENT_4, _jun(8, 10), *_at_center())
+    return _ctt_box(data), third, fourth
+
+
+def _mail_box(
+    data: ParcelsData, number: str, *mails: tuple[str, MailKind, datetime]
+) -> str:
+    """CTT's e-mails about one package."""
+    [box] = {
+        _apply(data, _ctt(origin_id, number, kind, when))
+        for origin_id, kind, when in mails
+    }
+    return box
+
+
+def _paack_box(
+    origin_id: str, number: str, kind: MailKind, when: datetime
+) -> Contribution:
+    """Paack's e-mail about a package, naming no shop."""
+    return contribution(
+        origin_id,
+        kind=kind,
+        time=when,
+        carrier="paack",
+        number=number,
+        label="paack.co",
+    )
+
+
+def _two_paack_boxes(data: ParcelsData) -> tuple[str, str, str, str]:
+    """Two shipments, each in its own Paack package, delivered the same minute."""
+    shipments = []
+    for key, order, shipment, sent, arrived in (
+        (1, ORDER_1, SHIPMENT_1, _jun(8, 9), _jun(9, 12, 36)),
+        (2, ORDER_2, SHIPMENT_2, _jun(8, 10), _jun(9, 17, 18)),
+    ):
+        shipments.append(
+            _shipment(
+                data,
+                key,
+                order,
+                shipment,
+                sent,
+                _scan(arrived, ParcelStatus.IN_TRANSIT, ARRIVED),
+                _scan(_jun(10, 6, 41), ParcelStatus.OUT_FOR_DELIVERY, VAN_OUT),
+                _scan(_jun(10, 10, 14), ParcelStatus.DELIVERED, HANDED),
+            )
+        )
+    first, second = shipments
+    one = _apply(
+        data,
+        _paack_box("msg:p1#0", PAACK_1, MailKind.IN_TRANSIT, _jun(9, 12, 36, 16)),
+    )
+    two = _apply(
+        data,
+        _paack_box("msg:p2#0", PAACK_2, MailKind.IN_TRANSIT, _jun(9, 17, 18, 47)),
+    )
+    for origin_id, number, kind, when, box in (
+        ("msg:p3#0", PAACK_1, MailKind.OUT_FOR_DELIVERY, _jun(10, 6, 52), one),
+        ("msg:p4#0", PAACK_2, MailKind.OUT_FOR_DELIVERY, _jun(10, 6, 59), two),
+        ("msg:p5#0", PAACK_1, MailKind.DELIVERED, _jun(10, 10, 14, 22), one),
+        ("msg:p6#0", PAACK_2, MailKind.DELIVERED, _jun(10, 10, 14, 48), two),
+    ):
+        assert _apply(data, _paack_box(origin_id, number, kind, when)) == box
+    assert len({one, two, first, second}) == 4
+    return one, two, first, second
+
+
+def _linked(parcel: Parcel) -> bool:
+    flag = parcel.auto_merged
+    return flag is not None and flag.reason == REASON_AMAZON_TRACKING
+
+
+def test_amazon_tracking_links_each_shipment_to_its_package() -> None:
+    """A shipment joins the package whose times agree with Amazon's tracking.
+
+    It was delivered that minute and reached the carrier when the shipment
+    did; the van leaving with both doesn't tell them apart.
+    """
+    data = ParcelsData()
+    one, two, first, second = _two_paack_boxes(data)
+
+    result = reconcile(data, _jun(10, 22))
+
+    assert result.removed == {first, second}
+    assert result.suggestions == []
+    for box, mail, tracking, shipment in (
+        (one, "msg:a1#0", "pa:t1", SHIPMENT_1),
+        (two, "msg:a2#0", "pa:t2", SHIPMENT_2),
+    ):
+        parcel = data.parcels[box]
+        flag = parcel.auto_merged
+        assert flag is not None
+        assert flag.reason == REASON_AMAZON_TRACKING
+        assert flag.origin == mail
+        assert flag.all_origins == {mail, tracking}
+        assert flag.groups == ()
+        assert parcel.state.amazon_shipment_ids == (shipment,)
+    links = {"made": 2, "ambiguous": 0, "contradicted": 0}
+    assert data.engine[AMAZON_LINKS_KEY] == links
+
+    again = reconcile(data, _jun(10, 22, 30))
+
+    assert not again.removed
+    assert again.suggestions == []
+    assert data.engine[AMAZON_LINKS_KEY] == links
+
+
+def test_amazon_tracking_links_shipments_sharing_a_package() -> None:
+    """Shipments of two orders in one package both join it.
+
+    On undo, each leaves as it came, and the next sync doesn't link it again.
+    """
+    data = ParcelsData()
+    box, third, fourth = _ctt_with_two(data)
+
+    result = reconcile(data, _jun(10, 22))
+
+    assert result.removed == {third, fourth}
+    parcel = data.parcels[box]
+    flag = parcel.auto_merged
+    assert flag is not None
+    assert flag.reason == REASON_AMAZON_TRACKING
+    assert flag.origin == "msg:a3#0"
+    assert flag.groups == (("msg:a3#0", "pa:t3"), ("msg:a4#0", "pa:t4"))
+    assert set(parcel.state.amazon_shipment_ids) == {SHIPMENT_3, SHIPMENT_4}
+    links = {"made": 2, "ambiguous": 0, "contradicted": 0}
+    assert data.engine[AMAZON_LINKS_KEY] == links
+
+    undo_auto_merge(data, box, _jun(10, 22, 30))
+
+    assert {frozenset(parcel.origins) for parcel in data.parcels.values()} == {
+        frozenset({"msg:c1#0", "pa:c1"}),
+        frozenset({"msg:a3#0", "pa:t3"}),
+        frozenset({"msg:a4#0", "pa:t4"}),
+    }
+    again = reconcile(data, _jun(10, 22, 45))
+    assert not again.removed
+    assert again.suggestions == []
+    assert len(data.parcels) == 3
+    assert not any(_linked(parcel) for parcel in data.parcels.values())
+    assert data.engine[AMAZON_LINKS_KEY] == links
+
+
+def test_removed_mail_leaves_its_shipment_group() -> None:
+    """A removed e-mail leaves the group of the shipment it was about."""
+    data = ParcelsData()
+    box, _third, _fourth = _ctt_with_two(data)
+    reconcile(data, _jun(10, 22))
+
+    remove_message(data, "a4", _jun(10, 22, 30))
+
+    flag = data.parcels[box].auto_merged
+    assert flag is not None
+    assert flag.groups == (("msg:a3#0", "pa:t3"), ("pa:t4",))
+
+
+def test_amazon_tracking_suggests_packages_agreeing_equally() -> None:
+    """When two packages agree as well, none is chosen.
+
+    Each is suggested and the shipment may ride along in either, until one
+    is turned down.
+    """
+    data = ParcelsData()
+    fifth = _fifth(data)
+    first = _mail_box(
+        data,
+        CTT_1,
+        ("msg:c1#0", MailKind.SHIPPED, _jun(9, 15, 2)),
+        ("msg:c2#0", MailKind.DELIVERED, _jun(10, 9, 27, 30)),
+    )
+    second = _mail_box(
+        data,
+        CTT_2,
+        ("msg:c3#0", MailKind.SHIPPED, _jun(9, 15, 3)),
+        ("msg:c4#0", MailKind.DELIVERED, _jun(10, 9, 28)),
+    )
+
+    result = reconcile(data, _jun(10, 22))
+
+    assert not result.removed
+    assert len(result.suggestions) == 2
+    assert {
+        (suggestion.parcel_id, suggestion.candidates, suggestion.reason)
+        for suggestion in result.suggestions
+    } == {
+        (first, (fifth,), REASON_AMAZON_TRACKING),
+        (second, (fifth,), REASON_AMAZON_TRACKING),
+    }
+    assert {suggestion.day for suggestion in result.suggestions} == {JUNE_10}
+    assert data.engine[AMAZON_LINKS_KEY] == {
+        "made": 0,
+        "ambiguous": 1,
+        "contradicted": 0,
+    }
+    riding = boxes_of_day(data, data.parcels.values(), JUNE_10)
+    assert set(riding[fifth]) == {first, second}
+
+    dismiss_suggestion(data, second, [fifth])
+    result = reconcile(data, _jun(10, 22, 30))
+
+    assert result.removed == {fifth}
+    assert _linked(data.parcels[first])
+    assert data.engine[AMAZON_LINKS_KEY] == {
+        "made": 1,
+        "ambiguous": 0,
+        "contradicted": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("arrived", "mails"),
+    [
+        # Its first e-mail came hours before the shipment reached the carrier.
+        (
+            _jun(9, 15, 2),
+            (
+                ("msg:c1#0", MailKind.SHIPPED, _jun(9, 12)),
+                ("msg:c2#0", MailKind.DELIVERED, _jun(10, 9, 27, 30)),
+            ),
+        ),
+        # Only the van leaving agrees: a van takes many packages.
+        (
+            _jun(10, 7, 12),
+            (
+                ("msg:c1#0", MailKind.OUT_FOR_DELIVERY, _jun(10, 7, 12, 30)),
+                ("msg:c2#0", MailKind.DELIVERED, _jun(10, 9, 27, 30)),
+            ),
+        ),
+        # Delivered three minutes later.
+        (
+            _jun(9, 15, 2),
+            (
+                ("msg:c1#0", MailKind.SHIPPED, _jun(9, 15, 2)),
+                ("msg:c2#0", MailKind.DELIVERED, _jun(10, 9, 30, 30)),
+            ),
+        ),
+    ],
+)
+def test_amazon_tracking_needs_two_agreeing_times(
+    arrived: datetime, mails: tuple[tuple[str, MailKind, datetime], ...]
+) -> None:
+    """A package takes a shipment only when two of its times agree.
+
+    It was delivered that minute, and one more of its news agrees too.
+    """
+    data = ParcelsData()
+    _fifth(data, *_came(arrived))
+    box = _mail_box(data, CTT_1, *mails)
+
+    result = reconcile(data, _jun(10, 22))
+
+    assert data.engine[AMAZON_LINKS_KEY] == NO_LINKS
+    assert all(s.reason != REASON_AMAZON_TRACKING for s in result.suggestions)
+    assert not _linked(data.parcels[box])
+
+
+def test_amazon_tracking_rules_out_a_package_delivered_hours_apart() -> None:
+    """A package delivered hours from Amazon's time didn't carry the shipment.
+
+    The shipment neither rides along in it nor is suggested for it.
+    """
+    data = ParcelsData()
+    fifth = _fifth(data)
+    box = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.SHIPPED, _jun(9, 15)))
+    _own_scans(data, box, _scan(_jun(10, 11, 58), ParcelStatus.DELIVERED, "Entregue"))
+
+    result = reconcile(data, _jun(10, 22))
+
+    assert not result.removed
+    assert result.suggestions == []
+    assert data.engine[AMAZON_LINKS_KEY] == {
+        "made": 0,
+        "ambiguous": 0,
+        "contradicted": 1,
+    }
+    shipment, package = data.parcels[fifth], data.parcels[box]
+    assert amazon_contradicts(shipment, package)
+    assert amazon_disagree(shipment, package)
+    assert amazon_disagree(package, shipment)
+    assert boxes_of_day(data, data.parcels.values(), JUNE_10) == {}
+
+
+@pytest.mark.parametrize(
+    ("source", "when", "contradicts"),
+    [
+        # A delivered e-mail or a mark by hand says it came by then.
+        ("mail", _jun(10, 13, 27), False),
+        ("mail", _jun(10, 6, 57), True),
+        ("hand", _jun(10, 14, 27), False),
+        ("hand", _jun(10, 6, 57), True),
+        # A scan says when: more than two hours apart rules it out.
+        ("scan", _jun(10, 11, 26), False),
+        ("scan", _jun(10, 11, 28), True),
+    ],
+)
+def test_amazon_tracking_contradiction_bounds(
+    source: str, when: datetime, contradicts: bool
+) -> None:
+    """Amazon delivered at 09:27 UTC: which deliveries of a package rule it out."""
+    data = ParcelsData()
+    fifth = _fifth(data)
+    box = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.SHIPPED, _jun(9, 15)))
+    if source == "mail":
+        assert _apply(data, _ctt("msg:c2#0", CTT_1, MailKind.DELIVERED, when)) == box
+    elif source == "hand":
+        mark_delivered(data, box, when)
+    else:
+        _own_scans(data, box, _scan(when, ParcelStatus.DELIVERED, "Entregue"))
+
+    assert amazon_contradicts(data.parcels[fifth], data.parcels[box]) is contradicts
+
+
+def test_amazon_tracking_never_links_a_pair_kept_apart() -> None:
+    """A pair kept apart ("Not this one") never links, though the times agree."""
+    data = ParcelsData()
+    one, _two, first, second = _two_paack_boxes(data)
+    keep_apart(data, data.parcels[one], data.parcels[first])
+
+    result = reconcile(data, _jun(10, 22))
+
+    assert result.removed == {second}
+    assert first in data.parcels
+    assert data.parcels[one].auto_merged is None
+    assert data.engine[AMAZON_LINKS_KEY] == {
+        "made": 1,
+        "ambiguous": 0,
+        "contradicted": 0,
+    }
+
+
+@pytest.mark.parametrize(("place", "made"), [("Vila Exemplo", 1), ("Aldeia Modelo", 0)])
+def test_amazon_tracking_places_must_match(place: str, made: int) -> None:
+    """Delivered the same minute in another town isn't the same package."""
+    data = ParcelsData()
+    _fifth(data, *_came(delivered=f"Entregue, {place}, PT"))
+    box = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.SHIPPED, _jun(9, 15, 2)))
+    _own_scans(data, box, _scan(_jun(10, 9, 27), ParcelStatus.DELIVERED, HANDED))
+
+    reconcile(data, _jun(10, 22))
+
+    assert data.engine[AMAZON_LINKS_KEY] == {
+        "made": made,
+        "ambiguous": 0,
+        "contradicted": 0,
+    }
+    assert _linked(data.parcels[box]) is bool(made)
+
+
+def test_a_shipment_merges_by_hand_into_a_package_carrying_another() -> None:
+    """A package carrying one shipment may take another order's by hand.
+
+    Two shipments still can't merge.
+    """
+    data = ParcelsData()
+    third = _shipment(data, 3, ORDER_1, SHIPMENT_3, _jun(8, 9), *_at_center())
+    fourth = _shipment(
+        data, 4, ORDER_2, SHIPMENT_4, _jun(8, 10), *_at_center(_jun(9, 20))
+    )
+    box = _ctt_box(data)
+
+    result = reconcile(data, _jun(10, 22))
+
+    assert result.removed == {third}
+    assert result.suggestions == []
+    assert data.engine[AMAZON_LINKS_KEY] == {
+        "made": 1,
+        "ambiguous": 0,
+        "contradicted": 0,
+    }
+
+    accept_suggestion(data, box, fourth, _jun(10, 22, 30))
+
+    assert fourth not in data.parcels
+    shipments = set(data.parcels[box].state.amazon_shipment_ids)
+    assert shipments == {SHIPMENT_3, SHIPMENT_4}
+
+    eta = Eta(start=JUNE_10, end=JUNE_10)
+    fifth = _apply(
+        data, _amazon("msg:a5#0", ORDER_1, _jun(8, 9), eta, shipment_id=SHIPMENT_5)
+    )
+    sixth = _apply(
+        data, _amazon("msg:a6#0", ORDER_3, _jun(8, 10), eta, shipment_id=SHIPMENT_6)
+    )
+    assert fifth != sixth
+    assert _error(accept_suggestion, data, fifth, sixth, _jun(10, 22, 45)) == (
+        "cannot_merge"
+    )
+
+
+def test_an_order_rides_along_in_a_package_carrying_shipments() -> None:
+    """An order may ride along in a package carrying another order's shipments."""
+    data = ParcelsData()
+    box, _third, _fourth = _ctt_with_two(data)
+    reconcile(data, _jun(10, 22))
+    eta = Eta(start=JUNE_10, end=JUNE_10)
+
+    seventh = _apply(data, _amazon("msg:a7#0", ORDER_3, _jun(8, 11), eta))
+
+    assert boxes_of_day(data, data.parcels.values(), JUNE_10) == {seventh: (box,)}
+
+
+@pytest.mark.parametrize(
+    ("marked", "rides"), [(_jun(10, 21, 40), True), (_jun(10, 5), False)]
+)
+def test_marked_delivered_means_delivered_by_then(
+    marked: datetime, rides: bool
+) -> None:
+    """Marking an order delivered by hand says it came by then, not then.
+
+    It rides along in a package delivered earlier that day, not in a later one.
+    """
+    data = ParcelsData()
+    eta = Eta(start=JUNE_10, end=JUNE_10)
+    eighth = _apply(data, _amazon("msg:a8#0", ORDER_2, _jun(8, 9), eta))
+    box = _mail_box(
+        data,
+        CTT_1,
+        ("msg:c1#0", MailKind.SHIPPED, _jun(9, 15)),
+        ("msg:c2#0", MailKind.DELIVERED, _jun(10, 9, 27)),
+    )
+    assert box != eighth
+
+    mark_delivered(data, eighth, marked)
+
+    expected = {eighth: (box,)} if rides else {}
+    assert boxes_of_day(data, data.parcels.values(), JUNE_10) == expected
+
+
+def test_amazon_tracking_needs_the_parcel_app() -> None:
+    """Without the Parcel app, Amazon's e-mails give no tracking to match."""
+    data = ParcelsData()
+    eta = Eta(start=JUNE_10, end=JUNE_10)
+    fifth = _apply(
+        data, _amazon("msg:a5#0", ORDER_1, _jun(8, 9), eta, shipment_id=SHIPMENT_5)
+    )
+    box = _mail_box(
+        data,
+        CTT_1,
+        ("msg:c1#0", MailKind.SHIPPED, _jun(9, 15)),
+        ("msg:c2#0", MailKind.DELIVERED, _jun(10, 11, 58)),
+    )
+    assert amazon_evidence(data.parcels[fifth]) is None
+    assert not amazon_contradicts(data.parcels[fifth], data.parcels[box])
+
+    reconcile(data, _jun(10, 22))
+
+    assert AMAZON_LINKS_KEY not in data.engine
+
+
+def test_amazon_tracking_skips_amazons_own_deliveries() -> None:
+    """A delivery of Amazon's own, with its number, isn't another's package."""
+    data = ParcelsData()
+    _fifth(data)
+    eta = Eta(start=JUNE_10, end=JUNE_10)
+    own = _apply(
+        data,
+        _amazon(
+            "msg:a6#0",
+            ORDER_2,
+            _jun(8, 10),
+            eta,
+            number=AMAZON_LOGISTICS,
+            carrier="amazon",
+            shipment_id=SHIPMENT_6,
+        ),
+    )
+    tracking = _parcel_app(
+        "tba", "msg:a6#0", _came(), carrier="amazon", tracking_number=AMAZON_LOGISTICS
+    )
+    assert _apply(data, tracking) == own
+
+    reconcile(data, _jun(10, 22))
+
+    assert data.engine[AMAZON_LINKS_KEY] == NO_LINKS
+    assert not _linked(data.parcels[own])
+
+
+@pytest.mark.parametrize(
+    ("status", "label", "made"),
+    [(ParcelStatus.IN_TRANSIT, ARRIVED, 1), (None, None, 0)],
+)
+def test_amazon_tracking_counts_only_news_of_the_shipment(
+    status: ParcelStatus | None, label: str | None, made: int
+) -> None:
+    """A new estimate isn't news of where the shipment is."""
+    data = ParcelsData()
+    _fifth(
+        data,
+        _scan(_jun(9, 15, 2), status, label, eta=Eta(start=JUNE_10, end=JUNE_10)),
+        _scan(_jun(10, 9, 27), ParcelStatus.DELIVERED, "Entregue"),
+    )
+    _mail_box(
+        data,
+        CTT_1,
+        ("msg:c1#0", MailKind.SHIPPED, _jun(9, 15, 2)),
+        ("msg:c2#0", MailKind.DELIVERED, _jun(10, 9, 27, 30)),
+    )
+
+    reconcile(data, _jun(10, 22))
+
+    assert data.engine[AMAZON_LINKS_KEY]["made"] == made
+
+
+def _evidence(*events: ParcelEvent) -> AmazonEvidence | None:
+    data = ParcelsData()
+    return amazon_evidence(data.parcels[_fifth(data, *events)])
+
+
+def test_amazon_evidence() -> None:
+    """When and where Amazon's tracking says a shipment was delivered."""
+    delivered = ParcelStatus.DELIVERED
+    at_center = _scan(_jun(9, 15, 2), ParcelStatus.IN_TRANSIT, ARRIVED)
+    assert _evidence(*_came()) == AmazonEvidence(_jun(10, 9, 27), False, None)
+    assert _evidence(*_came(delivered=HANDED)) == AmazonEvidence(
+        _jun(10, 9, 27), False, "Vila Exemplo"
+    )
+    # The day without the time, then no day at all.
+    timeless = _scan(_jun(10, 12), delivered, "Entregue", undated=True, timeless=True)
+    assert _evidence(at_center, timeless) == AmazonEvidence(_jun(10, 12), True, None)
+    dayless = _scan(_jun(10, 12), delivered, "Entregue", undated=True, dayless=True)
+    assert _evidence(at_center, dayless) is None
+    assert _evidence(at_center) is None
+    # A carrier's package isn't a shipment.
+    data = ParcelsData()
+    assert amazon_evidence(data.parcels[_ctt_box(data)]) is None
+
+
+def test_page_shows_amazons_tracking() -> None:
+    """The page shows when and where Amazon's tracking says a shipment came.
+
+    Only for Amazon's shipments, and only to those who may see them.
+    """
+    data = ParcelsData()
+    shipment = data.parcels[_fifth(data, *_came(delivered=HANDED))]
+    box = data.parcels[_ctt_box(data)]
+
+    assert parcel_json(shipment, SYSTEM_VIEWER)["amazon_tracking"] == {
+        "delivered": "2026-06-10T09:27:00+00:00",
+        "timeless": False,
+        "place": "Vila Exemplo",
+    }
+    assert parcel_json(box, SYSTEM_VIEWER)["amazon_tracking"] is None
+    shipment.private = True
+    stranger = Viewer(is_admin=False, persons=frozenset({"person.two"}))
+    assert parcel_json(shipment, stranger)["amazon_tracking"] is None
+
+
+def test_details_list_the_parcels_amazons_tracking_rules_out() -> None:
+    """The details list the parcels Amazon's tracking rules out, both ways.
+
+    Not a package whose time agrees, nor one the viewer may not see.
+    """
+    data = ParcelsData()
+    fifth = _fifth(data)
+    apart = _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.SHIPPED, _jun(9, 15)))
+    _own_scans(data, apart, _scan(_jun(10, 11, 58), ParcelStatus.DELIVERED, "Entregue"))
+    agrees = _mail_box(
+        data, CTT_2, ("msg:c3#0", MailKind.DELIVERED, _jun(10, 9, 27, 30))
+    )
+    engine: Any = SimpleNamespace(data=data)
+
+    def contradicted(parcel_id: str, viewer: Viewer = SYSTEM_VIEWER) -> list[str]:
+        return details(engine, data.parcels[parcel_id], viewer)["contradicted"]
+
+    assert contradicted(fifth) == [apart]
+    assert contradicted(apart) == [fifth]
+    assert contradicted(agrees) == []
+    data.parcels[apart].private = True
+    stranger = Viewer(is_admin=False, persons=frozenset({"person.two"}))
+    assert contradicted(fifth, stranger) == []
+
+
+@pytest.mark.parametrize(("carrier", "made"), [(None, 1), ("ctt", 1), ("dpd", 0)])
+def test_amazon_tracking_keeps_the_named_carrier(
+    carrier: str | None, made: int
+) -> None:
+    """A shipment Amazon says another carrier took isn't in CTT's package."""
+    data = ParcelsData()
+    _shipment(data, 3, ORDER_1, SHIPMENT_3, _jun(8, 9), *_at_center(), carrier=carrier)
+    _ctt_box(data)
+
+    reconcile(data, _jun(10, 22))
+
+    assert data.engine[AMAZON_LINKS_KEY] == {
+        "made": made,
+        "ambiguous": 0,
+        "contradicted": 0,
+    }

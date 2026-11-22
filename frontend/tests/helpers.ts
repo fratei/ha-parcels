@@ -49,6 +49,7 @@ export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
     senders: [],
     ordered_at: null,
     shipped_at: null,
+    amazon_tracking: null,
     ...overrides,
   };
 }

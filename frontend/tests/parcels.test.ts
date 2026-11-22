@@ -149,6 +149,21 @@ describe("rankMergeCandidates", () => {
     assert.deepEqual(ids(older), ["cancelled", "long-delivered", "archived"]);
   });
 
+  test("puts the parcels Amazon's tracking rules out last, in the same order otherwise", () => {
+    const parcels = [
+      self,
+      makeParcel({ id: "order", order_numbers: ["111-0000001-0000001"], eta_start: "2026-07-15" }),
+      makeParcel({ id: "shop", merchant: "Example Shop", eta_start: "2026-07-16" }),
+      makeParcel({ id: "other", merchant: "Other Shop", eta_start: "2026-07-17" }),
+      makeParcel({ id: "archived", archived: true, status_time: "2026-07-01T08:00:00Z" }),
+      makeParcel({ id: "cancelled", status: "cancelled", status_time: "2026-07-12T08:00:00Z" }),
+    ];
+    const { likely, older } = rankMergeCandidates(parcels, self, ctx, new Set(["order", "cancelled"]));
+    assert.deepEqual(ids(likely), ["shop", "other", "order"]);
+    assert.deepEqual(ids(older), ["archived", "cancelled"]);
+    assert.deepEqual(ids(rankMergeCandidates(parcels, self, ctx).likely), ["order", "shop", "other"]);
+  });
+
   test("activity follows the status", () => {
     assert.equal(isActiveParcel(makeParcel({ status: "exception" })), true);
     assert.equal(isActiveParcel(makeParcel({ status: "returned" })), false);
@@ -386,5 +401,48 @@ describe("possible matches", () => {
       possibleHint(possibleMatches([suggestion("s1", delivered, [stem], "same_reference")], "b1")),
       "Not confirmed: an e-mail names only the shipment this package is part of. Merge it if it's about this package, or rule it out.",
     );
+  });
+
+  test("say when Amazon's tracking fits more than one delivery", () => {
+    const shipment = makeParcel({ id: "shipment", merchant: "Amazon" });
+    const tie = possibleMatches(
+      [
+        suggestion("s1", box("b1", "2026-07-18"), [shipment], "amazon_tracking"),
+        suggestion("s2", box("b2", "2026-07-18"), [shipment], "amazon_tracking"),
+      ],
+      "shipment",
+    );
+    assert.equal(
+      possibleHint(tie),
+      "Not confirmed: Amazon's tracking fits these deliveries equally well. Merge the one this package came in, or rule out the others.",
+    );
+    assert.equal(
+      possibleHint(tie.slice(0, 1)),
+      "Not confirmed: Amazon's tracking fits this delivery's times. Merge it if this package came in it, or rule it out.",
+    );
+    const other = makeParcel({ id: "other", merchant: "Amazon" });
+    const carried = possibleMatches(
+      [
+        suggestion("s1", box("b1", "2026-07-18"), [shipment], "amazon_tracking"),
+        suggestion("s2", box("b1", "2026-07-18"), [other], "amazon_tracking"),
+      ],
+      "b1",
+    );
+    assert.equal(
+      possibleHint(carried),
+      "Not confirmed: Amazon's tracking of these orders fits this delivery's times. Merge the ones that came in it, and rule out the rest.",
+    );
+    assert.equal(
+      possibleHint(carried.slice(0, 1)),
+      "Not confirmed: Amazon's tracking of this order fits this delivery's times. Merge the order if it came in it, or rule it out.",
+    );
+    const mixed = possibleMatches(
+      [
+        suggestion("s1", box("b1", "2026-07-18"), [shipment], "amazon_tracking"),
+        suggestion("s2", box("b2", "2026-07-18"), [shipment]),
+      ],
+      "shipment",
+    );
+    assert.match(possibleHint(mixed), /^Not confirmed: the carrier's e-mails for these deliveries/);
   });
 });

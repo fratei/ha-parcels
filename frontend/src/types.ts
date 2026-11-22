@@ -54,6 +54,14 @@ export interface AutoMerged {
   reason: string;
 }
 
+/** When and where Amazon's tracking, via the Parcel app, says a shipment was delivered. */
+export interface AmazonTracking {
+  delivered: string;
+  /** Amazon gave the day but not the time. */
+  timeless: boolean;
+  place: string | null;
+}
+
 export interface Parcel {
   id: string;
   merchant: string | null;
@@ -142,6 +150,8 @@ export interface Parcel {
   ordered_at: string | null;
   /** When it left, per a dated e-mail; null when not known or restricted. */
   shipped_at: string | null;
+  /** What Amazon's tracking says of an Amazon shipment; null otherwise or when restricted. */
+  amazon_tracking: AmazonTracking | null;
 }
 
 /** What the parser or the AI read from an e-mail; also the shape of accept overrides. */
@@ -372,6 +382,8 @@ export interface ParcelDetails {
   timeline: TimelineEntry[];
   orders: OrderInfo[];
   origins: OriginInfo[];
+  /** The parcels Amazon's tracking rules out as the same package: delivered at another time. */
+  contradicted: string[];
 }
 
 export interface HassMessage {

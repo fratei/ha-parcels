@@ -177,6 +177,7 @@ describe("normalizeParcel", () => {
       ],
       ordered_at: "2026-07-10T09:00:00+00:00",
       shipped_at: "2026-07-12T09:00:00+00:00",
+      amazon_tracking: { delivered: "2026-07-14T09:27:00+00:00", timeless: true, place: "Vila Exemplo" },
     });
     assert.deepEqual(normalizeParcel(JSON.parse(JSON.stringify(parcel))), parcel);
   });
@@ -228,6 +229,7 @@ describe("normalizeParcel", () => {
       next_attempt: "tomorrow",
       collect_by: 20260721,
       left_at: "with the cat",
+      amazon_tracking: { delivered: 5, timeless: true, place: "Vila Exemplo" },
     });
     assert.ok(parcel);
     assert.equal(parcel.status, "teleported");
@@ -252,6 +254,14 @@ describe("normalizeParcel", () => {
     assert.equal(parcel.collect_by, null);
     assert.equal(parcel.left_at, null);
     assert.equal(normalizeParcel({ id: "p1", left_at: "Neighbour" })?.left_at, null);
+    assert.equal(parcel.amazon_tracking, null);
+    assert.deepEqual(
+      normalizeParcel({ id: "p1", amazon_tracking: { delivered: "2026-07-14T09:27:00Z", timeless: "yes", place: 7 } })
+        ?.amazon_tracking,
+      { delivered: "2026-07-14T09:27:00Z", timeless: false, place: null },
+    );
+    assert.equal(normalizeParcel({ id: "p1", amazon_tracking: "2026-07-14" })?.amazon_tracking, null);
+    assert.equal(normalizeParcel({ id: "p1", amazon_tracking: { delivered: "" } })?.amazon_tracking, null);
     assert.equal(normalizeParcel({ id: "p1", collect_by: "2026-02-30" })?.collect_by, null);
     assert.equal(normalizeParcel({ id: "p1", eta_source: 3 })?.eta_source, null);
     assert.equal(normalizeParcel({ id: "p1", eta_source: "" })?.eta_source, null);
@@ -427,9 +437,12 @@ describe("normalizeDetails", () => {
       ],
       orders: [{ id: "o1", number: "ORDER-1", parcel_ids: ["p1"] }],
       origins: [{ id: "m1", label: "E-mail from Example Shop", source: "parser", time: null }, { label: "No id" }],
+      contradicted: ["p2", 3, "", null, "p3"],
     });
     assert.ok(details);
     assert.equal(details.parcel.status, "delivered");
+    assert.deepEqual(details.contradicted, ["p2", "p3"]);
+    assert.deepEqual(normalizeDetails({ parcel: { id: "p1" }, contradicted: "p2" })?.contradicted, []);
     assert.deepEqual(details.timeline, [
       { time: "2026-07-14T08:00:00Z", status: "delivered", source: "ai", label: "Delivered", undated: false, timeless: false },
       { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "", undated: false, timeless: false },

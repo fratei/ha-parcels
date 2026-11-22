@@ -15,7 +15,7 @@ import { ParcelsCardBase, focusIsLost } from "./base-card.ts";
 import { CARRIER_NAMES, carrierOptions } from "./carriers.ts";
 import { cardTitle, reviewCardConfig, type ReviewCardConfig } from "./config.ts";
 import { parseInstant } from "./dates.ts";
-import { candidateLabel, candidateLines } from "./describe.ts";
+import { amazonTrackingLine, candidateLabel, candidateLines } from "./describe.ts";
 import { errorMessage } from "./errors.ts";
 import { formatDateRange, formatDateTime, formatWindow } from "./format.ts";
 import {
@@ -673,11 +673,16 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     </article>`;
   }
 
-  /** The lines that tell parcels apart: shop and status, carrier and numbers, senders, items. */
+  /**
+   * The lines that tell parcels apart: shop and status, carrier and numbers,
+   * when Amazon's tracking has it delivered, senders, items.
+   */
   private _renderLines(parcel: Parcel): TemplateResult {
     const lines = candidateLines(parcel, this.locale);
+    const evidence = amazonTrackingLine(parcel, this.locale);
     return html`<span class="block"><strong>${lines.title}</strong> · ${lines.when}</span>
       <span class="meta block">${lines.carrier}</span>
+      ${evidence ? html`<span class="meta block">${evidence}</span>` : nothing}
       ${lines.emails ? html`<span class="meta block">${lines.emails}</span>` : nothing}
       <span class="meta block items-line">${lines.items ?? lines.noItems}</span>`;
   }

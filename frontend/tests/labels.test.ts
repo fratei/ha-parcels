@@ -159,6 +159,7 @@ describe("labels", () => {
     assert.equal(reasonLabel(null), "");
     assert.equal(reasonLabel("__proto__"), "__proto__");
     assert.equal(mergeReasonLabel("same_reference"), "same shipment reference");
+    assert.equal(mergeReasonLabel("amazon_tracking"), "Amazon's tracking matches the carrier's times");
     assert.equal(humanize("low-confidence"), "Low confidence");
   });
 

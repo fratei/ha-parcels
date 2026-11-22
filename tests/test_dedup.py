@@ -22,7 +22,6 @@ from custom_components.parcels.dedup import (
     mark_delivered,
     merge_parcels,
     order_parcels,
-    paack_amazon_counts,
     parcel_order_keys,
     remove_message,
     split_parcel,
@@ -314,10 +313,13 @@ PAACK_BARCODE = "534000088812345678"
 
 @pytest.mark.parametrize("paack_eta", [None, _eta(5)])
 @pytest.mark.parametrize("paack_first", [False, True])
-def test_paack_order_id_joins_its_amazon_shipment(
+def test_paack_order_id_is_not_an_amazon_shipment(
     paack_first: bool, paack_eta: Eta | None
 ) -> None:
-    """Paack's order ID is Amazon's shipment ID and a package number."""
+    """Paack's order ID isn't Amazon's shipment ID, even when it looks so.
+
+    Only the same expected day joins them, as a guess the user can undo.
+    """
     data = ParcelsData()
     amazon = contribution(
         "msg:a#0",
@@ -338,40 +340,11 @@ def test_paack_order_id_joins_its_amazon_shipment(
     apply_contribution(data, first, T0)
     joined = apply_contribution(data, second, at(hours=1))
 
-    [parcel] = data.parcels.values()
-    assert joined.auto_merged is None
-    assert parcel.auto_merged is None
-    assert parcel.state.tracking_number == PAACK_ID
-    assert parcel.state.amazon_shipment_ids == (SHIPMENT,)
-    with pytest.raises(DedupError, match="shared_number"):
-        split_parcel(data, parcel.id, {"msg:p#0"}, at(days=1))
-
-
-@pytest.mark.parametrize(
-    ("carrier", "number"),
-    [
-        ("paack", PAACK_ID.upper()),
-        ("paack", PAACK_ID.lower()),
-        ("paack", "Rb5Lq2Vm8_1"),
-        ("gls", PAACK_ID),
-        (None, PAACK_ID),
-    ],
-)
-def test_paack_order_id_needs_the_exact_shipment_id(
-    carrier: str | None, number: str
-) -> None:
-    """Only Paack's ID with the shipment ID as written joins the shipment."""
-    data = ParcelsData()
-    apply_contribution(
-        data, contribution("msg:a#0", merchant="Amazon.es", shipment_id=SHIPMENT), T0
-    )
-    apply_contribution(
-        data,
-        contribution(
-            "msg:p#0", kind=MailKind.IN_TRANSIT, carrier=carrier, number=number
-        ),
-        at(hours=1),
-    )
+    if paack_eta is None:
+        assert joined.created
+    else:
+        assert joined.auto_merged == REASON_SAME_MERCHANT_ETA
+        undo_auto_merge(data, joined.parcel_id, at(days=1))
     assert len(data.parcels) == 2
 
 
@@ -401,97 +374,6 @@ def test_paack_barcode_joins_amazon() -> None:
     )
     assert paack.parcel_id == amazon.parcel_id
     assert paack.auto_merged is None
-
-
-def test_paack_amazon_counts() -> None:
-    """Paack's e-mails are counted by whether their ID names a shipment.
-
-    Each e-mail counts once, with no ID or shop name, so users can share the
-    counts. Two more counts per group: e-mails whose ID names a shipment
-    when case is ignored, and e-mails that came at most 7 days after an
-    Amazon e-mail that gave a shipment ID.
-    """
-    data = ParcelsData()
-    sent = [
-        contribution(
-            "msg:a#0",
-            label="amazon.es",
-            merchant="Amazon.es",
-            shipment_id=SHIPMENT,
-            carrier="paack",
-            number=PAACK_BARCODE,
-        ),
-        *(
-            contribution(
-                origin_id,
-                label="paack.co",
-                source=source,
-                kind=MailKind.IN_TRANSIT,
-                carrier="paack",
-                number=number,
-                merchant=merchant,
-            )
-            for origin_id, source, number, merchant in (
-                ("msg:p1#0", Source.PARSER, PAACK_ID, "Amazon"),
-                ("msg:p1#ai", Source.AI, PAACK_ID, None),
-                ("msg:p2#0", Source.PARSER, f"{SHIPMENT.lower()}_2", "Amazon"),
-                ("msg:p3#0", Source.PARSER, PAACK_BARCODE, "Amazon"),
-                ("msg:p4#0", Source.PARSER, f"{SHIPMENT}_2", None),
-                ("msg:p5#0", Source.PARSER, f"{SHIPMENT[:-1]}X_1", "Casa Exemplo"),
-            )
-        ),
-        # Only the shipment, as Paack's "order number".
-        contribution(
-            "msg:p6#0",
-            label="paack.co",
-            kind=MailKind.DELIVERED,
-            carrier="paack",
-            reference=SHIPMENT,
-            merchant="Amazon",
-        ),
-        # A day before Amazon's e-mail with the shipment ID.
-        contribution(
-            "msg:p7#0",
-            label="paack.co",
-            kind=MailKind.IN_TRANSIT,
-            carrier="paack",
-            number=f"{SHIPMENT}_3",
-            merchant="Amazon",
-            time=at(days=-1),
-        ),
-        # Amazon's e-mail without a shipment ID, half a day before Paack's.
-        contribution(
-            "msg:a2#0", label="amazon.es", merchant="Amazon.es", time=at(days=7.5)
-        ),
-        # Eight days after Amazon's e-mail with the shipment ID.
-        contribution(
-            "msg:p8#0",
-            label="paack.co",
-            kind=MailKind.IN_TRANSIT,
-            carrier="paack",
-            number="Tq3Zr8Lm2_1",
-            time=at(days=8),
-        ),
-    ]
-    for index, item in enumerate(sent):
-        apply_contribution(data, item, at(days=9, hours=index))
-
-    assert paack_amazon_counts(data) == {
-        "naming_amazon": {
-            "matched": 3,
-            "unmatched": 1,
-            "without_id": 1,
-            "matched_ignoring_case": 4,
-            "amazon_id_7_days_before": 4,
-        },
-        "not_naming_amazon": {
-            "matched": 1,
-            "unmatched": 2,
-            "without_id": 0,
-            "matched_ignoring_case": 1,
-            "amazon_id_7_days_before": 2,
-        },
-    }
 
 
 def test_amazon_shipment_id_counts() -> None:
@@ -649,8 +531,8 @@ def test_paack_stem_prefers_the_open_package() -> None:
     assert len(data.parcels) == 3
 
 
-def test_paack_stem_joins_its_amazon_shipment() -> None:
-    """The stem is Amazon's shipment ID, so it joins Amazon's parcel."""
+def test_paack_stem_is_not_an_amazon_shipment() -> None:
+    """Paack's ID isn't Amazon's shipment ID, even when they look alike."""
     data = ParcelsData()
     amazon = apply_contribution(
         data,
@@ -668,10 +550,11 @@ def test_paack_stem_joins_its_amazon_shipment() -> None:
         _paack("msg:p#0", hours=1, kind=MailKind.DELIVERED, reference=SHIPMENT),
         at(hours=1),
     )
-    assert stem.parcel_id == amazon.parcel_id
-    assert stem.auto_merged is None
-    [parcel] = data.parcels.values()
-    assert parcel.state.status is S.DELIVERED
+    assert stem.created
+    assert stem.parcel_id != amazon.parcel_id
+    assert len(data.parcels) == 2
+    parcel = data.parcels[amazon.parcel_id]
+    assert parcel.state.status is not S.DELIVERED
     assert parcel.state.order_numbers == (AMAZON_ORDER,)
 
 

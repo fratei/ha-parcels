@@ -8,10 +8,8 @@ this an incremental union-find where each parcel is one set. The keys are:
   over to each other under the same number count as one family;
 * the tracking number alone for international postal (S10) numbers, because
   the carrier changes at the border;
-* the Amazon shipment ID. Paack's order ID for an Amazon parcel is that
-  shipment ID, written the same way, then "_" and the package number. Paack's
-  e-mails that give only that shipment ID, as the order number, join its
-  Amazon parcel too;
+* the Amazon shipment ID. Paack's order IDs for Amazon parcels are not
+  Amazon's shipment IDs, so they don't join them;
 * the origin ID. It holds the hash of the e-mail's Message-ID, so the same
   e-mail found in two mailboxes is applied once.
 
@@ -43,9 +41,15 @@ arrive in any order and a shop's e-mail rarely names the carrier's number:
   shipments that the same sender domain announces within a few days;
 * a parcel known only by a shipment reference joins the only tracked parcel
   with that reference. With several, the user gets merge suggestions;
+* an Amazon shipment that the Parcel app tracks joins the carrier's package
+  whose own events have the same minutes as Amazon's tracking: delivered,
+  and one more, such as arriving at the carrier. Only when exactly one
+  package agrees, and flagged; several shipments may join one package. When
+  more agree, the user gets merge suggestions;
 * a parcel without a tracking number joins the tracked parcel of the same
   merchant delivered on its date, when they are the only two that fit. When
-  more fit, the user gets merge suggestions instead.
+  more fit, the user gets merge suggestions instead. A package whose
+  delivery time Amazon's tracking contradicts never fits.
 
 Item titles never link different orders, and titles that unrelated orders
 share (a shop's recommendations read as items) don't count at all.
@@ -68,6 +72,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 import hashlib
 from itertools import combinations
+import re
 from typing import Any
 
 from homeassistant.util import dt as dt_util
@@ -97,6 +102,8 @@ from .models import (
 )
 from .parsers.base import Eta
 from .parsers.carriers import brand_carriers
+from .parsers.carriers._common import fold_text, phrase_regex
+from .parsers.carriers._phrases import KIND_PHRASES
 from .parsers.items import item_key, same_key
 from .parsers.senders import (
     is_free_mail,
@@ -122,6 +129,7 @@ REASON_SAME_MERCHANT_DAY = "same_merchant_day"
 REASON_SAME_MERCHANT_DOMAIN = "same_merchant_domain"
 REASON_SAME_ORDER = "same_order"
 REASON_SAME_REFERENCE = "same_reference"
+REASON_AMAZON_TRACKING = "amazon_tracking"
 
 # How far back reconcile() looks, and how soon after a shop's order e-mails
 # its tracked shipments must follow to absorb the order's parcel.
@@ -135,9 +143,6 @@ RECENT_AMAZON = timedelta(days=30)
 _ORDER_STAGE = frozenset(
     {MailKind.ORDER, MailKind.CANCELLED, MailKind.RETURN, MailKind.CUSTOMER_RETURN}
 )
-# How long before a Paack e-mail the diagnostics look for Amazon's e-mail
-# with a shipment ID.
-PAACK_AFTER_AMAZON = timedelta(days=7)
 # A shop's parcel up to this many days late, or due this many days later,
 # could still be the package a carrier delivers: shops deliver early too.
 LATE_DAYS = timedelta(days=14)
@@ -146,6 +151,15 @@ EARLY_DAYS = timedelta(days=7)
 SELLER_KEY_MIN_LENGTH = 4
 # An order delivered this long before or after a package wasn't in it.
 BOX_DELIVERY_SLACK = timedelta(hours=3)
+# Amazon's tracking of a shipment repeats the scans of the carrier's package
+# that holds it, to the minute. One of the package's own events agrees with
+# one of Amazon's this little before or after it: Amazon gives minutes, and
+# a carrier's e-mail leaves some seconds after its scan.
+AGREE_BEFORE = timedelta(minutes=1)
+AGREE_AFTER = timedelta(minutes=2)
+# A package delivered this long before or after Amazon's tracking says the
+# shipment came, or marked delivered by hand this long before, didn't hold it.
+CONTRADICTION_GAP = timedelta(hours=2)
 # What doesn't come to the door on a day, and the orders that need the user.
 _NOT_COMING = frozenset(
     {ParcelStatus.READY_FOR_PICKUP, ParcelStatus.RETURNED, ParcelStatus.CANCELLED}
@@ -153,11 +167,13 @@ _NOT_COMING = frozenset(
 _PROBLEMS = frozenset({ParcelStatus.ATTEMPTED, ParcelStatus.EXCEPTION})
 
 # Engine-state keys: pairs of origins the user keeps apart, the version of
-# the one-time repair of stored parcels, and what its fourth step changed.
+# the one-time repair of stored parcels, what its fourth step changed, and
+# how Amazon shipments were linked to carriers' packages (counts only).
 KEPT_APART = "kept_apart"
 REPAIR_KEY = "repair"
 REPAIR_VERSION = 4
 AMAZON_REPAIR_KEY = "amazon_carrier_repaired"
+AMAZON_LINKS_KEY = "amazon_links"
 # Where a carrier is read from the parcel's or someone else's say-so: the
 # local AI, the Parcel app and 17TRACK. Amazon is their carrier only with
 # one of its numbers.
@@ -211,6 +227,7 @@ class Contribution:
     attach_only: bool = False
     # Joins the parcel holding this origin ID, or nothing when no parcel does:
     # what the AI filled in for an e-mail goes with the e-mail's parser origin.
+    # A Parcel app delivery joins the parcel its sync chose, and no other.
     anchor: str | None = None
 
 
@@ -311,6 +328,15 @@ def order_parcels(
     ]
 
 
+def shipment_parcels(data: ParcelsData, shipment: str) -> list[Parcel]:
+    """Return the parcels of an Amazon shipment."""
+    return [
+        parcel
+        for parcel in data.parcels.values()
+        if shipment in parcel.state.amazon_shipment_ids
+    ]
+
+
 def find_parcels_by_number(data: ParcelsData, number: str) -> list[Parcel]:
     """Return the parcels known by a tracking number, whatever the carrier."""
     wanted = number_key_text(number)
@@ -376,23 +402,15 @@ def _references_differ(first: set[ReferenceKey], second: set[ReferenceKey]) -> b
     return False
 
 
-def _names_shipment(paack: Origin, amazon: Origin) -> bool:
-    stem = _paack_stem(paack)
-    return stem is not None and stem == amazon.amazon_shipment_id
-
-
 def _same_shipment(first: Origin, second: Origin) -> bool:
-    """Return True when two origins are about the same Amazon shipment.
+    """Return True when two origins give the same Amazon shipment ID.
 
-    Both give its shipment ID, or one is Paack's order ID whose part before
-    "_" is the other's shipment ID. Case counts: the IDs are case-sensitive.
+    Case counts: the IDs are case-sensitive.
     """
-    if (
+    return bool(
         first.amazon_shipment_id
         and first.amazon_shipment_id == second.amazon_shipment_id
-    ):
-        return True
-    return _names_shipment(first, second) or _names_shipment(second, first)
+    )
 
 
 def _origins_linked(first: Origin, second: Origin) -> bool:
@@ -408,65 +426,6 @@ def _origins_linked(first: Origin, second: Origin) -> bool:
         or key_b.family is None
         or key_a.family == key_b.family
     )
-
-
-def paack_amazon_counts(data: ParcelsData) -> dict[str, dict[str, int]]:
-    """Count Paack's e-mails by whether their order ID names an Amazon shipment.
-
-    Each e-mail counts once: "matched" when the part of its order ID before
-    "_" (or the order number it gives alone) is the shipment ID of an Amazon
-    e-mail, "unmatched" when no Amazon shipment fits, "without_id" when no
-    order ID was read. Apart from those, "matched_ignoring_case" counts the
-    e-mails that match when case is ignored, the matched ones included, and
-    "amazon_id_7_days_before" the e-mails that came at most 7 days after an
-    e-mail from Amazon that gave a shipment ID, whichever shipment it named.
-    The counts hold no ID or shop name.
-    """
-    shipments = {
-        origin.amazon_shipment_id
-        for origin in _all_origins(data)
-        if origin.amazon_shipment_id
-    }
-    folded = {shipment.casefold() for shipment in shipments}
-    amazon_times = [
-        origin.time
-        for origin in _all_origins(data)
-        if origin.amazon_shipment_id
-        and (info := lookup(origin.label)) is not None
-        and info.parser == "amazon"
-    ]
-    emails: defaultdict[str, list[Origin]] = defaultdict(list)
-    for origin in _all_origins(data):
-        if (info := lookup(origin.label)) is not None and info.carrier == "paack":
-            emails[origin.message or origin.id].append(origin)
-    counts = {
-        group: dict.fromkeys(
-            (
-                "matched",
-                "unmatched",
-                "without_id",
-                "matched_ignoring_case",
-                "amazon_id_7_days_before",
-            ),
-            0,
-        )
-        for group in ("naming_amazon", "not_naming_amazon")
-    }
-    for origins in emails.values():
-        stems = {stem for origin in origins if (stem := _paack_stem(origin))}
-        if stems & shipments:
-            result = "matched"
-        else:
-            result = "unmatched" if stems else "without_id"
-        amazon = any(merchant_key(origin.merchant) == "amazon" for origin in origins)
-        group = counts["naming_amazon" if amazon else "not_naming_amazon"]
-        group[result] += 1
-        if {stem.casefold() for stem in stems} & folded:
-            group["matched_ignoring_case"] += 1
-        sent = min(origin.time for origin in origins)
-        if any(sent - PAACK_AFTER_AMAZON <= time <= sent for time in amazon_times):
-            group["amazon_id_7_days_before"] += 1
-    return counts
 
 
 def _id_shape(value: str) -> str:
@@ -968,7 +927,7 @@ def apply_contribution(
         }
         if not strong:
             return Applied(parcel_id=None)
-    if origin.amazon_shipment_id or _paack_stem(origin):
+    if origin.amazon_shipment_id:
         strong |= {
             pid
             for pid, parcel in data.parcels.items()
@@ -1003,7 +962,8 @@ def apply_contribution(
     ):
         targets = {_most_recent(data, loose)}
         reason = REASON_SAME_NUMBER
-    if number or origin.amazon_shipment_id:
+    placed = contribution.anchor is not None and origin.source is Source.PARCELAPP
+    if (number or origin.amazon_shipment_id) and not placed:
         absorbed, absorb_reason = _absorbable(data, origin, targets)
         targets |= absorbed
         targets |= _reference_absorbable(data, origin, targets)
@@ -1210,9 +1170,12 @@ def undo_auto_merge(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel 
     """Undo a heuristic merge, returning the parcel that was split off.
 
     The origins that were linked by the heuristic leave together with every
-    origin that shares their tracking number or shipment. When nothing would
-    be left behind, only the flag is cleared and None is returned. The two
-    parcels are then kept apart, so they aren't merged again.
+    origin that shares their tracking number or shipment. When the flag has
+    groups, such as Amazon shipments linked one by one to the package that
+    carried them, each group leaves as its own parcel, and the first is
+    returned. When nothing would be left behind, only the flag is cleared
+    and None is returned. The parcels are then kept apart, so they aren't
+    merged again.
     """
     parcel = data.parcels[parcel_id]
     flag = parcel.auto_merged
@@ -1220,20 +1183,39 @@ def undo_auto_merge(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel 
     parcel.touch(now)
     if flag is None:
         return None
-    component = flag.all_origins & parcel.origins.keys()
-    if not component:
-        return None
-    pending = [parcel.origins[oid] for oid in component]
-    while pending:
-        current = pending.pop()
-        for oid, other in parcel.origins.items():
-            if oid not in component and _origins_linked(current, other):
-                component.add(oid)
-                pending.append(other)
-    try:
-        return split_parcel(data, parcel_id, component, now)
-    except DedupError:
-        return None
+    first: Parcel | None = None
+    for part in _undo_parts(flag, parcel):
+        try:
+            new = split_parcel(data, parcel_id, part, now)
+        except DedupError:
+            continue
+        first = first or new
+    return first
+
+
+def _undo_parts(flag: AutoMerge, parcel: Parcel) -> list[set[str]]:
+    """Return the origins that leave a parcel on undo, one set per parcel.
+
+    Each group of the flag is one, and its other origins one more. Each
+    takes the origins that share its tracking number or shipment, unless
+    another took them first.
+    """
+    present = flag.all_origins & parcel.origins.keys()
+    grouped = {oid for group in flag.groups for oid in group}
+    parts = [set(group) & present for group in flag.groups]
+    parts.append(present - grouped)
+    parts = [part for part in parts if part]
+    taken = set().union(*parts)
+    for part in parts:
+        pending = [parcel.origins[oid] for oid in part]
+        while pending:
+            current = pending.pop()
+            for oid, other in parcel.origins.items():
+                if oid not in taken and _origins_linked(current, other):
+                    part.add(oid)
+                    taken.add(oid)
+                    pending.append(other)
+    return parts
 
 
 def remove_message(data: ParcelsData, message_hash: str, now: datetime) -> set[str]:
@@ -1303,6 +1285,11 @@ def remove_origins(
             parcel.auto_merged = replace(
                 flag,
                 origins=tuple(oid for oid in flag.origins if oid not in removed),
+                groups=tuple(
+                    kept
+                    for group in flag.groups
+                    if (kept := tuple(oid for oid in group if oid not in removed))
+                ),
             )
     if parcel.origins:
         parcel.touch(now)
@@ -1837,20 +1824,28 @@ def _reported_delivery(parcel: Parcel) -> datetime | None:
     return None
 
 
-def _parcels_conflict(first: Parcel, second: Parcel) -> bool:
-    """Return True when two parcels can't be the same parcel."""
+def _parcels_conflict(first: Parcel, second: Parcel, *, carried: bool = False) -> bool:
+    """Return True when two parcels can't be the same parcel.
+
+    With ``carried``, a carrier's package that carries Amazon shipments may
+    take one more, of another order, or hold another order of the day.
+    """
     one, two = first.state, second.state
     if one.tracking_number and two.tracking_number:
         return True
-    if (
-        one.amazon_shipment_ids
-        and two.amazon_shipment_ids
-        and not set(one.amazon_shipment_ids) & set(two.amazon_shipment_ids)
-    ):
-        return True
-    orders_one, orders_two = parcel_order_keys(first), parcel_order_keys(second)
-    if orders_one and orders_two and not orders_one & orders_two:
-        return True
+    holds = carried and (
+        (_is_box(first) and _carries(first)) or (_is_box(second) and _carries(second))
+    )
+    if not holds:
+        if (
+            one.amazon_shipment_ids
+            and two.amazon_shipment_ids
+            and not set(one.amazon_shipment_ids) & set(two.amazon_shipment_ids)
+        ):
+            return True
+        orders_one, orders_two = parcel_order_keys(first), parcel_order_keys(second)
+        if orders_one and orders_two and not orders_one & orders_two:
+            return True
     return _references_differ(
         parcel_reference_keys(first), parcel_reference_keys(second)
     )
@@ -1951,6 +1946,7 @@ def _grown(flag: AutoMerge, parcel: Parcel, guessed: set[str]) -> AutoMerge:
         at=flag.at,
         reason=flag.reason,
         origins=tuple(sorted(linked, key=lambda oid: (parcel.origins[oid].time, oid))),
+        groups=flag.groups,
     )
 
 
@@ -2199,12 +2195,497 @@ def _shop_keys(parcel: Parcel) -> set[str]:
     return keys - {""}
 
 
+# --- Amazon shipments and the carrier's package -----------------------------------
+
+# A place from the Parcel app is a name, not a sentence: "Vila Exemplo".
+PLACE_MAX_WORDS = 8
+PLACE_MAX_LENGTH = 60
+_PLACE_TOKEN = re.compile(r"[a-z0-9]{3,}")
+# Amazon's tracking says "Entrega em curso" when the van leaves, which no
+# e-mail of the carriers says.
+_VAN_OUT_PHRASES = (
+    *KIND_PHRASES[MailKind.OUT_FOR_DELIVERY],
+    "entrega em curso",
+    "em entrega",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AmazonEvidence:
+    """When and where Amazon's tracking says a shipment was delivered.
+
+    With ``timeless``, Amazon gave the day but not the time.
+    """
+
+    delivered: datetime
+    timeless: bool
+    place: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _Mark:
+    """A time a shipment or package was seen at, and where.
+
+    A scan's time (Amazon's tracking, 17TRACK, the Parcel app) is the
+    carrier's; an e-mail leaves some time after what it tells.
+    """
+
+    time: datetime
+    place: str | None = None
+    scan: bool = False
+
+
+def _van_out(event: ParcelEvent) -> bool:
+    """Return whether an event says the parcel left for delivery."""
+    return (
+        event.status is ParcelStatus.OUT_FOR_DELIVERY
+        or event.kind is MailKind.OUT_FOR_DELIVERY
+        or (
+            bool(event.label)
+            and phrase_regex(_VAN_OUT_PHRASES).search(fold_text(event.label or ""))
+            is not None
+        )
+    )
+
+
+def _amazon_tracking(origin: Origin) -> bool:
+    """Return whether an origin is the Parcel app's tracking of an Amazon order."""
+    return (
+        origin.source is Source.PARCELAPP
+        and bool(origin.order_numbers)
+        and not origin.tracking_number
+    )
+
+
+def _carries(parcel: Parcel) -> bool:
+    """Return whether a parcel holds the Parcel app's tracking of Amazon's."""
+    return any(_amazon_tracking(origin) for origin in parcel.origins.values())
+
+
+def _amazon_mail(origin: Origin) -> bool:
+    """Return whether an origin is one of Amazon's e-mails."""
+    return (
+        origin.message is not None
+        and (info := lookup(origin.label or "")) is not None
+        and info.parser == "amazon"
+    )
+
+
+def _exact(event: ParcelEvent) -> bool:
+    """Return whether an event tells a time it was really seen at."""
+    return (
+        not event.inferred
+        and not event.undated
+        and event.source is not Source.MANUAL
+        and (event.status is not None or bool(event.label))
+    )
+
+
+def _is_shipment(parcel: Parcel) -> bool:
+    """Return whether a parcel is an Amazon shipment the Parcel app follows.
+
+    It has no carrier's number: the package that carried it is another
+    parcel.
+    """
+    state = parcel.state
+    return (
+        not state.tracking_number
+        and state.status not in (ParcelStatus.CANCELLED, ParcelStatus.RETURNED)
+        and _carries(parcel)
+    )
+
+
+def _is_box(parcel: Parcel) -> bool:
+    """Return whether a parcel is a carrier's package of no shop's order.
+
+    The orders of the Amazon shipments it carries don't count: one package
+    may carry several.
+    """
+    state = parcel.state
+    if not state.tracking_number:
+        return False
+    carried: set[str] = set()
+    for origin in parcel.origins.values():
+        keys = origin_order_keys(origin, state.merchant)
+        if origin.tracking_number and keys:
+            return False
+        if _amazon_tracking(origin):
+            carried |= keys
+    return parcel_order_keys(parcel) <= carried
+
+
+def _own_origin(origin: Origin) -> bool:
+    """Return whether an origin tells about a package itself.
+
+    Not the user's edits, nor Amazon's e-mails or tracking of the shipments
+    it carries.
+    """
+    return (
+        origin.source is not Source.MANUAL
+        and origin.amazon_shipment_id is None
+        and not (origin.order_numbers and not origin.tracking_number)
+        and not _amazon_mail(origin)
+    )
+
+
+def _place(event: ParcelEvent) -> str | None:
+    """Return the place a Parcel app event names, or None.
+
+    The app writes an event as "<what>, <place>", maybe followed by the
+    country's code: "Entregue, Vila Exemplo, PT".
+    """
+    if event.source is not Source.PARCELAPP or not event.label:
+        return None
+    parts = [part.strip() for part in event.label.split(",")]
+    if len(parts) > 2 and len(parts[-1]) == 2 and parts[-1].isalpha():
+        parts.pop()
+    if len(parts) < 2:
+        return None
+    place = parts[-1]
+    if (
+        not place
+        or len(place) > PLACE_MAX_LENGTH
+        or len(place.split()) > PLACE_MAX_WORDS
+        or not any(char.isalpha() for char in place)
+        or place.endswith((".", "!", "?", "…"))
+    ):
+        return None
+    return place
+
+
+def _places_differ(first: str | None, second: str | None) -> bool:
+    """Return True when two places share no word: they're other places."""
+    if not first or not second:
+        return False
+    one = set(_PLACE_TOKEN.findall(fold_text(first)))
+    two = set(_PLACE_TOKEN.findall(fold_text(second)))
+    return bool(one) and bool(two) and one.isdisjoint(two)
+
+
+def _agrees(amazon: _Mark, own: _Mark) -> bool:
+    """Return whether a package's own news repeats one of Amazon's."""
+    return (
+        amazon.time - AGREE_BEFORE <= own.time <= amazon.time + AGREE_AFTER
+        and not _places_differ(amazon.place, own.place)
+    )
+
+
+def _hand_marks(parcel: Parcel) -> list[datetime]:
+    """Return when the user marked a parcel delivered."""
+    return [
+        event.time
+        for event in parcel.events
+        if event.source is Source.MANUAL
+        and event.status is ParcelStatus.DELIVERED
+        and not event.inferred
+    ]
+
+
+def _by_hand(parcel: Parcel) -> bool:
+    """Return whether a parcel's delivery time is when the user marked it.
+
+    It had come by then, maybe hours before.
+    """
+    return _real_delivery(parcel) is not None and _reported_delivery(parcel) is None
+
+
+def _came_together(
+    first: datetime, first_by_hand: bool, second: datetime, second_by_hand: bool
+) -> bool:
+    """Return whether two deliveries may have been one.
+
+    A delivery marked by hand had come by then: only a later one rules it
+    out.
+    """
+    if first_by_hand and second_by_hand:
+        return True
+    if first_by_hand:
+        return second <= first + BOX_DELIVERY_SLACK
+    if second_by_hand:
+        return first <= second + BOX_DELIVERY_SLACK
+    return abs(first - second) <= BOX_DELIVERY_SLACK
+
+
+def _amazon_marks(parcel: Parcel) -> tuple[_Mark | None, list[_Mark]]:
+    """Return Amazon's delivery of a shipment, and its other news but the van.
+
+    Several packages in one van leave and come together; only their other
+    news tells them apart.
+    """
+    tracking = {
+        oid for oid, origin in parcel.origins.items() if _amazon_tracking(origin)
+    }
+    events = [
+        event for event in parcel.events if event.origin in tracking and _exact(event)
+    ]
+    done = [event for event in events if event.status is ParcelStatus.DELIVERED]
+    delivered = None
+    if done:
+        last = max(done, key=lambda event: event.time)
+        delivered = _Mark(last.time, _place(last), scan=True)
+    further = [
+        _Mark(event.time, _place(event), scan=True)
+        for event in events
+        if event.status is not ParcelStatus.DELIVERED and not _van_out(event)
+    ]
+    return delivered, further
+
+
+def _box_evidence(box: Parcel) -> tuple[list[_Mark], list[_Mark]]:
+    """Return a package's own deliveries, and its other news but the van.
+
+    The other news are the scans 17TRACK and the Parcel app give, and the
+    carrier's first e-mail, sent when the package reached it.
+    """
+    own = {oid: origin for oid, origin in box.origins.items() if _own_origin(origin)}
+    delivered: list[_Mark] = []
+    further: list[_Mark] = []
+    for event in box.events:
+        origin = own.get(event.origin or "")
+        if origin is None or not _exact(event):
+            continue
+        scan = origin.message is None
+        if event.status is ParcelStatus.DELIVERED:
+            delivered.append(_Mark(event.time, _place(event), scan))
+        elif scan and not _van_out(event):
+            further.append(_Mark(event.time, _place(event), scan=True))
+    mails = sorted(
+        (origin for origin in own.values() if origin.message is not None),
+        key=lambda origin: (origin.time, origin.id),
+    )
+    if mails and not any(
+        event.origin == mails[0].id
+        and (event.status is ParcelStatus.DELIVERED or _van_out(event))
+        for event in box.events
+    ):
+        further.append(_Mark(mails[0].time))
+    return delivered, further
+
+
+def _contradicted(
+    at: datetime, marks: Iterable[_Mark], bounds: Iterable[datetime]
+) -> bool:
+    """Return whether a package's delivery rules out one at ``at``.
+
+    A scan gives the time, which must be within two hours. An e-mail or the
+    user's mark says only that it had come by then: it rules out a delivery
+    more than two hours later.
+    """
+    marks = list(marks)
+    if scans := [mark.time for mark in marks if mark.scan]:
+        return not any(abs(time - at) <= CONTRADICTION_GAP for time in scans)
+    upper = [mark.time for mark in marks if not mark.scan] + list(bounds)
+    return bool(upper) and min(upper) < at - CONTRADICTION_GAP
+
+
+def amazon_contradicts(shipment: Parcel, box: Parcel) -> bool:
+    """Return whether Amazon's tracking rules out that a package held a parcel.
+
+    The parcel has no carrier's number and Amazon's tracking says when it
+    was delivered; the package was delivered at another time.
+    """
+    if shipment.state.tracking_number or not box.state.tracking_number:
+        return False
+    mark, _further = _amazon_marks(shipment)
+    if mark is None:
+        return False
+    delivered, _further = _box_evidence(box)
+    return _contradicted(mark.time, delivered, _hand_marks(box))
+
+
+def amazon_disagree(first: Parcel, second: Parcel) -> bool:
+    """Return whether Amazon's tracking rules out that two parcels are one."""
+    return amazon_contradicts(first, second) or amazon_contradicts(second, first)
+
+
+def amazon_evidence(parcel: Parcel) -> AmazonEvidence | None:
+    """Return when and where Amazon's tracking says a shipment was delivered."""
+    if not _is_shipment(parcel):
+        return None
+    tracking = {
+        oid for oid, origin in parcel.origins.items() if _amazon_tracking(origin)
+    }
+    found = [
+        event
+        for event in parcel.events
+        if event.origin in tracking
+        and event.status is ParcelStatus.DELIVERED
+        and not event.inferred
+        and event.source is not Source.MANUAL
+        and day_known(event)
+    ]
+    if not found:
+        return None
+    event = max(found, key=lambda event: event.time)
+    return AmazonEvidence(event.time, event.undated, _place(event))
+
+
+def _may_carry(
+    shipment: Parcel, box: Parcel, apart: Callable[[Parcel, Parcel], bool]
+) -> bool:
+    """Return whether a package may have carried an Amazon shipment.
+
+    Not another carrier's, another shop's, a private package with a public
+    shipment, or one the user keeps apart.
+    """
+    if box.private and not shipment.private:
+        return False
+    if not _same_carrier(shipment.state.carrier, box.state.carrier):
+        return False
+    keys, box_keys = _shop_keys(shipment), _shop_keys(box)
+    if keys and box_keys and keys.isdisjoint(box_keys):
+        return False
+    return not apart(shipment, box) and not _parcels_conflict(
+        shipment, box, carried=True
+    )
+
+
+def _carry(
+    data: ParcelsData, box: Parcel, shipment: Parcel, now: datetime, result: Reconciled
+) -> bool:
+    """Merge an Amazon shipment into the package that carried it, undoably.
+
+    Shipments linked one by one leave as their own parcels on undo. A
+    package or shipment merged by another guess isn't merged again.
+    """
+    earlier = box.auto_merged
+    if earlier is not None and earlier.reason != REASON_AMAZON_TRACKING:
+        return False
+    if (
+        shipment.auto_merged is not None
+        and shipment.auto_merged.reason != REASON_SAME_ORDER
+    ):
+        return False
+    if earlier is None:
+        _auto_merge(data, box, shipment, REASON_AMAZON_TRACKING, now, result)
+        return True
+    present = tuple(
+        sorted(
+            earlier.all_origins & box.origins.keys(),
+            key=lambda oid: (box.origins[oid].time, oid),
+        )
+    )
+    groups = earlier.groups or ((present,) if present else ())
+    moving = tuple(
+        sorted(shipment.origins, key=lambda oid: (shipment.origins[oid].time, oid))
+    )
+    _auto_merge(data, box, shipment, REASON_AMAZON_TRACKING, now, result)
+    if (flag := box.auto_merged) is not None:
+        box.auto_merged = replace(flag, groups=(*groups, moving))
+    return True
+
+
+def _link_amazon_shipments(
+    data: ParcelsData,
+    pool: list[Parcel],
+    apart: Callable[[Parcel, Parcel], bool],
+    now: datetime,
+    result: Reconciled,
+) -> set[str]:
+    """Link Amazon shipments to the carriers' packages that carried them.
+
+    Amazon's tracking of a shipment, which the Parcel app follows, repeats
+    the scans of the carrier's package to the minute. A package carried it
+    when it was delivered that minute and one more of its news agrees: a
+    scan, or its first e-mail, sent when the package reached the carrier.
+    The van leaving doesn't count, since a van takes many packages. When
+    exactly one package agrees, the shipment merges into it, undoably; when
+    several do, each is suggested. A package delivered at another time is
+    ruled out. Returns the shipments that were linked or suggested.
+    """
+    shipments = [
+        parcel
+        for parcel in pool
+        if parcel.id not in result.removed and _is_shipment(parcel)
+    ]
+    previous = data.engine.get(AMAZON_LINKS_KEY)
+    if not shipments and not isinstance(previous, Mapping):
+        return set()
+    boxes: list[tuple[Parcel, list[_Mark], list[_Mark], list[datetime], date | None]]
+    boxes = []
+    for box in data.parcels.values():
+        if (
+            box.id in result.removed
+            or box.state.status in (ParcelStatus.CANCELLED, ParcelStatus.RETURNED)
+            or not _is_box(box)
+        ):
+            continue
+        delivered, further = _box_evidence(box)
+        hands = _hand_marks(box)
+        if delivered or hands:
+            came = _real_delivery(box)
+            boxes.append(
+                (
+                    box,
+                    delivered,
+                    further,
+                    hands,
+                    None if came is None else local_date(came),
+                )
+            )
+
+    handled: set[str] = set()
+    made = ambiguous = contradicted = 0
+    for shipment in shipments:
+        mark, extra = _amazon_marks(shipment)
+        if mark is None:
+            continue
+        day = local_date(mark.time)
+        found: list[Parcel] = []
+        for box, delivered, further, hands, came in boxes:
+            if box.id in result.removed:
+                continue
+            if (
+                any(_agrees(mark, own) for own in delivered)
+                and any(_agrees(theirs, own) for theirs in extra for own in further)
+                and _may_carry(shipment, box, apart)
+            ):
+                found.append(box)
+            elif (
+                came == day
+                and _contradicted(mark.time, delivered, hands)
+                and _may_carry(shipment, box, apart)
+            ):
+                contradicted += 1
+        if not found:
+            continue
+        handled.add(shipment.id)
+        if len(found) == 1:
+            [box] = found
+            if _carry(data, box, shipment, now, result):
+                made += 1
+            elif box.archived is None and shipment.archived is None:
+                result.suggestions.append(
+                    _suggestion(box, [shipment], day, REASON_AMAZON_TRACKING)
+                )
+            continue
+        ambiguous += 1
+        if shipment.archived is None:
+            result.suggestions.extend(
+                _suggestion(box, [shipment], day, REASON_AMAZON_TRACKING)
+                for box in found
+                if box.archived is None
+            )
+
+    earlier = previous.get("made") if isinstance(previous, Mapping) else None
+    counts = {
+        "made": (earlier if isinstance(earlier, int) else 0) + made,
+        "ambiguous": ambiguous,
+        "contradicted": contradicted,
+    }
+    if counts != previous:
+        data.engine[AMAZON_LINKS_KEY] = counts
+    return handled
+
+
 def _pair_by_day(
     data: ParcelsData,
     pool: list[Parcel],
     apart: Callable[[Parcel, Parcel], bool],
     now: datetime,
     result: Reconciled,
+    *,
+    skip: Collection[str] = frozenset(),
 ) -> None:
     """Pair parcels without a tracking number with a carrier's delivery.
 
@@ -2215,11 +2696,15 @@ def _pair_by_day(
     only two that could be the same package, they merge. An open parcel of
     the shop that is late, or due in the next days, could be it too, and two
     carriers known to differ never pair, nor does a delivery made before the
-    day the shop's package left. Otherwise the user gets suggestions.
+    day the shop's package left. Otherwise the user gets suggestions. The
+    Amazon shipments in ``skip`` were already linked by Amazon's tracking,
+    and a package it rules out is never paired.
     """
     untracked: list[tuple[Parcel, set[str], date, date, datetime, date | None]] = []
     tracked: list[tuple[Parcel, set[str], date]] = []
     for parcel in pool:
+        if parcel.id in skip:
+            continue
         state = parcel.state
         if not (keys := _shop_keys(parcel)):
             continue
@@ -2261,6 +2746,7 @@ def _pair_by_day(
                 and (sent is None or sent <= day)
                 and not _parcels_conflict(parcel, other)
                 and not apart(parcel, other)
+                and not amazon_contradicts(parcel, other)
             ):
                 edges[parcel.id].add(other.id)
                 edges[other.id].add(parcel.id)
@@ -2318,8 +2804,10 @@ def _box_may_hold(
 
     Its shop must be the order's or unknown, its carrier the one the shop
     named, if any, and it can't hold a public order when it's private. A
-    delivered order was in a package delivered within a few hours, and an
-    order that had news after the package came, or none before, wasn't in it.
+    delivered order was in a package delivered within a few hours; one the
+    user marked delivered had come by then. An order that had news after the
+    package came, or none before, wasn't in it, nor was an Amazon shipment
+    whose tracking says it came at another time.
     """
     mine, theirs = order.state, box.state
     if box.private and not order.private:
@@ -2329,8 +2817,9 @@ def _box_may_hold(
         return False
     if (
         not _same_carrier(mine.carrier, theirs.carrier)
-        or _parcels_conflict(order, box)
+        or _parcels_conflict(order, box, carried=True)
         or apart(order, box)
+        or amazon_contradicts(order, box)
     ):
         return False
     delivered = _real_delivery(box)
@@ -2347,7 +2836,7 @@ def _box_may_hold(
         if (
             came is not None
             and delivered is not None
-            and abs(came - delivered) > BOX_DELIVERY_SLACK
+            and not _came_together(came, _by_hand(order), delivered, _by_hand(box))
         ):
             return False
     elif (
@@ -2375,20 +2864,16 @@ def boxes_of_day(
     """Return the packages that may hold each of a day's orders.
 
     An order here is a parcel of the day, delivered or not, of a known shop
-    and without a carrier's number. A carrier's package that no order is
-    linked to may hold it,
-    see :func:`_box_may_hold`: shops pack orders together, so one package
-    may hold several. Only the likeliest packages are kept, every one of
-    them on a tie. An order that no package may hold, or with a problem, is
-    left out.
+    and without a carrier's number. A carrier's package that no shop's order
+    names, apart from the Amazon shipments it carries, may hold it, see
+    :func:`_box_may_hold`: shops pack orders together, so one package may
+    hold several. Only the likeliest packages are kept, every one of them on
+    a tie. An order that no package may hold, or with a problem, is left
+    out.
     """
     apart = _apart_checker(data)
     today = [parcel for parcel in parcels if _of_day(parcel.state, day)]
-    boxes = [
-        parcel
-        for parcel in today
-        if parcel.state.tracking_number and not parcel_order_keys(parcel)
-    ]
+    boxes = [parcel for parcel in today if _is_box(parcel)]
     covered: dict[str, tuple[str, ...]] = {}
     if not boxes:
         return covered
@@ -2483,7 +2968,10 @@ def reconcile(
     _merge_by_order(data, start, apart, now, result)
     _absorb_by_domain(data, _reconcile_pool(data, start), apart, now, result)
     _pair_by_reference(data, _reconcile_pool(data, start), apart, now, result)
-    _pair_by_day(data, _reconcile_pool(data, start), apart, now, result)
+    handled = _link_amazon_shipments(
+        data, _reconcile_pool(data, start), apart, now, result
+    )
+    _pair_by_day(data, _reconcile_pool(data, start), apart, now, result, skip=handled)
     result.changed -= result.removed
     return result
 
@@ -2497,7 +2985,7 @@ def accept_suggestion(
     target, candidate = data.parcels.get(parcel_id), data.parcels.get(candidate_id)
     if target is None or candidate is None:
         raise DedupError("unknown_parcel")
-    if _parcels_conflict(target, candidate):
+    if _parcels_conflict(target, candidate, carried=True):
         raise DedupError("cannot_merge")
     return merge_parcels(data, parcel_id, (candidate_id,), now, keep_archived=True)
 

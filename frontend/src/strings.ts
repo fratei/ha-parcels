@@ -80,6 +80,14 @@ export const STRINGS = {
     "Not confirmed: this parcel's e-mails name only a shipment reference. Merge the package if they're about it, or rule it out.",
   possibleHintShipment:
     "Not confirmed: an e-mail names only the shipment this package is part of. Merge it if it's about this package, or rule it out.",
+  possibleHintAmazonMany:
+    "Not confirmed: Amazon's tracking fits these deliveries equally well. Merge the one this package came in, or rule out the others.",
+  possibleHintAmazonOne:
+    "Not confirmed: Amazon's tracking fits this delivery's times. Merge it if this package came in it, or rule it out.",
+  possibleHintAmazonDeliveryMany:
+    "Not confirmed: Amazon's tracking of these orders fits this delivery's times. Merge the ones that came in it, and rule out the rest.",
+  possibleHintAmazonDeliveryOne:
+    "Not confirmed: Amazon's tracking of this order fits this delivery's times. Merge the order if it came in it, or rule it out.",
   candidateEmail: "1 e-mail from {name}",
   candidateEmails: "{count} e-mails from {name}",
   candidateUpdate: "1 update from {name}",
@@ -298,6 +306,9 @@ export const STRINGS = {
   mergeShowOlder: "Show older ({count})",
   mergeNoMatch: "No parcel matches the search.",
   noMergeCandidates: "There are no other parcels to merge with.",
+  amazonTracking: "Amazon's tracking: delivered {when}",
+  amazonTrackingAt: "Amazon's tracking: delivered {when} · {place}",
+  amazonRulesOut: "Amazon's tracking rules this out: delivered at another time",
   numberTail: "No. {tail}",
   orderTail: "Order {tail}",
   splitIntro: "Choose what to move to a new parcel.",
@@ -536,6 +547,7 @@ export const MERGE_REASON_LABELS: Readonly<Record<string, string>> = {
   same_merchant_domain: "the shop's tracked shipment followed its order",
   same_order: "same order",
   same_reference: "same shipment reference",
+  amazon_tracking: "Amazon's tracking matches the carrier's times",
 };
 
 /** Fills `{name}` placeholders; unknown placeholders are left as they are. */

@@ -116,6 +116,19 @@ def _result(kind: MailKind, *, eta: Eta | None = None) -> ParseResult:
         ("nl", "Je pakket is in de brievenbus geleverd.", MAILBOX),
         ("nl", "Je pakket is afgeleverd bij de voordeur.", DOOR),
         ("nl", "Je pakket is afgegeven bij de receptie.", RECEPTION),
+        # Who took it, when that's a place.
+        ("it", "Ha ritirato: il portiere", RECEPTION),
+        ("it", "Ritirato da: Portineria condominio", RECEPTION),
+        ("it", "Firmato da: Portiere", RECEPTION),
+        ("fr", "Réceptionné par : Accueil", RECEPTION),
+        ("fr", "Réceptionné par le gardien", RECEPTION),
+        ("fr", "Signé par : Gardien", RECEPTION),
+        ("nl", "In ontvangst genomen door: Buren", NEIGHBOUR),
+        ("nl", "In ontvangst genomen door de receptie", RECEPTION),
+        ("nl", "Getekend door: Receptie", RECEPTION),
+        ("es", "Firmado por: Conserjería", RECEPTION),
+        ("pt", "Assinado por: Rececionista", RECEPTION),
+        ("de", "Unterschrieben von: Nachbar", NEIGHBOUR),
     ],
 )
 def test_left_at(lang: str | None, text: str, expected: LeftAt) -> None:
@@ -128,6 +141,9 @@ def test_left_at(lang: str | None, text: str, expected: LeftAt) -> None:
     [
         # Names of people and items aren't places.
         ("pt", "Recebido por Alex Doe"),
+        ("it", "Ha ritirato: Alex Esempio"),
+        ("fr", "Réceptionné par : A. Exemple"),
+        ("nl", "In ontvangst genomen door: J. Voorbeeld"),
         ("en", "Delivered: A garage rack"),
         ("en", "Delivered\nGarage rack"),
         # A delivery to the address isn't a place it was left.
