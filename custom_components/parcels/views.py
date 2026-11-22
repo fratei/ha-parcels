@@ -28,6 +28,7 @@ from .customer_returns import linked_parcels, order_index
 from .dedup import (
     MergeSuggestion,
     amazon_disagree,
+    amazon_elsewhere,
     amazon_evidence,
     first_news,
     is_shop_sender,
@@ -623,8 +624,10 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
 
     "contradicted" lists the parcels the viewer may see that Amazon's
     tracking rules out as the same package: one is an Amazon shipment and
-    the other a carrier's package delivered at another time. Callers check
-    ``viewer.can_see`` first.
+    the other a carrier's package delivered at another time. "elsewhere"
+    lists the others its tracking points away from: the packages that don't
+    repeat a shipment's times when some do, or the shipments whose times
+    some other package repeats. Callers check ``viewer.can_see`` first.
     """
     data = engine.data
     state = parcel.state
@@ -666,6 +669,13 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
     groups = shipment_groups(
         other for other in data.parcels.values() if viewer.can_see(other)
     )
+    contradicted = sorted(
+        other.id
+        for other in data.parcels.values()
+        if other.id != parcel.id
+        and viewer.can_see(other)
+        and amazon_disagree(parcel, other)
+    )
     return {
         "parcel": parcel_json(
             parcel, viewer, shipment=groups.get(parcel.id), code=True
@@ -673,12 +683,11 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
         "timeline": timeline,
         "orders": orders,
         "origins": origin_rows(engine, parcel, viewer),
-        "contradicted": sorted(
-            other.id
-            for other in data.parcels.values()
-            if other.id != parcel.id
-            and viewer.can_see(other)
-            and amazon_disagree(parcel, other)
+        "contradicted": contradicted,
+        "elsewhere": sorted(
+            amazon_elsewhere(data, parcel, viewer.can_see).difference(
+                contradicted, (parcel.id,)
+            )
         ),
     }
 

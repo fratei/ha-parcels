@@ -152,6 +152,7 @@ from .quiet import infer_quiet_deliveries
 from .seventeentrack import (
     PICKUP_PLACES_KEY,
     PICKUPS_REPAIR_KEY,
+    PICKUPS_REREAD_KEY,
     repair_pickups,
     restore_pickup_places,
 )
@@ -455,6 +456,9 @@ class ParcelsEngine:
             self.store.async_schedule_save()
         if PICKUP_PLACES_KEY not in data.engine:
             data.engine[PICKUP_PLACES_KEY] = restore_pickup_places(data, now, self.tz)
+            self.store.async_schedule_save()
+        if PICKUPS_REREAD_KEY not in data.engine:
+            data.engine[PICKUPS_REREAD_KEY] = repair_pickups(data, now, self.tz)
             self.store.async_schedule_save()
         if not (data.parcels or data.review):
             # Nothing stored by an earlier release to check after the update.
@@ -2467,6 +2471,7 @@ class ParcelsEngine:
             "parcel_app_dates_repaired": data.engine.get(DATES_REPAIR_KEY),
             "seventeentrack_pickups_repaired": data.engine.get(PICKUPS_REPAIR_KEY),
             "seventeentrack_pickups_restored": data.engine.get(PICKUP_PLACES_KEY),
+            "seventeentrack_pickups_reread": data.engine.get(PICKUPS_REREAD_KEY),
             "reconcile_waiting": len(self._syncing | self._more),
             # How the sender checks went for the newest e-mails under review:
             # the shop's domain and the servers that wrote the headers only.

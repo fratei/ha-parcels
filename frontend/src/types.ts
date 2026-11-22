@@ -384,6 +384,11 @@ export interface ParcelDetails {
   origins: OriginInfo[];
   /** The parcels Amazon's tracking rules out as the same package: delivered at another time. */
   contradicted: string[];
+  /**
+   * The parcels Amazon's tracking points away from: it repeats the times of
+   * other packages, not theirs. None of them is in `contradicted`.
+   */
+  elsewhere: string[];
 }
 
 export interface HassMessage {

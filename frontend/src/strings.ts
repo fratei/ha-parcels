@@ -309,6 +309,7 @@ export const STRINGS = {
   amazonTracking: "Amazon's tracking: delivered {when}",
   amazonTrackingAt: "Amazon's tracking: delivered {when} · {place}",
   amazonRulesOut: "Amazon's tracking rules this out: delivered at another time",
+  amazonPointsElsewhere: "Amazon's tracking points to another package",
   numberTail: "No. {tail}",
   orderTail: "Order {tail}",
   splitIntro: "Choose what to move to a new parcel.",

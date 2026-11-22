@@ -2724,6 +2724,10 @@ def _pair_by_day(
     day the shop's package left. Otherwise the user gets suggestions. The
     Amazon shipments in ``skip`` were already linked by Amazon's tracking,
     and a package it rules out is never paired.
+
+    When a shipment's tracking repeats times of some packages, see
+    :func:`_pointed`, it pairs only with those. Leaving the others out
+    never makes a merge of what was a suggestion.
     """
     untracked: list[tuple[Parcel, set[str], date, date, datetime, date | None]] = []
     tracked: list[tuple[Parcel, set[str], date]] = []
@@ -2753,10 +2757,13 @@ def _pair_by_day(
     edges: dict[str, set[str]] = defaultdict(set)
     days: dict[str, date] = {}
     fits: set[frozenset[str]] = set()
+    narrowed: set[str] = set()
+    boxes = _boxes(data)
     for parcel, keys, start, end, first, sent in untracked:
         # A parcel may arrive late or early, unless news closed it (a
         # "probably delivered" guess doesn't); only a fit is sure.
         waiting = not _finished(parcel)
+        points = _pointed(parcel, boxes, apart)
         for other, other_keys, day in tracked:
             delivered = _real_delivery(other)
             fit = start <= day <= end
@@ -2773,6 +2780,9 @@ def _pair_by_day(
                 and not apart(parcel, other)
                 and not amazon_contradicts(parcel, other)
             ):
+                if points and other.id not in points:
+                    narrowed.update((parcel.id, other.id))
+                    continue
                 edges[parcel.id].add(other.id)
                 edges[other.id].add(parcel.id)
                 days[other.id] = day
@@ -2786,6 +2796,7 @@ def _pair_by_day(
             len(targets) == 1
             and len(sources) == 1
             and frozenset((targets[0], sources[0])) in fits
+            and not component & narrowed
         ):
             target = data.parcels[targets[0]]
             other = data.parcels[sources[0]]
@@ -2894,6 +2905,84 @@ def _agreement(marks: tuple[_Mark | None, list[_Mark]], box: Parcel) -> int:
     return int(mark is not None and any(_agrees(mark, own) for own in delivered)) + int(
         any(_agrees(theirs, own) for theirs in extra for own in further)
     )
+
+
+def _boxes(data: ParcelsData) -> list[Parcel]:
+    """Return the carriers' packages still coming or come, see :func:`_is_box`.
+
+    Not the archived ones, nor those cancelled or sent back.
+    """
+    return [
+        parcel
+        for parcel in data.parcels.values()
+        if parcel.archived is None
+        and parcel.state.status not in (ParcelStatus.CANCELLED, ParcelStatus.RETURNED)
+        and _is_box(parcel)
+    ]
+
+
+def _pointed(
+    shipment: Parcel, boxes: Iterable[Parcel], apart: Callable[[Parcel, Parcel], bool]
+) -> frozenset[str]:
+    """Return the packages an Amazon shipment's tracking points to, if any.
+
+    Of the packages that may hold it, see :func:`_box_may_hold`, those
+    repeating the most of its times but the van leaving, as in
+    :func:`boxes_of_day`, whatever their day: a carrier's first e-mail and
+    its scans come before its package does.
+    """
+    if not _is_shipment(shipment):
+        return frozenset()
+    marks = _amazon_marks(shipment)
+    if marks[0] is None and not marks[1]:
+        return frozenset()
+    scores = {
+        box.id: _agreement(marks, box)
+        for box in boxes
+        if _box_may_hold(shipment, box, apart)
+    }
+    top = max(scores.values(), default=0)
+    return frozenset(pid for pid, score in scores.items() if top and score == top)
+
+
+def amazon_elsewhere(
+    data: ParcelsData,
+    parcel: Parcel,
+    visible: Callable[[Parcel], bool] = lambda _parcel: True,
+) -> set[str]:
+    """Return the ``visible`` parcels Amazon's tracking points away from.
+
+    From a shipment whose tracking points to some packages, see
+    :func:`_pointed`, the other packages; from a package, the shipments
+    whose tracking points to others. A shipment counts only when one of the
+    packages it points to is ``visible``: the marks never tell of a package
+    the viewer may not see.
+    """
+    if parcel.archived is not None:
+        return set()
+    apart = _apart_checker(data)
+    boxes = _boxes(data)
+
+    def points(shipment: Parcel) -> frozenset[str]:
+        found = _pointed(shipment, boxes, apart)
+        if any(visible(data.parcels[pid]) for pid in found):
+            return found
+        return frozenset()
+
+    if _is_shipment(parcel):
+        if not (found := points(parcel)):
+            return set()
+        return {box.id for box in boxes if box.id not in found and visible(box)}
+    if all(box.id != parcel.id for box in boxes):
+        return set()
+    return {
+        shipment.id
+        for shipment in data.parcels.values()
+        if shipment.archived is None
+        and visible(shipment)
+        and (found := points(shipment))
+        and parcel.id not in found
+    }
 
 
 @dataclass(frozen=True, slots=True)

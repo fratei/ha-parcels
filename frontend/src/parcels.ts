@@ -166,7 +166,8 @@ function isOlder(parcel: Parcel, { today, timeZone }: DayContext): boolean {
  * The parcels the given one can be merged with: every other parcel the viewer
  * may see. Ones delivered before the other was shipped go behind "Show older".
  * The ones in `ruledOut` (Amazon's tracking has them delivered at another
- * time) keep their order but come last in each list.
+ * time, or points to another package) keep their order but come last in each
+ * list.
  */
 export function rankMergeCandidates(
   parcels: readonly Parcel[],
@@ -188,6 +189,25 @@ export function rankMergeCandidates(
   older.sort(newestFirst);
   const last = (a: Parcel, b: Parcel): number => Number(ruledOut.has(a.id)) - Number(ruledOut.has(b.id));
   return { likely: likely.sort(last), older: older.sort(last) };
+}
+
+/** What Amazon's tracking says against a merge candidate. */
+export type AmazonMark = "ruled_out" | "elsewhere";
+
+/**
+ * The warning a merge candidate gets from Amazon's tracking, if any. A
+ * delivery at another time rules it out, which outweighs tracking that
+ * points to another package.
+ */
+export function amazonMark(
+  id: string,
+  ruledOut: ReadonlySet<string>,
+  elsewhere: ReadonlySet<string>,
+): AmazonMark | null {
+  if (ruledOut.has(id)) {
+    return "ruled_out";
+  }
+  return elsewhere.has(id) ? "elsewhere" : null;
 }
 
 /** The parcels whose shop, items, order or tracking number, or carrier contain every word. */

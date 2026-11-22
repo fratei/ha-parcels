@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 
 import {
   alsoPossible,
+  amazonMark,
   etaRange,
   isActiveParcel,
   possibleHint,
@@ -162,6 +163,15 @@ describe("rankMergeCandidates", () => {
     assert.deepEqual(ids(likely), ["shop", "other", "order"]);
     assert.deepEqual(ids(older), ["archived", "cancelled"]);
     assert.deepEqual(ids(rankMergeCandidates(parcels, self, ctx).likely), ["order", "shop", "other"]);
+  });
+
+  test("Amazon's tracking marks a candidate it points away from, unless it rules it out", () => {
+    const ruledOut = new Set(["both", "late"]);
+    const elsewhere = new Set(["both", "other-box"]);
+    assert.equal(amazonMark("late", ruledOut, elsewhere), "ruled_out");
+    assert.equal(amazonMark("both", ruledOut, elsewhere), "ruled_out");
+    assert.equal(amazonMark("other-box", ruledOut, elsewhere), "elsewhere");
+    assert.equal(amazonMark("pointed", ruledOut, elsewhere), null);
   });
 
   test("activity follows the status", () => {

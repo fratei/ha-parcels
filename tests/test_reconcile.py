@@ -2572,6 +2572,137 @@ def _sixth(data: ParcelsData) -> str:
     )
 
 
+def _one_paack_box(data: ParcelsData, *, van: bool = True) -> tuple[str, str]:
+    """A shipment in its own Paack package, out for delivery on 10 June or not."""
+    news = (
+        _scan(_jun(9, 12, 36), ParcelStatus.IN_TRANSIT, ARRIVED),
+        _scan(_jun(10, 6, 41), ParcelStatus.OUT_FOR_DELIVERY, VAN_OUT),
+    )
+    first = _shipment(
+        data, 1, ORDER_1, SHIPMENT_1, _jun(8, 9), *(news if van else news[:1])
+    )
+    one = _apply(
+        data,
+        _paack_box("msg:p1#0", PAACK_1, MailKind.IN_TRANSIT, _jun(9, 12, 36, 16)),
+    )
+    if van:
+        out = _paack_box(
+            "msg:p3#0", PAACK_1, MailKind.OUT_FOR_DELIVERY, _jun(10, 6, 52)
+        )
+        assert _apply(data, out) == one
+    return one, first
+
+
+def test_amazon_tracking_narrows_the_packages_suggested_for_a_shipment() -> None:
+    """A shipment is suggested only for the packages repeating its times.
+
+    The morning the vans left, CTT's package names Amazon and Paack's name
+    no shop, so the shop alone suggested all five shipments for CTT's. Two
+    reached the carrier when a Paack package did: they're left out. One
+    repeats no package's times, so the shop still decides for it.
+    """
+    data = ParcelsData()
+    _one, _two, _first, _second = _two_paack_boxes(data, delivered=False)
+    sixth = _sixth(data)
+    box, third, fourth = _ctt_with_two(data, delivered=False)
+
+    result = reconcile(data, _jun(10, 8))
+
+    assert not result.removed
+    assert [
+        (suggestion.parcel_id, set(suggestion.candidates), suggestion.reason)
+        for suggestion in result.suggestions
+    ] == [(box, {third, fourth, sixth}, REASON_SAME_MERCHANT_DAY)]
+    assert all(parcel.auto_merged is None for parcel in data.parcels.values())
+
+
+@pytest.mark.parametrize(
+    ("shipments", "van"),
+    [(1, True), (1, False), (2, True)],
+    ids=["one", "one-before-the-van", "two"],
+)
+def test_amazon_tracking_keeps_shipments_out_of_another_package(
+    shipments: int, van: bool
+) -> None:
+    """Shipments that reached the carrier with Paack's packages aren't CTT's.
+
+    CTT's package names Amazon and comes on the shop's day, so the shop
+    alone merged a lone shipment into it, or suggested it for two.
+    """
+    data = ParcelsData()
+    if shipments == 1:
+        _one, first = _one_paack_box(data, van=van)
+        mine = {first}
+    else:
+        _one, _two, first, second = _two_paack_boxes(data, delivered=False)
+        mine = {first, second}
+    box = _ctt_box(data, delivered=False)
+
+    result = reconcile(data, _jun(10, 8))
+
+    assert not result.removed
+    assert result.suggestions == []
+    assert mine <= data.parcels.keys()
+    assert data.parcels[box].auto_merged is None
+
+
+def test_a_narrowed_suggestion_never_merges() -> None:
+    """Leaving a shipment out of a suggestion never makes it a merge.
+
+    A shipment whose tracking repeats no package's times fits CTT's package
+    too. With the other left out it's the only one, but it wasn't before.
+    """
+    data = ParcelsData()
+    _one, _first = _one_paack_box(data)
+    sixth = _sixth(data)
+    box = _ctt_box(data, delivered=False)
+
+    result = reconcile(data, _jun(10, 8))
+
+    assert not result.removed
+    assert [(s.parcel_id, s.candidates) for s in result.suggestions] == [
+        (box, (sixth,))
+    ]
+    assert data.parcels[box].auto_merged is None
+
+
+def test_details_list_the_packages_amazons_tracking_points_away_from() -> None:
+    """The details list the packages a shipment's tracking points away from.
+
+    Both ways: from a shipment, the packages that don't repeat its times,
+    when some do; from a package, the shipments pointing to others. Not the
+    parcels the viewer may not see, nor a mark pointing only to those.
+    """
+    data = ParcelsData()
+    one, two, first, second = _two_paack_boxes(data, delivered=False)
+    sixth = _sixth(data)
+    box, third, fourth = _ctt_with_two(data, delivered=False)
+    engine: Any = SimpleNamespace(data=data)
+
+    def elsewhere(parcel_id: str, viewer: Viewer = SYSTEM_VIEWER) -> list[str]:
+        return details(engine, data.parcels[parcel_id], viewer)["elsewhere"]
+
+    assert elsewhere(first) == sorted((two, box))
+    assert elsewhere(third) == sorted((one, two))
+    assert elsewhere(box) == sorted((first, second))
+    assert elsewhere(one) == sorted((second, third, fourth))
+    assert elsewhere(sixth) == []
+    data.parcels[two].private = True
+    stranger = Viewer(is_admin=False, persons=frozenset({"person.two"}))
+    assert elsewhere(first, stranger) == [box]
+    assert elsewhere(box, stranger) == [first]
+    shipment = data.parcels[second]
+    shipment.private = True
+    for origin in shipment.origins.values():
+        origin.owners = ("person.two",)
+    shipment.touch(_jun(10, 8))
+    both = Viewer(is_admin=False, persons=frozenset({"person.one", "person.two"}))
+    assert elsewhere(second, both) == sorted((one, box))
+    assert elsewhere(second, stranger) == []
+    assert elsewhere(box, both) == sorted((first, second))
+    assert elsewhere(box, stranger) == [first]
+
+
 def _seen(data: ParcelsData, **reads: datetime) -> None:
     """When Parcels last read each delivery in the Parcel app."""
     records = data.parcelapp.setdefault("records", {})

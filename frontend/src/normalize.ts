@@ -491,5 +491,6 @@ export function normalizeDetails(raw: unknown): ParcelDetails | null {
     orders: list(raw.orders, orderInfo),
     origins: list(raw.origins, originInfo),
     contradicted: list(raw.contradicted, id),
+    elsewhere: list(raw.elsewhere, id),
   };
 }

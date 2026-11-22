@@ -438,11 +438,15 @@ describe("normalizeDetails", () => {
       orders: [{ id: "o1", number: "ORDER-1", parcel_ids: ["p1"] }],
       origins: [{ id: "m1", label: "E-mail from Example Shop", source: "parser", time: null }, { label: "No id" }],
       contradicted: ["p2", 3, "", null, "p3"],
+      elsewhere: ["p4", {}, "", "p5"],
     });
     assert.ok(details);
     assert.equal(details.parcel.status, "delivered");
     assert.deepEqual(details.contradicted, ["p2", "p3"]);
-    assert.deepEqual(normalizeDetails({ parcel: { id: "p1" }, contradicted: "p2" })?.contradicted, []);
+    assert.deepEqual(details.elsewhere, ["p4", "p5"]);
+    const flat = normalizeDetails({ parcel: { id: "p1" }, contradicted: "p2", elsewhere: "p4" });
+    assert.deepEqual(flat?.contradicted, []);
+    assert.deepEqual(flat?.elsewhere, []);
     assert.deepEqual(details.timeline, [
       { time: "2026-07-14T08:00:00Z", status: "delivered", source: "ai", label: "Delivered", undated: false, timeless: false },
       { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "", undated: false, timeless: false },

@@ -69,6 +69,7 @@ from custom_components.parcels.seventeentrack import (
     MAX_ADDS,
     MAX_HISTORY,
     NOT_FOUND_ARCHIVE,
+    PICKUP_PLACES_KEY,
     PICKUPS_REPAIR_KEY,
     SEVENTEENTRACK_DOMAIN,
     SeventeenTrackSync,
@@ -494,6 +495,40 @@ def logged_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
             "Destinatário ausente, enviado para o cacifo",
             ParcelStatus.ATTEMPTED,
         ),
+        # A delivery today is out for delivery even when the place splits
+        # its words, but not when it's denied.
+        (
+            "Ready to be picked up",
+            "Die Sendung wird heute an eine Packstation geliefert",
+            ParcelStatus.OUT_FOR_DELIVERY,
+        ),
+        (
+            "Ready to be picked up",
+            "Je pakket wordt vandaag in een pakketautomaat bezorgd",
+            ParcelStatus.OUT_FOR_DELIVERY,
+        ),
+        (
+            "In Transit",
+            "Wird voraussichtlich heute an der Abholstation zugestellt",
+            ParcelStatus.OUT_FOR_DELIVERY,
+        ),
+        ("In Transit", "Wird heute leider nicht zugestellt", ParcelStatus.IN_TRANSIT),
+        # The carrier taking a parcel from a pickup place isn't a pickup.
+        (
+            "Ready to be picked up",
+            "Collected by the courier from the parcel shop",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Recolhido pelo estafeta no ponto de recolha",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Vom Kurier im Paketshop abgeholt",
+            ParcelStatus.IN_TRANSIT,
+        ),
         ("In Transit", "Parcel is in the locker", ParcelStatus.IN_TRANSIT),
         ("Ready to be picked up", "Pickup Scan", ParcelStatus.IN_TRANSIT),
         ("Delivered", "Em distribuição", ParcelStatus.DELIVERED),
@@ -821,6 +856,115 @@ async def test_update_gives_back_pickups_at_a_named_place(
     assert len(records(engine)[CTT]["history"]) == 2
     assert len(news(engine, ids[CTT], CTT)) == 2
     assert status(engine, ids[CTT]) is ParcelStatus.READY_FOR_PICKUP
+
+
+async def test_update_reads_the_stored_pickups_again(
+    hass: HomeAssistant, hass_storage: dict[str, Any], track: FakeSeventeenTrack
+) -> None:
+    """Once, stored pickups take what 0.1.15 reads in the carrier's text.
+
+    A delivery today whose words a place splits is out for delivery, and
+    the carrier taking a parcel from a pickup place is in transit; a text
+    naming the place where the parcel waits stays a pickup. The next
+    refresh adds nothing new.
+    """
+    data = ParcelsData()
+    shipped = NOW_DT - timedelta(hours=6)
+    packages: dict[str, dict[str, Any]] = {}
+    ids: dict[str, str] = {}
+    texts = (
+        (CTT, "ctt", "Collected by the courier from the parcel shop", 15),
+        (OTHER, "dhl", "Die Sendung wird heute an eine Packstation geliefert", 25),
+        (UPS, "ups", "Waiting at the parcel locker", 35),
+    )
+    for number, carrier, info, minute in texts:
+        applied = apply_contribution(
+            data,
+            contribution(
+                f"msg:{number}#0", time=shipped, carrier=carrier, number=number
+            ),
+            shipped,
+        )
+        assert applied.parcel_id is not None
+        ids[number] = applied.parcel_id
+        time = datetime(2026, 11, 17, 7, minute, tzinfo=UTC)
+        apply_contribution(
+            data,
+            Contribution(
+                origin=Origin(
+                    id=origin_id(number),
+                    source=Source.SEVENTEENTRACK,
+                    time=time,
+                    label="17TRACK",
+                    carrier=carrier,
+                    tracking_number=number,
+                ),
+                events=[
+                    ParcelEvent(
+                        time=time,
+                        source=Source.SEVENTEENTRACK,
+                        status=ParcelStatus.READY_FOR_PICKUP,
+                        label=info,
+                    )
+                ],
+            ),
+            time,
+        )
+        packages[number] = {
+            "parcel": applied.parcel_id,
+            "own": True,
+            "status": "ready_to_be_picked_up",
+            "history": [
+                {
+                    "status": "ready_for_pickup",
+                    "info": info,
+                    "at": dt_to_str(time),
+                    "time": dt_to_str(time),
+                }
+            ],
+        }
+    data.seventeentrack["packages"] = packages
+    data.engine[REPAIR_KEY] = REPAIR_VERSION
+    data.engine[PICKUPS_REPAIR_KEY] = 0
+    data.engine[PICKUP_PLACES_KEY] = 0
+    hass_storage[DOMAIN] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": DOMAIN,
+        "data": data.as_dict(),
+    }
+    add_hub(hass)
+
+    engine = await async_setup_parcels(hass)
+    tracker = engine.tracker
+    assert tracker is not None
+    await tracker.async_stop()
+
+    assert {number: status(engine, ids[number]) for number in (CTT, OTHER, UPS)} == {
+        CTT: ParcelStatus.IN_TRANSIT,
+        OTHER: ParcelStatus.OUT_FOR_DELIVERY,
+        UPS: ParcelStatus.READY_FOR_PICKUP,
+    }
+    assert {
+        number: [entry["status"] for entry in record["history"]]
+        for number, record in records(engine).items()
+    } == {
+        CTT: ["in_transit"],
+        OTHER: ["out_for_delivery"],
+        UPS: ["ready_for_pickup"],
+    }
+    assert engine.diagnostics()["seventeentrack_pickups_reread"] == 2
+
+    track.put(
+        CTT,
+        "Ready to be picked up",
+        info="Collected by the courier from the parcel shop",
+        timestamp="2026-11-17T07:15:00+00:00",
+    )
+    await tracker.async_refresh()
+
+    assert len(records(engine)[CTT]["history"]) == 1
+    assert status(engine, ids[CTT]) is ParcelStatus.IN_TRANSIT
 
 
 async def test_adds_the_numbers_of_active_parcels(

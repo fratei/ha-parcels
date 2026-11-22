@@ -54,7 +54,8 @@ api.parcel.app, which Parcels contacts itself with your API key.
   when the carriers named by the shop and the delivery agree. A delivery made
   on a day before the shop's package was shipped is another package, and
   isn't suggested either, nor is one that Amazon's tracking says came at
-  another time. When several parcels could match, Parcels asks
+  another time, or that it points away from because other packages repeat
+  its times. When several parcels could match, Parcels asks
   in **Needs review** instead. Parcels with different tracking numbers are
   never merged.
 - **Parcels without a tracking number**: when a carrier delivers another
@@ -481,7 +482,7 @@ add a resource.
   shipped, are behind **Show older** and the search. An Amazon shipment that
   the Parcel app follows also shows when, and where if known, Amazon's
   tracking says it was delivered, and the parcels that tracking rules out
-  are marked so and moved to the end of their list. For administrators,
+  or points away from are marked so and listed last. For administrators,
   when a carrier's e-mails don't say which of a shop's parcels it's
   delivering, the box says "Possibly: …" with the candidates' items, and the
   details list them, nearest to the parcel's day first, to merge or rule out
@@ -652,6 +653,14 @@ their times agreeing as above, or news in Amazon's tracking at least an hour
 after the package came. Parcel updates Amazon's tracking on your phone (see
 [Parcel app](#parcel-app)), so the time of a read alone proves nothing.
 
+The same times narrow the suggestions. When some packages repeat a
+shipment's times, also packages still on their way, **Needs review** and the
+details suggest the shipment only for those repeating the most of them.
+**Merge with…** marks the others "Amazon's tracking points to another
+package" and lists them last, and, on those packages, marks the shipment so.
+You can still merge them if you know better. Narrowing never turns a
+suggestion into a merge.
+
 ### Live Activities
 
 [Live Activities](https://companion.home-assistant.io/docs/notifications/live-activities/)
@@ -759,8 +768,9 @@ own tracking in between.
   for out for delivery, so it's a pickup only when the carrier's wording
   says so, or names a place where parcels wait to be collected, such as a
   locker, a pickup point or a Packstation, without saying the parcel is
-  still on its way there; otherwise the parcel takes the status that
-  wording gives, or in transit.
+  still on its way there or that the carrier took it from there; otherwise
+  the parcel takes the status that wording gives, or in transit. Wording
+  such as "will be delivered to the locker today" is out for delivery.
 - **What it doesn't add**: delivery dates. Home Assistant's 17TRACK integration
   gives no expected date, so a parcel without one stays under **No date yet**.
 - **What it leaves out**, so they don't take up places in your account:
@@ -1209,10 +1219,12 @@ actions:
   **Merge with…**: for an Amazon shipment that the Parcel app follows, it
   shows when, and where if known, Amazon's tracking says the shipment was
   delivered, such as "Amazon's tracking: delivered Wed 10 Jun at 10:27 ·
-  Vila Exemplo", and it moves the parcels delivered at another time to the
-  end of its lists, marked "Amazon's tracking rules this out: delivered at
-  another time". You can still merge them if you know better. **Needs
-  review** shows the same line on its suggestions.
+  Vila Exemplo"; **Needs review** shows the same line on its suggestions.
+  It moves the parcels delivered at another time to the end of its lists,
+  marked "Amazon's tracking rules this out: delivered at another time",
+  and, when some packages repeat the shipment's times, the others, marked
+  "Amazon's tracking points to another package". You can still merge them
+  if you know better.
 - **A delivery from Parcel shows apart from its parcel, or doesn't update
   it.** Select both and merge them, or select **Undo** on a pairing Parcels
   made. Parcels leaves a delivery out when your Parcel list has two
@@ -1295,6 +1307,13 @@ actions:
   for the latest news of each package that 17TRACK still has as ready to be
   picked up. The hub's diagnostics count the parcels that changed
   (`seventeentrack_pickups_restored`).
+- **A parcel showed as ready for pickup, though it was on its way.** 0.1.14
+  took 17TRACK's wording that names a pickup place for a pickup even when
+  it said the parcel would be delivered there today, which is out for
+  delivery, or that the carrier took it from there, which is in transit.
+  After the update to 0.1.15, Parcels reads the stored pickups again once.
+  The hub's diagnostics count the parcels that changed
+  (`seventeentrack_pickups_reread`).
 - **Amazon shows as the carrier, but didn't deliver.** Before 0.1.8, Amazon
   became the carrier whenever the local AI, the Parcel app or 17TRACK named
   it, which kept Amazon's orders apart from their carrier's deliveries. After
@@ -1319,9 +1338,10 @@ actions:
   (`parcel_app_dates_repaired`) and the sources, senders and answers whose
   unproven Amazon carrier the update to 0.1.8 dropped
   (`amazon_carrier_repaired`), the parcels whose 17TRACK pickups the
-  update to 0.1.13 took back (`seventeentrack_pickups_repaired`) and those
+  update to 0.1.13 took back (`seventeentrack_pickups_repaired`), those
   whose pickups at a named place the update to 0.1.14 gave back
-  (`seventeentrack_pickups_restored`); its
+  (`seventeentrack_pickups_restored`) and those whose pickups the update
+  to 0.1.15 read again and changed (`seventeentrack_pickups_reread`); its
   notifications part counts today's orders that ride along with a package
   (`orders_in_a_box`); its 17TRACK part counts the numbers 17TRACK can't
   find, by carrier (`not_found_by_carrier`); its Parcel app part

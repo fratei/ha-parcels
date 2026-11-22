@@ -74,6 +74,9 @@ PICKUPS_REPAIR_KEY: Final = "seventeentrack_pickups"
 # The engine state key of the pickups given back by
 # :func:`restore_pickup_places`.
 PICKUP_PLACES_KEY: Final = "seventeentrack_pickup_places"
+# The engine state key of the second run of :func:`repair_pickups`, after
+# 0.1.15 read more of the carrier's text (see :func:`pickup_status`).
+PICKUPS_REREAD_KEY: Final = "seventeentrack_pickups_reread"
 
 INTERVAL: Final = timedelta(minutes=30)
 # While a parcel is out for delivery or due today.
@@ -135,6 +138,50 @@ _REFINED: Final = frozenset(
 )
 
 
+def _gap(stops: str) -> str:
+    """Return a pattern for up to four words of one clause.
+
+    None of them may be one of the stop words: a negation, another day or a
+    word that joins two clauses.
+    """
+    return rf" (?:(?!(?:{stops})\b)[a-z0-9'-]+ ){{0,4}}"
+
+
+_DE: Final = _gap(r"nicht|kein\w*|morgen|ubermorgen|und|oder|aber|sondern")
+_NL: Final = _gap(r"niet|geen|morgen|overmorgen|en|of|maar")
+_EN: Final = _gap(r"not|never|tomorrow|and|or|but")
+_PT: Final = _gap(r"nao|amanha|e|ou|mas")
+_ES: Final = _gap(r"no|manana|y|o|pero")
+_FR: Final = _gap(r"pas|demain|et|ou|mais")
+_IT: Final = _gap(r"non|domani|e|o|ma")
+# A delivery today whose words a place splits, such as "wird heute an die
+# Packstation geliefert" or "will be delivered to the locker today".
+_DELIVERY_TODAY_APART: Final = re.compile(
+    r"(?<![a-z0-9])(?:"
+    rf"wird{_DE}heute{_DE}(?:zugestellt|geliefert)"
+    rf"|wordt{_NL}vandaag{_NL}(?:bezorgd|geleverd)"
+    rf"|will be delivered{_EN}today"
+    rf"|(?<!nao )sera entregue{_PT}hoje"
+    rf"|(?<!no )sera entregad[oa]{_ES}hoy"
+    rf"|sera livree?{_FR}aujourd'hui"
+    rf"|(?<!non )sara consegnat[oa]{_IT}oggi"
+    r")(?![a-z0-9])"
+)
+# The carrier, not the user, took the parcel from a pickup place: one the
+# sender dropped off there, now on its way.
+_CARRIER_TOOK: Final = re.compile(
+    r"(?<![a-z0-9])(?:"
+    r"(?:picked up|collected|taken) by (?:the |our |a )?(?:carrier|courier|driver)"
+    r"|recolhid[oa] pel[oa] (?:transportadora|estafeta|motorista)"
+    r"|recogid[oa] por (?:el |la )?(?:transportista|repartidor|mensajero)"
+    r"|(?:collecte|enleve|ramasse)e? par (?:le |la )?(?:transporteur|livreur|coursier)"
+    r"|ritirat[oa] dal (?:corriere|vettore)"
+    r"|vom (?:zusteller|kurier|fahrer|paketdienst)(?: [a-z0-9'-]+){0,4} abgeholt"
+    r"|(?:opgehaald|afgehaald) door de (?:vervoerder|bezorger|koerier|chauffeur)"
+    r")(?![a-z0-9])"
+)
+
+
 def origin_id(number: str) -> str:
     """Return the ID of the origin that holds 17TRACK's news about a number."""
     return f"{ORIGIN_PREFIX}{number}"
@@ -165,12 +212,15 @@ def pickup_status(info: str | None) -> ParcelStatus:
     It's what the text says, such as a pickup, out for delivery or a missed
     attempt. A text that says none of these but names a place where parcels
     wait, such as a locker or a pickup point, is a pickup, unless it says
-    the parcel is still on its way there. Otherwise it's in transit.
+    the parcel is still on its way there or the carrier took it from there.
+    Otherwise it's in transit.
     """
     if (status := _text_status(info)) is not None:
         return status
     text = fold_text(info or "")
     if phrase_regex(KIND_PHRASES[MailKind.IN_TRANSIT]).search(text):
+        return ParcelStatus.IN_TRANSIT
+    if _CARRIER_TOOK.search(text):
         return ParcelStatus.IN_TRANSIT
     if phrase_regex(PICKUP_PLACES).search(text):
         return ParcelStatus.READY_FOR_PICKUP
@@ -185,12 +235,17 @@ def refine_status(status: ParcelStatus, info: str | None) -> ParcelStatus:
 
 
 def _text_status(info: str | None) -> ParcelStatus | None:
-    """Return the status a carrier's text tells, if it tells one."""
+    """Return the status a carrier's text tells, if it tells one.
+
+    A delivery today counts even when a place splits its words.
+    """
     if info:
         text = fold_text(info)
         for kind, status in _INFO_RULES:
             if phrase_regex(KIND_PHRASES[kind]).search(text):
                 return status
+        if _DELIVERY_TODAY_APART.search(text):
+            return ParcelStatus.OUT_FOR_DELIVERY
     return None
 
 
@@ -201,7 +256,8 @@ def repair_pickups(data: ParcelsData, now: datetime, tz: tzinfo) -> int:
     :func:`pickup_status`. Its events whose text doesn't say so get the
     status the text tells, or in transit, in the stored packages and on
     their parcels, with the details read again as the sync reads them.
-    Returns how many parcels changed.
+    0.1.15 runs it once more, as it reads more of the text. Returns how
+    many parcels changed.
     """
     pickup = ParcelStatus.READY_FOR_PICKUP
     packages = data.seventeentrack.get("packages")

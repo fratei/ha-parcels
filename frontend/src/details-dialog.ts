@@ -66,6 +66,7 @@ import {
 } from "./origins.ts";
 import {
   alsoPossible,
+  amazonMark,
   etaRange,
   possibleHint,
   possibleMatches,
@@ -1344,9 +1345,10 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
 
   /**
    * A parcel the viewed one may be: shop, status and day, whether Amazon's
-   * tracking rules it out, carrier and numbers, when Amazon's tracking has it
-   * delivered, who wrote about it, and its items. Without items, why they
-   * aren't known and which other orders it could also be.
+   * tracking rules it out or points to another package, carrier and numbers,
+   * when Amazon's tracking has it delivered, who wrote about it, and its
+   * items. Without items, why they aren't known and which other orders it
+   * could also be.
    */
   private _renderCandidateLines(candidate: Parcel, parcelId: string): TemplateResult {
     const lines = candidateLines(candidate, this.locale);
@@ -1354,12 +1356,19 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
       ? null
       : couldAlsoBe(alsoPossible(this.snapshot?.merge_suggestions, candidate.id, parcelId));
     const evidence = amazonTrackingLine(candidate, this.locale);
+    const mark = amazonMark(candidate.id, this._ruledOut(parcelId), this._pointsElsewhere(parcelId));
     return html`<span class="merge-lines">
       <span class="merge-line"><strong>${lines.title}</strong> · ${lines.when}</span>
-      ${this._ruledOut(parcelId).has(candidate.id)
+      ${mark === "ruled_out"
         ? html`<span class="merge-line ruled-out" data-ruled-out>
             <ha-icon icon="mdi:alert-circle-outline" aria-hidden="true"></ha-icon>
             <span>${STRINGS.amazonRulesOut}</span>
+          </span>`
+        : nothing}
+      ${mark === "elsewhere"
+        ? html`<span class="merge-line ruled-out" data-points-elsewhere>
+            <ha-icon icon="mdi:alert-circle-outline" aria-hidden="true"></ha-icon>
+            <span>${STRINGS.amazonPointsElsewhere}</span>
           </span>`
         : nothing}
       <span class="merge-line muted">${lines.carrier}</span>
@@ -1676,19 +1685,29 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._parcelService("update", data, () => this._backToView());
   }
 
-  /** Every other parcel the viewer may see, likely matches first and ruled-out ones last. */
+  /**
+   * Every other parcel the viewer may see, likely matches first and the ones
+   * Amazon's tracking rules out or points away from last.
+   */
   private _mergePool(parcel: Parcel): MergeCandidates {
     const snapshot = this.snapshot;
     if (!snapshot) {
       return { likely: [], older: [] };
     }
-    return rankMergeCandidates(snapshot.parcels, parcel, this._dayContext(), this._ruledOut(parcel.id));
+    const last = new Set([...this._ruledOut(parcel.id), ...this._pointsElsewhere(parcel.id)]);
+    return rankMergeCandidates(snapshot.parcels, parcel, this._dayContext(), last);
   }
 
   /** The parcels Amazon's tracking rules out as the given parcel's package, once its details are in. */
   private _ruledOut(parcelId: string): ReadonlySet<string> {
     const details = this._details;
     return new Set(details?.parcel.id === parcelId ? details.contradicted : []);
+  }
+
+  /** The parcels Amazon's tracking points away from for the given parcel, once its details are in. */
+  private _pointsElsewhere(parcelId: string): ReadonlySet<string> {
+    const details = this._details;
+    return new Set(details?.parcel.id === parcelId ? details.elsewhere : []);
   }
 
   /** The candidates on show, and the chosen one while it is on show. */
