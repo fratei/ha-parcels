@@ -1,0 +1,173 @@
+Return-Path: <20261203091207b7c6d5@bounces.amazon.es>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@amazon.es header.s=sel1amz header.b=hLzdVhDZ;
+       dkim=pass header.i=@amazonses.com header.s=ug7nbtf4 header.b=hLzdVhDZ;
+       spf=pass (google.com: domain of 20261203091207b7c6d5@bounces.amazon.es designates 192.0.2.43 as permitted sender) smtp.mailfrom=20261203091207b7c6d5@bounces.amazon.es;
+       dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=amazon.es
+Received: from a48-3.smtp-out.eu-west-1.amazonses.com (a48-3.smtp-out.eu-west-1.amazonses.com. [192.0.2.43])
+        by mx.google.com with ESMTPS id y34si5566778wrc.121.2026.12.03
+        for <alex@example.com>;
+        Thu, 03 Dec 2026 09:12:07 +0000
+From: "Amazon.es" <auto-confirm@amazon.es>
+To: Alex Doe <alex@example.com>
+Subject: =?utf-8?q?Pedido_efetuado=3A_=E2=80=9CCandeeiro_de_mesa_Exemplo=2C_LED?=
+ =?utf-8?q?=E2=80=A6=E2=80=9D_e_mais_2_produtos?=
+Date: Thu, 03 Dec 2026 09:12:07 +0000
+Message-ID: <010201920261203091207.order-pedido-pt-000000@eu-west-1.amazonses.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_parcels_b1"
+
+--=_parcels_b1
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Amazon.es
+Os seus pedidos | A sua conta
+
+Ol=C3=A1 Alex,
+
+Obrigado pelo seu pedido!
+
+Pedido n.=C2=BA 406-2958173-6604821
+
+Chegada:
+segunda-feira, 7 de dezembro
+
+Candeeiro de mesa Exemplo, LED, regul=C3=A1vel, branco
+Quantidade: 1
+https://www.amazon.es/gp/r.html?C=3D03M5Q8X2K7B4N&K=3D2W4KZ8R6T1YV3&M=3Durn=
+:rtn:msg:2026120309a7b6c5d4e3f201&R=3D1QWE7R4T2Y9UZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.es%2Fdp%2FB0DX7K2M9Q%2Fref%3Dpe_3051742_987654321_TE_dp_1&H=3DP=
+LMOKNIJBUHV0YGT01&ref_=3Dpe_3051742_987654321_TE_SIMP_typ
+
+L=C3=A2mpada LED E27 Exemplo, 9 W, pack de 2
+Quantidade: 1
+https://www.amazon.es/gp/r.html?C=3D03M5Q8X2K7B4N&K=3D2W4KZ8R6T1YV3&M=3Durn=
+:rtn:msg:2026120309a7b6c5d4e3f202&R=3D1QWE7R4T2Y9UZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.es%2Fdp%2FB0C4N8T1WZ%2Fref%3Dpe_3051742_987654321_TE_dp_1&H=3DP=
+LMOKNIJBUHV0YGT02&ref_=3Dpe_3051742_987654321_TE_SIMP_typ
+
+Extens=C3=A3o el=C3=A9trica Exemplo com 3 tomadas
+Quantidade: 1
+https://www.amazon.es/gp/r.html?C=3D03M5Q8X2K7B4N&K=3D2W4KZ8R6T1YV3&M=3Durn=
+:rtn:msg:2026120309a7b6c5d4e3f203&R=3D1QWE7R4T2Y9UZ&T=3DC&U=3Dhttps%3A%2F%2=
+Fwww.amazon.es%2Fdp%2FB08R5V2LQX%2Fref%3Dpe_3051742_987654321_TE_dp_1&H=3DP=
+LMOKNIJBUHV0YGT03&ref_=3Dpe_3051742_987654321_TE_SIMP_typ
+
+Total do pedido: 41,97 =E2=82=AC
+
+Morada de entrega Alex Doe, Rua Exemplo 1, 1000-001 Lisboa
+
+Ver detalhes do pedido: https://www.amazon.es/gp/r.html?C=3D03M5Q8X2K7B4N&K=
+=3D2W4KZ8R6T1YV3&M=3Durn:rtn:msg:2026120309a7b6c5d4e3f204&R=3D1QWE7R4T2Y9UZ=
+&T=3DC&U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fgp%2Fyour-account%2Forder-details%=
+2Fref%3Dpe_3051742_987654321_TE_SIMP_od%3Fie%3DUTF8%26orderID%3D406-2958173=
+-6604821&H=3DPLMOKNIJBUHV0YGT04&ref_=3Dpe_3051742_987654321_TE_SIMP_typ
+
+Este e-mail foi enviado a partir de um endere=C3=A7o que apenas envia notif=
+ica=C3=A7=C3=B5es e n=C3=A3o aceita mensagens. N=C3=A3o responda a esta men=
+sagem.
+
+Aviso de privacidade
+
+=C2=A9 2026 Amazon.com, Inc. ou as suas afiliadas. Todos os direitos reserv=
+ados.
+
+--=_parcels_b1
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html lang=3D"pt">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DUTF-8">
+<title>Amazon.es</title>
+<style type=3D"text/css">
+body { margin: 0; padding: 0; background-color: #ffffff; }
+.container { width: 600px; font-family: Arial, Helvetica, sans-serif; color=
+: #0f1111; }
+.h1 { font-size: 20px; font-weight: bold; margin: 16px 0 8px; }
+.footer { font-size: 11px; color: #565959; padding-top: 24px; }
+</style>
+</head>
+<body>
+<table role=3D"presentation" class=3D"container" width=3D"600" cellpadding=
+=3D"0" cellspacing=3D"0">
+<tr><td class=3D"content">
+<p>Ol=C3=A1 Alex,</p>
+<h1 class=3D"h1">Obrigado pelo seu pedido!</h1>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Pedido n.=C2=BA</td><td class=3D"v"><b>406-2958173-6=
+604821</b></td></tr></table>
+<div class=3D"eta"><span class=3D"label">Chegada:</span><br><span class=3D"=
+value"><b>segunda-feira, 7 de dezembro</b></span></div>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D03M5Q8X2K7B4N&amp;K=3D2W4KZ8R6T1YV3&amp;M=3Durn:rtn:msg:2026120309a7b6c5=
+d4e3f201&amp;R=3D1QWE7R4T2Y9UZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB0DX7K2M9Q%2Fref%3Dpe_3051742_987654321_TE_dp_1&amp;H=3DPLMOKNIJBU=
+HV0YGT01&amp;ref_=3Dpe_3051742_987654321_TE_SIMP_typ"><img src=3D"https://m=
+.media-amazon.com/images/I/41DX7K2M9L._SS142_.jpg" alt=3D"Candeeiro de mesa=
+ Exemplo, LED, regul=C3=A1vel, branco" width=3D"90" height=3D"90" border=3D=
+"0"></a></td><td class=3D"desc"><a href=3D"https://www.amazon.es/gp/r.html?=
+C=3D03M5Q8X2K7B4N&amp;K=3D2W4KZ8R6T1YV3&amp;M=3Durn:rtn:msg:2026120309a7b6c=
+5d4e3f201&amp;R=3D1QWE7R4T2Y9UZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.=
+es%2Fdp%2FB0DX7K2M9Q%2Fref%3Dpe_3051742_987654321_TE_dp_1&amp;H=3DPLMOKNIJB=
+UHV0YGT01&amp;ref_=3Dpe_3051742_987654321_TE_SIMP_typ">Candeeiro de mesa Ex=
+emplo, LED, regul=C3=A1vel, branco</a><br><span>Quantidade: 1</span></td></=
+tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D03M5Q8X2K7B4N&amp;K=3D2W4KZ8R6T1YV3&amp;M=3Durn:rtn:msg:2026120309a7b6c5=
+d4e3f202&amp;R=3D1QWE7R4T2Y9UZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB0C4N8T1WZ%2Fref%3Dpe_3051742_987654321_TE_dp_1&amp;H=3DPLMOKNIJBU=
+HV0YGT02&amp;ref_=3Dpe_3051742_987654321_TE_SIMP_typ"><img src=3D"https://m=
+.media-amazon.com/images/I/41C4N8T1WL._SS142_.jpg" alt=3D"L=C3=A2mpada LED =
+E27 Exemplo, 9 W, pack de 2" width=3D"90" height=3D"90" border=3D"0"></a></=
+td><td class=3D"desc"><a href=3D"https://www.amazon.es/gp/r.html?C=3D03M5Q8=
+X2K7B4N&amp;K=3D2W4KZ8R6T1YV3&amp;M=3Durn:rtn:msg:2026120309a7b6c5d4e3f202&=
+amp;R=3D1QWE7R4T2Y9UZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2Fdp%2F=
+B0C4N8T1WZ%2Fref%3Dpe_3051742_987654321_TE_dp_1&amp;H=3DPLMOKNIJBUHV0YGT02&=
+amp;ref_=3Dpe_3051742_987654321_TE_SIMP_typ">L=C3=A2mpada LED E27 Exemplo, =
+9 W, pack de 2</a><br><span>Quantidade: 1</span></td></tr></table>
+<table role=3D"presentation" class=3D"item" cellpadding=3D"0" cellspacing=
+=3D"0"><tr><td class=3D"thumb"><a href=3D"https://www.amazon.es/gp/r.html?C=
+=3D03M5Q8X2K7B4N&amp;K=3D2W4KZ8R6T1YV3&amp;M=3Durn:rtn:msg:2026120309a7b6c5=
+d4e3f203&amp;R=3D1QWE7R4T2Y9UZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.e=
+s%2Fdp%2FB08R5V2LQX%2Fref%3Dpe_3051742_987654321_TE_dp_1&amp;H=3DPLMOKNIJBU=
+HV0YGT03&amp;ref_=3Dpe_3051742_987654321_TE_SIMP_typ"><img src=3D"https://m=
+.media-amazon.com/images/I/418R5V2LQL._SS142_.jpg" alt=3D"Extens=C3=A3o el=
+=C3=A9trica Exemplo com 3 tomadas" width=3D"90" height=3D"90" border=3D"0">=
+</a></td><td class=3D"desc"><a href=3D"https://www.amazon.es/gp/r.html?C=3D=
+03M5Q8X2K7B4N&amp;K=3D2W4KZ8R6T1YV3&amp;M=3Durn:rtn:msg:2026120309a7b6c5d4e=
+3f203&amp;R=3D1QWE7R4T2Y9UZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazon.es%2=
+Fdp%2FB08R5V2LQX%2Fref%3Dpe_3051742_987654321_TE_dp_1&amp;H=3DPLMOKNIJBUHV0=
+YGT03&amp;ref_=3Dpe_3051742_987654321_TE_SIMP_typ">Extens=C3=A3o el=C3=A9tr=
+ica Exemplo com 3 tomadas</a><br><span>Quantidade: 1</span></td></tr></tabl=
+e>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Total do pedido:</td><td class=3D"v"><b>41,97 =E2=82=
+=AC</b></td></tr></table>
+<table role=3D"presentation" class=3D"kv" cellpadding=3D"0" cellspacing=3D"=
+0"><tr><td class=3D"k">Morada de entrega</td><td class=3D"v"><b>Alex Doe, R=
+ua Exemplo 1, 1000-001 Lisboa</b></td></tr></table>
+<p class=3D"cta"><a class=3D"button" href=3D"https://www.amazon.es/gp/r.htm=
+l?C=3D03M5Q8X2K7B4N&amp;K=3D2W4KZ8R6T1YV3&amp;M=3Durn:rtn:msg:2026120309a7b=
+6c5d4e3f204&amp;R=3D1QWE7R4T2Y9UZ&amp;T=3DC&amp;U=3Dhttps%3A%2F%2Fwww.amazo=
+n.es%2Fgp%2Fyour-account%2Forder-details%2Fref%3Dpe_3051742_987654321_TE_SI=
+MP_od%3Fie%3DUTF8%26orderID%3D406-2958173-6604821&amp;H=3DPLMOKNIJBUHV0YGT0=
+4&amp;ref_=3Dpe_3051742_987654321_TE_SIMP_typ">Ver detalhes do pedido</a></=
+p>
+</td></tr>
+<tr><td class=3D"footer">
+<p>Este e-mail foi enviado a partir de um endere=C3=A7o que apenas envia no=
+tifica=C3=A7=C3=B5es e n=C3=A3o aceita mensagens. N=C3=A3o responda a esta =
+mensagem.</p>
+<p>=C2=A9 2026 Amazon.com, Inc. ou as suas afiliadas. Todos os direitos res=
+ervados.</p>
+</td></tr>
+</table>
+</body>
+</html>
+
+--=_parcels_b1--

@@ -947,6 +947,7 @@ PICKUP_PLACES: Final[tuple[str, ...]] = (
     "ophaalpunt*",
     "servicepunt*",
     "postnl punt*",
+    "postnl-punt*",
 )
 
 # A line starting with one of these gives the parcel status after a colon.

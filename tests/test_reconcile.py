@@ -28,6 +28,7 @@ from custom_components.parcels.dedup import (
     REASON_SAME_MERCHANT_DAY,
     REASON_SAME_MERCHANT_DOMAIN,
     REASON_SAME_MERCHANT_ETA,
+    REASON_SAME_NUMBER,
     REASON_SAME_ORDER,
     REASON_SAME_REFERENCE,
     REPAIR_VERSION,
@@ -45,6 +46,7 @@ from custom_components.parcels.dedup import (
     fill_shop,
     infer_deliveries,
     keep_apart,
+    manual_origin_id,
     mark_delivered,
     merge_parcels,
     order_parcels,
@@ -1984,7 +1986,7 @@ CENTER = "(CO) C.O. Centro Exemplo"
 CTT_ARRIVED = f"Chegou ao centro operacional, 4321 - {CENTER}"
 AMAZON_AT_CENTER = f"o pedido chegou a uma instalação da transportadora, {CENTER}, PT"
 JUNE_10 = date(2026, 6, 10)
-NO_LINKS = {"made": 0, "ambiguous": 0, "contradicted": 0}
+NO_LINKS = {"made": 0, "ambiguous": 0, "contradicted": 0, "undone": 0}
 
 
 def _jun(day: int, hour: int = 0, minute: int = 0, second: int = 0) -> datetime:
@@ -2202,7 +2204,7 @@ def test_amazon_tracking_links_each_shipment_to_its_package() -> None:
         assert flag.all_origins == {mail, tracking}
         assert flag.groups == ()
         assert parcel.state.amazon_shipment_ids == (shipment,)
-    links = {"made": 2, "ambiguous": 0, "contradicted": 0}
+    links = {"made": 2, "ambiguous": 0, "contradicted": 0, "undone": 0}
     assert data.engine[AMAZON_LINKS_KEY] == links
 
     again = reconcile(data, _jun(10, 22, 30))
@@ -2230,7 +2232,7 @@ def test_amazon_tracking_links_shipments_sharing_a_package() -> None:
     assert flag.origin == "msg:a3#0"
     assert flag.groups == (("msg:a3#0", "pa:t3"), ("msg:a4#0", "pa:t4"))
     assert set(parcel.state.amazon_shipment_ids) == {SHIPMENT_3, SHIPMENT_4}
-    links = {"made": 2, "ambiguous": 0, "contradicted": 0}
+    links = {"made": 2, "ambiguous": 0, "contradicted": 0, "undone": 0}
     assert data.engine[AMAZON_LINKS_KEY] == links
 
     undo_auto_merge(data, box, _jun(10, 22, 30))
@@ -2298,6 +2300,7 @@ def test_amazon_tracking_suggests_packages_agreeing_equally() -> None:
         "made": 0,
         "ambiguous": 1,
         "contradicted": 0,
+        "undone": 0,
     }
     riding = boxes_of_day(data, data.parcels.values(), JUNE_10)
     assert set(riding[fifth]) == {first, second}
@@ -2311,6 +2314,7 @@ def test_amazon_tracking_suggests_packages_agreeing_equally() -> None:
         "made": 1,
         "ambiguous": 0,
         "contradicted": 0,
+        "undone": 0,
     }
 
 
@@ -2379,6 +2383,7 @@ def test_amazon_tracking_rules_out_a_package_delivered_hours_apart() -> None:
         "made": 0,
         "ambiguous": 0,
         "contradicted": 1,
+        "undone": 0,
     }
     shipment, package = data.parcels[fifth], data.parcels[box]
     assert amazon_contradicts(shipment, package)
@@ -2432,6 +2437,7 @@ def test_amazon_tracking_never_links_a_pair_kept_apart() -> None:
         "made": 1,
         "ambiguous": 0,
         "contradicted": 0,
+        "undone": 0,
     }
 
 
@@ -2449,6 +2455,7 @@ def test_amazon_tracking_places_must_match(place: str, made: int) -> None:
         "made": made,
         "ambiguous": 0,
         "contradicted": 0,
+        "undone": 0,
     }
     assert _linked(data.parcels[box]) is bool(made)
 
@@ -2473,6 +2480,7 @@ def test_a_shipment_merges_by_hand_into_a_package_carrying_another() -> None:
         "made": 1,
         "ambiguous": 0,
         "contradicted": 0,
+        "undone": 0,
     }
 
     accept_suggestion(data, box, fourth, _jun(10, 22, 30))
@@ -2664,6 +2672,452 @@ def test_a_narrowed_suggestion_never_merges() -> None:
         (box, (sixth,))
     ]
     assert data.parcels[box].auto_merged is None
+
+
+def _ctt_came() -> tuple[ParcelEvent, ...]:
+    """CTT's own tracking of its package of 10 June, delivered."""
+    return (
+        _scan(_jun(10, 1, 41), ParcelStatus.IN_TRANSIT, CTT_ARRIVED),
+        _scan(_jun(10, 7, 12), ParcelStatus.OUT_FOR_DELIVERY, "Em entrega"),
+        _scan(_jun(10, 9, 27), ParcelStatus.DELIVERED, "Entregue"),
+    )
+
+
+def _guessed_into_ctt(data: ParcelsData) -> str:
+    """A shipment the shop alone merged into CTT's package as the vans left.
+
+    Its tracking repeats none of CTT's times, and no other package was
+    known yet.
+    """
+    sixth = _sixth(data)
+    box = _ctt_box(data, delivered=False)
+    reconcile(data, _jun(10, 8))
+    assert sixth not in data.parcels
+    flag = data.parcels[box].auto_merged
+    assert flag is not None
+    assert flag.reason == REASON_SAME_MERCHANT_DAY
+    assert flag.origin == "msg:a6#0"
+    assert flag.all_origins == {"msg:a6#0", "pa:t6"}
+    return box
+
+
+def _late_paack(
+    data: ParcelsData, key: int, number: str, first: datetime, came: datetime
+) -> str:
+    """Paack's e-mails about a package, read only after it came."""
+    read = _jun(10, 10, 20)
+    box = _apply(
+        data, _paack_box(f"msg:p{key}#0", number, MailKind.IN_TRANSIT, first), read
+    )
+    delivered = _paack_box(f"msg:p{key + 4}#0", number, MailKind.DELIVERED, came)
+    assert _apply(data, delivered, read) == box
+    return box
+
+
+def _sixth_came(data: ParcelsData, parcel_id: str) -> None:
+    """Amazon's tracking of the sixth shipment, now delivered."""
+    tracking = _parcel_app(
+        "t6",
+        "msg:a6#0",
+        (
+            _scan(_jun(9, 11, 11), ParcelStatus.IN_TRANSIT, ARRIVED),
+            _scan(_jun(10, 6, 41), ParcelStatus.OUT_FOR_DELIVERY, VAN_OUT),
+            _scan(_jun(10, 10, 14), ParcelStatus.DELIVERED, HANDED),
+        ),
+        order_numbers=(ORDER_3,),
+        amazon_shipment_id=SHIPMENT_6,
+    )
+    assert _apply(data, tracking, _jun(10, 10, 20)) == parcel_id
+
+
+def test_a_guess_is_undone_when_amazons_tracking_points_to_another_package() -> None:
+    """A shop's guess is undone when Amazon's tracking points to another package.
+
+    As the vans left, the shop alone merged a shipment into CTT's package.
+    Paack's e-mails, read later, came the minutes the shipment reached the
+    carrier and was delivered; CTT's package came at another time. The
+    guess is undone as Undo would, and the shipment joins Paack's package.
+    """
+    data = ParcelsData()
+    box = _guessed_into_ctt(data)
+    paack = _late_paack(data, 1, PAACK_1, _jun(9, 11, 11, 20), _jun(10, 10, 14, 22))
+    _sixth_came(data, box)
+    _own_scans(data, box, *_ctt_came())
+
+    result = reconcile(data, _jun(10, 22))
+
+    assert set(data.parcels) == {box, paack}
+    assert {box, paack} <= result.changed
+    ctt = data.parcels[box]
+    assert set(ctt.origins) == {"msg:c1#0", "pa:c1"}
+    assert ctt.auto_merged is None
+    parcel = data.parcels[paack]
+    assert set(parcel.origins) == {"msg:p1#0", "msg:p5#0", "msg:a6#0", "pa:t6"}
+    flag = parcel.auto_merged
+    assert flag is not None
+    assert flag.reason == REASON_AMAZON_TRACKING
+    assert flag.origin == "msg:a6#0"
+    assert flag.all_origins == {"msg:a6#0", "pa:t6"}
+    links = {"made": 1, "ambiguous": 0, "contradicted": 0, "undone": 1}
+    assert data.engine[AMAZON_LINKS_KEY] == links
+
+    again = reconcile(data, _jun(10, 23))
+
+    assert not again.removed
+    assert again.suggestions == []
+    assert set(data.parcels[box].origins) == {"msg:c1#0", "pa:c1"}
+    assert len(data.parcels[paack].origins) == 4
+    assert data.engine[AMAZON_LINKS_KEY] == links
+
+
+def _guessed_by_eta(data: ParcelsData) -> str:
+    """CTT's e-mail naming Amazon, put in the shipment due that day."""
+    first = _shipment(
+        data,
+        1,
+        ORDER_1,
+        SHIPMENT_1,
+        _jun(8, 9),
+        _scan(_jun(9, 12, 36), ParcelStatus.IN_TRANSIT, ARRIVED),
+        _scan(_jun(10, 6, 41), ParcelStatus.OUT_FOR_DELIVERY, VAN_OUT),
+    )
+    mail = _ctt("msg:c1#0", CTT_1, MailKind.OUT_FOR_DELIVERY, _jun(10, 7, 30))
+    assert _apply(data, mail) == first
+    flag = data.parcels[first].auto_merged
+    assert flag is not None
+    assert (flag.reason, flag.origin, flag.origins) == (
+        REASON_SAME_MERCHANT_ETA,
+        "msg:c1#0",
+        (),
+    )
+    return first
+
+
+def _first_came(data: ParcelsData, parcel_id: str) -> None:
+    """Amazon's tracking of the first shipment, delivered hours after CTT's."""
+    tracking = _parcel_app(
+        "t1",
+        "msg:a1#0",
+        (
+            _scan(_jun(9, 12, 36), ParcelStatus.IN_TRANSIT, ARRIVED),
+            _scan(_jun(10, 6, 41), ParcelStatus.OUT_FOR_DELIVERY, VAN_OUT),
+            _scan(_jun(10, 12, 30), ParcelStatus.DELIVERED, HANDED),
+        ),
+        order_numbers=(ORDER_1,),
+        amazon_shipment_id=SHIPMENT_1,
+    )
+    assert _apply(data, tracking, _jun(10, 13)) == parcel_id
+
+
+@pytest.mark.parametrize("by_hand", [False, True], ids=["scanned", "by-hand"])
+def test_a_guess_is_undone_when_amazons_tracking_rules_its_package_out(
+    by_hand: bool,
+) -> None:
+    """A shop's guess is undone when its package came hours before the shipment.
+
+    CTT's e-mail named Amazon and came the day a shipment was due, so it
+    joined the shipment. CTT's package came three hours before Amazon's
+    tracking says the shipment did, by its own tracking or by the user's
+    mark, which says it came by then. The user's edits stay, as with Undo.
+    """
+    data = ParcelsData()
+    first = _guessed_by_eta(data)
+    if by_hand:
+        mark_delivered(data, first, _jun(10, 9, 27))
+    else:
+        _own_scans(data, first, *_ctt_came())
+    _first_came(data, first)
+
+    result = reconcile(data, _jun(10, 14))
+
+    [ctt] = set(data.parcels) - {first}
+    assert {first, ctt} <= result.changed
+    shipment = data.parcels[first]
+    mine = {"msg:a1#0", "pa:t1"}
+    assert set(shipment.origins) == mine | (
+        {manual_origin_id(first)} if by_hand else set()
+    )
+    assert shipment.auto_merged is None
+    package = data.parcels[ctt]
+    assert set(package.origins) == {"msg:c1#0"} | (set() if by_hand else {"pa:c1"})
+    assert package.auto_merged is None
+    links = {"made": 0, "ambiguous": 0, "contradicted": 0, "undone": 1}
+    assert data.engine[AMAZON_LINKS_KEY] == links
+
+    again = reconcile(data, _jun(10, 15))
+
+    assert not again.removed
+    assert again.suggestions == []
+    assert set(data.parcels) == {first, ctt}
+    assert data.engine[AMAZON_LINKS_KEY] == links
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        None,
+        REASON_SAME_ORDER,
+        REASON_SAME_NUMBER,
+        REASON_SAME_REFERENCE,
+        REASON_SAME_MERCHANT_DOMAIN,
+        REASON_AMAZON_TRACKING,
+    ],
+)
+def test_only_the_shops_guesses_are_undone(reason: str | None) -> None:
+    """Only the shop's guesses are undone, never the user's merges.
+
+    A merge the user made or kept carries no flag. An order, a number, a
+    reference, a shop's own domain or Amazon's tracking are no guess.
+    """
+    data = ParcelsData()
+    first = _guessed_by_eta(data)
+    _own_scans(data, first, *_ctt_came())
+    _first_came(data, first)
+    guess = data.parcels[first].auto_merged
+    assert guess is not None
+    flag = None if reason is None else replace(guess, reason=reason)
+    data.parcels[first].auto_merged = flag
+
+    reconcile(data, _jun(10, 14))
+
+    assert set(data.parcels) == {first}
+    parcel = data.parcels[first]
+    assert set(parcel.origins) == {"msg:a1#0", "pa:t1", "msg:c1#0", "pa:c1"}
+    assert parcel.auto_merged == flag
+    assert AMAZON_LINKS_KEY not in data.engine
+
+
+def test_a_guess_put_away_stays() -> None:
+    """A guess about a parcel put away stays: undoing it would bring it back."""
+    data = ParcelsData()
+    first = _guessed_by_eta(data)
+    _own_scans(data, first, *_ctt_came())
+    _first_came(data, first)
+    data.parcels[first].archived = _jun(10, 13, 30)
+
+    reconcile(data, _jun(10, 14))
+
+    assert set(data.parcels) == {first}
+    parcel = data.parcels[first]
+    assert len(parcel.origins) == 4
+    assert parcel.auto_merged is not None
+    assert parcel.archived == _jun(10, 13, 30)
+    assert AMAZON_LINKS_KEY not in data.engine
+
+
+def test_a_guess_stays_when_the_user_merged_another_shipment_in() -> None:
+    """A guess stays when the user merged another shipment into the parcel.
+
+    Amazon's tracking of the two shipments then tells two stories, and the
+    user put them together.
+    """
+    data = ParcelsData()
+    first = _guessed_by_eta(data)
+    _own_scans(data, first, *_ctt_came())
+    _first_came(data, first)
+    second = _shipment(data, 2, ORDER_2, SHIPMENT_2, _jun(8, 10), *_at_center())
+    merge_parcels(data, first, [second], _jun(10, 13, 30))
+
+    reconcile(data, _jun(10, 14))
+
+    assert set(data.parcels) == {first}
+    parcel = data.parcels[first]
+    assert len(parcel.origins) == 6
+    flag = parcel.auto_merged
+    assert flag is not None
+    assert flag.reason == REASON_SAME_MERCHANT_ETA
+    assert AMAZON_LINKS_KEY not in data.engine
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "two-packages",
+        "merged-one-agrees",
+        "came-only",
+        "reached-only",
+        "private",
+        "not-delivered",
+    ],
+)
+def test_a_guess_stays_without_one_package_clearly_agreeing(case: str) -> None:
+    """A guess stays unless exactly one other package repeats both times.
+
+    Not when two packages repeat them, or the merged one does too; not when
+    the other package repeats only the minute the shipment came, or only
+    the one it reached the carrier; not when the shipment can't have been
+    in it; and not before Amazon's tracking says the shipment came.
+    """
+    data = ParcelsData()
+    box = _guessed_into_ctt(data)
+    first, came = _jun(9, 11, 11, 20), _jun(10, 10, 14, 22)
+    if case == "came-only":
+        first = _jun(9, 13, 30)
+    if case == "reached-only":
+        came = _jun(10, 11, 30)
+    paack = _late_paack(data, 1, PAACK_1, first, came)
+    if case == "two-packages":
+        _late_paack(data, 2, PAACK_2, _jun(9, 11, 11, 30), _jun(10, 10, 14, 40))
+    if case == "private":
+        data.parcels[paack].private = True
+    if case != "not-delivered":
+        _sixth_came(data, box)
+    scans = _ctt_came()
+    if case == "merged-one-agrees":
+        scans = (
+            _scan(_jun(9, 11, 11), ParcelStatus.IN_TRANSIT, CTT_ARRIVED),
+            scans[1],
+            _scan(_jun(10, 10, 15), ParcelStatus.DELIVERED, "Entregue"),
+        )
+    _own_scans(data, box, *scans)
+
+    reconcile(data, _jun(10, 22))
+
+    parcel = data.parcels[box]
+    assert set(parcel.origins) == {"msg:c1#0", "pa:c1", "msg:a6#0", "pa:t6"}
+    flag = parcel.auto_merged
+    assert flag is not None
+    assert flag.reason == REASON_SAME_MERCHANT_DAY
+    assert data.engine[AMAZON_LINKS_KEY] == NO_LINKS
+
+
+def test_a_guess_stays_when_the_package_it_points_to_went_back() -> None:
+    """A guess stays when the package Amazon's tracking points to went back.
+
+    Paack's package came the minutes the shipment did, then went back to
+    its sender. A package sent back is never linked, so nothing would take
+    the shipment from CTT's package.
+    """
+    data = ParcelsData()
+    box = _guessed_into_ctt(data)
+    paack = _late_paack(data, 1, PAACK_1, _jun(9, 11, 11, 20), _jun(10, 10, 14, 22))
+    _sixth_came(data, box)
+    _own_scans(data, box, *_ctt_came())
+    back = _paack_box("msg:p9#0", PAACK_1, MailKind.RETURN, _jun(10, 18))
+    assert _apply(data, back) == paack
+    assert data.parcels[paack].state.status is ParcelStatus.RETURNED
+
+    reconcile(data, _jun(10, 22))
+
+    assert set(data.parcels) == {box, paack}
+    parcel = data.parcels[box]
+    assert set(parcel.origins) == {"msg:c1#0", "pa:c1", "msg:a6#0", "pa:t6"}
+    flag = parcel.auto_merged
+    assert flag is not None
+    assert flag.reason == REASON_SAME_MERCHANT_DAY
+    assert data.engine[AMAZON_LINKS_KEY] == NO_LINKS
+
+
+def test_a_guess_the_user_gave_a_tracking_number_stays() -> None:
+    """A guess stays once the user gave the parcel a tracking number.
+
+    Undo would leave the user's edits with the shipment, which would then
+    have a carrier's number of its own: the user may have named its package.
+    """
+    data = ParcelsData()
+    first = _guessed_by_eta(data)
+    _own_scans(data, first, *_ctt_came())
+    _first_came(data, first)
+    update_parcel(data, first, {"tracking_number": "EX123456789099"}, _jun(10, 13))
+
+    reconcile(data, _jun(10, 14))
+
+    assert set(data.parcels) == {first}
+    parcel = data.parcels[first]
+    mine = {"msg:a1#0", "pa:t1", manual_origin_id(first)}
+    assert set(parcel.origins) == mine | {"msg:c1#0", "pa:c1"}
+    flag = parcel.auto_merged
+    assert flag is not None
+    assert flag.reason == REASON_SAME_MERCHANT_ETA
+    assert AMAZON_LINKS_KEY not in data.engine
+
+
+def test_a_guess_of_an_email_naming_no_package_stays() -> None:
+    """A guess stays when the e-mail it put in names no package.
+
+    Amazon's e-mail without an order or a number joined the shipment due
+    that day. Paack's package repeats the shipment's times, but undoing the
+    guess would leave the e-mail on its own: the shipment is only suggested
+    for the package.
+    """
+    data = ParcelsData()
+    arrived = _scan(_jun(9, 11, 11), ParcelStatus.IN_TRANSIT, ARRIVED)
+    van = _scan(_jun(10, 6, 41), ParcelStatus.OUT_FOR_DELIVERY, VAN_OUT)
+    first = _shipment(data, 1, ORDER_1, SHIPMENT_1, _jun(8, 9), arrived, van)
+    mail = contribution(
+        "msg:a7#0",
+        kind=MailKind.OUT_FOR_DELIVERY,
+        time=_jun(10, 7, 30),
+        merchant="Amazon.es",
+        eta=Eta(start=JUNE_10, end=JUNE_10),
+        label="amazon.es",
+    )
+    assert _apply(data, mail) == first
+    guess = data.parcels[first].auto_merged
+    assert guess is not None
+    assert (guess.reason, guess.origin) == (REASON_SAME_MERCHANT_ETA, "msg:a7#0")
+    came = _scan(_jun(10, 10, 14), ParcelStatus.DELIVERED, HANDED)
+    tracking = _parcel_app(
+        "t1",
+        "msg:a1#0",
+        (arrived, van, came),
+        order_numbers=(ORDER_1,),
+        amazon_shipment_id=SHIPMENT_1,
+    )
+    assert _apply(data, tracking, _jun(10, 10, 20)) == first
+    paack = _late_paack(data, 1, PAACK_1, _jun(9, 11, 11, 20), _jun(10, 10, 14, 22))
+
+    result = reconcile(data, _jun(10, 22))
+
+    assert set(data.parcels) == {first, paack}
+    parcel = data.parcels[first]
+    assert set(parcel.origins) == {"msg:a1#0", "pa:t1", "msg:a7#0"}
+    flag = parcel.auto_merged
+    assert flag is not None
+    assert (flag.reason, flag.origin) == (REASON_SAME_MERCHANT_ETA, "msg:a7#0")
+    assert [(s.parcel_id, s.candidates) for s in result.suggestions] == [
+        (paack, (first,))
+    ]
+    assert data.engine[AMAZON_LINKS_KEY] == NO_LINKS
+
+
+def test_a_guess_undone_counts_when_the_shipment_left_a_month_before() -> None:
+    """A guess undone counts when the shipment left over a month before.
+
+    Only parcels with news in the last 30 days are looked at, so once apart
+    the shipment, whose e-mail and tracking began in May, has nothing to
+    link. The undo still counts.
+    """
+    data = ParcelsData()
+    may = datetime(2026, 5, 4, 12, 36, tzinfo=UTC)
+    arrived = _scan(may, ParcelStatus.IN_TRANSIT, ARRIVED)
+    van = _scan(_jun(10, 6, 41), ParcelStatus.OUT_FOR_DELIVERY, VAN_OUT)
+    sent = datetime(2026, 5, 2, 9, tzinfo=UTC)
+    first = _shipment(data, 1, ORDER_1, SHIPMENT_1, sent, arrived, van)
+    mail = _ctt("msg:c1#0", CTT_1, MailKind.OUT_FOR_DELIVERY, _jun(10, 7, 30))
+    assert _apply(data, mail) == first
+    guess = data.parcels[first].auto_merged
+    assert guess is not None
+    assert guess.reason == REASON_SAME_MERCHANT_ETA
+    _own_scans(data, first, *_ctt_came())
+    came = _scan(_jun(10, 12, 30), ParcelStatus.DELIVERED, HANDED)
+    tracking = _parcel_app(
+        "t1",
+        "msg:a1#0",
+        (arrived, van, came),
+        order_numbers=(ORDER_1,),
+        amazon_shipment_id=SHIPMENT_1,
+    )
+    assert _apply(data, tracking, _jun(10, 13)) == first
+
+    result = reconcile(data, _jun(10, 14))
+
+    [ctt] = set(data.parcels) - {first}
+    assert {first, ctt} <= result.changed
+    assert set(data.parcels[first].origins) == {"msg:a1#0", "pa:t1"}
+    assert set(data.parcels[ctt].origins) == {"msg:c1#0", "pa:c1"}
+    links = {"made": 0, "ambiguous": 0, "contradicted": 0, "undone": 1}
+    assert data.engine[AMAZON_LINKS_KEY] == links
 
 
 def test_details_list_the_packages_amazons_tracking_points_away_from() -> None:
@@ -2948,4 +3402,5 @@ def test_amazon_tracking_keeps_the_named_carrier(
         "made": made,
         "ambiguous": 0,
         "contradicted": 0,
+        "undone": 0,
     }

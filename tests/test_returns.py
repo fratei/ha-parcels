@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Coroutine, Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
@@ -19,11 +19,8 @@ import pytest
 from pytest_homeassistant.common import CLIENT_ID
 from pytest_homeassistant.typing import WebSocketGenerator
 
-from custom_components.parcels.ai_worker import AIWorker
 from custom_components.parcels.const import (
-    CONF_ENTRY_TYPE,
     DOMAIN,
-    ENTRY_TYPE_MAILBOX,
     MailKind,
     ParcelStatus,
 )
@@ -46,7 +43,6 @@ from custom_components.parcels.parsers.normalize import message_from_bytes
 from custom_components.parcels.parsers.returns import NOTE_REFUND
 from custom_components.parcels.views import SYSTEM_VIEWER, details, parcel_json
 
-from .ai.common import LOCAL_MODEL, add_ai_task
 from .common import (
     ADDRESS,
     EMAIL_FIXTURES,
@@ -540,27 +536,6 @@ def ai_lists(engine: ParcelsEngine) -> list[str]:
     return [entry["hash"] for entry in engine.ai.queue] + list(
         engine.data.ai.get("shadow", [])
     )
-
-
-@pytest.fixture
-async def local_ai(hass: HomeAssistant) -> AsyncIterator[str]:
-    """Add a local AI task and return its entity; its queue only fills up.
-
-    The mailbox unloads before the hub at the end, as in the AI's own tests:
-    a hub that unloads first reloads it, and it would wait for the hub.
-    """
-
-    async def idle(self: AIWorker) -> None:
-        return None
-
-    entity_id = add_ai_task(hass, model=LOCAL_MODEL)
-    hass.config.components.add("ai_task")
-    hass.states.async_set(entity_id, "2026-11-20T09:00:00+00:00")
-    with patch.object(AIWorker, "_async_run", idle):
-        yield entity_id
-    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
-        if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MAILBOX:
-            await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_check_drops_refunds_an_earlier_release_added(

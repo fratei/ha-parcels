@@ -53,6 +53,7 @@ def _day(day: int) -> Eta:
     [
         ("order_es", MailKind.ORDER, "es", "405-3829174-6627315"),
         ("order_multi_pt", MailKind.ORDER, "pt", "406-5839271-0042817"),
+        ("order_pedido_pt", MailKind.ORDER, "pt", "406-2958173-6604821"),
         ("order_en_us", MailKind.ORDER, "en", "112-4839201-5938472"),
         ("shipped_de", MailKind.SHIPPED, "de", "303-5928471-2039485"),
         ("shipped_ctt_pt", MailKind.SHIPPED, "pt", "406-1928374-5647382"),
@@ -210,6 +211,15 @@ def test_two_packages_split_items(parse: Parse) -> None:
                 "Silicone Straw Lid Replacement, 2 Pack",
             ),
         ),
+        (
+            "order_pedido_pt",
+            Eta(date(2026, 12, 7), date(2026, 12, 7)),
+            (
+                "Candeeiro de mesa Exemplo, LED, regulável, branco",
+                "Lâmpada LED E27 Exemplo, 9 W, pack de 2",
+                "Extensão elétrica Exemplo com 3 tomadas",
+            ),
+        ),
     ],
 )
 def test_order_confirmation(
@@ -226,6 +236,55 @@ def test_order_confirmation(
     assert shipment.tracking_number is None
     assert shipment.amazon_shipment_id is None
     assert shipment.tracking_url is None
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Pedido recebido: \u201cCandeeiro de mesa Exemplo\u2026\u201d",
+        "Pedido confirmado: \u201cCandeeiro de mesa Exemplo\u2026\u201d",
+        "Pedido realizado",
+        "Pedido: \u201cCandeeiro de mesa Exemplo\u2026\u201d e mais 2 produtos",
+        "Confirmação do seu pedido",
+        "Confirmação do pedido 406-2958173-6604821",
+        "O seu pedido da Amazon.es",
+        "Obrigado pelo seu pedido",
+    ],
+)
+def test_portuguese_order_says_pedido(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    subject: str,
+) -> None:
+    """Amazon's Portuguese e-mails call an order "pedido" as well as "encomenda".
+
+    Words shared with Spanish keep the e-mail's own language.
+    """
+    message = load_eml("amazon/order_pedido_pt.eml")
+    message = dataclasses.replace(message, subject=subject)
+    result = parse_amazon(message, verdict_for(message), tz)
+    assert result is not None
+    assert result.kind is MailKind.ORDER
+    assert result.language == "pt"
+    assert result.confidence >= max(0.85, CONFIDENCE_APPLY)
+    [shipment] = result.shipments
+    assert shipment.eta == Eta(date(2026, 12, 7), date(2026, 12, 7))
+
+
+def test_portuguese_order_by_its_body(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """Under an unknown subject, "Obrigado pelo seu pedido!" is an order."""
+    message = load_eml("amazon/order_pedido_pt.eml")
+    message = dataclasses.replace(message, subject="Novidades para si")
+    result = parse_amazon(message, verdict_for(message), tz)
+    assert result is not None
+    assert result.kind is MailKind.ORDER
+    assert result.language == "pt"
+    assert result.order_numbers == ("406-2958173-6604821",)
 
 
 @pytest.mark.parametrize(

@@ -79,6 +79,7 @@ from .customer_returns import (
 from .dedup import (
     AMAZON_LINKS_KEY,
     AMAZON_REPAIR_KEY,
+    ORDER_FOLD_KEY,
     REPAIR_KEY,
     REPAIR_VERSION,
     Contribution,
@@ -91,6 +92,7 @@ from .dedup import (
     archive_parcel,
     dismiss_suggestion,
     fill_shop,
+    fold_known_orders,
     infer_deliveries,
     manual_origin_id,
     mark_delivered,
@@ -151,6 +153,8 @@ from .parsers.tracking import (
 from .quiet import infer_quiet_deliveries
 from .seventeentrack import (
     PICKUP_PLACES_KEY,
+    PICKUPS_READ_KEY,
+    PICKUPS_READ_VERSION,
     PICKUPS_REPAIR_KEY,
     PICKUPS_REREAD_KEY,
     repair_pickups,
@@ -227,6 +231,15 @@ PAACK_SHOP_CHECK_KEY = "paack_shop_check"
 PAACK_SHOP_CHECK_WINDOW = timedelta(days=14)
 # ... at most this many, newest first.
 PAACK_SHOP_CHECK_MAX = 50
+# Set when the store of an earlier release is loaded. Once the mailboxes were
+# read, Amazon's recent e-mails that the local AI read, or that wait in
+# review, are read again by the parsers: releases before 0.1.16 couldn't read
+# Amazon's Portuguese order confirmations. Then it holds what the check found.
+AMAZON_AI_CHECK_KEY = "amazon_ai_check"
+# The check reads Amazon's e-mails of this many recent days...
+AMAZON_AI_CHECK_WINDOW = timedelta(days=30)
+# ... at most this many, newest first.
+AMAZON_AI_CHECK_MAX = 100
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -457,13 +470,17 @@ class ParcelsEngine:
         if PICKUP_PLACES_KEY not in data.engine:
             data.engine[PICKUP_PLACES_KEY] = restore_pickup_places(data, now, self.tz)
             self.store.async_schedule_save()
-        if PICKUPS_REREAD_KEY not in data.engine:
+        if int(data.engine.get(PICKUPS_READ_KEY) or 0) < PICKUPS_READ_VERSION:
             data.engine[PICKUPS_REREAD_KEY] = repair_pickups(data, now, self.tz)
+            data.engine[PICKUPS_READ_KEY] = PICKUPS_READ_VERSION
+            self.store.async_schedule_save()
+        if ORDER_FOLD_KEY not in data.engine:
+            data.engine[ORDER_FOLD_KEY] = fold_known_orders(data, now)
             self.store.async_schedule_save()
         if not (data.parcels or data.review):
             # Nothing stored by an earlier release to check after the update.
             data.engine.setdefault(FILL_CHECK_KEY, True)
-        for key in (RETURNS_CHECK_KEY, PAACK_SHOP_CHECK_KEY):
+        for key in (RETURNS_CHECK_KEY, PAACK_SHOP_CHECK_KEY, AMAZON_AI_CHECK_KEY):
             data.engine.setdefault(
                 key,
                 {"before": dt_to_str(now)}
@@ -570,23 +587,42 @@ class ParcelsEngine:
         shops = None
         if isinstance(shop_check, dict) and not {"started", "done"} & shop_check.keys():
             shops = dt_from_str(shop_check.get("before"))
+        amazon_check = engine.get(AMAZON_AI_CHECK_KEY)
+        amazon_ai = None
+        if (
+            isinstance(amazon_check, dict)
+            and not {"started", "done"} & amazon_check.keys()
+        ):
+            amazon_ai = dt_from_str(amazon_check.get("before"))
         fill = not engine.get(FILL_CHECK_KEY)
         paack = not engine.get(PAACK_CHECK_KEY)
         leroymerlin = not engine.get(LEROYMERLIN_CHECK_KEY)
-        if before is None and shops is None and not (fill or paack or leroymerlin):
+        if (
+            before is None
+            and shops is None
+            and amazon_ai is None
+            and not (fill or paack or leroymerlin)
+        ):
             return
         if before is not None:
             check["started"] = dt_to_str(dt_util.utcnow())
             check["relisted"] = self._relist()
         if shops is not None:
             shop_check["started"] = dt_to_str(dt_util.utcnow())
+        if amazon_ai is not None:
+            amazon_check["started"] = dt_to_str(dt_util.utcnow())
         engine[FILL_CHECK_KEY] = True
         engine[PAACK_CHECK_KEY] = True
         engine[LEROYMERLIN_CHECK_KEY] = True
         self.async_schedule_save()
         self.async_create_task(
             self._async_checks(
-                before, shops=shops, fill=fill, paack=paack, leroymerlin=leroymerlin
+                before,
+                shops=shops,
+                amazon_ai=amazon_ai,
+                fill=fill,
+                paack=paack,
+                leroymerlin=leroymerlin,
             ),
             "parcels checks",
         )
@@ -1126,11 +1162,14 @@ class ParcelsEngine:
         label: str,
         now: datetime,
         confirmed: bool = False,
+        keep_closed: bool = False,
     ) -> set[str]:
         """Add a parse result to the parcels; returns the touched parcel IDs.
 
         A customer return goes to the returns instead. Whatever the e-mail
         said before (as a parcel or as a return) gives way to the result.
+        With ``keep_closed``, a parcel put away or closed stays so: the
+        e-mail was read before, so it isn't news.
         """
         owners = record.owners
         if result.kind is MailKind.CUSTOMER_RETURN:
@@ -1161,7 +1200,9 @@ class ParcelsEngine:
             owner=owners[0] if owners else None,
             confirmed=confirmed,
         ):
-            applied = apply_contribution(self.data, contribution, now)
+            applied = apply_contribution(
+                self.data, contribution, now, keep_closed=keep_closed
+            )
             if applied.parcel_id is not None:
                 touched.add(applied.parcel_id)
         for owner in owners[1:]:
@@ -1887,6 +1928,20 @@ class ParcelsEngine:
                 found = True
         return found
 
+    def _ai_only(self, message_hash: str) -> bool:
+        """Return True when only the local AI added an e-mail, and nobody confirmed it."""
+        found = False
+        for parcel in self.data.parcels.values():
+            for origin in parcel.origins.values():
+                if origin.message != message_hash or origin.id.endswith(
+                    FILL_ORIGIN_SUFFIX
+                ):
+                    continue
+                if origin.source is not Source.AI or origin.confirmed:
+                    return False
+                found = True
+        return found
+
     async def _async_fill_check(self) -> None:
         """Check once, after the update, what an earlier release stored.
 
@@ -1929,16 +1984,17 @@ class ParcelsEngine:
         before: datetime | None,
         *,
         shops: datetime | None,
+        amazon_ai: datetime | None,
         fill: bool,
         paack: bool,
         leroymerlin: bool,
     ) -> None:
         """Run the one-time checks in turn.
 
-        Returns first, as they can remove parcels. Paack's and Leroy Merlin's
-        e-mails last, so that what the parsers read then isn't filled in by
-        the local AI; the shops of Paack's parcels at the very end, once the
-        e-mails under review were read.
+        Returns first, as they can remove parcels. Paack's, Leroy Merlin's
+        and then Amazon's e-mails last, so that what the parsers read then
+        isn't filled in by the local AI; the shops of Paack's parcels at the
+        very end, once the e-mails under review were read.
         """
         if before is not None:
             await self._async_returns_check(before)
@@ -1948,6 +2004,8 @@ class ParcelsEngine:
             await self._async_rejected_check(_paack_rejected, "Paack")
         if leroymerlin:
             await self._async_rejected_check(_leroymerlin_rejected, "Leroy Merlin")
+        if amazon_ai is not None:
+            await self._async_amazon_ai_check(amazon_ai)
         if shops is not None:
             await self._async_paack_shop_check(shops)
 
@@ -2025,6 +2083,131 @@ class ParcelsEngine:
         check["done"] = dt_to_str(dt_util.utcnow())
         check["counts"] = counts
         if counts["filled"]:
+            self.async_changed()
+        else:
+            self.async_schedule_save()
+
+    def _amazon_ai_reading(self, record: MessageRecord) -> str | None:
+        """Return how the local AI left an e-mail, or None if it didn't.
+
+        "applied" when only the AI added it to parcels, unconfirmed; "review"
+        when it waits in review; "filtered" when the AI took it for no
+        parcel; "queued" when it waits for the AI. None as well when the user
+        asked the AI to read it, or removed it from Parcels.
+        """
+        data = self.data
+        key = record.hash
+        queued = [entry for entry in self.ai.queue if entry.get("hash") == key]
+        if any(entry.get("forced") for entry in queued):
+            return None
+        if record.state is MessageState.APPLIED:
+            return "applied" if self._ai_only(key) else None
+        if record.state is MessageState.REVIEW:
+            waiting = any(item.message == key for item in data.review.values())
+            return "review" if waiting else None
+        if record.state is MessageState.FILTERED:
+            rejected = any(
+                entry.message == key and not entry.removed
+                for entry in data.filtered.values()
+            )
+            return "filtered" if rejected else None
+        if record.state is MessageState.QUEUED:
+            return "queued" if queued else None
+        return None
+
+    def _amazon_ai_check_keys(self, before: datetime, now: datetime) -> list[str]:
+        """Return Amazon's e-mails that the local AI read, newest first.
+
+        Those of the last 30 days that an earlier release, before ``before``,
+        left to the AI or to review. Senders the user ignores never count.
+        """
+        data = self.data
+        since = now - AMAZON_AI_CHECK_WINDOW
+
+        def received(key: str) -> datetime:
+            record = data.messages[key]
+            return record.received or record.seen
+
+        keys = [
+            key
+            for key, record in data.messages.items()
+            if record.seen < before
+            and received(key) >= since
+            and (info := lookup(record.sender_domain)) is not None
+            and info.parser == "amazon"
+            and not self.is_ignored(record.sender_domain)
+            and self._amazon_ai_reading(record) is not None
+        ]
+        return sorted(keys, key=received, reverse=True)
+
+    async def _async_amazon_ai_check(self, before: datetime) -> None:
+        """Read Amazon's e-mails that the local AI read again, once after the update.
+
+        Releases before 0.1.16 couldn't read Amazon's Portuguese order
+        confirmations, so the local AI read them, or they waited in review.
+        Each e-mail is downloaded and read again by the parsers, never the
+        AI. Where they read it with confidence, their reading replaces the
+        AI's, without reopening a parcel that was put away; what the user
+        set, merged or split stays, and so does a parcel only the AI saw
+        once the user edited it. Nothing changes when the e-mail changed
+        state while it was read.
+        """
+        data = self.data
+        keys = self._amazon_ai_check_keys(before, dt_util.utcnow())
+        counts = dict.fromkeys(("read", "applied", "kept", "gone", "failed"), 0)
+        counts["skipped"] = max(0, len(keys) - AMAZON_AI_CHECK_MAX)
+        for key in keys[:AMAZON_AI_CHECK_MAX]:
+            if (record := data.messages.get(key)) is None:
+                continue
+            fetched = await self.async_refetch(record)
+            if (message := fetched.message) is None or fetched.mailbox is None:
+                counts["gone" if fetched.gone else "failed"] += 1
+                continue
+            counts["read"] += 1
+            verdict = self.verify(message)
+            result = await self.async_parse(message, verdict)
+            reading = (
+                self._amazon_ai_reading(record)
+                if data.messages.get(key) is record
+                else None
+            )
+            if reading is None or not verdict.verified or not is_confident(result):
+                counts["kept"] += 1
+                continue
+            now = dt_util.utcnow()
+            org = organizational_domain(message.sender_domain)
+            if reading != "applied":
+                self._clear_outputs(key, now)
+            self.apply_result(
+                result,
+                record,
+                source=Source.PARSER,
+                time=self.message_time(message, now),
+                label=org,
+                now=now,
+                keep_closed=True,
+            )
+            # What only the AI read in the e-mail goes, but not a parcel that
+            # the user edited.
+            for parcel in list(data.parcels.values()):
+                stale = {
+                    origin.id
+                    for origin in parcel.origins.values()
+                    if origin.message == key
+                    and origin.source is Source.AI
+                    and not origin.id.endswith(FILL_ORIGIN_SUFFIX)
+                }
+                if stale and set(parcel.origins) - stale != {
+                    manual_origin_id(parcel.id)
+                }:
+                    remove_origins(data, parcel, stale, now)
+            self.ai.drop(key)
+            self._clear_unparsed(org)
+            counts["applied"] += 1
+        check = data.engine.setdefault(AMAZON_AI_CHECK_KEY, {})
+        check["done"] = dt_to_str(dt_util.utcnow())
+        check["counts"] = counts
+        if counts["applied"]:
             self.async_changed()
         else:
             self.async_schedule_save()
@@ -2462,10 +2645,12 @@ class ParcelsEngine:
             "refunds_dropped": int(data.engine.get(REFUNDS_KEY) or 0),
             "returns_check": data.engine.get(RETURNS_CHECK_KEY),
             "paack_shop_check": data.engine.get(PAACK_SHOP_CHECK_KEY),
+            "amazon_ai_check": data.engine.get(AMAZON_AI_CHECK_KEY),
             "recent_emails": self._recent_emails(dt_util.utcnow()),
             "working_days": self.workdays.source,
             "amazon_shipment_ids": amazon_shipment_id_counts(data, dt_util.utcnow()),
             "amazon_links": data.engine.get(AMAZON_LINKS_KEY),
+            "order_fold": data.engine.get(ORDER_FOLD_KEY),
             "repair": data.engine.get(REPAIR_KEY),
             "amazon_carrier_repaired": data.engine.get(AMAZON_REPAIR_KEY),
             "parcel_app_dates_repaired": data.engine.get(DATES_REPAIR_KEY),

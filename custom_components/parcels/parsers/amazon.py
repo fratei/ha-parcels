@@ -229,7 +229,13 @@ _SUBJECT_PATTERNS: tuple[KindPattern, ...] = (
         r"|thank(?:s|\s+you)\s+for\s+your\s+order",
         pt=r"encomenda\s+(?:efetuada|confirmada|realizada|recebida)|encomendado"
         r"|confirmacao\s+d[ae]\s+encomenda|a\s+sua\s+encomenda\s+d[ae]\s+amazon"
-        r"|obrigad[oa]\s+pela\s+sua\s+encomenda|^\s*encomenda\s*:",
+        r"|obrigad[oa]\s+pela\s+sua\s+encomenda|^\s*encomenda\s*:"
+        # Newer e-mails say "pedido"; "pedido confirmado/realizado" and
+        # "pedido:" are Spanish too and stay with es, so that a Spanish
+        # e-mail of unknown language isn't read as Portuguese.
+        r"|pedido\s+(?:efetuado|recebido)|confirmacao\s+d[eo]\s+(?:seu\s+)?pedido"
+        r"|o\s+seu\s+pedido\s+(?:d[aeo]|n[ao])\s+amazon"
+        r"|obrigad[oa]\s+pelo\s+seu\s+pedido",
         es=r"pedido\s+(?:realizado|confirmado|recibido|efectuado)"
         r"|confirmacion\s+del?\s+pedido|tu\s+pedido\s+(?:de|en)\s+amazon"
         r"|gracias\s+por\s+tu\s+pedido|^\s*pedido\s*:",
@@ -338,7 +344,7 @@ _BODY_PATTERNS: tuple[KindPattern, ...] = (
     *kind_table(
         MailKind.ORDER,
         en=r"thank(?:s|\s+you)\s+for\s+your\s+order",
-        pt=r"obrigad[oa]\s+pela\s+sua\s+encomenda",
+        pt=r"obrigad[oa]\s+(?:pela\s+sua\s+encomenda|pelo\s+seu\s+pedido)",
         es=r"gracias\s+por\s+tu\s+pedido",
         de=r"(?:vielen\s+)?dank\s+fur\s+ihre\s+bestellung",
         fr=r"merci\s+pour\s+votre\s+commande",

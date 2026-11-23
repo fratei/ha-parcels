@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import date, time
+from collections.abc import Callable, Iterable
+import dataclasses
+from datetime import date, datetime, time
 import json
 
 import pytest
@@ -19,6 +21,8 @@ from custom_components.parcels.dedup import (
     apply_contribution,
     archive_parcel,
     find_parcels_by_number,
+    fold_known_orders,
+    keep_apart,
     mark_delivered,
     merge_parcels,
     order_parcels,
@@ -28,7 +32,7 @@ from custom_components.parcels.dedup import (
     undo_auto_merge,
     update_parcel,
 )
-from custom_components.parcels.models import ParcelsData, Source
+from custom_components.parcels.models import ParcelEvent, ParcelsData, Source
 from custom_components.parcels.parsers.base import Eta
 
 from .factories import T0, at, contribution
@@ -778,6 +782,238 @@ def test_news_brings_back_an_archived_parcel() -> None:
         at(days=50),
     )
     assert data.parcels[applied.parcel_id].archived == at(days=50)
+
+
+LAMP = "Candeeiro de mesa Exemplo"
+RUG = "Tapete de banho Exemplo"
+
+
+def _order_mail(
+    origin_id: str,
+    time: datetime,
+    *,
+    items: Iterable[str] = (),
+    private: bool = False,
+) -> Contribution:
+    """What an Amazon order's e-mail says: no carrier, no tracking number."""
+    return dataclasses.replace(
+        contribution(
+            origin_id,
+            kind=MailKind.ORDER,
+            time=time,
+            merchant="Amazon.es",
+            orders=[AMAZON_ORDER],
+            items=items,
+            private=private,
+        ),
+        order_placed=time,
+    )
+
+
+def _delivered_order(data: ParcelsData) -> str:
+    """Store an order whose parcel CTT delivered, archived on day 17."""
+    parcel_id = apply_contribution(
+        data, _order_mail("msg:o#0", T0, items=[LAMP]), T0
+    ).parcel_id
+    assert parcel_id is not None
+    apply_contribution(
+        data,
+        contribution(
+            "msg:d#0",
+            kind=MailKind.DELIVERED,
+            time=at(days=3),
+            carrier="ctt",
+            number="RR123456785PT",
+            merchant="Amazon.es",
+            orders=[AMAZON_ORDER],
+        ),
+        at(days=3),
+    )
+    archive_parcel(data, parcel_id, at(days=17))
+    return parcel_id
+
+
+def test_order_mail_joins_the_parcel_put_away() -> None:
+    """An order's late e-mail joins its archived parcel and leaves it closed."""
+    data = ParcelsData()
+    parcel_id = _delivered_order(data)
+
+    for index, items in enumerate(((), (LAMP,))):
+        late = at(days=30 + index)
+        applied = apply_contribution(
+            data, _order_mail(f"msg:late{index}#0", late, items=items), late
+        )
+        assert (applied.parcel_id, applied.created) == (parcel_id, False)
+        assert applied.auto_merged is None
+
+    assert list(data.parcels) == [parcel_id]
+    parcel = data.parcels[parcel_id]
+    assert parcel.archived == at(days=17)
+    assert parcel.state.status is S.DELIVERED
+    assert parcel.state.delivered_at == at(days=3)
+
+
+def test_order_mail_with_other_items_is_another_package() -> None:
+    """An order's e-mail with other items still makes a parcel of its own.
+
+    So does each shipment of an order that ships in two.
+    """
+    data = ParcelsData()
+    parcel_id = _delivered_order(data)
+    late = at(days=30)
+
+    applied = apply_contribution(
+        data, _order_mail("msg:late#0", late, items=[RUG]), late
+    )
+
+    assert applied.created
+    assert data.parcels[parcel_id].archived == at(days=17)
+
+    data = ParcelsData()
+    first, second = (
+        apply_contribution(
+            data, _order_mail(f"msg:two#{index}", T0, items=[item]), T0
+        ).parcel_id
+        for index, item in enumerate((LAMP, RUG))
+    )
+    assert first != second
+    assert len(data.parcels) == 2
+
+
+@pytest.mark.parametrize("archived", [False, True])
+def test_order_mail_keeps_an_inferred_delivery(archived: bool) -> None:
+    """An order's e-mail isn't news: the delivery Parcels inferred stays."""
+    data = ParcelsData()
+    parcel_id = apply_contribution(
+        data, _order_mail("msg:o#0", T0, items=[LAMP]), T0
+    ).parcel_id
+    assert parcel_id is not None
+    parcel = data.parcels[parcel_id]
+    parcel.events.append(
+        ParcelEvent(
+            time=at(days=3),
+            source=Source.PARSER,
+            status=S.DELIVERED,
+            kind=MailKind.DELIVERED,
+            inferred=True,
+        )
+    )
+    parcel.touch(at(days=4))
+    if archived:
+        archive_parcel(data, parcel_id, at(days=17))
+    late = at(days=30)
+
+    applied = apply_contribution(data, _order_mail("msg:late#0", late), late)
+
+    assert applied.parcel_id == parcel_id
+    parcel = data.parcels[parcel_id]
+    assert parcel.state.status is S.DELIVERED
+    assert parcel.state.inferred
+    assert parcel.archived == (at(days=17) if archived else None)
+
+
+def _stray(data: ParcelsData, contribution: Contribution, now: datetime) -> str:
+    """Store the parcel that releases before 0.1.16 made of a late e-mail."""
+    alone = ParcelsData()
+    parcel_id = apply_contribution(alone, contribution, now).parcel_id
+    assert parcel_id is not None
+    data.parcels[parcel_id] = alone.parcels[parcel_id]
+    return parcel_id
+
+
+def test_fold_known_orders() -> None:
+    """Once, the parcel an order's late e-mail made joins the order's parcel.
+
+    That parcel stays archived and delivered; other orders' parcels stay.
+    """
+    data = ParcelsData()
+    parcel_id = _delivered_order(data)
+    late = at(days=30)
+    stray = _stray(data, _order_mail("msg:late#0", late), late)
+    other = apply_contribution(
+        data,
+        contribution(
+            "msg:x#0",
+            kind=MailKind.ORDER,
+            time=late,
+            merchant="Amazon.es",
+            orders=["405-7654321-7654321"],
+        ),
+        late,
+    ).parcel_id
+
+    assert fold_known_orders(data, at(days=31)) == 1
+
+    assert set(data.parcels) == {parcel_id, other}
+    parcel = data.parcels[parcel_id]
+    assert "msg:late#0" in parcel.origins
+    assert parcel.archived == at(days=17)
+    assert parcel.state.status is S.DELIVERED
+    assert stray not in data.parcels
+    assert fold_known_orders(data, at(days=31)) == 0
+
+
+def _confirm(data: ParcelsData, parcel_id: str, earlier: str) -> None:
+    for origin in data.parcels[parcel_id].origins.values():
+        origin.confirmed = True
+
+
+def _edit(data: ParcelsData, parcel_id: str, earlier: str) -> None:
+    update_parcel(data, parcel_id, {"pickup_point": "Loja Exemplo"}, at(days=30))
+
+
+def _delay(data: ParcelsData, parcel_id: str, earlier: str) -> None:
+    data.parcels[parcel_id].events.append(
+        ParcelEvent(time=at(days=30), source=Source.PARSER, kind=MailKind.DELAYED)
+    )
+
+
+def _part(data: ParcelsData, parcel_id: str, earlier: str) -> None:
+    keep_apart(data, data.parcels[parcel_id], data.parcels[earlier])
+
+
+def _older(data: ParcelsData, parcel_id: str, earlier: str) -> None:
+    data.parcels[parcel_id].created = at(days=-1)
+
+
+@pytest.mark.parametrize(
+    ("items", "private", "spoil"),
+    [
+        ([RUG], False, None),
+        ([], True, None),
+        ([], False, _confirm),
+        ([], False, _edit),
+        ([], False, _delay),
+        ([], False, _part),
+        ([], False, _older),
+    ],
+    ids=[
+        "other_items",
+        "private",
+        "confirmed",
+        "edited",
+        "news",
+        "kept_apart",
+        "older",
+    ],
+)
+def test_fold_known_orders_leaves(
+    items: list[str],
+    private: bool,
+    spoil: Callable[[ParcelsData, str, str], None] | None,
+) -> None:
+    """A parcel stays that the user touched, or that may be another package."""
+    data = ParcelsData()
+    parcel_id = _delivered_order(data)
+    late = at(days=30)
+    stray = _stray(
+        data, _order_mail("msg:late#0", late, items=items, private=private), late
+    )
+    if spoil is not None:
+        spoil(data, stray, parcel_id)
+
+    assert fold_known_orders(data, at(days=31)) == 0
+    assert set(data.parcels) == {parcel_id, stray}
 
 
 def test_merge_and_split() -> None:

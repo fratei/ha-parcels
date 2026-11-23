@@ -74,9 +74,13 @@ PICKUPS_REPAIR_KEY: Final = "seventeentrack_pickups"
 # The engine state key of the pickups given back by
 # :func:`restore_pickup_places`.
 PICKUP_PLACES_KEY: Final = "seventeentrack_pickup_places"
-# The engine state key of the second run of :func:`repair_pickups`, after
-# 0.1.15 read more of the carrier's text (see :func:`pickup_status`).
+# The engine state key of the latest run of :func:`repair_pickups` after a
+# release read more of the carrier's text (see :func:`pickup_status`), and
+# the key and version of the reading it applied: 1 is 0.1.15's, 2 adds
+# 0.1.16's deliveries to the place that are still ahead or denied.
 PICKUPS_REREAD_KEY: Final = "seventeentrack_pickups_reread"
+PICKUPS_READ_KEY: Final = "seventeentrack_pickups_read"
+PICKUPS_READ_VERSION: Final = 2
 
 INTERVAL: Final = timedelta(minutes=30)
 # While a parcel is out for delivery or due today.
@@ -138,13 +142,13 @@ _REFINED: Final = frozenset(
 )
 
 
-def _gap(stops: str) -> str:
-    """Return a pattern for up to four words of one clause.
+def _gap(stops: str, words: int = 4) -> str:
+    """Return a pattern for up to ``words`` words of one clause.
 
-    None of them may be one of the stop words: a negation, another day or a
-    word that joins two clauses.
+    None of them may be one of the stop words, such as a negation, another
+    day or a word that joins two clauses.
     """
-    return rf" (?:(?!(?:{stops})\b)[a-z0-9'-]+ ){{0,4}}"
+    return rf" (?:(?!(?:{stops})\b)[a-z0-9'-]+ ){{0,{words}}}"
 
 
 _DE: Final = _gap(r"nicht|kein\w*|morgen|ubermorgen|und|oder|aber|sondern")
@@ -155,7 +159,9 @@ _ES: Final = _gap(r"no|manana|y|o|pero")
 _FR: Final = _gap(r"pas|demain|et|ou|mais")
 _IT: Final = _gap(r"non|domani|e|o|ma")
 # A delivery today whose words a place splits, such as "wird heute an die
-# Packstation geliefert" or "will be delivered to the locker today".
+# Packstation geliefert" or "will be delivered to the locker today", and
+# the forms the phrase lists lack: Spanish's reflexive future ("se
+# entregará hoy") and Italian's passive with venire ("verrà consegnato").
 _DELIVERY_TODAY_APART: Final = re.compile(
     r"(?<![a-z0-9])(?:"
     rf"wird{_DE}heute{_DE}(?:zugestellt|geliefert)"
@@ -163,8 +169,34 @@ _DELIVERY_TODAY_APART: Final = re.compile(
     rf"|will be delivered{_EN}today"
     rf"|(?<!nao )sera entregue{_PT}hoje"
     rf"|(?<!no )sera entregad[oa]{_ES}hoy"
+    rf"|(?<!no )se (?:les? )?entregaran?{_ES}hoy"
     rf"|sera livree?{_FR}aujourd'hui"
     rf"|(?<!non )sara consegnat[oa]{_IT}oggi"
+    rf"|(?<!non )(?:verra|verranno|viene|vengono)"
+    rf"(?:{_IT}oggi{_IT}consegnat[oaie]|{_IT}consegnat[oaie]{_IT}oggi)"
+    r")(?![a-z0-9])"
+)
+# A delivery or drop at the place that's still ahead, or denied, in forms
+# the in-transit phrases lack, such as "wird morgen an die Packstation
+# geliefert", "will not be delivered to the locker" or "verrà depositato
+# nel locker": the parcel isn't waiting there yet. Up to six words of one
+# clause may part a German, Dutch or Italian verb from its participle.
+_DELIVERY_AHEAD: Final = re.compile(
+    r"(?<![a-z0-9])(?:"
+    rf"(?:wird|werden){_gap(r'und|oder|aber|sondern', 6)}"
+    r"(?:zugestellt|(?:aus)?geliefert|eingelegt|hinterlegt)"
+    rf"|(?:wordt|worden){_gap(r'en|of|maar', 6)}"
+    r"(?:bezorgd|(?:af)?geleverd|(?:neer)?gelegd|geplaatst|afgegeven)"
+    r"|(?:(?:will|shall|to)(?: not)?|won't|cannot|can't) be"
+    r" (?:delivered|placed|dropped off)"
+    r"|(?:is|are)(?: not)? being (?:delivered|placed|dropped off)"
+    r"|(?:(?:sera|seront)(?: pas)?|(?:va|vont)(?: pas)? etre)"
+    r" (?:livre|depose|remis)e?s?"
+    r"|(?:sera|serao|seran|vai ser|vao ser|va a ser|van a ser)"
+    r" (?:entregues?|(?:entregad|depositad|colocad)[oa]s?)"
+    r"|se (?:les? )?(?:entregar|depositar)an?"
+    rf"|(?:sara|saranno|verra|verranno|viene|vengono){_gap(r'e|o|ma', 6)}"
+    r"(?:consegnat|depositat)[oaie]"
     r")(?![a-z0-9])"
 )
 # The carrier, not the user, took the parcel from a pickup place: one the
@@ -212,13 +244,15 @@ def pickup_status(info: str | None) -> ParcelStatus:
     It's what the text says, such as a pickup, out for delivery or a missed
     attempt. A text that says none of these but names a place where parcels
     wait, such as a locker or a pickup point, is a pickup, unless it says
-    the parcel is still on its way there or the carrier took it from there.
+    the parcel is still on its way there, that its delivery there is still
+    ahead or won't happen, or that the carrier took it from there.
     Otherwise it's in transit.
     """
     if (status := _text_status(info)) is not None:
         return status
     text = fold_text(info or "")
-    if phrase_regex(KIND_PHRASES[MailKind.IN_TRANSIT]).search(text):
+    on_its_way = phrase_regex(KIND_PHRASES[MailKind.IN_TRANSIT])
+    if on_its_way.search(text) or _DELIVERY_AHEAD.search(text):
         return ParcelStatus.IN_TRANSIT
     if _CARRIER_TOOK.search(text):
         return ParcelStatus.IN_TRANSIT
@@ -256,8 +290,8 @@ def repair_pickups(data: ParcelsData, now: datetime, tz: tzinfo) -> int:
     :func:`pickup_status`. Its events whose text doesn't say so get the
     status the text tells, or in transit, in the stored packages and on
     their parcels, with the details read again as the sync reads them.
-    0.1.15 runs it once more, as it reads more of the text. Returns how
-    many parcels changed.
+    0.1.15 and 0.1.16 run it once more, as they read more of the text.
+    Returns how many parcels changed.
     """
     pickup = ParcelStatus.READY_FOR_PICKUP
     packages = data.seventeentrack.get("packages")

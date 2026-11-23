@@ -46,18 +46,23 @@ api.parcel.app, which Parcels contacts itself with your API key.
   later completes, also when the carrier's e-mail names only the shop. A
   later e-mail about the same order and items updates that order's parcel,
   and a delivery e-mail without items, or one saying the parcel went back to
-  its sender, updates the order's only open parcel. An e-mail that arrives
-  late never moves a parcel back to an earlier status. Merges that rely on a
-  guess (same shop, matching dates, only one candidate) are marked, and you
-  can undo them. A guess counts only when no other open parcel of that shop
-  could be the one, late parcels and those due in the next days included, and
-  when the carriers named by the shop and the delivery agree. A delivery made
-  on a day before the shop's package was shipped is another package, and
-  isn't suggested either, nor is one that Amazon's tracking says came at
-  another time, or that it points away from because other packages repeat
-  its times. When several parcels could match, Parcels asks
-  in **Needs review** instead. Parcels with different tracking numbers are
-  never merged.
+  its sender, updates the order's only open parcel. A late order e-mail
+  joins its order's parcel even once that parcel was delivered or archived,
+  without reopening it, unless the parcel holds other items. An e-mail that
+  arrives late never moves a parcel back to an earlier status. Merges that
+  rely on a guess (same shop, matching dates, only one candidate) are
+  marked, and you can undo them. A guess counts only when no other open
+  parcel of that shop could be the one, late parcels and those due in the
+  next days included, and when the carriers named by the shop and the
+  delivery agree. A delivery made on a day before the shop's package was
+  shipped is another package, and isn't suggested either, nor is one that
+  Amazon's tracking says came at another time, or that it points away from
+  because other packages repeat its times. With the
+  [Parcel app](#parcel-app), Parcels undoes a guess about an Amazon shipment
+  that Amazon's tracking proves wrong later (see
+  [How the day is counted](#how-the-day-is-counted)). When several parcels
+  could match, Parcels asks in **Needs review** instead. Parcels with
+  different tracking numbers are never merged.
 - **Parcels without a tracking number**: when a carrier delivers another
   parcel from the same shop around the expected day, and no e-mail says
   otherwise, the parcel is marked as probably delivered, unless that delivery
@@ -661,6 +666,15 @@ package" and lists them last, and, on those packages, marks the shipment so.
 You can still merge them if you know better. Narrowing never turns a
 suggestion into a merge.
 
+A guess that merged a shipment and a package because the shop and the
+dates, or the day, matched (see [What it does](#what-it-does)) is undone,
+as **Undo** would, when Amazon's tracking rules that package out as above,
+or when exactly one other package agrees with the shipment's times as above
+and the merged one doesn't. The two are then kept apart, and the shipment
+joins, rides along or is suggested as above. Your own merges, merges of one
+order's e-mails, archived parcels and parcels you typed a tracking number on
+stay as they are.
+
 ### Live Activities
 
 [Live Activities](https://companion.home-assistant.io/docs/notifications/live-activities/)
@@ -768,9 +782,12 @@ own tracking in between.
   for out for delivery, so it's a pickup only when the carrier's wording
   says so, or names a place where parcels wait to be collected, such as a
   locker, a pickup point or a Packstation, without saying the parcel is
-  still on its way there or that the carrier took it from there; otherwise
-  the parcel takes the status that wording gives, or in transit. Wording
-  such as "will be delivered to the locker today" is out for delivery.
+  still on its way there, won't be left there, or that the carrier took it
+  from there; otherwise the parcel takes the status that wording gives, or
+  in transit. In all seven languages, wording such as "will be delivered to
+  the locker today" is out for delivery, and wording such as "wird morgen
+  an die Packstation geliefert" or "won't be delivered to the locker" is in
+  transit.
 - **What it doesn't add**: delivery dates. Home Assistant's 17TRACK integration
   gives no expected date, so a parcel without one stays under **No date yet**.
 - **What it leaves out**, so they don't take up places in your account:
@@ -1007,6 +1024,8 @@ and the details say what happened. Once, after updating from 0.1.3 or earlier,
 Parcels does this by itself when the first mail check ends, for open parcels
 that lack a date or items (within the 20 a day). It also reads again the
 e-mails held for review with "Authentication results from an unknown server".
+After updating to 0.1.16, it reads Amazon's e-mails that the AI read again,
+once, with the parsers only (see [Troubleshooting](#troubleshooting)).
 
 **What the AI sees**: the day the e-mail arrived, the sender's name and
 domain, the subject and the text a reader sees (text the HTML hides is left
@@ -1205,6 +1224,26 @@ actions:
   diagnostics count the e-mails read, those whose shop was filled in or
   kept, those deleted since, those that couldn't be downloaded and those
   over the limit (`paack_shop_check`).
+- **An Amazon order showed as in transit before it shipped, or its order
+  e-mail waited in review.** Before 0.1.16, Parcels couldn't read Amazon's
+  Portuguese order e-mails titled "Pedido efetuado", so the local AI read
+  them. After the update, when its first mail check ends, Parcels downloads
+  once more the Amazon e-mails of the last 30 days that the local AI read,
+  or that wait in review or for the local AI, at most 100 and newest first,
+  and reads them with its parsers, never the local AI. Where they read one
+  from a verified sender with confidence, their reading replaces the AI's
+  and the e-mail leaves **Needs review**, without reopening a parcel that
+  was delivered or archived. What you typed, merged or split stays.
+  E-mails from ignored senders are skipped. The hub's diagnostics count the
+  e-mails read, those whose reading was replaced or kept, those deleted
+  since, those that couldn't be downloaded and those over the limit
+  (`amazon_ai_check`).
+- **An old order showed again as ordered, without items or a date.** Before
+  0.1.16, an order e-mail about an order whose parcels were all archived
+  made a new parcel. After the update, Parcels folds once each parcel that
+  only such e-mails made, and that you left alone, into the order's earlier
+  parcel, which stays as it was, archived included. The hub's diagnostics
+  count them (`order_fold`).
 - **A carrier's package shows apart from its Amazon order.** Amazon's
   e-mails rarely name the carrier's number. With the Parcel app, Parcels
   links a shipment to its package by the times in Amazon's tracking (see
@@ -1215,7 +1254,10 @@ actions:
   (`amazon_shipment_ids`, such as `len9:Aa0` for nine capitals, small
   letters and digits), and the links Amazon's tracking made (`amazon_links`).
 - **A parcel was merged into the wrong package.** Select **Undo** on a merge
-  Parcels made, or **Split…** on one you made. Before you merge, check
+  Parcels made, or **Split…** on one you made. With the Parcel app, Parcels
+  undoes by itself a guess about an Amazon shipment that Amazon's tracking
+  proves wrong (see [How the day is counted](#how-the-day-is-counted)).
+  Before you merge, check
   **Merge with…**: for an Amazon shipment that the Parcel app follows, it
   shows when, and where if known, Amazon's tracking says the shipment was
   delivered, such as "Amazon's tracking: delivered Wed 10 Jun at 10:27 ·
@@ -1311,9 +1353,11 @@ actions:
   took 17TRACK's wording that names a pickup place for a pickup even when
   it said the parcel would be delivered there today, which is out for
   delivery, or that the carrier took it from there, which is in transit.
-  After the update to 0.1.15, Parcels reads the stored pickups again once.
-  The hub's diagnostics count the parcels that changed
-  (`seventeentrack_pickups_reread`).
+  0.1.15 still did so for some wordings saying the parcel would be left
+  there later, or wouldn't be, such as "won't be delivered to the locker".
+  After the update to 0.1.15, and again after 0.1.16, Parcels reads the
+  stored pickups again once. The hub's diagnostics count the parcels that
+  the latest re-read changed (`seventeentrack_pickups_reread`).
 - **Amazon shows as the carrier, but didn't deliver.** Before 0.1.8, Amazon
   became the carrier whenever the local AI, the Parcel app or 17TRACK named
   it, which kept Amazon's orders apart from their carrier's deliveries. After
@@ -1329,9 +1373,11 @@ actions:
   (`recent_emails`), where working days come from (`working_days`), the
   refunds ignored (`refunds_dropped`), the check after updating to 0.1.5
   (`returns_check`), the check that named the shops of Paack's parcels after
-  updating to 0.1.11 (`paack_shop_check`), the shapes of Amazon's shipment
-  IDs (`amazon_shipment_ids`), the Amazon shipments that Amazon's tracking
-  linked to a carrier's package since 0.1.13 (`made`), and at the last
+  updating to 0.1.11 (`paack_shop_check`), the check that read Amazon's
+  e-mails again after updating to 0.1.16 (`amazon_ai_check`), the shapes of
+  Amazon's shipment IDs (`amazon_shipment_ids`), the Amazon shipments that
+  Amazon's tracking linked to a carrier's package since 0.1.13 (`made`) and
+  the guesses it undid since 0.1.16 (`undone`), and at the last
   check those that fit several packages (`ambiguous`) and the packages of
   their day it ruled out (`contradicted`, in `amazon_links`), the parcels
   whose Parcel app events the update to 0.1.7 placed again
@@ -1340,8 +1386,11 @@ actions:
   (`amazon_carrier_repaired`), the parcels whose 17TRACK pickups the
   update to 0.1.13 took back (`seventeentrack_pickups_repaired`), those
   whose pickups at a named place the update to 0.1.14 gave back
-  (`seventeentrack_pickups_restored`) and those whose pickups the update
-  to 0.1.15 read again and changed (`seventeentrack_pickups_reread`); its
+  (`seventeentrack_pickups_restored`), those whose pickups the latest
+  re-read, after the update to 0.1.15 or 0.1.16, changed
+  (`seventeentrack_pickups_reread`) and the parcels of late order e-mails
+  that the update to 0.1.16 folded into their order's parcel
+  (`order_fold`); its
   notifications part counts today's orders that ride along with a package
   (`orders_in_a_box`); its 17TRACK part counts the numbers 17TRACK can't
   find, by carrier (`not_found_by_carrier`); its Parcel app part

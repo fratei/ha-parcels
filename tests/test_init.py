@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import patch
@@ -15,11 +16,18 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.setup import async_setup_component
 import pytest
 
-from custom_components.parcels.const import DOMAIN, PERSISTENT_NOTIFICATION_ID
+from custom_components.parcels.const import (
+    DOMAIN,
+    PERSISTENT_NOTIFICATION_ID,
+    MailKind,
+    ParcelStatus,
+)
 from custom_components.parcels.dedup import (
+    ORDER_FOLD_KEY,
     REPAIR_KEY,
     REPAIR_VERSION,
     apply_contribution,
+    archive_parcel,
 )
 from custom_components.parcels.engine import ParcelsEngine, get_engine
 from custom_components.parcels.models import ParcelsData, Source
@@ -34,7 +42,7 @@ from .common import (
     async_wait_for_mail,
     patch_mail_clients,
 )
-from .factories import contribution
+from .factories import at, contribution
 
 NOW = "2026-11-17 10:00:00+00:00"
 
@@ -378,3 +386,80 @@ async def test_start_forgets_an_unproven_amazon_carrier(
         "senders": 0,
         "answers": 0,
     }
+
+
+async def test_start_folds_late_order_mail_once(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """The parcel an order's late e-mail made joins the order's parcel, once."""
+    data = ParcelsData()
+    order = "405-7777777-0000001"
+    parcels = []
+    for origin, kind, when in (
+        ("msg:o#0", MailKind.ORDER, at()),
+        ("msg:d#0", MailKind.DELIVERED, at(days=3)),
+    ):
+        parcels.append(
+            apply_contribution(
+                data,
+                dataclasses.replace(
+                    contribution(
+                        origin,
+                        kind=kind,
+                        time=when,
+                        merchant="Amazon.es",
+                        orders=[order],
+                        carrier="ctt" if kind is MailKind.DELIVERED else None,
+                        number="RR123456785PT" if kind is MailKind.DELIVERED else None,
+                    ),
+                    order_placed=when if kind is MailKind.ORDER else None,
+                ),
+                when,
+            ).parcel_id
+        )
+    parcel_id = parcels[0]
+    assert parcel_id is not None
+    assert parcels == [parcel_id, parcel_id]
+    archive_parcel(data, parcel_id, at(days=10))
+    # What 0.1.15 made of the order's e-mail a few days later.
+    late = at(days=13)
+    alone = ParcelsData()
+    stray = apply_contribution(
+        alone,
+        dataclasses.replace(
+            contribution(
+                "msg:late#0",
+                kind=MailKind.ORDER,
+                time=late,
+                merchant="Amazon.es",
+                orders=[order],
+            ),
+            order_placed=late,
+        ),
+        late,
+    ).parcel_id
+    assert stray is not None
+    data.parcels[stray] = alone.parcels[stray]
+    hass_storage["parcels"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "parcels",
+        "data": data.as_dict(),
+    }
+    hub = add_hub(hass)
+
+    engine = await async_setup_parcels(hass)
+
+    assert set(engine.data.parcels) == {parcel_id}
+    parcel = engine.data.parcels[parcel_id]
+    assert "msg:late#0" in parcel.origins
+    assert parcel.archived == at(days=10)
+    assert parcel.state.status is ParcelStatus.DELIVERED
+    assert engine.data.engine[ORDER_FOLD_KEY] == 1
+    assert engine.diagnostics()["order_fold"] == 1
+
+    with patch("custom_components.parcels.engine.fold_known_orders") as fold:
+        assert await hass.config_entries.async_reload(hub.entry_id)
+        await hass.async_block_till_done()
+
+    fold.assert_not_called()

@@ -71,6 +71,7 @@ from custom_components.parcels.seventeentrack import (
     NOT_FOUND_ARCHIVE,
     PICKUP_PLACES_KEY,
     PICKUPS_REPAIR_KEY,
+    PICKUPS_REREAD_KEY,
     SEVENTEENTRACK_DOMAIN,
     SeventeenTrackSync,
     friendly_name,
@@ -513,6 +514,237 @@ def logged_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
             ParcelStatus.OUT_FOR_DELIVERY,
         ),
         ("In Transit", "Wird heute leider nicht zugestellt", ParcelStatus.IN_TRANSIT),
+        # So is one in Spanish's reflexive future or Italian's passive with
+        # venire; without today, the parcel is still on its way.
+        (
+            "Ready to be picked up",
+            "Su paquete se entregará hoy en un punto Citypaq",
+            ParcelStatus.OUT_FOR_DELIVERY,
+        ),
+        (
+            "Ready to be picked up",
+            "Los paquetes se entregarán hoy en el locker",
+            ParcelStatus.OUT_FOR_DELIVERY,
+        ),
+        (
+            "Ready to be picked up",
+            "Il pacco verrà oggi consegnato al locker",
+            ParcelStatus.OUT_FOR_DELIVERY,
+        ),
+        (
+            "Ready to be picked up",
+            "Il pacco viene consegnato al locker oggi",
+            ParcelStatus.OUT_FOR_DELIVERY,
+        ),
+        (
+            "In Transit",
+            "Su envío se entregará hoy en el punto Citypaq",
+            ParcelStatus.OUT_FOR_DELIVERY,
+        ),
+        (
+            "In Transit",
+            "La spedizione verrà consegnata oggi presso il locker",
+            ParcelStatus.OUT_FOR_DELIVERY,
+        ),
+        (
+            "Ready to be picked up",
+            "El envío se entregará en un Citypaq",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "El paquete no se entregará hoy en el punto Citypaq",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Il pacco verrà consegnato presso il locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "I pacchi verranno consegnati nel locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Il pacco non verrà consegnato oggi al locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        ("In Transit", "El envío se entregará en un Citypaq", ParcelStatus.IN_TRANSIT),
+        # A delivery or drop at the place that's still ahead, or denied, in
+        # each language: the parcel isn't there yet.
+        (
+            "Ready to be picked up",
+            "Die Sendung wird morgen an die Packstation geliefert",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Heute wird Ihr Paket nicht in die Packstation eingelegt",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Het pakket wordt in de pakketautomaat bezorgd",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Het pakket wordt morgen niet in de pakketautomaat gelegd",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "The parcel will not be delivered to the locker today",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Your parcel is being dropped off at the locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Le colis ne sera pas livré en consigne aujourd'hui",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Votre colis va être déposé dans la consigne",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "A encomenda vai ser depositada no cacifo",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Los paquetes serán depositados en el Citypaq",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Il pacco sarà depositato nel locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Os volumes serão colocados no cacifo",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Die Sendung wird in der Packstation hinterlegt",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Het pakket wordt bij het afhaalpunt afgegeven",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Het pakket wordt in de pakketautomaat geplaatst",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Le colis sera remis au point relais",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Het pakket wordt morgen bij het afhaalpunt afgeleverd",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Parcel to be delivered to the parcel locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Your parcel won\u2019t be delivered to the locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "The parcel cannot be delivered to the locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Your parcel can't be dropped off at the locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Your parcel will be placed in a parcel locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "The shipment shall be delivered to the parcel locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            "Ready to be picked up",
+            "Your parcels are being placed in the locker",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        # Past forms still say the parcel waits there.
+        (
+            "Ready to be picked up",
+            "Die Sendung wurde an die Packstation geliefert",
+            ParcelStatus.READY_FOR_PICKUP,
+        ),
+        (
+            "Ready to be picked up",
+            "Het pakket is in de pakketautomaat gelegd",
+            ParcelStatus.READY_FOR_PICKUP,
+        ),
+        (
+            "Ready to be picked up",
+            "Your parcel was dropped off at the locker",
+            ParcelStatus.READY_FOR_PICKUP,
+        ),
+        (
+            "Ready to be picked up",
+            "Votre colis a été déposé dans la consigne",
+            ParcelStatus.READY_FOR_PICKUP,
+        ),
+        (
+            "Ready to be picked up",
+            "A encomenda foi depositada no cacifo",
+            ParcelStatus.READY_FOR_PICKUP,
+        ),
+        (
+            "Ready to be picked up",
+            "Het pakket is afgeleverd bij het PostNL-punt",
+            ParcelStatus.READY_FOR_PICKUP,
+        ),
+        (
+            "Ready to be picked up",
+            "Le colis a été remis au point relais",
+            ParcelStatus.READY_FOR_PICKUP,
+        ),
+        (
+            "Ready to be picked up",
+            "Se entregó en el Citypaq",
+            ParcelStatus.READY_FOR_PICKUP,
+        ),
+        (
+            "Ready to be picked up",
+            "Il pacco venne consegnato al locker",
+            ParcelStatus.READY_FOR_PICKUP,
+        ),
+        (
+            "Ready to be picked up",
+            "Il pacco è stato consegnato al locker",
+            ParcelStatus.READY_FOR_PICKUP,
+        ),
         # The carrier taking a parcel from a pickup place isn't a pickup.
         (
             "Ready to be picked up",
@@ -548,6 +780,45 @@ async def test_map_status(
     pickup only when the carrier's text says so or names a pickup place.
     """
     assert map_status(package_status, info) is expected
+
+
+@pytest.mark.parametrize(
+    "info",
+    [
+        "Die Sendung wird morgen an die Packstation zugestellt",
+        "Die Sendungen werden morgen in die Packstation eingelegt",
+        "Die Sendung wird morgen an die Packstation ausgeliefert",
+        "De pakketten worden morgen in de pakketautomaat gelegd",
+        "Het pakket wordt morgen in de pakketautomaat neergelegd",
+        "Your parcel is not being delivered to the locker",
+        "Your parcel is being delivered to the parcel locker",
+        "Vos colis seront déposés en consigne",
+        "Votre colis ne va pas être livré en consigne",
+        "Vos colis vont être déposés dans la consigne",
+        "Votre commande sera déposée en point relais",
+        "A encomenda será depositada no cacifo",
+        "As encomendas vão ser colocadas no cacifo",
+        "As encomendas serão entregues no cacifo",
+        "El paquete será colocado en el Citypaq",
+        "El paquete va a ser depositado en el Citypaq",
+        "Los paquetes van a ser entregados en el Citypaq",
+        "Los paquetes serán entregados en el Citypaq",
+        "Se le entregará el paquete en el Citypaq",
+        "El paquete se depositará en el Citypaq",
+        "Los paquetes se entregarán en el Citypaq",
+        "I pacchi saranno depositati nel locker",
+        "Il pacco viene depositato nel locker",
+        "I pacchi vengono consegnati al locker",
+        "Il pacco sarà presto depositato nel locker",
+    ],
+)
+async def test_delivery_to_the_place_still_ahead(info: str) -> None:
+    """Every form of a delivery or drop at the place still ahead isn't a pickup.
+
+    Plural, feminine, negated and split forms read in transit in each
+    language, like the plain ones of test_map_status.
+    """
+    assert map_status("Ready to be picked up", info) is ParcelStatus.IN_TRANSIT
 
 
 async def test_pickup_status_needs_the_carriers_word(
@@ -858,25 +1129,23 @@ async def test_update_gives_back_pickups_at_a_named_place(
     assert status(engine, ids[CTT]) is ParcelStatus.READY_FOR_PICKUP
 
 
-async def test_update_reads_the_stored_pickups_again(
-    hass: HomeAssistant, hass_storage: dict[str, Any], track: FakeSeventeenTrack
-) -> None:
-    """Once, stored pickups take what 0.1.15 reads in the carrier's text.
+async def _start_with_stored_pickups(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    texts: tuple[tuple[str, str, str, int], ...],
+    ran: dict[str, int],
+) -> tuple[ParcelsEngine, dict[str, str]]:
+    """Start Parcels on stored 17TRACK pickups, after an earlier release.
 
-    A delivery today whose words a place splits is out for delivery, and
-    the carrier taking a parcel from a pickup place is in transit; a text
-    naming the place where the parcel waits stays a pickup. The next
-    refresh adds nothing new.
+    ``texts`` holds each package's number, carrier, text and minute past
+    07:00 UTC on 17 Nov; ``ran`` the engine keys of the one-time repairs
+    the earlier release ran. Returns the engine, with its 17TRACK sync
+    stopped, and the parcel ID of each number.
     """
     data = ParcelsData()
     shipped = NOW_DT - timedelta(hours=6)
     packages: dict[str, dict[str, Any]] = {}
     ids: dict[str, str] = {}
-    texts = (
-        (CTT, "ctt", "Collected by the courier from the parcel shop", 15),
-        (OTHER, "dhl", "Die Sendung wird heute an eine Packstation geliefert", 25),
-        (UPS, "ups", "Waiting at the parcel locker", 35),
-    )
     for number, carrier, info, minute in texts:
         applied = apply_contribution(
             data,
@@ -925,8 +1194,7 @@ async def test_update_reads_the_stored_pickups_again(
         }
     data.seventeentrack["packages"] = packages
     data.engine[REPAIR_KEY] = REPAIR_VERSION
-    data.engine[PICKUPS_REPAIR_KEY] = 0
-    data.engine[PICKUP_PLACES_KEY] = 0
+    data.engine.update(ran)
     hass_storage[DOMAIN] = {
         "version": 1,
         "minor_version": 1,
@@ -939,6 +1207,31 @@ async def test_update_reads_the_stored_pickups_again(
     tracker = engine.tracker
     assert tracker is not None
     await tracker.async_stop()
+    return engine, ids
+
+
+async def test_update_reads_the_stored_pickups_again(
+    hass: HomeAssistant, hass_storage: dict[str, Any], track: FakeSeventeenTrack
+) -> None:
+    """Once, stored pickups take what 0.1.15 reads in the carrier's text.
+
+    A delivery today whose words a place splits is out for delivery, and
+    the carrier taking a parcel from a pickup place is in transit; a text
+    naming the place where the parcel waits stays a pickup. The next
+    refresh adds nothing new.
+    """
+    engine, ids = await _start_with_stored_pickups(
+        hass,
+        hass_storage,
+        (
+            (CTT, "ctt", "Collected by the courier from the parcel shop", 15),
+            (OTHER, "dhl", "Die Sendung wird heute an eine Packstation geliefert", 25),
+            (UPS, "ups", "Waiting at the parcel locker", 35),
+        ),
+        {PICKUPS_REPAIR_KEY: 0, PICKUP_PLACES_KEY: 0},
+    )
+    tracker = engine.tracker
+    assert tracker is not None
 
     assert {number: status(engine, ids[number]) for number in (CTT, OTHER, UPS)} == {
         CTT: ParcelStatus.IN_TRANSIT,
@@ -965,6 +1258,54 @@ async def test_update_reads_the_stored_pickups_again(
 
     assert len(records(engine)[CTT]["history"]) == 1
     assert status(engine, ids[CTT]) is ParcelStatus.IN_TRANSIT
+
+
+@pytest.mark.usefixtures("track")
+async def test_update_reads_future_deliveries_again(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """Once more after 0.1.15, stored pickups take what 0.1.16 reads.
+
+    A delivery to the place that's still ahead or denied, such as Spanish's
+    reflexive future, Italian's passive with venire or a German denial, is
+    out for delivery today and on its way otherwise; a past form stays a
+    pickup.
+    """
+    engine, ids = await _start_with_stored_pickups(
+        hass,
+        hass_storage,
+        (
+            (CTT, "correos", "Su paquete se entregará hoy en un punto Citypaq", 15),
+            (
+                OTHER,
+                "poste_italiane",
+                "Il pacco verrà consegnato presso il locker",
+                25,
+            ),
+            (UPS, "ups", "Il pacco venne consegnato al locker", 35),
+            (GLS, "gls", "Das Paket wird nicht in den PaketShop geliefert", 45),
+        ),
+        {PICKUPS_REPAIR_KEY: 0, PICKUP_PLACES_KEY: 0, PICKUPS_REREAD_KEY: 0},
+    )
+
+    assert {
+        number: status(engine, ids[number]) for number in (CTT, OTHER, UPS, GLS)
+    } == {
+        CTT: ParcelStatus.OUT_FOR_DELIVERY,
+        OTHER: ParcelStatus.IN_TRANSIT,
+        UPS: ParcelStatus.READY_FOR_PICKUP,
+        GLS: ParcelStatus.IN_TRANSIT,
+    }
+    assert {
+        number: [entry["status"] for entry in record["history"]]
+        for number, record in records(engine).items()
+    } == {
+        CTT: ["out_for_delivery"],
+        OTHER: ["in_transit"],
+        UPS: ["ready_for_pickup"],
+        GLS: ["in_transit"],
+    }
+    assert engine.diagnostics()["seventeentrack_pickups_reread"] == 3
 
 
 async def test_adds_the_numbers_of_active_parcels(
