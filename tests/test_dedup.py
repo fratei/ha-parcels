@@ -28,11 +28,12 @@ from custom_components.parcels.dedup import (
     order_parcels,
     parcel_order_keys,
     remove_message,
+    restore_cancellations,
     split_parcel,
     undo_auto_merge,
     update_parcel,
 )
-from custom_components.parcels.models import ParcelEvent, ParcelsData, Source
+from custom_components.parcels.models import Origin, ParcelEvent, ParcelsData, Source
 from custom_components.parcels.parsers.base import Eta
 
 from .factories import T0, at, contribution
@@ -732,6 +733,278 @@ def test_cancellations() -> None:
     )
     assert late.parcel_id == shipped.parcel_id
     assert data.parcels[shipped.parcel_id].state.status is S.SHIPPED
+
+
+AI_READ_ORDER = "402-0000000-1111111"
+
+
+def _ai_reads_order(data: ParcelsData) -> str:
+    """Apply the local AI's reading of an order e-mail as in transit."""
+    applied = apply_contribution(
+        data,
+        contribution(
+            "msg:o#0",
+            kind=MailKind.IN_TRANSIT,
+            merchant="Amazon",
+            orders=[AI_READ_ORDER],
+            items=["Desk lamp"],
+            source=Source.AI,
+        ),
+        T0,
+    )
+    assert applied.parcel_id is not None
+    return applied.parcel_id
+
+
+def _order_news(
+    data: ParcelsData, origin_id: str, kind: MailKind, **kwargs: object
+) -> str | None:
+    """Apply an Amazon e-mail about the order, a day after it was placed."""
+    return apply_contribution(
+        data,
+        contribution(
+            origin_id,
+            kind=kind,
+            time=at(hours=24),
+            merchant="Amazon",
+            orders=[AI_READ_ORDER],
+            **kwargs,  # type: ignore[arg-type]
+        ),
+        at(hours=24),
+    ).parcel_id
+
+
+def _cancel(data: ParcelsData) -> str | None:
+    return apply_contribution(
+        data,
+        contribution(
+            "msg:x#0",
+            kind=MailKind.CANCELLED,
+            time=at(hours=30),
+            merchant="Amazon",
+            orders=[AI_READ_ORDER],
+        ),
+        at(hours=30),
+    ).parcel_id
+
+
+def test_cancelling_an_order_the_ai_read_as_shipped() -> None:
+    """The AI's reading of the order e-mail isn't news that it shipped."""
+    data = ParcelsData()
+    pid = _ai_reads_order(data)
+    assert data.parcels[pid].state.status is S.IN_TRANSIT
+    assert _cancel(data) == pid
+    assert data.parcels[pid].state.status is S.CANCELLED
+
+
+def test_cancelling_after_a_delay_notice() -> None:
+    """A delay notice about the order isn't news that it shipped either."""
+    data = ParcelsData()
+    order = apply_contribution(
+        data,
+        contribution(
+            "msg:o#0", kind=MailKind.ORDER, merchant="Amazon", orders=[AI_READ_ORDER]
+        ),
+        T0,
+    )
+    assert _order_news(data, "msg:d#0", MailKind.DELAYED) == order.parcel_id
+    assert data.parcels[order.parcel_id].state.status is S.IN_TRANSIT
+    assert _cancel(data) == order.parcel_id
+    assert data.parcels[order.parcel_id].state.status is S.CANCELLED
+
+
+def _shipped_mail(data: ParcelsData, pid: str) -> None:
+    assert _order_news(data, "msg:s#0", MailKind.SHIPPED) == pid
+
+
+def _later_ai_reading(data: ParcelsData, pid: str) -> None:
+    assert _order_news(data, "msg:a#0", MailKind.IN_TRANSIT, source=Source.AI) == pid
+
+
+def _ai_names_a_carrier(data: ParcelsData, pid: str) -> None:
+    data.parcels[pid].origins["msg:o#0"].carrier = "ctt"
+
+
+def _parsers_read_it(data: ParcelsData, pid: str) -> None:
+    data.parcels[pid].origins["msg:o#0"].source = Source.PARSER
+
+
+def _delay_of_a_shipment(data: ParcelsData, pid: str) -> None:
+    assert (
+        _order_news(data, "msg:d#0", MailKind.DELAYED, shipment_id="Rq5TbY8wZ") == pid
+    )
+
+
+def _tracking_number(data: ParcelsData, pid: str) -> None:
+    update_parcel(data, pid, {"tracking_number": DPD}, at(hours=24))
+
+
+def _tracker(data: ParcelsData, pid: str) -> None:
+    parcel = data.parcels[pid]
+    origin = Origin(id="parcelapp:1", source=Source.PARCELAPP, time=at(hours=24))
+    parcel.origins[origin.id] = origin
+    parcel.events.append(
+        ParcelEvent(
+            time=at(hours=24),
+            source=Source.PARCELAPP,
+            origin=origin.id,
+            status=S.IN_TRANSIT,
+        )
+    )
+
+
+SHIPPING_NEWS = [
+    _shipped_mail,
+    _later_ai_reading,
+    _ai_names_a_carrier,
+    _parsers_read_it,
+    _delay_of_a_shipment,
+    _tracking_number,
+    _tracker,
+]
+
+
+@pytest.mark.parametrize("news", SHIPPING_NEWS)
+def test_shipping_news_makes_a_cancellation_partial(
+    news: Callable[[ParcelsData, str], None],
+) -> None:
+    """Once other news says the parcel shipped, a cancellation is partial."""
+    data = ParcelsData()
+    pid = _ai_reads_order(data)
+    news(data, pid)
+    assert _cancel(data) == pid
+    parcel = data.parcels[pid]
+    assert parcel.state.status is not S.CANCELLED
+    assert [e.status for e in parcel.events if e.kind is MailKind.CANCELLED] == [None]
+
+
+def _dropped_cancellation(data: ParcelsData) -> str:
+    """Cancel the AI-read order, then drop the status as 0.1.17 did."""
+    pid = _ai_reads_order(data)
+    assert _cancel(data) == pid
+    parcel = data.parcels[pid]
+    for event in parcel.events:
+        if event.kind is MailKind.CANCELLED:
+            event.status = None
+    parcel.touch(at(hours=30))
+    assert parcel.state.status is S.IN_TRANSIT
+    return pid
+
+
+def _now_ordered(data: ParcelsData, pid: str) -> None:
+    """Read the order e-mail with the parsers instead of the AI."""
+    assert (
+        apply_contribution(
+            data,
+            contribution(
+                "msg:o#0",
+                kind=MailKind.ORDER,
+                merchant="Amazon",
+                orders=[AI_READ_ORDER],
+                items=["Desk lamp"],
+            ),
+            at(hours=40),
+        ).parcel_id
+        == pid
+    )
+    assert data.parcels[pid].state.status is S.ORDERED
+
+
+def _no_news(data: ParcelsData, pid: str) -> None:
+    pass
+
+
+@pytest.mark.parametrize("reading", [_now_ordered, _no_news])
+def test_restoring_dropped_cancellations(
+    reading: Callable[[ParcelsData, str], None],
+) -> None:
+    """A cancellation taken for a partial one cancels a parcel that takes it."""
+    data = ParcelsData()
+    pid = _dropped_cancellation(data)
+    reading(data, pid)
+    assert restore_cancellations(data, {"o"}, at(hours=41)) == 0
+    assert restore_cancellations(data, {"o", "x"}, at(hours=41)) == 1
+    parcel = data.parcels[pid]
+    assert parcel.state.status is S.CANCELLED
+    assert parcel.updated == at(hours=41)
+    assert [e.status for e in parcel.events if e.kind is MailKind.CANCELLED] == [
+        S.CANCELLED
+    ]
+    assert restore_cancellations(data, {"o", "x"}, at(hours=42)) == 0
+    assert parcel.updated == at(hours=41)
+
+
+def _delivered(data: ParcelsData, pid: str) -> None:
+    mark_delivered(data, pid, at(hours=36))
+
+
+def _archived(data: ParcelsData, pid: str) -> None:
+    _now_ordered(data, pid)
+    archive_parcel(data, pid, at(hours=40))
+
+
+@pytest.mark.parametrize("news", [*SHIPPING_NEWS, _delivered, _archived])
+def test_restoring_leaves_partial_cancellations(
+    news: Callable[[ParcelsData, str], None],
+) -> None:
+    """A cancellation stays partial on a shipped, closed or archived parcel."""
+    data = ParcelsData()
+    pid = _dropped_cancellation(data)
+    news(data, pid)
+    status = data.parcels[pid].state.status
+    assert restore_cancellations(data, {"o", "x"}, at(hours=41)) == 0
+    parcel = data.parcels[pid]
+    assert parcel.state.status is status
+    assert [e.status for e in parcel.events if e.kind is MailKind.CANCELLED] == [None]
+
+
+def test_a_later_cancellation_skips_a_cancelled_parcel() -> None:
+    """A partial cancellation joins the parcel with its items, not a closed one."""
+    data = ParcelsData()
+    shipped = apply_contribution(
+        data,
+        contribution(
+            "msg:s#0",
+            carrier="dpd",
+            number=DPD,
+            merchant="Amazon",
+            orders=[AI_READ_ORDER],
+            items=["Wool hat"],
+        ),
+        T0,
+    ).parcel_id
+    lamp = apply_contribution(
+        data,
+        contribution(
+            "msg:o#0",
+            kind=MailKind.ORDER,
+            merchant="Amazon",
+            orders=[AI_READ_ORDER],
+            items=["Desk lamp"],
+        ),
+        T0,
+    ).parcel_id
+    assert lamp is not None
+    assert lamp != shipped
+    assert _cancel(data) == lamp
+    assert data.parcels[lamp].state.status is S.CANCELLED
+
+    hat = apply_contribution(
+        data,
+        contribution(
+            "msg:y#0",
+            kind=MailKind.CANCELLED,
+            time=at(hours=36),
+            merchant="Amazon",
+            orders=[AI_READ_ORDER],
+            items=["Wool hat"],
+        ),
+        at(hours=36),
+    )
+    assert hat.parcel_id == shipped
+    parcel = data.parcels[shipped]
+    assert parcel.state.status is S.SHIPPED
+    assert [e.status for e in parcel.events if e.kind is MailKind.CANCELLED] == [None]
 
 
 def test_reapplying_replaces_the_events() -> None:

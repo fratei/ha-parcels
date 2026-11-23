@@ -105,6 +105,7 @@ export function makeReturn(overrides: Partial<CustomerReturn> = {}): CustomerRet
     pickup_rule: "assumed",
     started: "2026-07-14T10:00:00+00:00",
     received: false,
+    picked_up: null,
     order_numbers: [],
     items: [],
     parcel_ids: [],

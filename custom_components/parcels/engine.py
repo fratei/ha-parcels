@@ -72,6 +72,7 @@ from .convert import (
 from .customer_returns import (
     apply_return,
     infer_return_deliveries,
+    mark_return_picked_up,
     pickup_suggestion,
     remove_return,
     return_origin,
@@ -103,6 +104,7 @@ from .dedup import (
     remove_parcel_origins,
     remove_return_origins,
     repair_store,
+    restore_cancellations,
     split_parcel,
     undo_auto_merge,
     undo_inferred_delivery,
@@ -240,6 +242,12 @@ AMAZON_AI_CHECK_KEY = "amazon_ai_check"
 AMAZON_AI_CHECK_WINDOW = timedelta(days=30)
 # ... at most this many, newest first.
 AMAZON_AI_CHECK_MAX = 100
+# Set when the store of an earlier release is loaded. Once the mailboxes were
+# read, Amazon's recent e-mails whose only reading is a local AI answer that
+# the user accepted are read again by the parsers, within the same days and
+# limit as above; then Amazon's cancellations taken for partial ones cancel
+# their parcel where it hasn't shipped. Then it holds what the check found.
+AMAZON_ACCEPTED_CHECK_KEY = "amazon_accepted_check"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -480,7 +488,12 @@ class ParcelsEngine:
         if not (data.parcels or data.review):
             # Nothing stored by an earlier release to check after the update.
             data.engine.setdefault(FILL_CHECK_KEY, True)
-        for key in (RETURNS_CHECK_KEY, PAACK_SHOP_CHECK_KEY, AMAZON_AI_CHECK_KEY):
+        for key in (
+            RETURNS_CHECK_KEY,
+            PAACK_SHOP_CHECK_KEY,
+            AMAZON_AI_CHECK_KEY,
+            AMAZON_ACCEPTED_CHECK_KEY,
+        ):
             data.engine.setdefault(
                 key,
                 {"before": dt_to_str(now)}
@@ -594,6 +607,13 @@ class ParcelsEngine:
             and not {"started", "done"} & amazon_check.keys()
         ):
             amazon_ai = dt_from_str(amazon_check.get("before"))
+        accepted_check = engine.get(AMAZON_ACCEPTED_CHECK_KEY)
+        accepted = None
+        if (
+            isinstance(accepted_check, dict)
+            and not {"started", "done"} & accepted_check.keys()
+        ):
+            accepted = dt_from_str(accepted_check.get("before"))
         fill = not engine.get(FILL_CHECK_KEY)
         paack = not engine.get(PAACK_CHECK_KEY)
         leroymerlin = not engine.get(LEROYMERLIN_CHECK_KEY)
@@ -601,6 +621,7 @@ class ParcelsEngine:
             before is None
             and shops is None
             and amazon_ai is None
+            and accepted is None
             and not (fill or paack or leroymerlin)
         ):
             return
@@ -611,6 +632,8 @@ class ParcelsEngine:
             shop_check["started"] = dt_to_str(dt_util.utcnow())
         if amazon_ai is not None:
             amazon_check["started"] = dt_to_str(dt_util.utcnow())
+        if accepted is not None:
+            accepted_check["started"] = dt_to_str(dt_util.utcnow())
         engine[FILL_CHECK_KEY] = True
         engine[PAACK_CHECK_KEY] = True
         engine[LEROYMERLIN_CHECK_KEY] = True
@@ -620,6 +643,7 @@ class ParcelsEngine:
                 before,
                 shops=shops,
                 amazon_ai=amazon_ai,
+                accepted=accepted,
                 fill=fill,
                 paack=paack,
                 leroymerlin=leroymerlin,
@@ -1942,6 +1966,24 @@ class ParcelsEngine:
                 found = True
         return found
 
+    def _ai_accepted(self, message_hash: str) -> bool:
+        """Return True when only the local AI added an e-mail, and the user confirmed it.
+
+        What the AI filled in for the parsers doesn't count.
+        """
+        found = confirmed = False
+        for parcel in self.data.parcels.values():
+            for origin in parcel.origins.values():
+                if origin.message != message_hash or origin.id.endswith(
+                    FILL_ORIGIN_SUFFIX
+                ):
+                    continue
+                if origin.source is not Source.AI:
+                    return False
+                found = True
+                confirmed = confirmed or origin.confirmed
+        return found and confirmed
+
     async def _async_fill_check(self) -> None:
         """Check once, after the update, what an earlier release stored.
 
@@ -1985,6 +2027,7 @@ class ParcelsEngine:
         *,
         shops: datetime | None,
         amazon_ai: datetime | None,
+        accepted: datetime | None,
         fill: bool,
         paack: bool,
         leroymerlin: bool,
@@ -1993,8 +2036,11 @@ class ParcelsEngine:
 
         Returns first, as they can remove parcels. Paack's, Leroy Merlin's
         and then Amazon's e-mails last, so that what the parsers read then
-        isn't filled in by the local AI; the shops of Paack's parcels at the
-        very end, once the e-mails under review were read.
+        isn't filled in by the local AI: first those only the AI read, then
+        those whose AI answer the user accepted, so that Amazon's
+        cancellations are judged on the parsers' reading. The shops of
+        Paack's parcels at the very end, once the e-mails under review were
+        read.
         """
         if before is not None:
             await self._async_returns_check(before)
@@ -2006,6 +2052,8 @@ class ParcelsEngine:
             await self._async_rejected_check(_leroymerlin_rejected, "Leroy Merlin")
         if amazon_ai is not None:
             await self._async_amazon_ai_check(amazon_ai)
+        if accepted is not None:
+            await self._async_amazon_accepted_check(accepted)
         if shops is not None:
             await self._async_paack_shop_check(shops)
 
@@ -2087,6 +2135,29 @@ class ParcelsEngine:
         else:
             self.async_schedule_save()
 
+    def _amazon_check_messages(self, before: datetime, now: datetime) -> list[str]:
+        """Return Amazon's e-mails of the last 30 days read before ``before``.
+
+        Newest first. Senders the user ignores never count.
+        """
+        data = self.data
+        since = now - AMAZON_AI_CHECK_WINDOW
+
+        def received(key: str) -> datetime:
+            record = data.messages[key]
+            return record.received or record.seen
+
+        keys = [
+            key
+            for key, record in data.messages.items()
+            if record.seen < before
+            and received(key) >= since
+            and (info := lookup(record.sender_domain)) is not None
+            and info.parser == "amazon"
+            and not self.is_ignored(record.sender_domain)
+        ]
+        return sorted(keys, key=received, reverse=True)
+
     def _amazon_ai_reading(self, record: MessageRecord) -> str | None:
         """Return how the local AI left an e-mail, or None if it didn't.
 
@@ -2121,24 +2192,12 @@ class ParcelsEngine:
         Those of the last 30 days that an earlier release, before ``before``,
         left to the AI or to review. Senders the user ignores never count.
         """
-        data = self.data
-        since = now - AMAZON_AI_CHECK_WINDOW
-
-        def received(key: str) -> datetime:
-            record = data.messages[key]
-            return record.received or record.seen
-
-        keys = [
+        messages = self.data.messages
+        return [
             key
-            for key, record in data.messages.items()
-            if record.seen < before
-            and received(key) >= since
-            and (info := lookup(record.sender_domain)) is not None
-            and info.parser == "amazon"
-            and not self.is_ignored(record.sender_domain)
-            and self._amazon_ai_reading(record) is not None
+            for key in self._amazon_check_messages(before, now)
+            if self._amazon_ai_reading(messages[key]) is not None
         ]
-        return sorted(keys, key=received, reverse=True)
 
     async def _async_amazon_ai_check(self, before: datetime) -> None:
         """Read Amazon's e-mails that the local AI read again, once after the update.
@@ -2208,6 +2267,102 @@ class ParcelsEngine:
         check["done"] = dt_to_str(dt_util.utcnow())
         check["counts"] = counts
         if counts["applied"]:
+            self.async_changed()
+        else:
+            self.async_schedule_save()
+
+    def _amazon_accepted(self, record: MessageRecord) -> bool:
+        """Return True when only a local AI answer the user accepted added an e-mail.
+
+        Not when the user asked the AI to read the e-mail again.
+        """
+        key = record.hash
+        return (
+            record.state is MessageState.APPLIED
+            and not any(
+                entry.get("forced")
+                for entry in self.ai.queue
+                if entry.get("hash") == key
+            )
+            and self._ai_accepted(key)
+        )
+
+    async def _async_amazon_accepted_check(self, before: datetime) -> None:
+        """Read again Amazon's e-mails whose AI answer the user accepted, once.
+
+        Releases before 0.1.16 couldn't read Amazon's Portuguese order
+        confirmations, so the local AI read them, and where it only suggested,
+        the user accepted its answers in review: on its way, for an order.
+        Accepting meant that the e-mail was about the user's parcel, not that
+        it shipped. Each such e-mail is downloaded and read again by the
+        parsers, never the AI. Where they read an order with confidence, their
+        reading replaces the AI's and stays confirmed, without reopening a
+        parcel that was put away; what the user set, merged or split stays.
+        Not where what the e-mail added names a tracking number or a
+        shipment, which the parsers don't read in an order's e-mail. Nothing
+        changes when the e-mail changed state while it was read.
+
+        Then Amazon's cancellations that were taken for partial ones cancel
+        their parcel, where nothing but the order's e-mail says it shipped:
+        see restore_cancellations().
+        """
+        data = self.data
+        messages = self._amazon_check_messages(before, dt_util.utcnow())
+        keys = [key for key in messages if self._amazon_accepted(data.messages[key])]
+        counts = dict.fromkeys(("read", "applied", "kept", "gone", "failed"), 0)
+        counts["skipped"] = max(0, len(keys) - AMAZON_AI_CHECK_MAX)
+        for key in keys[:AMAZON_AI_CHECK_MAX]:
+            if (record := data.messages.get(key)) is None:
+                continue
+            fetched = await self.async_refetch(record)
+            if (message := fetched.message) is None or fetched.mailbox is None:
+                counts["gone" if fetched.gone else "failed"] += 1
+                continue
+            counts["read"] += 1
+            verdict = self.verify(message)
+            result = await self.async_parse(message, verdict)
+            if (
+                data.messages.get(key) is not record
+                or not self._amazon_accepted(record)
+                or not verdict.verified
+                or not is_confident(result)
+                or result.kind is not MailKind.ORDER
+                or any(
+                    origin.tracking_number or origin.amazon_shipment_id
+                    for parcel in data.parcels.values()
+                    for origin in parcel.origins.values()
+                    if origin.message == key
+                )
+            ):
+                counts["kept"] += 1
+                continue
+            now = dt_util.utcnow()
+            org = organizational_domain(message.sender_domain)
+            # Without a tracking number the answer added a single origin, and
+            # the parsers' reading replaces it where it is: merges and splits
+            # stay.
+            self.apply_result(
+                result,
+                record,
+                source=Source.PARSER,
+                time=self.message_time(message, now),
+                label=org,
+                now=now,
+                confirmed=True,
+                keep_closed=True,
+            )
+            self.ai.drop(key)
+            self._clear_unparsed(org)
+            counts["applied"] += 1
+        now = dt_util.utcnow()
+        cancellations = restore_cancellations(
+            data, set(self._amazon_check_messages(before, now)), now
+        )
+        check = data.engine.setdefault(AMAZON_ACCEPTED_CHECK_KEY, {})
+        check["done"] = dt_to_str(now)
+        check["counts"] = counts
+        check["cancellations"] = cancellations
+        if counts["applied"] or cancellations:
             self.async_changed()
         else:
             self.async_schedule_save()
@@ -2603,6 +2758,16 @@ class ParcelsEngine:
             self._dismiss_message(key)
         self.async_changed()
 
+    def mark_return_picked_up(self, return_id: str, picked_up: bool) -> None:
+        """Mark a customer return picked up now, or take that back.
+
+        Its Live Activity ends; taken back, it shows again on its day.
+        """
+        if return_id not in self.data.returns:
+            raise validation_error("unknown_return")
+        mark_return_picked_up(self.data, return_id, picked_up, dt_util.utcnow())
+        self.async_changed()
+
     # -- Diagnostics ------------------------------------------------------
 
     def diagnostics(self) -> dict[str, Any]:
@@ -2646,6 +2811,7 @@ class ParcelsEngine:
             "returns_check": data.engine.get(RETURNS_CHECK_KEY),
             "paack_shop_check": data.engine.get(PAACK_SHOP_CHECK_KEY),
             "amazon_ai_check": data.engine.get(AMAZON_AI_CHECK_KEY),
+            "amazon_accepted_check": data.engine.get(AMAZON_ACCEPTED_CHECK_KEY),
             "recent_emails": self._recent_emails(dt_util.utcnow()),
             "working_days": self.workdays.source,
             "amazon_shipment_ids": amazon_shipment_id_counts(data, dt_util.utcnow()),

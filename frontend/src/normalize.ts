@@ -383,6 +383,7 @@ export function normalizeReturn(raw: unknown): CustomerReturn | null {
     pickup_rule: pickupRule(raw.pickup_rule),
     started: str(raw.started),
     received: raw.received === true,
+    picked_up: str(raw.picked_up),
     order_numbers: strs(raw.order_numbers),
     items: strs(raw.items),
     parcel_ids: strs(raw.parcel_ids),

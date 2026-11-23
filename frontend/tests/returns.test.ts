@@ -5,6 +5,8 @@ import { matchesReturnFilter } from "../src/filter.ts";
 import { formatDate, type LocaleOptions } from "../src/format.ts";
 import { normalizeReturn, normalizeSnapshot } from "../src/normalize.ts";
 import {
+  canMarkPickedUp,
+  canUndoPickedUp,
   describeReturn,
   isReturnDone,
   pickupRuleText,
@@ -18,6 +20,8 @@ const GB: LocaleOptions = { language: "en-GB", hour12: false, timeZone: "Europe/
 // Wednesday; its week runs from Monday 13 to Sunday 19 July 2026.
 const TODAY = "2026-07-15";
 const NOW = Date.UTC(2026, 6, 15, 10);
+// Marked picked up on the morning of TODAY, 10:12 in Lisbon.
+const MARKED = "2026-07-15T09:12:00+00:00";
 
 describe("normalizeReturn", () => {
   test("keeps a full return as it is", () => {
@@ -32,6 +36,7 @@ describe("normalizeReturn", () => {
       pickup_rule: "next_working_day",
       started: "2026-07-15T11:44:00+00:00",
       received: true,
+      picked_up: "2026-07-16T09:12:00+00:00",
       order_numbers: ["ORDER-1"],
       items: ["Blue mug"],
       parcel_ids: ["p1"],
@@ -70,6 +75,7 @@ describe("normalizeReturn", () => {
       pickup: "tomorrow",
       pickup_rule: "whenever",
       received: "yes",
+      picked_up: 5,
       items: ["Blue mug", 3, null],
       parcel_ids: "p1",
       emails: [{ time: 5, label: 3, source: "pigeon" }, null, "e-mail"],
@@ -82,6 +88,7 @@ describe("normalizeReturn", () => {
     assert.equal(ret.pickup, null);
     assert.equal(ret.pickup_rule, null);
     assert.equal(ret.received, false);
+    assert.equal(ret.picked_up, null);
     assert.deepEqual(ret.items, ["Blue mug"]);
     assert.deepEqual(ret.parcel_ids, []);
     assert.deepEqual(ret.emails, [{ time: null, label: "", source: "parser" }]);
@@ -116,6 +123,42 @@ describe("isReturnDone", () => {
     assert.equal(isReturnDone(makeReturn({ day: "2026-07-16" }), TODAY), false);
     assert.equal(isReturnDone(makeReturn({ day: "2026-07-16", received: true }), TODAY), true);
   });
+
+  test("is done once someone marks it picked up, even before its day", () => {
+    assert.equal(isReturnDone(makeReturn({ day: TODAY, picked_up: MARKED }), TODAY), true);
+    assert.equal(isReturnDone(makeReturn({ day: "2026-07-16", picked_up: MARKED }), TODAY), true);
+  });
+});
+
+describe("marking a return picked up", () => {
+  const upcoming = makeReturn({ day: "2026-07-16", pickup: "2026-07-16" });
+  const today = makeReturn({ day: TODAY, pickup: TODAY });
+  const marked = { ...today, picked_up: MARKED };
+
+  test("is offered until the return is done, when it has a pickup day", () => {
+    assert.equal(canMarkPickedUp(today, TODAY), true);
+    // The carrier may come early.
+    assert.equal(canMarkPickedUp(upcoming, TODAY), true);
+    assert.equal(canMarkPickedUp(makeReturn({ day: "2026-07-14", pickup: "2026-07-14" }), TODAY), false);
+    assert.equal(canMarkPickedUp(marked, TODAY), false);
+    assert.equal(canMarkPickedUp({ ...today, received: true }, TODAY), false);
+    // Without a pickup day nobody comes for it.
+    assert.equal(canMarkPickedUp({ ...today, pickup: null, pickup_rule: null }, TODAY), false);
+  });
+
+  test("can be undone until the pickup day is over", () => {
+    assert.equal(canUndoPickedUp(marked, TODAY), true);
+    assert.equal(canUndoPickedUp({ ...upcoming, picked_up: MARKED }, TODAY), true);
+    // Done anyway once its day is over: undoing would change nothing.
+    assert.equal(canUndoPickedUp(marked, "2026-07-16"), false);
+    assert.equal(canUndoPickedUp(today, TODAY), false);
+    assert.equal(canUndoPickedUp({ ...marked, received: true }, TODAY), false);
+  });
+
+  test("is only for someone who may see the return", () => {
+    assert.equal(canMarkPickedUp({ ...today, restricted: true }, TODAY), false);
+    assert.equal(canUndoPickedUp({ ...marked, restricted: true }, TODAY), false);
+  });
 });
 
 describe("matchesReturnFilter", () => {
@@ -123,21 +166,21 @@ describe("matchesReturnFilter", () => {
   const today = makeReturn({ day: TODAY });
   const past = makeReturn({ day: "2026-07-14" });
   const received = makeReturn({ day: "2026-07-17", received: true });
+  const marked = makeReturn({ day: TODAY, picked_up: MARKED });
   const context = { today: TODAY };
 
   test("All shows every return", () => {
-    for (const ret of [upcoming, today, past, received]) {
+    for (const ret of [upcoming, today, past, received, marked]) {
       assert.equal(matchesReturnFilter(ret, "all", context), true);
     }
   });
 
   test("Active shows the ones still to be picked up, Completed the others", () => {
-    const active = [upcoming, today, past, received].map((ret) => matchesReturnFilter(ret, "active", context));
-    const completed = [upcoming, today, past, received].map((ret) =>
-      matchesReturnFilter(ret, "completed", context),
-    );
-    assert.deepEqual(active, [true, true, false, false]);
-    assert.deepEqual(completed, [false, false, true, true]);
+    const returns = [upcoming, today, past, received, marked];
+    const active = returns.map((ret) => matchesReturnFilter(ret, "active", context));
+    const completed = returns.map((ret) => matchesReturnFilter(ret, "completed", context));
+    assert.deepEqual(active, [true, true, false, false, false]);
+    assert.deepEqual(completed, [false, false, true, true, true]);
   });
 
   test("Recent shows the returns of this week", () => {
@@ -184,6 +227,19 @@ describe("return text", () => {
     assert.equal(returnStateLine({ ...upcoming, restricted: true }, TODAY), "Return pickup");
   });
 
+  test("says a return was picked up as soon as someone marks it", () => {
+    assert.equal(returnStateLine({ ...upcoming, picked_up: MARKED }, TODAY), "Return picked up · UPS");
+    // Marked although no pickup day was known.
+    assert.equal(
+      returnStateLine({ ...upcoming, pickup: null, pickup_rule: null, picked_up: MARKED }, TODAY),
+      "Return picked up · UPS",
+    );
+    assert.equal(
+      returnStateLine({ ...upcoming, received: true, picked_up: MARKED }, TODAY),
+      "Received by the shop · UPS",
+    );
+  });
+
   test("describes a pickup to come, with where its day comes from", () => {
     assert.equal(
       describeReturn(upcoming, GB, TODAY),
@@ -206,6 +262,19 @@ describe("return text", () => {
     assert.equal(
       describeReturn({ ...past, received: true }, GB, TODAY),
       "Return to Example Shop, received by the shop",
+    );
+  });
+
+  test("describes when someone marked a return picked up", () => {
+    const early = { ...upcoming, carrier: null, carrier_name: null, items: [], picked_up: MARKED };
+    assert.equal(describeReturn(early, GB, TODAY), "Return to Example Shop, picked up Wed 15 Jul at 10:12");
+    assert.equal(
+      describeReturn(early, GB, "2026-07-17"),
+      "Return to Example Shop, picked up Wed 15 Jul at 10:12",
+    );
+    assert.equal(
+      describeReturn({ ...early, received: true }, GB, "2026-07-17"),
+      "Return to Example Shop, picked up Wed 15 Jul at 10:12, received by the shop",
     );
   });
 

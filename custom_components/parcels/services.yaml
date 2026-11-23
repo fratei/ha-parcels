@@ -131,6 +131,20 @@ undo_delivery:
       selector:
         text:
 
+mark_return_picked_up:
+  fields:
+    return_id:
+      required: true
+      selector:
+        text:
+
+undo_return_picked_up:
+  fields:
+    return_id:
+      required: true
+      selector:
+        text:
+
 merge:
   fields:
     parcel_ids:

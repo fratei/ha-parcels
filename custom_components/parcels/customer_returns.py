@@ -5,7 +5,8 @@ pickup day: the date the e-mail gives, the working day after an e-mail that
 says "next working day", or, for shops whose carrier collects returns on the
 next working day (Amazon), the working day after the e-mail. E-mails about the
 same return join one entry: they share an order and an item, or, without
-order numbers, the shop and an item.
+order numbers, the shop and an item. On its pickup day the notifier shows it
+too, until someone marks it picked up (:func:`mark_return_picked_up`).
 
 A return never changes its order's parcels, with one exception: a parcel can
 only be sent back once it arrived. When a return names an order whose parcel
@@ -299,6 +300,32 @@ def infer_return_deliveries(data: ParcelsData, now: datetime) -> set[str]:
 
 def _inferred_by_return(event: ParcelEvent) -> bool:
     return event.inferred and event.label == INFERRED_RETURN
+
+
+def pickup_today(entry: ReturnEntry, today: date) -> bool:
+    """Return True when a return's carrier comes today, done or not.
+
+    Only a pickup day counts, including the one assumed for the shop; a
+    return without one, or archived, never has a pickup today.
+    """
+    pickup = entry.pickup
+    return entry.archived is None and pickup is not None and pickup[0] == today
+
+
+def mark_return_picked_up(
+    data: ParcelsData, entry_id: str, picked_up: bool, now: datetime
+) -> ReturnEntry:
+    """Mark a return picked up now, or take that back; return it.
+
+    Marking it again keeps the first time. Raises KeyError for an unknown
+    return.
+    """
+    entry = data.returns[entry_id]
+    if picked_up == (entry.picked_up is not None):
+        return entry
+    entry.picked_up = now if picked_up else None
+    entry.updated = now
+    return entry
 
 
 def remove_return(data: ParcelsData, entry_id: str, now: datetime) -> ReturnEntry:

@@ -31,7 +31,15 @@ from pytest_homeassistant.common import (
 from custom_components.parcels.const import DOMAIN, MailKind, ParcelStatus
 from custom_components.parcels.dedup import apply_contribution
 from custom_components.parcels.engine import ParcelsEngine
-from custom_components.parcels.models import Eta, MessageState, Parcel, Source
+from custom_components.parcels.models import (
+    Eta,
+    MessageState,
+    Parcel,
+    PickupRule,
+    ReturnEntry,
+    ReturnOrigin,
+    Source,
+)
 
 from .common import (
     OTHER_OWNER,
@@ -485,6 +493,62 @@ async def test_mark_delivered_and_archive(
     assert parcel.archived == dt_util.utcnow()
     await refused(hass, "archive", {"parcel_id": "p_missing"}, "unknown_parcel")
     await refused(hass, "mark_delivered", {"parcel_id": "p_missing"}, "unknown_parcel")
+
+
+# -- Customer returns ---------------------------------------------------------
+
+
+def add_return(
+    engine: ParcelsEngine, *, owners: tuple[str, ...] = (OWNER,), private: bool = False
+) -> ReturnEntry:
+    """Add a return to Loja Exemplo, picked up today."""
+    now = dt_util.utcnow()
+    entry = ReturnEntry(id="ret_1", created=now, updated=now, private=private)
+    entry.origins["m1"] = ReturnOrigin(
+        message="m1",
+        time=now,
+        label=SHOP,
+        merchant="Loja Exemplo",
+        pickup=dt_util.now().date(),
+        pickup_rule=PickupRule.EMAIL,
+        owners=owners,
+    )
+    engine.data.returns[entry.id] = entry
+    return entry
+
+
+async def test_return_picked_up(
+    hass: HomeAssistant, engine: ParcelsEngine, sam: User
+) -> None:
+    """Anyone who sees a return may mark it picked up, and undo that."""
+    entry = add_return(engine)
+    data = {"return_id": entry.id}
+
+    await call(hass, "mark_return_picked_up", data, user=sam)
+    assert entry.picked_up == dt_util.utcnow()
+    assert entry.done(dt_util.now().date())
+    await call(hass, "undo_return_picked_up", data, user=sam)
+    assert entry.picked_up is None
+    assert not entry.done(dt_util.now().date())
+    # An automation may too.
+    await call(hass, "mark_return_picked_up", data)
+    assert entry.picked_up == dt_util.utcnow()
+    for service in ("mark_return_picked_up", "undo_return_picked_up"):
+        await refused(hass, service, {"return_id": "ret_missing"}, "unknown_return")
+
+
+async def test_private_return_refused(
+    hass: HomeAssistant, engine: ParcelsEngine, hass_admin_user: MockUser, sam: User
+) -> None:
+    """Only its owners may mark a private return, administrators included."""
+    entry = add_return(engine, owners=(OTHER_OWNER,), private=True)
+    data = {"return_id": entry.id}
+
+    for service in ("mark_return_picked_up", "undo_return_picked_up"):
+        await refused(hass, service, data, "not_allowed", user=hass_admin_user)
+    assert entry.picked_up is None
+    await call(hass, "mark_return_picked_up", data, user=sam)
+    assert entry.picked_up == dt_util.utcnow()
 
 
 # -- Merging and splitting ----------------------------------------------------

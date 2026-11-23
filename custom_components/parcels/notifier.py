@@ -20,7 +20,8 @@ Routing
 Device kinds
     iPhones get Live Activities. iPads and Android phones get one normal
     notification per parcel (same tag, each replacing the last) on key changes:
-    out for delivery, ready for pickup, delivered, attempted and exception.
+    out for delivery, ready for pickup, delivered, attempted and exception,
+    and one per return pickup while it waits.
     Macs, watches and unknown systems get nothing; they mirror the iPhone.
     The Live Activities switch covers these notifications too.
 
@@ -51,18 +52,20 @@ Live Activities
     Home Assistant neither ends nor duplicates an activity.
 
     The icon and the progress bar take the colour of the status: blue on the
-    way, orange out for delivery, green delivered, purple ready for pickup and
-    red for a missed attempt or a problem. The card keeps the system's dark
-    background, and the icon and the text still say the status. A combined
-    activity takes the colour of its most urgent parcel: out for delivery,
-    then a problem, then a pickup; green once all are delivered. The message
+    way, orange out for delivery, green delivered, purple ready for pickup,
+    red for a missed attempt or a problem and pink for a return pickup. The
+    card keeps the system's dark background, and the icon and the text still
+    say the status. A combined activity takes the colour of its most urgent
+    parcel: out for delivery, then a problem, then a return pickup that
+    waits, then a pickup; green once all are delivered. The message
     always shows the delivery window; the countdown runs only in the last
     hour of the window (all of a shorter one) and starts with one quiet
     update. The combined activity shows no countdown while one of its
     parcels has a missed attempt or a problem, so its text can say so; a
     parcel's own activity keeps its countdown. Tapping an activity or a
     notification opens the parcel on the dashboard
-    (``<path>?parcel=<id>``); the combined activity opens the week.
+    (``<path>?parcel=<id>``), or the return (``<path>?return=<id>``); the
+    combined activity opens the week.
 
     The text says what comes next: where and until when a parcel can be
     collected, when a missed attempt happened ("reported" when that's only
@@ -77,9 +80,11 @@ Delivery PINs
     message's first line and the PIN leads the second, which the Lock Screen
     shows and the one-line views (Smart Stack, CarPlay, the expanded Dynamic
     Island) leave out; ``critical_text`` never has it, and no countdown
-    replaces the message while it shows. A combined activity shows only the
-    PIN of the parcel out for delivery that it names next, never a pickup
-    code. iPads, Android phones and the persistent notification never get it.
+    replaces the message while it shows. A combined activity shows the PIN
+    of the parcel out for delivery that it names next; without one, the
+    pickup code of its only parcel ready for pickup, with the pickup point,
+    and no code while two or more wait for pickup. iPads, Android phones and
+    the persistent notification never get it.
 
     Every start is plain: the PIN follows with a quiet update, sent through
     mobile_app's notify service object rather than a service call, whose
@@ -100,10 +105,26 @@ Packages
     hold ("Possibly: ..."). An order that no package may hold counts on its
     own. When an order stops riding along, its activity starts again.
 
+Return pickups
+    A return whose carrier collects it today (see
+    :func:`~.customer_returns.pickup_today`) has its own activity
+    (``return-<id>``) on the iPhones that may show the return: a shared
+    return on every notified iPhone, a private one only on its owners'. It
+    starts at the start time, or as soon as a pickup is set for today, and
+    names the shop, the carrier and, with item names on, a shared return's
+    first item.
+    Marking it picked up updates it quietly to "Return picked up ✓" with the
+    time at 4/4, and it ends 30 minutes later; undo brings it back, and
+    starts it again once it has ended. A return picked up before the start
+    time starts nothing, and one moved to another day ends at once. Return
+    pickups count towards the collapse threshold, and the combined activity
+    counts them in its text and its progress.
+
 Persistent notification
-    ``parcels_today`` lists the day's parcels from the start time until the
-    next morning's start time, without item names, with the same details as
-    the activities; private parcels are only counted.
+    ``parcels_today`` lists the day's parcels and return pickups from the
+    start time until the next morning's start time, without item names, with
+    the same details as the activities; private parcels and private returns
+    are only counted.
 """
 
 from __future__ import annotations
@@ -135,6 +156,7 @@ from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util, slugify
 
 from .const import (
+    CARRIER_NAMES,
     CONF_COLLAPSE_THRESHOLD,
     CONF_CUTOFF_TIME,
     CONF_DASHBOARD_PATH,
@@ -156,8 +178,9 @@ from .const import (
     LeftAt,
     ParcelStatus,
 )
+from .customer_returns import linked_parcels, order_index, pickup_today
 from .dedup import boxes_of_day
-from .models import Parcel, ParcelsData, ParcelState, local_date
+from .models import Parcel, ParcelsData, ParcelState, ReturnEntry, local_date
 from .parsers.base import Eta
 from .parsers.items import unique_items
 from .views import shipment_groups
@@ -219,7 +242,10 @@ REASON_COLLAPSED = "collapsed"
 REASON_DELIVERED = "delivered"
 REASON_RESTART = "restart"
 REASON_MOVED = "moved"
+REASON_PICKED_UP = "picked_up"
 RESTARTABLE = frozenset({REASON_RESTART, REASON_DISABLED, REASON_REMOVED})
+LINGERING = frozenset({REASON_DELIVERED, REASON_MOVED, REASON_PICKED_UP})
+RETURN_STATUS = "return_pickup"
 
 S = ParcelStatus
 KEY_STATUSES = frozenset(
@@ -242,6 +268,7 @@ ICONS: dict[ParcelStatus, str] = {
     S.EXCEPTION: "mdi:alert-circle-outline",
 }
 DEFAULT_ICON = "mdi:package-variant-closed"
+RETURN_ICON = "mdi:package-up"
 
 # Legible on the Lock Screen's dark card; never the only sign of a status.
 BLUE = "#039BE5"
@@ -249,6 +276,7 @@ ORANGE = "#FFA600"
 GREEN = "#43A047"
 PURPLE = "#926BC7"
 RED = "#DB4437"
+PINK = "#E91E63"
 COLORS: dict[ParcelStatus, str] = {
     S.OUT_FOR_DELIVERY: ORANGE,
     S.DELIVERED: GREEN,
@@ -499,6 +527,11 @@ def _parcel_tag(parcel_id: str, gen: int = 1) -> str:
     return _tag(f"parcel-{parcel_id.removeprefix('p_')}", gen)
 
 
+def _return_tag(entry_id: str, gen: int = 1) -> str:
+    """Return the tag of a return pickup's activity or notification."""
+    return _tag(f"return-{entry_id.removeprefix('ret_')}", gen)
+
+
 def _combined_tag(day: date, gen: int = 1) -> str:
     """Return the tag of a device's combined activity of a day."""
     return _tag(f"parcels-today-{day:%Y%m%d}", gen)
@@ -609,6 +642,62 @@ def _routed(parcel: Parcel, device: _Device) -> bool:
     have no owner).
     """
     return not parcel.private or bool(device.persons & set(parcel.state.owners))
+
+
+@dataclass(frozen=True, slots=True)
+class _DayReturn:
+    """A return the carrier picks up on a day, and who may see it.
+
+    One of a private parcel's order is private too, for the owners of both,
+    as on the dashboard.
+    """
+
+    entry: ReturnEntry
+    private: bool
+    owners: frozenset[str]
+
+    def routed(self, device: _Device) -> bool:
+        """Return True when a device may show the return pickup."""
+        return not self.private or bool(device.persons & self.owners)
+
+
+def _day_returns(data: ParcelsData, day: date) -> dict[str, _DayReturn]:
+    """Return the return pickups of a day by ID, in the store's order."""
+    entries = [entry for entry in data.returns.values() if pickup_today(entry, day)]
+    if not entries:
+        return {}
+    index = order_index(data)
+    found: dict[str, _DayReturn] = {}
+    for entry in entries:
+        private = [parcel for parcel in linked_parcels(entry, index) if parcel.private]
+        found[entry.id] = _DayReturn(
+            entry=entry,
+            private=entry.private or bool(private),
+            owners=frozenset(
+                {*entry.owners, *(o for parcel in private for o in parcel.state.owners)}
+            ),
+        )
+    return found
+
+
+def _return_carrier(entry: ReturnEntry) -> str | None:
+    """Return the name of the carrier that picks a return up, when known."""
+    carrier = entry.carrier
+    if not carrier or carrier == "other":
+        return None
+    return _clean(CARRIER_NAMES.get(carrier, carrier)) or None
+
+
+def _return_names(entry: ReturnEntry) -> list[str]:
+    """Return the shop and the carrier of a return pickup, without duplicates.
+
+    Without a shop the carrier names it, else just "Return".
+    """
+    carrier = _return_carrier(entry)
+    title = _clean(entry.merchant) or carrier or "Return"
+    if carrier and carrier.casefold() != title.casefold():
+        return [title, carrier]
+    return [title]
 
 
 def _pin(parcel: Parcel, device: _Device, options: _Options) -> str | None:
@@ -913,6 +1002,43 @@ def _parcel_content(
     )
 
 
+def _return_content(item: _DayReturn, ctx: _Context) -> _Content:
+    """Return what a return pickup's activity or notification shows.
+
+    In pink until someone marks it picked up, then the time it was marked.
+    Both share one status, so marking it, and taking that back, update the
+    activity quietly.
+    """
+    entry = item.entry
+    title, *names = _return_names(entry)
+    done = entry.done(ctx.today)
+    if done:
+        at = _local_hm(entry.picked_up) if entry.picked_up is not None else None
+        parts = [f"Return picked up {CHECK}" + (f" {at}" if at else "")]
+        critical = f"{CHECK} {at}" if at else CHECK
+    else:
+        parts = ["Return pickup today"]
+        critical = "Return"
+    parts += names
+    if ctx.options.item_names and not item.private and (items := entry.items):
+        more = len(items) - 1
+        name = _clean(items[0], 30)
+        parts.append(f"{name} +{more} more" if more else name)
+    return _Content(
+        title=title,
+        message=SEP.join(parts),
+        critical=critical,
+        progress=PROGRESS_MAX if done else PROGRESS_MAX - 1,
+        progress_max=PROGRESS_MAX,
+        icon=RETURN_ICON,
+        color=PINK,
+        relevance=0.2 if done else 0.6,
+        when=None,
+        status=RETURN_STATUS,
+        url=_detail_url(ctx.options.path, "return", entry.id),
+    )
+
+
 def _packages(
     data: ParcelsData, parcels: list[Parcel], day: date
 ) -> tuple[list[Parcel], dict[str, list[str]]]:
@@ -983,12 +1109,19 @@ def _next_label(state: ParcelState) -> str:
 
 
 def _combined_content(
-    parcels: list[Parcel], ctx: _Context, pin: str | None = None
+    parcels: list[Parcel],
+    ctx: _Context,
+    pin: str | None = None,
+    *,
+    returns: Sequence[ReturnEntry] = (),
+    place: str | None = None,
 ) -> _Content:
     """Return what a device's combined activity shows.
 
-    ``pin`` is the code of the parcel out for delivery that it names next:
-    the count keeps the first line, and the PIN leads the second.
+    ``pin`` is the code of the parcel out for delivery that it names next, or
+    of the one parcel ready for pickup at ``place``: the count keeps the
+    first line, and the PIN leads the second. ``returns`` are the device's
+    return pickups of the day; they count after the parcels.
     """
     states = [parcel.state for parcel in parcels]
     total = len(states)
@@ -997,13 +1130,22 @@ def _combined_content(
     pickup = counts[S.READY_FOR_PICKUP]
     problems = counts[S.ATTEMPTED] + counts[S.EXCEPTION]
     out = counts[S.OUT_FOR_DELIVERY]
-    done = bool(total) and delivered == total
-    head = f"{delivered} of {total} delivered" + (f" {CHECK}" if done else "")
+    picked = sum(entry.done(ctx.today) for entry in returns)
+    waiting = len(returns) - picked
+    done = bool(total or returns) and delivered == total and not waiting
+    head = f"{delivered} of {total} delivered" + (
+        f" {CHECK}" if total and delivered == total else ""
+    )
     parts: list[str] = []
     if pickup:
         parts.append(f"{pickup} ready for pickup")
     if problems:
         parts.append(f"{problems} problem" + ("s" if problems > 1 else ""))
+    if waiting:
+        parts.append(f"{waiting} return pickup" + ("s" if waiting > 1 else ""))
+    if picked:
+        noun = "returns" if picked > 1 else "return"
+        parts.append(f"{picked} {noun} picked up {CHECK}")
     upcoming_parts: list[str] = []
     when: int | None = None
     if (upcoming := _next_state(states, ctx.today)) is not None:
@@ -1019,36 +1161,49 @@ def _combined_content(
             and (end := _chronometer_end(upcoming, ctx)) is not None
         ):
             when = int(end.timestamp())
-    # The most urgent parcel leads the icon and the colour.
+    # The most urgent parcel leads the icon and the colour; a return pickup
+    # waiting today comes before a parcel that can wait at its pickup point.
+    icon, color = DEFAULT_ICON, DEFAULT_COLOR
     if out:
-        lead: ParcelStatus | None = S.OUT_FOR_DELIVERY
+        icon, color = ICONS[S.OUT_FOR_DELIVERY], COLORS[S.OUT_FOR_DELIVERY]
     elif done:
-        lead = S.DELIVERED
+        icon, color = ICONS[S.DELIVERED], COLORS[S.DELIVERED]
     elif problems:
-        lead = S.EXCEPTION
+        icon, color = ICONS[S.EXCEPTION], COLORS[S.EXCEPTION]
+    elif waiting:
+        icon, color = RETURN_ICON, PINK
     elif pickup:
-        lead = S.READY_FOR_PICKUP
-    else:
-        lead = None
+        icon, color = ICONS[S.READY_FOR_PICKUP], COLORS[S.READY_FOR_PICKUP]
     relevance = max(
-        (_relevance(state, ctx) for state in states if state.status is not S.DELIVERED),
+        [
+            *(
+                _relevance(state, ctx)
+                for state in states
+                if state.status is not S.DELIVERED
+            ),
+            *([0.6] if waiting else []),
+        ],
         default=0.2,
     )
-    if pin is None:
-        message = SEP.join([head, *parts, *upcoming_parts])
+    if pin is not None and total:
+        message = f"{head}\n" + SEP.join(
+            [f"PIN {pin}", *([place] if place else []), *upcoming_parts, *parts]
+        )
     else:
-        message = f"{head}\n" + SEP.join([f"PIN {pin}", *upcoming_parts, *parts])
+        message = SEP.join([*([head] if total else []), *parts, *upcoming_parts])
+    status = f"{delivered}/{total}/{out}/{pickup}/{problems}"
     return _Content(
         title=COMBINED_TITLE,
         message=message,
-        critical=f"{delivered}/{total}",
-        progress=delivered,
-        progress_max=max(total, 1),
-        icon=ICONS[lead] if lead is not None else DEFAULT_ICON,
-        color=COLORS[lead] if lead is not None else DEFAULT_COLOR,
+        critical=f"{delivered + picked}/{total + len(returns)}",
+        progress=delivered + picked,
+        progress_max=max(total + len(returns), 1),
+        icon=icon,
+        color=color,
         relevance=relevance,
         when=when,
-        status=f"{delivered}/{total}/{out}/{pickup}/{problems}",
+        # Marking a return picked up, or taking that back, stays quiet.
+        status=f"{status}/{len(returns)}" if returns else status,
         url=ctx.options.path,
     )
 
@@ -1086,13 +1241,13 @@ def _end_payload(tag: str) -> dict[str, Any]:
     return {"message": CLEAR_NOTIFICATION, "data": {"tag": tag}}
 
 
-def _key_payload(content: _Content, parcel_id: str, kind: DeviceKind) -> dict[str, Any]:
+def _key_payload(content: _Content, tag: str, kind: DeviceKind) -> dict[str, Any]:
     """Return a normal notification for an iPad or an Android phone.
 
     Android tints the icon with the status colour; iPad notifications have no
     colour.
     """
-    data: dict[str, Any] = {"tag": _parcel_tag(parcel_id)}
+    data: dict[str, Any] = {"tag": tag}
     if kind is DeviceKind.ANDROID:
         data["clickAction"] = content.url
         data["notification_icon"] = content.icon
@@ -1254,6 +1409,7 @@ def _persistent_message(
     today: date,
     path: str,
     riders: Sequence[tuple[ParcelState, Sequence[ParcelState]]] = (),
+    returns: Sequence[_DayReturn] = (),
 ) -> str:
     """Return the Markdown of the persistent notification.
 
@@ -1262,12 +1418,16 @@ def _persistent_message(
     its time. The count in the title stays in packages. ``riders`` pairs each
     public order that packages of the day may hold with those packages; the
     orders of a shop that the same packages may hold share a line.
+    ``returns`` are the day's return pickups, after the parcels; private ones
+    are only counted.
     """
     total = len(listed) + private
-    lines = [
-        f"**{total} parcel{'' if total == 1 else 's'} {_day_word(day, today)}**",
-        "",
-    ]
+    counts: list[str] = []
+    if total or not returns:
+        counts.append(f"{total} parcel{'' if total == 1 else 's'}")
+    if returns:
+        counts.append(f"{len(returns)} return pickup{'' if len(returns) == 1 else 's'}")
+    lines = [f"**{' and '.join(counts)} {_day_word(day, today)}**", ""]
     rows: dict[tuple[str, str, int], list[ParcelState]] = {}
     ordered = sorted(listed, key=lambda item: _persistent_order(item[1]))
     for index, (shipment, state) in enumerate(ordered):
@@ -1301,10 +1461,30 @@ def _persistent_message(
             f"Possibly in a package from {where}",
         ]
         lines.append("- " + SEP.join(_markdown(part) for part in parts))
+    shown = [item.entry for item in returns if not item.private]
+    for entry in sorted(shown, key=lambda entry: _return_order(entry, day)):
+        parts = _return_names(entry)
+        if entry.done(day):
+            text = "Return picked up"
+            if entry.picked_up is not None and local_date(entry.picked_up) == day:
+                text += f" {_local_hm(entry.picked_up)}"
+            parts.append(f"{text} {CHECK}")
+        else:
+            parts.append(f"Return pickup {_day_word(day, today)}")
+        lines.append("- " + SEP.join(_markdown(part) for part in parts))
     if private:
         lines.append(f"- +{private} private parcel{'' if private == 1 else 's'}")
+    if hidden := len(returns) - len(shown):
+        lines.append(f"- +{hidden} private return pickup{'' if hidden == 1 else 's'}")
     lines += ["", f"[Open Parcels]({path})"]
     return "\n".join(lines)
+
+
+def _return_order(entry: ReturnEntry, day: date) -> tuple[bool, float, str]:
+    """Sort return pickups still waiting by name, then those done by time."""
+    done = entry.done(day)
+    at = entry.picked_up.timestamp() if done and entry.picked_up else float("inf")
+    return done, at, _return_names(entry)[0].casefold()
 
 
 def _new_day() -> dict[str, Any]:
@@ -1312,6 +1492,7 @@ def _new_day() -> dict[str, Any]:
     return {
         "morning": False,
         "board": [],
+        "returns": [],
         "combined": [],
         "activities": {},
         "notified": {},
@@ -1351,7 +1532,7 @@ def _sanitize_record(raw: Any) -> dict[str, Any] | None:
         "running": raw.get("running") is True,
         "end_reason": _optional_str(raw.get("end_reason")),
         "end_at": _iso(end_at) if end_at is not None else None,
-        "linger": linger if linger in (REASON_DELIVERED, REASON_MOVED) else None,
+        "linger": linger if linger in LINGERING else None,
         "fp": _optional_str(raw.get("fp")),
         "status": _optional_str(raw.get("status")),
         "service": _optional_str(raw.get("service")),
@@ -1367,6 +1548,7 @@ def _sanitize_day(raw: Mapping[str, Any]) -> dict[str, Any]:
     day = _new_day()
     day["morning"] = raw.get("morning") is True
     day["board"] = _strings(raw.get("board"))
+    day["returns"] = _strings(raw.get("returns"))
     day["combined"] = _strings(raw.get("combined"))
     activities = raw.get("activities")
     if isinstance(activities, Mapping):
@@ -1657,6 +1839,7 @@ class Notifier:
                 ),
                 "notifications_sent": sum(len(s) for s in day["notified"].values()),
                 "orders_in_a_box": len(boxes_of_day(self._host.data, board, today)),
+                "return_pickups": len(day["returns"]),
             },
             "persistent_notification_shown": self._persistent_fp
             not in (None, _UNKNOWN),
@@ -1703,14 +1886,15 @@ class Notifier:
             for moment in _wake_moments(eta, ctx.today)
         ]
         days: dict[str, Any] = self._data["days"]
+        returns = _day_returns(self._host.data, ctx.today)
         if ctx.in_window:
             day = days.setdefault(ctx.key, _new_day())
-            self._update_board(ctx, day, parcels)
+            self._update_board(ctx, day, parcels, returns)
         else:
             day = days.get(ctx.key)
         if day is not None:
             for device_id in sorted(set(self._recipients) | set(day["activities"])):
-                await self._async_device(ctx, day, device_id, parcels)
+                await self._async_device(ctx, day, device_id, parcels, returns)
         self._update_persistent(ctx, parcels)
 
     @staticmethod
@@ -1820,9 +2004,16 @@ class Notifier:
         return False
 
     def _update_board(
-        self, ctx: _Context, day: dict[str, Any], parcels: dict[str, Parcel]
+        self,
+        ctx: _Context,
+        day: dict[str, Any],
+        parcels: dict[str, Parcel],
+        returns: Mapping[str, _DayReturn],
     ) -> None:
-        """Add the parcels that are on the lock screen today; none leave."""
+        """Add the parcels and return pickups on the lock screen today; none leave.
+
+        A return pickup marked done before it joined stays off.
+        """
         board: list[str] = day["board"]
         added = set(board)
         candidates: list[Parcel] = []
@@ -1839,6 +2030,26 @@ class Notifier:
             if parcel.id not in added:
                 added.add(parcel.id)
                 board.append(parcel.id)
+        pickups: list[str] = day["returns"]
+        pickups += [
+            return_id
+            for return_id, item in returns.items()
+            if return_id not in pickups and not item.entry.done(ctx.today)
+        ]
+
+    @staticmethod
+    def _device_returns(
+        day: dict[str, Any], returns: Mapping[str, _DayReturn], device: _Device
+    ) -> list[_DayReturn]:
+        """Return the day's return pickups a device shows, in the order they joined.
+
+        One moved to another day, or archived, leaves.
+        """
+        return [
+            item
+            for return_id in day["returns"]
+            if (item := returns.get(return_id)) is not None and item.routed(device)
+        ]
 
     async def _async_device(
         self,
@@ -1846,16 +2057,19 @@ class Notifier:
         day: dict[str, Any],
         device_id: str,
         parcels: dict[str, Parcel],
+        returns: Mapping[str, _DayReturn],
     ) -> None:
         """Bring one device up to date."""
         device = self._recipients.get(device_id)
         if device is None:
             await self._async_end_all(ctx, day, device_id, REASON_REMOVED)
-        elif device.kind is DeviceKind.IPHONE:
-            await self._async_live_device(ctx, day, device, parcels)
+            return
+        pickups = self._device_returns(day, returns, device)
+        if device.kind is DeviceKind.IPHONE:
+            await self._async_live_device(ctx, day, device, parcels, pickups)
         else:
             await self._async_end_all(ctx, day, device_id, REASON_REMOVED)
-            await self._async_key_notifications(ctx, day, device, parcels)
+            await self._async_key_notifications(ctx, day, device, parcels, pickups)
 
     async def _async_end_all(
         self, ctx: _Context, day: dict[str, Any], device_id: str, reason: str
@@ -1871,6 +2085,7 @@ class Notifier:
         day: dict[str, Any],
         device: _Device,
         parcels: dict[str, Parcel],
+        pickups: Sequence[_DayReturn] = (),
     ) -> None:
         """Bring the Live Activities of one iPhone up to date."""
         device_id = device.device_id
@@ -1899,15 +2114,23 @@ class Notifier:
                 members.append(parcel)
         entries, possibly = _packages(self._host.data, members, ctx.today)
         records: dict[str, Any] = day["activities"].get(device_id, {})
-        if device_id in day["combined"] or len(entries) > ctx.options.threshold:
+        if (
+            device_id in day["combined"]
+            or len(entries) + len(pickups) > ctx.options.threshold
+        ):
             if device_id not in day["combined"]:
                 day["combined"].append(device_id)
             for key, record in records.items():
                 if key != COMBINED and record["running"]:
                     await self._async_end(device_id, record, REASON_COLLAPSED, ctx.now)
-            await self._async_combined(ctx, day, device, entries)
+            await self._async_combined(
+                ctx, day, device, entries, [item.entry for item in pickups]
+            )
             return
-        keep = {parcel.id for parcel in (*entries, *moved)}
+        keep = {
+            *(parcel.id for parcel in (*entries, *moved)),
+            *(item.entry.id for item in pickups),
+        }
         for key, record in records.items():
             if record["running"] and key not in keep:
                 await self._async_end(device_id, record, REASON_REMOVED, ctx.now)
@@ -1920,6 +2143,8 @@ class Notifier:
             if record is not None and record["running"]:
                 content = _parcel_content(parcel, ctx)
                 await self._async_linger(ctx, device, record, content, REASON_MOVED)
+        for item in pickups:
+            await self._async_return(ctx, day, device, item)
 
     async def _async_individual(
         self,
@@ -1961,26 +2186,68 @@ class Notifier:
             ctx, day, device, parcel.id, record, content, pinned
         )
 
+    async def _async_return(
+        self, ctx: _Context, day: dict[str, Any], device: _Device, item: _DayReturn
+    ) -> None:
+        """Start, update, restart or end the activity of one return pickup.
+
+        Marked picked up, it shows the time for 30 minutes and ends; taking
+        that back brings it back.
+        """
+        entry = item.entry
+        record = day["activities"].get(device.device_id, {}).get(entry.id)
+        content = _return_content(item, ctx)
+        done = entry.done(ctx.today)
+        if record is None or not record["running"]:
+            if done:
+                return
+            if record is None:
+                await self._async_start(ctx, day, device, entry.id, 1, content)
+            elif record["end_reason"] in (*RESTARTABLE, REASON_PICKED_UP):
+                gen = record["gen"] + 1
+                await self._async_start(ctx, day, device, entry.id, gen, content)
+            return
+        if done:
+            await self._async_linger(ctx, device, record, content, REASON_PICKED_UP)
+            return
+        record["linger"] = record["end_at"] = None
+        await self._async_keep_alive(ctx, day, device, entry.id, record, content)
+
     async def _async_combined(
         self,
         ctx: _Context,
         day: dict[str, Any],
         device: _Device,
         members: list[Parcel],
+        returns: Sequence[ReturnEntry] = (),
     ) -> None:
         """Start, update, restart or end the combined activity of one iPhone."""
         record = day["activities"].get(device.device_id, {}).get(COMBINED)
-        pending = any(parcel.state.status is not S.DELIVERED for parcel in members)
-        content = _combined_content(members, ctx)
-        # Only the PIN of the delivery it names: pickup codes stay with their
-        # parcels' own activities.
+        pending = any(
+            parcel.state.status is not S.DELIVERED for parcel in members
+        ) or any(not entry.done(ctx.today) for entry in returns)
+        content = _combined_content(members, ctx, returns=returns)
+        # The PIN of the delivery it names; else the code of its one parcel
+        # ready for pickup, with the place.
         upcoming = _next_parcel(members, ctx.today)
         pin = (
             _pin(upcoming, device, ctx.options)
             if upcoming is not None and upcoming.state.status is S.OUT_FOR_DELIVERY
             else None
         )
-        pinned = None if pin is None else (_combined_content(members, ctx, pin), pin)
+        place: str | None = None
+        ready = [p for p in members if p.state.status is S.READY_FOR_PICKUP]
+        if pin is None and len(ready) == 1:
+            pin = _pin(ready[0], device, ctx.options)
+            place = _place(ready[0].state.pickup_point) or None
+        pinned = (
+            None
+            if pin is None
+            else (
+                _combined_content(members, ctx, pin, returns=returns, place=place),
+                pin,
+            )
+        )
         if record is None or not record["running"]:
             if not pending:
                 return
@@ -1995,7 +2262,7 @@ class Notifier:
                     ctx, day, device, COMBINED, gen, content, pin_later=pin_later
                 )
             return
-        if not members:
+        if not members and not returns:
             await self._async_end(device.device_id, record, REASON_REMOVED, ctx.now)
             return
         if not pending:
@@ -2069,9 +2336,12 @@ class Notifier:
         A start never carries a PIN: with ``pin_later`` the PIN follows in a
         quiet update, once the iPhone has registered the activity.
         """
-        tag = (
-            _combined_tag(ctx.today, gen) if key == COMBINED else _parcel_tag(key, gen)
-        )
+        if key == COMBINED:
+            tag = _combined_tag(ctx.today, gen)
+        elif key.startswith("ret_"):
+            tag = _return_tag(key, gen)
+        else:
+            tag = _parcel_tag(key, gen)
         payload = _activity_payload(content, tag, content.title, silent=False)
         result = await self._async_send(device.service, device.kind, payload)
         if result is not _Result.SENT:
@@ -2354,8 +2624,12 @@ class Notifier:
         day: dict[str, Any],
         device: _Device,
         parcels: dict[str, Parcel],
+        pickups: Sequence[_DayReturn] = (),
     ) -> None:
-        """Notify an iPad or an Android phone of key changes of today's parcels."""
+        """Notify an iPad or an Android phone of key changes of today's parcels.
+
+        Each return pickup gets one notification while it waits.
+        """
         if not ctx.in_window or not self.live_activities_enabled:
             return
         board = [
@@ -2372,11 +2646,25 @@ class Notifier:
             if status not in KEY_STATUSES or sent.get(parcel.id) == status.value:
                 continue
             content = _parcel_content(parcel, ctx, possibly.get(parcel.id, ()))
-            payload = _key_payload(content, parcel.id, device.kind)
+            payload = _key_payload(content, _parcel_tag(parcel.id), device.kind)
             result = await self._async_send(device.service, device.kind, payload)
             if result is _Result.SENT:
                 day["notified"].setdefault(device.device_id, {})[parcel.id] = (
                     status.value
+                )
+            elif result is _Result.FAILED:
+                self._retry(ctx.now)
+        for item in pickups:
+            entry = item.entry
+            sent = day["notified"].get(device.device_id, {})
+            if entry.done(ctx.today) or sent.get(entry.id) == RETURN_STATUS:
+                continue
+            content = _return_content(item, ctx)
+            payload = _key_payload(content, _return_tag(entry.id), device.kind)
+            result = await self._async_send(device.service, device.kind, payload)
+            if result is _Result.SENT:
+                day["notified"].setdefault(device.device_id, {})[entry.id] = (
+                    RETURN_STATUS
                 )
             elif result is _Result.FAILED:
                 self._retry(ctx.now)
@@ -2422,11 +2710,12 @@ class Notifier:
                 private += 1
             else:
                 listed.append((shipments.get(parcel.id, parcel.id), parcel.state))
-        if not listed and not private:
+        returns = list(_day_returns(self._host.data, shown).values())
+        if not listed and not private and not returns:
             self._dismiss_persistent()
             return
         message = _persistent_message(
-            listed, private, shown, ctx.today, ctx.options.path, riders
+            listed, private, shown, ctx.today, ctx.options.path, riders, returns
         )
         fingerprint = hashlib.sha256(message.encode()).hexdigest()[:16]
         if fingerprint != self._persistent_fp:

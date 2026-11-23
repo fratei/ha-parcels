@@ -67,6 +67,12 @@
     "undo_delivery": {
       "service": "mdi:package-variant-closed-remove"
     },
+    "mark_return_picked_up": {
+      "service": "mdi:package-up"
+    },
+    "undo_return_picked_up": {
+      "service": "mdi:undo"
+    },
     "merge": {
       "service": "mdi:call-merge"
     },

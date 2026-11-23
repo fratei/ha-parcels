@@ -3,8 +3,8 @@
 A Home Assistant integration that tracks your parcels from your shipping
 e-mails. It reads Outlook.com and Gmail mailboxes with read-only access, keeps
 each parcel once, shows the week's deliveries and return pickups on a Parcels
-page and, on delivery day, puts the day's parcels on your iPhones as Live
-Activities and in a persistent notification in Home Assistant.
+page and, on their day, puts them on your iPhones as Live Activities and in a
+persistent notification in Home Assistant.
 
 Everything runs in Home Assistant. Parcels has no server of its own: it talks
 to Microsoft or Google with an app you register yourself, and, only if you
@@ -49,17 +49,22 @@ api.parcel.app, which Parcels contacts itself with your API key.
   its sender, updates the order's only open parcel. A late order e-mail
   joins its order's parcel even once that parcel was delivered or archived,
   without reopening it, unless the parcel holds other items. An e-mail that
-  arrives late never moves a parcel back to an earlier status. Merges that
-  rely on a guess (same shop, matching dates, only one candidate) are
-  marked, and you can undo them. A guess counts only when no other open
-  parcel of that shop could be the one, late parcels and those due in the
-  next days included, and when the carriers named by the shop and the
-  delivery agree. A delivery made on a day before the shop's package was
-  shipped is another package, and isn't suggested either, nor is one that
-  Amazon's tracking says came at another time, or that it points away from
-  because other packages repeat its times. With the
-  [Parcel app](#parcel-app), Parcels undoes a guess about an Amazon shipment
-  that Amazon's tracking proves wrong later (see
+  arrives late never moves a parcel back to an earlier status. An order's
+  cancellation cancels its parcel while the parcel shows as ordered, or while
+  no news says that it shipped: a tracking number, an Amazon shipment, or a
+  status from shipped onwards from an e-mail, 17TRACK, the Parcel app or your
+  own edit. A delay notice doesn't count, nor does the local AI's reading of
+  the order's own e-mail when it names no carrier. After that it's taken for a
+  partial cancellation, and the parcel keeps its status. Merges that rely on a
+  guess (same shop, matching dates, only one candidate) are marked, and you
+  can undo them. A guess counts only when no other open parcel of that shop
+  could be the one, late parcels and those due in the next days included, and
+  when the carriers named by the shop and the delivery agree. A delivery made
+  on a day before the shop's package was shipped is another package, and isn't
+  suggested either, nor is one that Amazon's tracking says came at another
+  time, or that it points away from because other packages repeat its times.
+  With the [Parcel app](#parcel-app), Parcels undoes a guess about an Amazon
+  shipment that Amazon's tracking proves wrong later (see
   [How the day is counted](#how-the-day-is-counted)). When several parcels
   could match, Parcels asks in **Needs review** instead. Parcels with
   different tracking numbers are never merged.
@@ -121,18 +126,22 @@ api.parcel.app, which Parcels contacts itself with your API key.
 - **Returns**: an item you send back to a shop becomes a return of its own,
   apart from the parcel it came in, which keeps its delivery day. The return
   shows on its pickup day, in its own color and with an outgoing-parcel icon.
-  The pickup day is the date in the shop's e-mail, or the working day after
-  the e-mail when the e-mail says so, such as "Pickup date: next working day",
-  in any of the seven languages. When an Amazon return e-mail gives no day,
-  the pickup goes on the working day after the e-mail, when Amazon's carrier
-  usually comes; other returns without a day show on their first e-mail's
-  day. Working days are Monday to Friday, without the public holidays of Home
-  Assistant's country when the `holidays` package, which Home Assistant's
-  Workday and Holiday integrations use, is available. A return is done once
-  its day has passed or the shop says it has the items. If the parcel the
-  items came in still shows as on its way, it's marked as probably delivered,
-  and you can undo that. A parcel that the carrier takes back to the shop
-  undelivered isn't a return: it shows as "Returned to sender".
+  The pickup day is the date in the shop's e-mail, or the working day after the
+  e-mail when the e-mail says so, such as "Pickup date: next working day", in
+  any of the seven languages. When an Amazon return e-mail gives no day, the
+  pickup goes on the working day after the e-mail, when Amazon's carrier usually
+  comes; other returns without a day show on their first e-mail's day. Working
+  days are Monday to Friday, without the public holidays of Home Assistant's
+  country when the `holidays` package, which Home Assistant's Workday and
+  Holiday integrations use, is available. On its pickup day, a return gets a
+  Live Activity on iPhones, a notification on iPads and Android phones and a
+  line in the persistent notification, like a delivery, and anyone who can see
+  it can mark it picked up (see [Return pickups](#return-pickups)). A return is
+  done once someone marks it picked up, its day has passed or the shop says it
+  has the items. If the parcel the items came in still shows as on its way, it's
+  marked as probably delivered, and you can undo that. A parcel that the carrier
+  takes back to the shop undelivered isn't a return: it shows as "Returned to
+  sender".
 - **Refunds**: refund e-mails from shops, in any of the seven languages, are
   ignored: those whose subject is about a refund or that say a refund was
   made, and those whose text opens with a refund and that are read as a
@@ -159,8 +168,9 @@ api.parcel.app, which Parcels contacts itself with your API key.
 - **A Parcels page** with a Monday-to-Sunday calendar of your deliveries and
   return pickups, the parcels that don't have a date yet, and the e-mails
   Parcels wasn't sure about.
-- **On delivery day**: Live Activities on iPhones, a notification on iPads and
-  Android phones, and a persistent notification in Home Assistant.
+- **On delivery day**, and on a return's pickup day: Live Activities on
+  iPhones, a notification on iPads and Android phones, and a persistent
+  notification in Home Assistant.
 - **Optional integrations**, all three off until you set them up:
   - [17TRACK](#17track), through Home Assistant's 17TRACK integration: the
     carrier's status between e-mails, such as in transit, out for delivery or
@@ -211,9 +221,9 @@ api.parcel.app, which Parcels contacts itself with your API key.
   (only "with a neighbour", "in the mailbox" and the like), never item names
   or delivery PINs unless you turn those options on. With item names on, a
   parcel without items shows its name in the Parcel app instead.
-  A parcel marked private notifies only its owner and is only counted in the
-  shared persistent notification. The link that opens a parcel from them
-  carries only its ID in Parcels.
+  A parcel marked private, like a return of its items, notifies only its
+  owner and is only counted in the shared persistent notification. The link
+  that opens a parcel or a return from them carries only its ID in Parcels.
 - **Delivery PINs** are shown on the Parcels page, to the people who can see
   the parcel: on its box until it's delivered, returned or cancelled, in its
   details, and to administrators in the e-mails waiting for review. They
@@ -431,9 +441,9 @@ entry.
 | --- | --- | --- |
 | People to notify | none | The companion app devices of these people get Live Activities and notifications. |
 | Excluded devices | none | Devices that never get them, such as a shared tablet. |
-| Start time | 08:00 | Live Activities for parcels expected today start at this time. |
+| Start time | 08:00 | Live Activities for parcels expected today, and for the day's return pickups, start at this time. |
 | Cut-off time | 22:00 | Remaining Live Activities end at this time. |
-| Combine Live Activities above | 3 | With more packages than this on one day, they share one Live Activity. Orders that ride along with a package don't count. |
+| Combine Live Activities above | 3 | With more packages than this on one day, they share one Live Activity. Return pickups count; orders that ride along with a package don't. |
 | Show item names on the lock screen | off | When off, the lock screen shows shop, carrier, status and time window only (and the delivery PIN, if that option is on). |
 | Show delivery PINs on the lock screen | off | iPhones' Live Activities also show a parcel's PIN or pickup code while it's out for delivery or ready for pickup. Anyone who can see the iPhone can read it. See [Privacy and safety](#privacy-and-safety). |
 | Live status from 17TRACK | on | Has effect only when the 17TRACK integration is set up. See [17TRACK](#17track). |
@@ -481,8 +491,11 @@ add a resource.
   started" while there's no pickup day), the carrier and the items. They're
   **Active** until done, **Completed** after, and **Recent** when their day
   is in this week. Select one for its pickup day and how it was worked out,
-  the carrier, the parcel its items came in and its e-mails; administrators
-  can remove it there. A parcel's details list its returns.
+  the carrier, the parcel its items came in, its e-mails and its return ID.
+  Once it has a pickup day, anyone who can see it can mark it picked up
+  there, and undo that until its day is over (see
+  [Return pickups](#return-pickups)); administrators can also remove it. A
+  parcel's details list its returns.
   Select a parcel for its timeline, carrier and carrier link, tracking
   number, shipment reference, the shipment's other packages, when it was
   delivered and where it was left, the next attempt after a missed one,
@@ -543,11 +556,12 @@ add a resource.
 
 Delivery notifications open `/dashboard-parcels/week`. A parcel's Live
 Activity or notification adds `?parcel=` and the parcel's ID, and the week
-or list card opens that parcel's details. To make them land on your page, go
-to **Settings > Dashboards > Add dashboard > New dashboard from
-scratch**, name it **Parcels** with the icon `mdi:package-variant-closed`, and
-keep the URL `dashboard-parcels`. Open it, choose **Edit dashboard > ⋮ > Raw
-configuration editor** and paste:
+or list card opens that parcel's details; a return pickup's adds `?return=`
+and the return's ID, and the card opens the return's details. To make them
+land on your page, go to **Settings > Dashboards > Add dashboard > New
+dashboard from scratch**, name it **Parcels** with the icon
+`mdi:package-variant-closed`, and keep the URL `dashboard-parcels`. Open it,
+choose **Edit dashboard > ⋮ > Raw configuration editor** and paste:
 
 ```yaml
 views:
@@ -720,7 +734,7 @@ To get them:
 2. In the hub options, choose the **People to notify**. Their iPhones get Live
    Activities; their iPads and Android phones get one notification per parcel
    that's replaced on each key change (out for delivery, ready for pickup,
-   delivered, delivery attempted, problem).
+   delivered, delivery attempted, problem), and one per return pickup.
 3. Optional: run the **Test Live Activity** action (see
    [Actions](#actions)) to check an iPhone. The demo ends after a minute.
    With **Show delivery PINs on the lock screen** on, it lasts two minutes
@@ -732,18 +746,22 @@ How they behave:
   one with a single-day date, on the last day of its date range, or announced
   for today. Orders that ride along with a package don't. Later in the day a
   parcel starts one as soon as it's out for delivery or ready for pickup.
+  Return pickups get theirs too (see [Return pickups](#return-pickups)).
 - With more packages than the threshold (3) on one iPhone, they share one
   activity, such as "2 of 5 delivered · next: Amazon via DPD 13–14h", for the
   rest of the day. It names the next package's shop and carrier, or the one
   that's known. Orders that ride along with a package don't count (see
-  [How the day is counted](#how-the-day-is-counted)).
+  [How the day is counted](#how-the-day-is-counted)). Return pickups count,
+  and the text counts them: "2 of 3 delivered · 1 return pickup · next:
+  Amazon via DPD 13–14h".
 - The icon and the progress bar take the color of the status: blue on the
-  way, orange out for delivery, green delivered, purple ready for pickup, and
-  red for a failed attempt or a problem. The card stays dark, and the icon and
-  the text still say the status. A shared activity takes the color of its
-  most urgent package (out for delivery, then a problem, then a pickup), and
-  turns green when all are delivered. Android notifications take the color
-  too; iPad notifications have no color.
+  way, orange out for delivery, green delivered, purple ready for pickup,
+  red for a failed attempt or a problem, and pink for a return pickup. The
+  card stays dark, and the icon and the text still say the status. A shared
+  activity takes the color of its most urgent package (out for delivery,
+  then a problem, then a return pickup that waits, then a pickup), and turns
+  green when all are delivered and the return pickups are done. Android
+  notifications take the color too; iPad notifications have no color.
 - The message always shows the time window, such as "Out for delivery
   13:00–14:00 · DPD". On the lock screen a countdown takes its place only in
   the last hour of the window (all of a shorter one), started by one silent
@@ -769,22 +787,27 @@ How they behave:
   for pickup: the status takes the first line and the PIN leads the second,
   such as "Out for delivery" and "PIN 4826 · 13:00–14:00 · DPD". A code
   longer than 20 characters isn't shown. A shared activity shows the PIN of
-  the package it names next when that one is out for delivery, never a
-  pickup code. Activities start, and restart after 7.5 hours, without the
-  PIN: it follows in a silent update once the iPhone has told Home Assistant
-  that it holds the activity. Parcels checks 5, 20 and 80 seconds after the
-  activity starts or alerts that the parcel is out for delivery or ready for
-  pickup, then every 5 minutes. Turning the option on or off changes running
-  activities silently. See [Privacy and safety](#privacy-and-safety) for
-  where the PIN shows.
+  the package it names next when that one is out for delivery. Otherwise, when
+  exactly one of its packages is ready for pickup, it shows that package's
+  pickup code with the pickup point's name, such as "PIN 59031 · Locker 12";
+  with two or more, none. Activities start, and restart after 7.5 hours,
+  without the PIN: it follows in a silent update once the iPhone has told Home
+  Assistant that it holds the activity. Parcels checks 5, 20 and 80 seconds
+  after the activity starts or alerts that the parcel is out for delivery or
+  ready for pickup, then every 5 minutes. Turning the option on or off changes
+  running activities silently. See [Privacy and safety](#privacy-and-safety)
+  for where the PIN shows.
 - Tapping a parcel's activity or notification opens its details on the
-  Parcels page; the shared activity opens the week.
+  Parcels page, and a return pickup's opens the return's; the shared
+  activity opens the week.
 - A delivered parcel shows "Delivered ✓" with the time when it's known, and
   its activity ends 30 minutes later. So does a shared activity once every
-  package is delivered ("3 of 3 delivered ✓").
-- Apple ends activities after 8 hours, so an undelivered parcel's activity is
-  restarted after 7.5 hours. The new activity plays the start alert once,
-  because iOS doesn't let a new activity start silently.
+  package is delivered ("3 of 3 delivered ✓") and its return pickups are
+  done.
+- Apple ends activities after 8 hours, so an undelivered parcel's activity,
+  or that of a return pickup still waiting, is restarted after 7.5 hours.
+  The new activity plays the start alert once, because iOS doesn't let a new
+  activity start silently.
 - At the cut-off (22:00) the remaining activities end. Undelivered parcels stay
   in the persistent notification.
 - Apple limits how often activities can start remotely, so a parcel starts
@@ -809,11 +832,48 @@ along with a package aren't in the count: a shop's orders that the same
 packages may hold share a line, such as "Amazon · 2 orders · Possibly in a
 package from CTT Expresso". Private parcels are only counted, and private
 orders that ride along aren't mentioned. Parcels ready for pickup stay in it
-for up to a week. The **Daily notification** switch turns it off and on.
+for up to a week. The day's return pickups follow the parcels (see
+[Return pickups](#return-pickups)). The **Daily notification** switch turns
+it off and on.
 
-Return pickups show only on the Parcels page and in `calendar.parcels`: they
-start no Live Activity or notification, and aren't in the persistent
-notification or the sensors.
+### Return pickups
+
+A return whose carrier comes for it today shows like a delivery, on the
+devices of the people to notify who may see it:
+
+- From the start time, or as soon as an e-mail sets its pickup for today,
+  each iPhone gets a pink Live Activity. Its title is the shop, or the
+  carrier when no shop is known, and its text says "Return pickup today ·
+  CTT", with the carrier unless it's the title. With **Show item names on the
+  lock screen** on, the first item follows ("· Wool hat +1 more"). iPads and
+  Android phones get one notification instead.
+- The persistent notification lists it after the parcels ("Example Shop ·
+  CTT · Return pickup today") and counts it in its title ("2 parcels and 1
+  return pickup today").
+- Once the carrier has it, select **Mark picked up** in the return's details
+  on the Parcels page, or call `parcels.mark_return_picked_up`, also from an
+  automation. Anyone who can see the return can, not only administrators.
+  The activity then says "Return picked up ✓ 10:12" and ends 30 minutes
+  later, and the persistent notification says "Return picked up 10:12 ✓".
+  To take that back, select **Undo** in its details (until the day is over)
+  or call `parcels.undo_return_picked_up`; the activity starts again if it
+  had ended.
+- When the shop says that the return arrived, the activity says "Return
+  picked up ✓" and ends 30 minutes later. A return whose pickup moves to
+  another day, or that's removed, ends at once, and one marked picked up
+  before the start time starts nothing.
+- Return pickups count towards **Combine Live Activities above**. A shared
+  activity counts them in its text and its progress ("2 of 3 delivered · 1
+  return pickup · next: Amazon via DPD 13–14h"), and a marked one as done
+  ("1 return picked up ✓").
+- A return of a private parcel shows only on its owners' devices, never with
+  its items, and the persistent notification only counts it ("+1 private
+  return pickup").
+
+Tapping the activity or notification opens the return's details. Return
+pickups are also in `calendar.parcels`, but not in the sensors. The **Live
+Activities** switch turns their activities and notifications off and on,
+like the parcels'.
 
 ## 17TRACK
 
@@ -1170,6 +1230,8 @@ carrier, status and dates. Each mailbox has a **Last sync** sensor and a
 | `parcels.split` | Moves e-mails or entries of a parcel to a new parcel. |
 | `parcels.undo_merge` | Splits a parcel that Parcels merged automatically. |
 | `parcels.undo_delivery` | Takes back a delivery that Parcels inferred, from another parcel of the same shop, from a return of its items or from three weeks without news, and doesn't infer it again. |
+| `parcels.mark_return_picked_up` | Marks a return picked up now (see [Return pickups](#return-pickups)). Its `return_id` is in the return's details on the Parcels page. |
+| `parcels.undo_return_picked_up` | Takes back marking a return picked up. |
 | `parcels.refresh` | Checks all mailboxes, and 17TRACK and the Parcel app when they're on, now. The Parcel app is read at most every 10 minutes. |
 | `parcels.reprocess` | Reads a parcel's or review item's e-mails again with the current parsers, optionally with the AI. Administrators only. |
 | `parcels.trust_sender` | Trusts a sender's domain, so its e-mails are read as shipping e-mails. Administrators only. |
@@ -1293,6 +1355,25 @@ actions:
   only such e-mails made, and that you left alone, into the order's earlier
   parcel, which stays as it was, archived included. The hub's diagnostics
   count them (`order_fold`).
+- **An Amazon order whose AI answer you accepted showed as in transit, or a
+  cancelled one stayed on its way.** The check after 0.1.16 left alone the
+  local AI's answers that you had accepted in **Needs review**, where every
+  answer waits in AI mode **Suggest**, so their parcels kept the AI's reading,
+  and a later cancellation was taken for a partial one. After the update to
+  0.1.18, when its first mail check ends, Parcels downloads once more the
+  Amazon e-mails of the last 30 days whose only reading is an AI answer you
+  accepted, at most 100 and newest first, and reads them with its parsers,
+  never the local AI. Where they read an order from a verified sender with
+  confidence, their reading replaces the AI's and the parcel stays accepted,
+  without reopening a parcel that was delivered or archived; not where the
+  e-mail added a tracking number or a shipment. What you typed, merged or
+  split stays. E-mails from ignored senders are skipped. Then Amazon's
+  cancellations of the last 30 days that were taken for partial ones cancel
+  their parcel, where no news says that it shipped (see
+  [What it does](#what-it-does)). The hub's diagnostics count the e-mails
+  read, those whose reading was replaced or kept, those deleted since, those
+  that couldn't be downloaded, those over the limit and the cancellations
+  applied (`amazon_accepted_check`).
 - **A carrier's package shows apart from its Amazon order.** Amazon's
   e-mails rarely name the carrier's number. With the Parcel app, Parcels
   links a shipment to its package by the times in Amazon's tracking (see
@@ -1363,13 +1444,15 @@ actions:
 - **A delivery PIN doesn't show on the lock screen.** Check that **Show
   delivery PINs on the lock screen** is on, that the parcel's details show a
   PIN or pickup code, and that it's out for delivery or ready for pickup. A
-  private parcel's PIN shows only on its owner's iPhones, and a shared
-  activity shows only the PIN of the package it names next. The PIN comes a
-  few seconds after the activity starts; `parcels.test_live_activity` shows
-  a made-up one.
+  private parcel's PIN shows only on its owner's iPhones. A shared activity
+  shows only the PIN of the package it names next, or the pickup code of its
+  only package ready for pickup (see [Live Activities](#live-activities)).
+  The PIN comes a few seconds after the activity starts;
+  `parcels.test_live_activity` shows a made-up one.
 - **Tapping a Live Activity or notification shows the week, not the
   parcel.** The page at the link needs the week or list card. A parcel merged
-  into another one or deleted since then has no details to open.
+  into another one or deleted since then, or a return removed since then,
+  has no details to open.
 - **Live Activities count fewer parcels than the page.** Orders that one of
   the day's packages may hold ride along with it (see
   [How the day is counted](#how-the-day-is-counted)). The notifications part
@@ -1435,7 +1518,9 @@ actions:
   refunds ignored (`refunds_dropped`), the check after updating to 0.1.5
   (`returns_check`), the check that named the shops of Paack's parcels after
   updating to 0.1.11 (`paack_shop_check`), the check that read Amazon's
-  e-mails again after updating to 0.1.16 (`amazon_ai_check`), the shapes of
+  e-mails again after updating to 0.1.16 (`amazon_ai_check`) and the one
+  that read again those whose AI answer you accepted after updating to
+  0.1.18 (`amazon_accepted_check`), the shapes of
   Amazon's shipment IDs (`amazon_shipment_ids`), the Amazon shipments that
   Amazon's tracking linked to a carrier's package since 0.1.13 (`made`) and
   the guesses it undid since 0.1.16 (`undone`), and at the last
@@ -1454,8 +1539,9 @@ actions:
   (`order_fold`); its
   notifications part says whether delivery PINs show on the lock screen
   (`pin_on_lock_screen`) and counts today's running activities that show
-  one (`showing_pin`), never the PINs, and today's orders that ride along
-  with a package (`orders_in_a_box`); its 17TRACK part counts the numbers
+  one (`showing_pin`), never the PINs, today's orders that ride along
+  with a package (`orders_in_a_box`) and today's return pickups
+  (`return_pickups`); its 17TRACK part counts the numbers
   17TRACK can't
   find, by carrier (`not_found_by_carrier`); its Parcel app part
   (`parcelapp`) counts the deliveries read, matched, shown on their own and

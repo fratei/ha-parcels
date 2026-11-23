@@ -95,7 +95,8 @@ def return_event(
     """Return the all-day event of a customer return, on its pickup day.
 
     ``linked`` are the parcels of its orders: a private one makes the return
-    private too. It's marked done once its day is over or the shop has it.
+    private too. It's marked done once its day is over, someone marked it
+    picked up or the shop has it.
     """
     private = entry.private or any(parcel.private for parcel in linked)
     pickup = entry.pickup

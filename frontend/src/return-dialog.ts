@@ -7,7 +7,7 @@ import {
   type PropertyDeclarations,
   type TemplateResult,
 } from "lit";
-import { callParcelsCommand } from "./api.ts";
+import { callParcelsCommand, callParcelsService } from "./api.ts";
 import { OPEN_PARCEL_EVENT, ParcelsDialogBase, type ReturnFocus } from "./dialog-base.ts";
 import {
   formatDate,
@@ -19,7 +19,14 @@ import {
 } from "./format.ts";
 import { carrierLabel, parcelTitle, sourceLabel, statusLabel } from "./labels.ts";
 import { defineElement } from "./register.ts";
-import { RETURN_ICON, pickupRuleText, returnState, returnTitle } from "./returns.ts";
+import {
+  RETURN_ICON,
+  canMarkPickedUp,
+  canUndoPickedUp,
+  pickupRuleText,
+  returnState,
+  returnTitle,
+} from "./returns.ts";
 import { STRINGS, fmt } from "./strings.ts";
 import { baseStyles, dialogStyles } from "./styles.ts";
 import { safeHttpsUrl } from "./url.ts";
@@ -146,9 +153,7 @@ export class ParcelsReturnDialog extends ParcelsDialogBase {
             </div>
           </div>`
         : nothing}
-      ${ret && !ret.restricted && this.snapshot?.settings.user_is_admin === true
-        ? this._renderActions()
-        : nothing}
+      ${ret ? this._renderActions(ret, today) : nothing}
     `;
   }
 
@@ -196,6 +201,7 @@ export class ParcelsReturnDialog extends ParcelsDialogBase {
               : nothing}`,
           )
         : nothing}
+      ${ret.picked_up ? row(STRINGS.returnPickedUpAt, formatDateTime(ret.picked_up, locale)) : nothing}
       ${ret.started ? row(STRINGS.returnStartedDay, formatDateTime(ret.started, locale)) : nothing}
       ${carrier || url
         ? row(
@@ -227,6 +233,7 @@ export class ParcelsReturnDialog extends ParcelsDialogBase {
           )
         : nothing}
       ${ret.emails.length ? row(STRINGS.returnEmails, this._renderEmails(ret)) : nothing}
+      ${ret.restricted ? nothing : row(STRINGS.returnId, ret.id)}
     </dl>`;
   }
 
@@ -280,9 +287,14 @@ export class ParcelsReturnDialog extends ParcelsDialogBase {
     </ul>`;
   }
 
-  private _renderActions(): TemplateResult {
+  /**
+   * Remove for admins, as its command needs; Mark picked up and its Undo for
+   * anyone who may see the return, as the services check.
+   */
+  private _renderActions(ret: CustomerReturn, today: string): TemplateResult | typeof nothing {
     const busy = this._busy ? "true" : "false";
-    if (this._mode === "remove") {
+    const admin = !ret.restricted && this.snapshot?.settings.user_is_admin === true;
+    if (this._mode === "remove" && admin) {
       return html`<div class="dialog-actions">
         <button type="button" class="btn" data-cancel @click=${this._backToView}>
           ${STRINGS.cancel}
@@ -297,12 +309,51 @@ export class ParcelsReturnDialog extends ParcelsDialogBase {
         </button>
       </div>`;
     }
+    const mark = canMarkPickedUp(ret, today);
+    const undo = canUndoPickedUp(ret, today);
+    if (!admin && !mark && !undo) {
+      return nothing;
+    }
     return html`<div class="dialog-actions" role="group" aria-label=${STRINGS.actions}>
+      ${admin
+        ? html`<button type="button" class="btn danger" data-mode="remove" @click=${this._startRemove}>
+            ${STRINGS.removeReturn}
+          </button>`
+        : nothing}
       <span class="spacer"></span>
-      <button type="button" class="btn danger" data-mode="remove" @click=${this._startRemove}>
-        ${STRINGS.removeReturn}
-      </button>
+      ${undo
+        ? html`<button
+            type="button"
+            class="btn"
+            aria-label=${fmt(STRINGS.undoPickedUpLabel, { title: returnTitle(ret) })}
+            aria-disabled=${busy}
+            @click=${() => this._markPickedUp(false)}
+          >
+            ${STRINGS.undo}
+          </button>`
+        : nothing}
+      ${mark
+        ? html`<button
+            type="button"
+            class="btn primary"
+            aria-disabled=${busy}
+            @click=${() => this._markPickedUp(true)}
+          >
+            <ha-icon icon="mdi:check" aria-hidden="true"></ha-icon>${STRINGS.markPickedUp}
+          </button>`
+        : nothing}
     </div>`;
+  }
+
+  /** Marks the return picked up now, or takes that back; the dialog stays open. */
+  private _markPickedUp(picked: boolean): void {
+    const hass = this.hass;
+    const ret = this._return;
+    if (!hass || !ret) {
+      return;
+    }
+    const service = picked ? "mark_return_picked_up" : "undo_return_picked_up";
+    void this.runAction(() => callParcelsService(hass, service, { return_id: ret.id }));
   }
 
   private _startRemove(): void {

@@ -17,6 +17,7 @@ from homeassistant.helpers.service import async_register_admin_service
 import probatio as p
 
 from .const import CARRIER_NAMES, DOMAIN
+from .customer_returns import linked_parcels, order_index
 from .dedup import number_key_text, parcel_numbers
 from .engine import ParcelsEngine, get_engine, validation_error
 from .models import Parcel
@@ -31,6 +32,7 @@ ATTR_ORIGINS = "origins"
 ATTR_PARCEL_ID = "parcel_id"
 ATTR_PARCEL_IDS = "parcel_ids"
 ATTR_PRIVATE = "private"
+ATTR_RETURN_ID = "return_id"
 ATTR_REVIEW_ID = "review_id"
 ATTR_TRACKING_NUMBER = "tracking_number"
 ATTR_USE_AI = "use_ai"
@@ -39,6 +41,7 @@ SERVICE_ADD = "add"
 SERVICE_ARCHIVE = "archive"
 SERVICE_IGNORE_SENDER = "ignore_sender"
 SERVICE_MARK_DELIVERED = "mark_delivered"
+SERVICE_MARK_RETURN_PICKED_UP = "mark_return_picked_up"
 SERVICE_MERGE = "merge"
 SERVICE_REFRESH = "refresh"
 SERVICE_REPROCESS = "reprocess"
@@ -47,6 +50,7 @@ SERVICE_TEST_LIVE_ACTIVITY = "test_live_activity"
 SERVICE_TRUST_SENDER = "trust_sender"
 SERVICE_UNDO_DELIVERY = "undo_delivery"
 SERVICE_UNDO_MERGE = "undo_merge"
+SERVICE_UNDO_RETURN_PICKED_UP = "undo_return_picked_up"
 SERVICE_UPDATE = "update"
 
 
@@ -92,6 +96,7 @@ UPDATE_SCHEMA = p.Schema(
     }
 )
 PARCEL_SCHEMA = p.Schema({p.Required(ATTR_PARCEL_ID): cv.string})
+RETURN_SCHEMA = p.Schema({p.Required(ATTR_RETURN_ID): cv.string})
 MERGE_SCHEMA = p.Schema({p.Required(ATTR_PARCEL_IDS): p.All(_IDS, p.Length(min=2))})
 SPLIT_SCHEMA = p.Schema(
     {
@@ -202,6 +207,24 @@ def _parcel_service(
     return handle
 
 
+def _return_picked_up(picked_up: bool) -> Callable[[ServiceCall], Any]:
+    """Mark a return picked up, or undo that, for anyone who may see it."""
+
+    async def handle(call: ServiceCall) -> None:
+        engine = _engine(call.hass)
+        viewer = await _caller(call)
+        return_id = call.data[ATTR_RETURN_ID]
+        entry = engine.data.returns.get(return_id)
+        if entry is None:
+            raise validation_error("unknown_return")
+        linked = linked_parcels(entry, order_index(engine.data))
+        if viewer is not None and not viewer.can_see_return(entry, linked):
+            raise validation_error("not_allowed")
+        engine.mark_return_picked_up(return_id, picked_up)
+
+    return handle
+
+
 async def _async_merge(call: ServiceCall) -> ServiceResponse:
     engine = _engine(call.hass)
     viewer = await _caller(call)
@@ -285,6 +308,12 @@ def async_setup_services(hass: HomeAssistant) -> None:
         SERVICE_UNDO_DELIVERY,
         _parcel_service(lambda engine, pid: engine.undo_delivery(pid)),
         PARCEL_SCHEMA,
+    )
+    register(
+        DOMAIN, SERVICE_MARK_RETURN_PICKED_UP, _return_picked_up(True), RETURN_SCHEMA
+    )
+    register(
+        DOMAIN, SERVICE_UNDO_RETURN_PICKED_UP, _return_picked_up(False), RETURN_SCHEMA
     )
     register(
         DOMAIN, SERVICE_MERGE, _async_merge, MERGE_SCHEMA, SupportsResponse.OPTIONAL

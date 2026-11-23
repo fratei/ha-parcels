@@ -24,8 +24,10 @@ from custom_components.parcels.customer_returns import (
     apply_return,
     infer_return_deliveries,
     linked_parcels,
+    mark_return_picked_up,
     order_index,
     pickup_suggestion,
+    pickup_today,
     remove_return,
     return_origin,
 )
@@ -294,6 +296,48 @@ def test_day_and_done() -> None:
     # Without a pickup day: the day of the first e-mail, in Lisbon.
     summer = _entry(_bare("m3", datetime(2026, 6, 30, 23, 30, tzinfo=UTC)))
     assert summer.day == date(2026, 7, 1)
+
+
+def test_marking_a_return_picked_up() -> None:
+    data = ParcelsData()
+    entry = _apply(data, "m1", _nov(10, 15))
+    assert entry.day == date(2026, 11, 11)
+    # The carrier came a day early: done before its day, which stays.
+    assert mark_return_picked_up(data, entry.id, True, _nov(10, 16)) is entry
+    assert (entry.picked_up, entry.updated) == (_nov(10, 16), _nov(10, 16))
+    assert entry.done(date(2026, 11, 10))
+    assert entry.day == date(2026, 11, 11)
+    # Marking it again keeps the first time.
+    mark_return_picked_up(data, entry.id, True, _nov(10, 18))
+    assert (entry.picked_up, entry.updated) == (_nov(10, 16), _nov(10, 16))
+    # A new e-mail doesn't bring a picked-up return back from the archive.
+    entry.archived = _nov(10, 19)
+    _apply(data, "m2", _nov(10, 20))
+    assert entry.archived == _nov(10, 19)
+    # Undo: waiting for the carrier again.
+    mark_return_picked_up(data, entry.id, False, _nov(10, 21))
+    assert (entry.picked_up, entry.updated) == (None, _nov(10, 21))
+    assert not entry.done(date(2026, 11, 11))
+    with pytest.raises(KeyError):
+        mark_return_picked_up(data, "ret_unknown", True, _nov(10, 21))
+
+
+def test_pickup_today() -> None:
+    data = ParcelsData()
+    entry = _apply(data, "m1", _nov(10, 15))
+    assert entry.pickup == (date(2026, 11, 11), PickupRule.ASSUMED)
+    assert pickup_today(entry, date(2026, 11, 11))
+    assert not pickup_today(entry, date(2026, 11, 10))
+    assert not pickup_today(entry, date(2026, 11, 12))
+    # Done or not, the notifier decides; archived, never.
+    entry.origins["m2"] = _bare("m2", _nov(10, 18), received=True)
+    assert pickup_today(entry, date(2026, 11, 11))
+    entry.archived = _nov(11)
+    assert not pickup_today(entry, date(2026, 11, 11))
+    # A shop that names no pickup day: the day of its e-mail isn't a pickup.
+    other = _apply(ParcelsData(), "m3", _nov(10, 15), **SHOP)
+    assert other.pickup is None
+    assert not pickup_today(other, date(2026, 11, 10))
 
 
 def test_the_sender_names_the_shop() -> None:
@@ -622,9 +666,11 @@ def test_a_return_survives_a_restart() -> None:
     entry = _apply(data, "m1", _nov(10), carrier="ctt_expresso", number=CTT_1)
     _apply(data, "m2", _nov(20), notes=(NOTE_RETURN_RECEIVED,))
     entry.archived = _nov(21)
+    entry.picked_up = _nov(11, 9)
     restored = ParcelsData.from_dict(data.as_dict()).returns[entry.id]
     assert restored == entry
     assert restored.received
+    assert restored.picked_up == _nov(11, 9)
 
 
 def test_a_pickup_rule_from_a_newer_release_is_dropped() -> None:
@@ -671,6 +717,7 @@ def test_return_json() -> None:
         "pickup_rule": "assumed",
         "started": _nov(10).isoformat(),
         "received": False,
+        "picked_up": None,
         "order_numbers": [ORDER_1],
         "items": [LAMP],
         "parcel_ids": [parcel_id],
@@ -682,6 +729,15 @@ def test_return_json() -> None:
         "archived": False,
         "restricted": False,
     }
+    # Marked picked up: the time shows, even to someone who sees only the day.
+    mark_return_picked_up(data, entry.id, True, _nov(11, 9))
+    assert return_json(entry, Viewer(is_admin=False), linked)["picked_up"] == (
+        _nov(11, 9).isoformat()
+    )
+    entry.private = True
+    restricted = return_json(entry, Viewer(is_admin=False), linked)
+    assert restricted["restricted"]
+    assert restricted["picked_up"] == _nov(11, 9).isoformat()
 
 
 def test_a_private_parcel_makes_its_return_private() -> None:
@@ -730,10 +786,15 @@ def test_calendar_event_of_a_return() -> None:
             f"Tracking number: {CTT_1}",
         ]
     )
-    # Once its day is over.
+    # Once its day is over, or on it once marked picked up.
     assert return_event(entry, [], date(2026, 11, 12)).summary == (
         "Return pickup: Amazon ✓"
     )
+    entry.picked_up = _nov(11, 9)
+    assert return_event(entry, [], date(2026, 11, 11)).summary == (
+        "Return pickup: Amazon ✓"
+    )
+    entry.picked_up = None
     # A private parcel of the order makes it private.
     parcel = data.parcels[_shipped(data, "msg:s1#0")]
     parcel.private = True

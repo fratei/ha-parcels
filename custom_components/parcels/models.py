@@ -1631,8 +1631,9 @@ class ReturnEntry:
     """A parcel the user sends back to a shop, from the shop's e-mails.
 
     Kept apart from parcels: it never changes the state of the order's own
-    parcels, and it isn't tracked, notified or sent to 17TRACK. ``origins``
-    are keyed by the e-mail's hash.
+    parcels, and it isn't tracked or sent to 17TRACK. On its pickup day the
+    notifier shows it until someone marks it picked up (``picked_up``).
+    ``origins`` are keyed by the e-mail's hash.
     """
 
     id: str
@@ -1641,6 +1642,7 @@ class ReturnEntry:
     origins: dict[str, ReturnOrigin] = field(default_factory=dict)
     private: bool = False
     archived: datetime | None = None
+    picked_up: datetime | None = None
 
     def _oldest_first(self) -> list[ReturnOrigin]:
         return sorted(self.origins.values(), key=lambda o: (o.time, o.message))
@@ -1730,8 +1732,11 @@ class ReturnEntry:
         return pickup[0] if pickup else local_date(self.started)
 
     def done(self, today: date) -> bool:
-        """Return True once the parcel was picked up, or the shop has it."""
-        return self.received or self.day < today
+        """Return True once the parcel was picked up, or the shop has it.
+
+        Picked up means marked so, or its day is over.
+        """
+        return self.received or self.picked_up is not None or self.day < today
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the return."""
@@ -1743,6 +1748,7 @@ class ReturnEntry:
                 "origins": [origin.as_dict() for origin in self._oldest_first()],
                 "private": self.private,
                 "archived": dt_to_str(self.archived),
+                "picked_up": dt_to_str(self.picked_up),
             }
         )
 
@@ -1758,6 +1764,7 @@ class ReturnEntry:
             origins={origin.message: origin for origin in origins},
             private=bool(data.get("private", False)),
             archived=dt_from_str(data.get("archived")),
+            picked_up=dt_from_str(data.get("picked_up")),
         )
 
 

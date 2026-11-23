@@ -550,6 +550,65 @@ def _finished(parcel: Parcel) -> bool:
     return state.terminal and not state.inferred
 
 
+_SHIPPED_STATUSES = frozenset(
+    {
+        ParcelStatus.SHIPPED,
+        ParcelStatus.IN_TRANSIT,
+        ParcelStatus.EXCEPTION,
+        ParcelStatus.ATTEMPTED,
+        ParcelStatus.OUT_FOR_DELIVERY,
+        ParcelStatus.READY_FOR_PICKUP,
+        ParcelStatus.DELIVERED,
+        ParcelStatus.RETURNED,
+    }
+)
+
+
+def _first_message(parcel: Parcel) -> str | None:
+    """Return the hash of the earliest e-mail about a parcel."""
+    mails = [origin for origin in parcel.origins.values() if origin.message]
+    if not mails:
+        return None
+    return min(mails, key=lambda origin: (origin.time, origin.id)).message
+
+
+def _shipping_news(parcel: Parcel) -> bool:
+    """Return True when news besides the order e-mail says the parcel shipped.
+
+    That's a tracking number or an Amazon shipment, or a shipped-or-later
+    status from an e-mail or a tracker. A delay notice isn't such news, nor
+    is the local AI's reading of the parcel's first e-mail when it names no
+    carrier: that's the order's e-mail, which the AI may take for a shipment.
+    """
+    if _tracked(parcel):
+        return True
+    first = _first_message(parcel)
+    for event in parcel.events:
+        if event.status not in _SHIPPED_STATUSES or event.kind is MailKind.DELAYED:
+            continue
+        origin = parcel.origins.get(event.origin or "")
+        if (
+            origin is None
+            or origin.source is not Source.AI
+            or origin.carrier
+            or origin.message != first
+        ):
+            return True
+    return False
+
+
+def _takes_cancellation(parcel: Parcel) -> bool:
+    """Return True for a parcel that its order's cancellation can cancel.
+
+    That's one that hasn't shipped, as far as news besides the order e-mail
+    tells.
+    """
+    state = parcel.state
+    return state.status is ParcelStatus.ORDERED or (
+        not state.terminal and not _shipping_news(parcel)
+    )
+
+
 def _item_keys(items: Iterable[str]) -> set[str]:
     return {key for item in items if (key := item_key(item))}
 
@@ -717,8 +776,9 @@ def _order_only_target(
         ordered = [
             p.id for p in parcels.values() if p.state.status is ParcelStatus.ORDERED
         ]
-        if ordered:
-            return _most_recent(data, ordered)
+        unshipped = [p.id for p in parcels.values() if _takes_cancellation(p)]
+        if ordered or unshipped:
+            return _most_recent(data, ordered or unshipped)
         # A cancellation only applies to parcels that haven't shipped yet;
         # once shipped it's at most a partial cancellation.
         for event in events:
@@ -3717,6 +3777,40 @@ def fold_known_orders(data: ParcelsData, now: datetime) -> int:
         )
         folded += 1
     return folded
+
+
+def restore_cancellations(
+    data: ParcelsData, messages: Collection[str], now: datetime
+) -> int:
+    """Cancel the parcels whose cancellation was taken for a partial one.
+
+    Releases before 0.1.18 judged whether an order had shipped by its
+    parcel's status, which the local AI's reading of the order's own e-mail
+    could give. A cancellation among the e-mails ``messages`` whose status
+    was dropped cancels its parcel after all where it would now: see
+    _takes_cancellation(). The e-mail stays on its parcel, and the order's
+    other parcels stay as they are. Returns how many e-mails cancelled their
+    parcel.
+    """
+    restored = 0
+    for parcel in data.parcels.values():
+        if parcel.archived is not None or not _takes_cancellation(parcel):
+            continue
+        dropped = [
+            event
+            for event in parcel.events
+            if event.kind is MailKind.CANCELLED
+            and event.status is None
+            and (origin := parcel.origins.get(event.origin or "")) is not None
+            and origin.message in messages
+        ]
+        if not dropped:
+            continue
+        for event in dropped:
+            event.status = ParcelStatus.CANCELLED
+        parcel.touch(now)
+        restored += len({event.origin for event in dropped})
+    return restored
 
 
 def _order_mail_only(parcel: Parcel) -> bool:

@@ -67,7 +67,7 @@
           "ai_mode": "Suggest sends every AI result to Needs review. Automatic adds results that pass every check, but only from trusted senders.",
           "ai_task_entity": "Reads shipping e-mails that no parser understands. Only an Ollama AI task with a local model on the Home Assistant host is accepted, never a cloud model.",
           "archive_days": "Days after delivery. Archived parcels stay visible in past weeks.",
-          "collapse_threshold": "When more packages than this are expected on the same day, they share one Live Activity. Orders that one of the day's packages may hold don't count.",
+          "collapse_threshold": "When more packages than this are expected on the same day, they share one Live Activity. Return pickups count; orders that one of the day's packages may hold don't.",
           "cutoff_time": "Remaining Live Activities end at this time. Undelivered parcels stay in the persistent notification.",
           "excluded_devices": "Companion app devices that never get Live Activities, such as a shared tablet.",
           "item_names_on_lock_screen": "Live Activities are visible on the lock screen. When off, they show merchant, carrier, status and time window only (and the delivery PIN, if that option is on).",
@@ -82,7 +82,7 @@
           "pin_on_lock_screen": "While a parcel is out for delivery or ready for pickup, its iPhone Live Activity shows the delivery PIN or pickup code. Anyone who can see the phone can read it.",
           "purge_days": "Days after delivery. Must be more than the archive period.",
           "seventeentrack": "Sends tracking numbers, never item names or e-mails, to the 17TRACK integration.",
-          "start_time": "Live Activities for parcels expected today start at this time.",
+          "start_time": "Live Activities for parcels expected today, and for the day's return pickups, start at this time.",
           "test_device": "The only device that gets Live Activities while test mode is on.",
           "test_mode": "Send Live Activities to the test device only."
         }
@@ -464,6 +464,26 @@
         "parcel_id": {
           "name": "Parcel ID",
           "description": "The ID of the parcel, from the parcel's details on the Parcels page or the parcels attribute of a Parcels sensor."
+        }
+      }
+    },
+    "mark_return_picked_up": {
+      "name": "Mark return picked up",
+      "description": "Marks a return as picked up now. Its Live Activity says so, with the time, and ends 30 minutes later.",
+      "fields": {
+        "return_id": {
+          "name": "Return ID",
+          "description": "The ID of the return, from the return's details on the Parcels page."
+        }
+      }
+    },
+    "undo_return_picked_up": {
+      "name": "Undo return picked up",
+      "description": "Takes back marking a return as picked up. On its pickup day it shows again.",
+      "fields": {
+        "return_id": {
+          "name": "Return ID",
+          "description": "The ID of the return, from the return's details on the Parcels page."
         }
       }
     },

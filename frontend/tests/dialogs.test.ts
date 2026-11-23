@@ -64,3 +64,36 @@ describe("dialogs on phones", () => {
     }
   });
 });
+
+describe("the return dialog", () => {
+  const text = source("return-dialog.ts");
+
+  test("marks a return picked up, and undoes it, through the Parcels services", () => {
+    assert.match(text, /picked \? "mark_return_picked_up" : "undo_return_picked_up"/);
+    assert.match(text, /callParcelsService\(hass, service, \{ return_id: ret\.id \}\)/);
+    const services = readFileSync(new URL("../../custom_components/parcels/services.yaml", import.meta.url), "utf8");
+    for (const name of ["mark_return_picked_up", "undo_return_picked_up"]) {
+      assert.match(services, new RegExp(`^${name}:\\n  fields:\\n    return_id:\\n      required: true$`, "m"), name);
+    }
+  });
+
+  test("shows the return's ID for the Parcels actions, as a parcel's details do", () => {
+    assert.match(text, /\$\{ret\.restricted \? nothing : row\(STRINGS\.returnId, ret\.id\)\}\n    <\/dl>`;/);
+    assert.match(source("strings.ts"), /^ {2}returnId: "Return ID",$/m);
+    const en = readFileSync(new URL("../../custom_components/parcels/translations/en.json", import.meta.url), "utf8");
+    const services = JSON.parse(en).services;
+    for (const name of ["mark_return_picked_up", "undo_return_picked_up"]) {
+      const field = services[name].fields.return_id;
+      assert.equal(field.name, "Return ID", name);
+      assert.equal(field.description, "The ID of the return, from the return's details on the Parcels page.", name);
+    }
+  });
+
+  test("offers the buttons by the return's rules, and Remove to admins only", () => {
+    assert.match(text, /const mark = canMarkPickedUp\(ret, today\);/);
+    assert.match(text, /const undo = canUndoPickedUp\(ret, today\);/);
+    assert.match(text, /const admin = !ret\.restricted && this\.snapshot\?\.settings\.user_is_admin === true;/);
+    assert.match(text, /if \(this\._mode === "remove" && admin\) \{/);
+    assert.match(text, /\$\{admin\s+\? html`<button type="button" class="btn danger" data-mode="remove"/);
+  });
+});

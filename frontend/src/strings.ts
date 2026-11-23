@@ -387,9 +387,13 @@ export const STRINGS = {
   returnCarrier: "Carrier",
   returnSentBackFrom: "Original delivery",
   returnEmails: "E-mails",
+  returnId: "Return ID",
   returnNotFound: "This return no longer exists.",
   returnHint:
     "Items you send back to a shop. Their parcel keeps its delivery; the return shows on its pickup day.",
+  returnPickedUpAt: "Picked up",
+  markPickedUp: "Mark picked up",
+  undoPickedUpLabel: "Undo marking the return to {title} picked up",
   removeReturn: "Remove",
   removeReturnQuestion:
     "Remove this return? Its e-mails won't be read again, and a delivery worked out only from it is undone.",

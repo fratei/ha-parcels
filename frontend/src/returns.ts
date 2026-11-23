@@ -6,7 +6,7 @@
  */
 import { compareYmd } from "./dates.ts";
 import { itemsSummary } from "./describe.ts";
-import { formatDate, type LocaleOptions } from "./format.ts";
+import { formatDate, formatDayTime, type LocaleOptions } from "./format.ts";
 import { carrierLabel } from "./labels.ts";
 import { STRINGS, fmt } from "./strings.ts";
 import type { CustomerReturn, PickupRule } from "./types.ts";
@@ -28,9 +28,25 @@ function clean(value: string | null): string | null {
   return text ? text : null;
 }
 
-/** Done once its pickup day is over, or when the shop says it has the items. */
-export function isReturnDone(ret: Pick<CustomerReturn, "day" | "received">, today: string): boolean {
-  return ret.received || compareYmd(ret.day, today) < 0;
+/**
+ * Done once someone marks it picked up or its pickup day is over, or when the
+ * shop says it has the items.
+ */
+export function isReturnDone(
+  ret: Pick<CustomerReturn, "day" | "received" | "picked_up">,
+  today: string,
+): boolean {
+  return ret.received || ret.picked_up !== null || compareYmd(ret.day, today) < 0;
+}
+
+/** "Mark picked up" is offered until the return is done, when a carrier comes for it. */
+export function canMarkPickedUp(ret: CustomerReturn, today: string): boolean {
+  return !ret.restricted && ret.pickup !== null && !isReturnDone(ret, today);
+}
+
+/** Its Undo, until the pickup day is over: then it's done anyway. */
+export function canUndoPickedUp(ret: CustomerReturn, today: string): boolean {
+  return !ret.restricted && ret.picked_up !== null && !ret.received && compareYmd(ret.day, today) >= 0;
 }
 
 /** The shop; "Private return" for someone else's private one. */
@@ -54,6 +70,9 @@ function returnCarrier(ret: CustomerReturn): string | null {
 export function returnState(ret: CustomerReturn, today: string): string {
   if (ret.received) {
     return STRINGS.returnReceived;
+  }
+  if (ret.picked_up !== null) {
+    return STRINGS.returnPickedUp;
   }
   if (ret.pickup === null) {
     return STRINGS.returnStarted;
@@ -83,7 +102,10 @@ export function describeReturn(ret: CustomerReturn, locale: LocaleOptions, today
         : STRINGS.returnPlain,
   ];
   const date = formatDate(ret.day, locale);
-  if (ret.pickup === null) {
+  const marked = ret.picked_up === null ? "" : formatDayTime(ret.picked_up, locale);
+  if (marked) {
+    parts.push(fmt(STRINGS.pickedUpOn, { date: marked }));
+  } else if (ret.pickup === null) {
     parts.push(fmt(STRINGS.returnStartedOn, { date }));
   } else if (!isReturnDone(ret, today)) {
     parts.push(fmt(STRINGS.pickupOn, { date }));

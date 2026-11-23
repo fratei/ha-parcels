@@ -296,6 +296,8 @@ export interface CustomerReturn {
   started: string | null;
   /** The shop said it has the return. */
   received: boolean;
+  /** When someone marked it picked up; null until then. */
+  picked_up: string | null;
   order_numbers: string[];
   items: string[];
   /** The parcels the items came in. */

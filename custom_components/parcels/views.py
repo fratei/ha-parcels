@@ -401,8 +401,9 @@ def return_json(
     """Return a customer return as the page shows it.
 
     ``linked`` are the parcels of its orders. Someone who may not see the
-    return only gets its day. Whether it's done depends on the day, so the
-    page works it out: picked up once its day is over, or received.
+    return only gets its day and whether it's done. That depends on the day,
+    so the page works it out: picked up once its day is over or when marked
+    so (``picked_up``), or received.
     """
     parcels = list(linked)
     pickup = entry.pickup
@@ -421,6 +422,7 @@ def return_json(
         "pickup_rule": pickup[1].value if pickup else None,
         "started": dt_to_str(entry.started),
         "received": entry.received,
+        "picked_up": dt_to_str(entry.picked_up),
         "order_numbers": list(entry.order_numbers),
         "items": list(entry.items),
         "parcel_ids": [parcel.id for parcel in parcels if viewer.can_see(parcel)],
