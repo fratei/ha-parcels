@@ -192,6 +192,9 @@ ORDER_FOLD_KEY = "order_fold"
 _SAID_SOURCES = frozenset({Source.AI, Source.PARCELAPP, Source.SEVENTEENTRACK})
 # Before any stored news: the one-time repair looks at every parcel.
 _EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
+# The id of a carrier's package an e-mail would make on its own, weighed
+# before it is applied: new_id() never makes it.
+_INCOMING = "incoming"
 
 # Shorter numbers from carriers of different families are not linked.
 LOOSE_MIN_LENGTH = 10
@@ -848,13 +851,18 @@ def _reference_target(
     return None, None, True
 
 
-def _heuristic_target(data: ParcelsData, origin: Origin, eta: Eta | None) -> str | None:
+def _heuristic_target(data: ParcelsData, contribution: Contribution) -> str | None:
     """Return the only open parcel of the same merchant the e-mail can be about.
 
     Its dates must overlap the e-mail's, and no other parcel of the merchant
     may be late, or due soon enough, to be the one instead. A parcel with
     other items, or another carrier, than the e-mail's isn't a candidate.
+    Nor is an Amazon shipment the Parcel app follows for a carrier's e-mail
+    about a package its tracking doesn't point to, when it points to some:
+    see :func:`_points_away`.
     """
+    origin = contribution.origin
+    eta = _contribution_eta(contribution.events)
     wanted = merchant_key(origin.merchant)
     if not wanted or eta is None:
         return None
@@ -879,7 +887,35 @@ def _heuristic_target(data: ParcelsData, origin: Origin, eta: Eta | None) -> str
     if len(candidates) != 1:
         return None
     only = candidates[0]
-    return only.id if only.state.eta and _overlap(only.state.eta, eta) else None
+    if not (only.state.eta and _overlap(only.state.eta, eta)):
+        return None
+    return None if _points_away(data, only, contribution) else only.id
+
+
+def _points_away(
+    data: ParcelsData, shipment: Parcel, contribution: Contribution
+) -> bool:
+    """Return whether a shipment's tracking points away from an e-mail's package.
+
+    The e-mail is weighed as the carrier's package it would make on its
+    own. Amazon's tracking of the shipment, which the Parcel app follows,
+    points to some packages, see :func:`_pointed`, and not to that one.
+    """
+    if not _is_shipment(shipment):
+        return False
+    origin = contribution.origin
+    package = Parcel(
+        id=_INCOMING,
+        created=origin.time,
+        updated=origin.time,
+        origins={origin.id: origin},
+        events=list(contribution.events),
+        private=contribution.private,
+    )
+    if not _is_box(package):
+        return False
+    found = _pointed(shipment, [*_boxes(data), package], _apart_checker(data))
+    return bool(found) and package.id not in found
 
 
 def _normalise(origin: Origin) -> None:
@@ -1019,7 +1055,7 @@ def apply_contribution(
         not targets
         and not ambiguous
         and not contribution.attach_only
-        and (heuristic := _heuristic_target(data, origin, _contribution_eta(events)))
+        and (heuristic := _heuristic_target(data, contribution))
     ):
         targets = {heuristic}
         reason = REASON_SAME_MERCHANT_ETA
@@ -2679,13 +2715,17 @@ def _undo_amazon_guesses(
     the shop and the day matched. It is undone, as Undo would, when Amazon's
     tracking rules the package out, or when exactly one other package
     repeats the shipment's times as :func:`_link_amazon_shipments` asks and
-    the merged one doesn't. The two are then kept apart, and the shipment
-    is linked like any other. Each side is weighed as Undo would leave it:
-    the user's edits stay with the parcel, so a guess the user gave a
-    tracking number stays. The user's merges, other links and parcels put
-    away stay, and so does a shipment merged with another one's tracking,
-    or with an e-mail naming no package. Returns how many guesses were
-    undone.
+    the merged one doesn't. It is undone too, before the shipment came or
+    after, when the merged package repeats none of the shipment's times and
+    its tracking points to other packages, see :func:`_pointed`: a package
+    that held the shipment repeats at least one of them, the minute it
+    reached the carrier or the one it came. The two are then kept apart,
+    and the shipment is linked like any other. Each side is weighed as Undo
+    would leave it: the user's edits stay with the parcel, so a guess the
+    user gave a tracking number stays. The user's merges, other links and
+    parcels put away stay, and so does a shipment merged with another one's
+    tracking, or with an e-mail naming no package. Returns how many guesses
+    were undone.
     """
     undone = 0
     for parcel in pool:
@@ -2710,19 +2750,22 @@ def _undo_amazon_guesses(
         if not box.state.tracking_number or len(_tracking_of(shipment)) != 1:
             continue
         marks = _amazon_marks(shipment)
-        if marks[0] is None:
-            continue
-        delivered, _further = _box_evidence(box)
-        wrong = _contradicted(marks[0].time, delivered, _hand_marks(parcel))
-        if not wrong and _agreement(marks, box) < 2:
-            agreeing = [
-                other
-                for other in _linkable_packages(data)
-                if other.id != parcel.id
-                and _agreement(marks, other) == 2
-                and _may_carry(shipment, other, apart)
-            ]
-            wrong = len(agreeing) == 1
+        wrong = False
+        if marks[0] is not None:
+            delivered, _further = _box_evidence(box)
+            wrong = _contradicted(marks[0].time, delivered, _hand_marks(parcel))
+            if not wrong and _agreement(marks, box) < 2:
+                agreeing = [
+                    other
+                    for other in _linkable_packages(data)
+                    if other.id != parcel.id
+                    and _agreement(marks, other) == 2
+                    and _may_carry(shipment, other, apart)
+                ]
+                wrong = len(agreeing) == 1
+        if not wrong and _agreement(marks, box) == 0:
+            others = [other for other in _boxes(data) if other.id != parcel.id]
+            wrong = bool(_pointed(shipment, others, apart))
         if not wrong:
             continue
         new = undo_auto_merge(data, parcel.id, now)

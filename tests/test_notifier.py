@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from itertools import count
 import json
+import logging
 import re
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -15,6 +16,7 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.persistent_notification.helpers import (
     _async_get_or_create_notifications,
 )
+from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
@@ -22,6 +24,7 @@ from homeassistant.util import dt as dt_util, slugify
 import pytest
 from pytest_homeassistant.common import (
     MockConfigEntry,
+    async_capture_events,
     async_fire_time_changed,
     async_mock_service,
 )
@@ -32,6 +35,7 @@ from custom_components.parcels.const import (
     CONF_EXCLUDED_DEVICES,
     CONF_ITEM_NAMES,
     CONF_NOTIFY_PERSONS,
+    CONF_PIN_ON_LOCK_SCREEN,
     CONF_TEST_DEVICE,
     CONF_TEST_MODE,
     DOMAIN,
@@ -203,16 +207,52 @@ def persistent(hass: HomeAssistant) -> str | None:
 
 @dataclass
 class Phone:
-    """A mobile_app device and the calls its notify service received."""
+    """A mobile_app device and the calls its notify service received.
+
+    Pushes that bypass the service, as those with a PIN do, have a target.
+    """
 
     device_id: str
     calls: list[ServiceCall]
+    service: str = ""
+    webhook_id: str = ""
+    error: Exception | None = None
 
     def take(self) -> list[dict[str, Any]]:
         """Return the payloads received so far and forget them."""
         payloads = [dict(call.data) for call in self.calls]
         self.calls.clear()
         return payloads
+
+
+class FakePush:
+    """mobile_app's notify service, as Parcels calls it directly."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Start without devices."""
+        self.hass = hass
+        self.phones: dict[str, Phone] = {}
+
+    @property
+    def registered_targets(self) -> dict[str, str]:
+        """Return the webhook ID behind each notify service, like mobile_app."""
+        return {phone.service: webhook for webhook, phone in self.phones.items()}
+
+    async def async_send_message(self, message: str = "", **kwargs: Any) -> None:
+        """Record a push to one device, or fail as its service would."""
+        target = kwargs["target"]
+        assert isinstance(target, list)
+        assert len(target) == 1
+        phone = self.phones[target[0]]
+        if phone.error is not None:
+            raise phone.error
+        data = {"message": message, **kwargs}
+        phone.calls.append(ServiceCall(self.hass, "notify", phone.service, data))
+
+
+def pinned(payload: dict[str, Any], phone: Phone) -> dict[str, Any]:
+    """Return a payload as pushed to a phone without its notify service."""
+    return payload | {"target": [phone.webhook_id]}
 
 
 class FakeHost:
@@ -245,6 +285,15 @@ class Env:
         self._numbers = count(1)
         for entity_id, user_id in PERSONS.items():
             hass.states.async_set(entity_id, "home", {"user_id": user_id})
+        self.entries: dict[str, MockConfigEntry] = {}
+        self.tokens: dict[str, dict[str, dict[str, Any]]] = {}
+        self.push = FakePush(hass)
+        hass.data["mobile_app"] = {
+            "config_entries": self.entries,
+            "notify": self.push,
+            "live_activity_tokens": self.tokens,
+            "push_channel": {},
+        }
 
     def phone(
         self,
@@ -277,6 +326,7 @@ class Env:
             },
         )
         entry.add_to_hass(self.hass)
+        self.entries[f"webhook-{slug}"] = entry
         device = dr.async_get(self.hass).async_get_or_create(
             config_entry_id=entry.entry_id,
             identifiers={("mobile_app", f"app-{slug}")},
@@ -289,7 +339,22 @@ class Env:
             if service
             else []
         )
-        return Phone(device.id, calls)
+        phone = Phone(device.id, calls, f"mobile_app_{slug}", f"webhook-{slug}", error)
+        if service:
+            self.push.phones[phone.webhook_id] = phone
+        return phone
+
+    def token(self, phone: Phone, tag: str, expires: datetime | None = None) -> None:
+        """Store the push token an iPhone sent for one of its activities."""
+        moment = expires or dt_util.utcnow() + timedelta(hours=12)
+        self.tokens.setdefault(phone.webhook_id, {})[tag] = {
+            "token": "made-up-token",
+            "expires_at": moment.timestamp(),
+        }
+
+    def untoken(self, phone: Phone, tag: str) -> None:
+        """Forget an activity's push token, as mobile_app does when it ends."""
+        self.tokens.get(phone.webhook_id, {}).pop(tag, None)
 
     def hub(self, **options: Any) -> MockConfigEntry:
         """Add the hub entry; Alex and Sam are notified unless told otherwise."""
@@ -312,6 +377,7 @@ class Env:
         owners: tuple[str, ...] = (),
         private: bool = False,
         pickup_point: str | None = None,
+        pickup_code: str | None = None,
         when: datetime | None = None,
         name: str | None = None,
     ) -> Parcel:
@@ -328,6 +394,7 @@ class Env:
             items=items,
             owners=owners,
             pickup_point=pickup_point,
+            pickup_code=pickup_code,
             name=name,
         )
         parcel = Parcel(
@@ -361,6 +428,7 @@ class Env:
         timeless: bool = False,
         sent: datetime | None = None,
         pickup_point: str | None = None,
+        pickup_code: str | None = None,
         collect_by: date | None = None,
         next_attempt: date | None = None,
         left_at: LeftAt | None = None,
@@ -368,17 +436,22 @@ class Env:
         """Add an event to a parcel and tell the notifier.
 
         With ``sent``, the event comes from an e-mail sent then, which may
-        name a pickup point; an event at the time its e-mail was sent has
-        only that time. ``timeless`` gives the day without the time.
+        name a pickup point and a code; an event at the time its e-mail was
+        sent has only that time. ``timeless`` gives the day without the time.
         """
         moment = when or dt_util.utcnow()
         origin: str | None = None
         if sent is not None:
             origin = f"origin-{next(self._numbers)}"
             parcel.origins[origin] = Origin(
-                id=origin, source=Source.PARSER, time=sent, pickup_point=pickup_point
+                id=origin,
+                source=Source.PARSER,
+                time=sent,
+                pickup_point=pickup_point,
+                pickup_code=pickup_code,
             )
         assert pickup_point is None or origin is not None
+        assert pickup_code is None or origin is not None
         parcel.events.append(
             ParcelEvent(
                 time=moment,
@@ -2002,6 +2075,7 @@ async def test_diagnostics(env: Env) -> None:
     await env.goto(at(8))
     diagnostics = notifier.diagnostics()
     assert diagnostics["recipients"] == {"iphone": 1, "android": 1}
+    assert diagnostics["pin_on_lock_screen"] is False
     assert diagnostics["today"] == {
         "parcels": 1,
         "morning_done": True,
@@ -2009,12 +2083,501 @@ async def test_diagnostics(env: Env) -> None:
         "activities": 1,
         "activity_starts": 1,
         "running": 1,
+        "showing_pin": 0,
         "notifications_sent": 0,
         "orders_in_a_box": 0,
     }
     dumped = json.dumps(diagnostics).casefold()
     for secret in (iphone.device_id, android.device_id, parcel.id, "Amazon", "Alex"):
         assert secret.casefold() not in dumped
+
+
+@pytest.mark.parametrize("dismissed", [False, True])
+async def test_pin_option_changes_running_activities_quietly(
+    env: Env, hass: HomeAssistant, dismissed: bool
+) -> None:
+    """Turning the PIN option on or off updates running activities quietly.
+
+    Hubs set up before the option show no PIN. Taking a PIN away doesn't
+    start again an activity the user dismissed.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    entry = env.hub()
+    parcel = env.parcel(S.OUT_FOR_DELIVERY, eta=window(13, 14), pickup_code="4826")
+    tag = tag_of(parcel)
+    notifier = await env.start()
+    await env.goto(at(8))
+    plain = f"Out for delivery 13:00{DASH}14:00{SEP}DPD"
+    short = f"13{DASH}14h"
+    assert phone.take() == [activity(tag, "Amazon", plain, short, 3, OUT, 0.9)]
+    env.token(phone, tag)
+    await env.goto(at(8, 10))
+    assert phone.take() == []
+
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_PIN_ON_LOCK_SCREEN: True}
+    )
+    env.changed()
+    await env.settle()
+    shown = f"Out for delivery\nPIN 4826{SEP}13:00{DASH}14:00{SEP}DPD"
+    assert phone.take() == [
+        pinned(activity(tag, "Amazon", shown, short, 3, OUT, 0.9, silent=True), phone)
+    ]
+
+    if dismissed:
+        env.untoken(phone, tag)
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_PIN_ON_LOCK_SCREEN: False}
+    )
+    env.changed()
+    await env.settle()
+    assert phone.take() == (
+        []
+        if dismissed
+        else [activity(tag, "Amazon", plain, short, 3, OUT, 0.9, silent=True)]
+    )
+    await env.goto(at(9))
+    assert phone.take() == []
+    assert notifier.diagnostics()["today"]["activity_starts"] == 1
+
+
+async def test_pin_while_out_for_delivery(env: Env, hass: HomeAssistant) -> None:
+    """With the option on, the iPhone's activity shows the delivery PIN.
+
+    It comes quietly once the activity can be updated, never in an alert. No
+    timer hides it, and it goes with the delivery. iPads, Android phones and
+    the persistent notification never show it.
+    """
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    android = env.phone("Sam Pixel", SAM, "android")
+    env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
+    parcel = env.parcel(S.OUT_FOR_DELIVERY, eta=window(13, 14), pickup_code="4826")
+    tag = tag_of(parcel)
+    await env.start()
+    await env.goto(at(8))
+    plain = f"Out for delivery 13:00{DASH}14:00{SEP}DPD"
+    short = f"13{DASH}14h"
+    assert iphone.take() == [activity(tag, "Amazon", plain, short, 3, OUT, 0.9)]
+    env.token(iphone, tag)
+    await env.goto(at(8) + timedelta(seconds=5))
+    shown = f"Out for delivery\nPIN 4826{SEP}13:00{DASH}14:00{SEP}DPD"
+    assert iphone.take() == [
+        pinned(activity(tag, "Amazon", shown, short, 3, OUT, 0.9, silent=True), iphone)
+    ]
+
+    # The last hour's timer would replace the text, PIN included.
+    await env.goto(at(13))
+    assert iphone.take() == [
+        pinned(activity(tag, "Amazon", shown, short, 3, OUT, 1.0, silent=True), iphone)
+    ]
+
+    await env.goto(at(13, 40))
+    env.change(parcel, S.DELIVERED)
+    await env.settle()
+    delivered = f"Delivered {CHECK} 13:40{SEP}DPD"
+    assert iphone.take() == [
+        activity(tag, "Amazon", delivered, f"{CHECK} 13:40", 4, DONE, 0.2)
+    ]
+    await env.goto(at(14, 15))
+    assert iphone.take() == [end(tag)]
+    assert (
+        summary(ipad.take())
+        == summary(android.take())
+        == [(tag, plain), (tag, delivered)]
+    )
+    assert "Amazon" in str(persistent(hass))
+    assert "4826" not in str(persistent(hass))
+
+
+async def test_pickup_code_follows_the_alert(env: Env) -> None:
+    """A pickup code comes in a quiet update after the alert of the new status.
+
+    A private parcel's code shows only on its owner's iPhone.
+    """
+    alex = env.phone("Alex iPhone", ALEX)
+    sam = env.phone("Sam iPhone", SAM)
+    env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
+    parcel = env.parcel(
+        eta=on(), merchant="Decathlon", carrier="ctt", owners=(ALEX,), private=True
+    )
+    tag = tag_of(parcel)
+    await env.start()
+    await env.goto(at(8))
+    assert alex.take() == [
+        activity(tag, "Decathlon", f"Expected today{SEP}CTT", "Today", 2, TRUCK, 0.5)
+    ]
+    env.token(alex, tag)
+
+    await env.goto(at(10, 15))
+    env.change(
+        parcel,
+        S.READY_FOR_PICKUP,
+        sent=at(10, 15),
+        pickup_point="Locker 12, Rua Inventada 7",
+        pickup_code="59031",
+        collect_by=date(2026, 6, 24),
+    )
+    await env.settle()
+    ready = f"Ready at Locker 12{SEP}collect by Wed 24{SEP}CTT"
+    assert alex.take() == [activity(tag, "Decathlon", ready, "Pickup", 3, SHOP, 0.7)]
+
+    await env.goto(at(10, 16))
+    shown = f"Ready for pickup\nPIN 59031{SEP}Locker 12{SEP}collect by Wed 24{SEP}CTT"
+    assert alex.take() == [
+        pinned(
+            activity(tag, "Decathlon", shown, "Pickup", 3, SHOP, 0.7, silent=True),
+            alex,
+        )
+    ]
+    assert sam.calls == []
+
+
+async def test_pin_waits_until_the_activity_can_be_updated(env: Env) -> None:
+    """A PIN waits for the token of the running activity, and starts none.
+
+    Without a token, or with one about to expire, the push would start an
+    activity with an alert that shows the PIN. Restarts before Apple's 8
+    hours run out are plain too.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
+    parcel = env.parcel(S.OUT_FOR_DELIVERY, eta=on(), pickup_code="4826")
+    await env.start()
+    await env.goto(at(8))
+    plain = f"Out for delivery{SEP}DPD"
+    assert phone.take() == [
+        activity(tag_of(parcel), "Amazon", plain, "Today", 3, OUT, 0.9)
+    ]
+
+    # Asked again after 5 s, 20 s and 80 s.
+    await env.goto(at(8) + timedelta(seconds=5))
+    env.token(phone, tag_of(parcel), expires=at(8, 1) + timedelta(seconds=10))
+    await env.goto(at(8) + timedelta(seconds=20))
+    assert phone.take() == []
+    env.token(phone, tag_of(parcel))
+    await env.goto(at(8, 1) + timedelta(seconds=20))
+    shown = f"Out for delivery\nPIN 4826{SEP}DPD"
+    assert phone.take() == [
+        pinned(
+            activity(
+                tag_of(parcel), "Amazon", shown, "Today", 3, OUT, 0.9, silent=True
+            ),
+            phone,
+        )
+    ]
+
+    await env.goto(at(15, 30))
+    assert phone.take() == [
+        end(tag_of(parcel)),
+        activity(tag_of(parcel, 2), "Amazon", plain, "Today", 3, OUT, 0.9),
+    ]
+    env.token(phone, tag_of(parcel, 2))
+    await env.goto(at(15, 30) + timedelta(seconds=5))
+    assert phone.take() == [
+        pinned(
+            activity(
+                tag_of(parcel, 2), "Amazon", shown, "Today", 3, OUT, 0.9, silent=True
+            ),
+            phone,
+        )
+    ]
+
+
+@pytest.mark.parametrize("started", [False, True])
+async def test_a_new_pin_wait_starts_the_cadence_again(env: Env, started: bool) -> None:
+    """Each PIN that starts waiting is asked again after 5 s.
+
+    An iPhone that never sends its activity's token is asked only every 5
+    minutes after a while. Another delivery's PIN doesn't wait as long,
+    whether its activity starts now or turns out for delivery.
+    """
+    alex = env.phone("Alex iPhone", ALEX)
+    sam = env.phone("Sam iPhone", SAM)
+    env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
+    env.parcel(
+        S.OUT_FOR_DELIVERY, eta=on(), pickup_code="4826", owners=(ALEX,), private=True
+    )
+    parcel = env.parcel(
+        eta=on() if started else None,
+        merchant="Zalando",
+        owners=(SAM,),
+        private=True,
+    )
+    tag = tag_of(parcel)
+    await env.start()
+    await env.goto(at(8))
+    assert len(alex.take()) == 1
+    assert len(sam.take()) == int(started)
+    for seconds in (5, 20, 80, 380, 680):
+        await env.goto(at(8) + timedelta(seconds=seconds))
+    assert alex.take() == []
+
+    await env.goto(at(8, 15))
+    env.change(parcel, S.OUT_FOR_DELIVERY, sent=at(8, 15), pickup_code="59031")
+    await env.settle()
+    assert summary(sam.take()) == [(tag, f"Out for delivery{SEP}DPD")]
+    env.token(sam, tag)
+    await env.goto(dt_util.utcnow() + timedelta(seconds=5))
+    assert summary(sam.take()) == [(tag, f"Out for delivery\nPIN 59031{SEP}DPD")]
+    assert alex.take() == []
+
+
+async def test_a_failing_alert_is_tried_less_often(
+    env: Env, hass: HomeAssistant
+) -> None:
+    """An alert that keeps failing isn't tried every few seconds.
+
+    The PIN that waits for it follows soon after it goes through.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
+    parcel = env.parcel(eta=on())
+    tag = tag_of(parcel)
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    env.token(phone, tag)
+
+    phone.calls = async_mock_service(
+        hass, "notify", phone.service, raise_exception=HomeAssistantError("down")
+    )
+    env.change(parcel, S.OUT_FOR_DELIVERY, sent=at(8), pickup_code="4826")
+    await env.settle()
+    first = dt_util.utcnow()
+    for seconds in range(5, 125, 5):
+        await env.goto(first + timedelta(seconds=seconds))
+    # Tried at once, then after 5, 20 and 80 seconds.
+    assert len(phone.take()) == 4
+
+    phone.calls = async_mock_service(hass, "notify", phone.service)
+    await env.goto(first + timedelta(minutes=7))
+    assert summary(phone.take()) == [(tag, f"Out for delivery{SEP}DPD")]
+    await env.goto(dt_util.utcnow() + timedelta(seconds=5))
+    assert summary(phone.take()) == [(tag, f"Out for delivery\nPIN 4826{SEP}DPD")]
+
+
+async def test_pin_leaves_no_trace(
+    env: Env, hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A PIN goes straight to the iPhone's push and is kept nowhere.
+
+    A notify service call would put it in an event, which the recorder and
+    the logbook keep. Logs, the stored state and the diagnostics don't have
+    it either.
+    """
+    caplog.set_level(logging.DEBUG)
+    events = async_capture_events(hass, MATCH_ALL)
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
+    parcel = env.parcel(S.OUT_FOR_DELIVERY, eta=on(), pickup_code="4826")
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    env.token(phone, tag_of(parcel))
+    await env.goto(at(8, 1))
+    assert summary(phone.take()) == [
+        (tag_of(parcel), f"Out for delivery\nPIN 4826{SEP}DPD")
+    ]
+    notifier = await env.restart()
+    await env.goto(at(8, 30))
+    assert phone.take() == []
+
+    assert events
+    for event in events:
+        assert "4826" not in json.dumps(event.as_dict(), default=str)
+    assert "4826" not in caplog.text
+    # Fingerprints are keyed hashes, which can't be checked against guesses.
+    stored = json.dumps(env.host.data.engine)
+    assert "4826" not in re.sub(r'"[0-9a-f]{16}"', '""', stored)
+    diagnostics = notifier.diagnostics()
+    assert diagnostics["pin_on_lock_screen"] is True
+    assert diagnostics["today"]["showing_pin"] == 1
+    assert "4826" not in json.dumps(diagnostics)
+
+
+@pytest.mark.parametrize(
+    "fault", ["no mobile_app", "no push target", "no app entry", "no expiry", "error"]
+)
+async def test_pin_fails_closed(
+    env: Env, hass: HomeAssistant, caplog: pytest.LogCaptureFixture, fault: str
+) -> None:
+    """Without proof that the activity can be updated, no PIN is pushed.
+
+    A failed push is retried later, and its error isn't logged.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
+    parcel = env.parcel(S.OUT_FOR_DELIVERY, eta=on(), pickup_code="4826")
+    tag = tag_of(parcel)
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    env.token(phone, tag)
+    mobile_app = hass.data["mobile_app"]
+    app_entry = env.entries[phone.webhook_id]
+    if fault == "no mobile_app":
+        del hass.data["mobile_app"]
+    elif fault == "no push target":
+        del env.push.phones[phone.webhook_id]
+    elif fault == "no app entry":
+        del env.entries[phone.webhook_id]
+    elif fault == "no expiry":
+        del env.tokens[phone.webhook_id][tag]["expires_at"]
+    else:
+        phone.error = HomeAssistantError("PIN 4826")
+    await env.goto(at(8, 10))
+    assert phone.take() == []
+    assert "4826" not in caplog.text
+    if fault == "error":
+        assert "Notifying a device (iphone) failed: HomeAssistantError" in caplog.text
+
+    hass.data["mobile_app"] = mobile_app
+    env.push.phones[phone.webhook_id] = phone
+    env.entries[phone.webhook_id] = app_entry
+    env.token(phone, tag)
+    phone.error = None
+    await env.goto(at(8, 20))
+    assert summary(phone.take()) == [(tag, f"Out for delivery\nPIN 4826{SEP}DPD")]
+
+
+async def test_combined_activity_shows_the_next_pin(env: Env) -> None:
+    """The combined activity shows the PIN of the delivery it names next.
+
+    Only an out-for-delivery parcel's: pickup codes stay with their parcels.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1, CONF_PIN_ON_LOCK_SCREEN: True})
+    moving = env.parcel(
+        S.OUT_FOR_DELIVERY,
+        eta=window(13, 15),
+        merchant="Zalando",
+        carrier="ctt",
+        pickup_code="4826",
+    )
+    pickup = env.parcel(eta=on(), merchant="Decathlon", carrier="ctt")
+    env.parcel(eta=window(16, 18), merchant="IKEA", carrier="dpd")
+    await env.start()
+    await env.goto(at(8))
+    next_up = f"next: Zalando via CTT 13{DASH}15h"
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"0 of 3 delivered{SEP}{next_up}",
+            "0/3",
+            0,
+            OUT,
+            0.9,
+            progress_max=3,
+        )
+    ]
+    env.token(phone, COMBINED)
+    await env.goto(at(8) + timedelta(seconds=5))
+    assert phone.take() == [
+        pinned(
+            activity(
+                COMBINED,
+                "Parcels today",
+                f"0 of 3 delivered\nPIN 4826{SEP}{next_up}",
+                "0/3",
+                0,
+                OUT,
+                0.9,
+                progress_max=3,
+                silent=True,
+            ),
+            phone,
+        )
+    ]
+
+    await env.goto(at(10))
+    env.change(
+        pickup,
+        S.READY_FOR_PICKUP,
+        sent=at(10),
+        pickup_point="Locker 12",
+        pickup_code="59031",
+    )
+    await env.settle()
+    assert summary(phone.take()) == [
+        (COMBINED, f"0 of 3 delivered{SEP}1 ready for pickup{SEP}{next_up}")
+    ]
+    await env.goto(at(10, 1))
+    assert phone.take() == [
+        pinned(
+            activity(
+                COMBINED,
+                "Parcels today",
+                f"0 of 3 delivered\nPIN 4826{SEP}{next_up}{SEP}1 ready for pickup",
+                "0/3",
+                0,
+                OUT,
+                0.9,
+                progress_max=3,
+                silent=True,
+            ),
+            phone,
+        )
+    ]
+
+    # The next delivery has no PIN, and a pickup code never shows here.
+    await env.goto(at(11))
+    env.change(moving, S.DELIVERED)
+    await env.settle()
+    await env.goto(at(11, 10))
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"1 of 3 delivered{SEP}1 ready for pickup{SEP}next: IKEA via DPD "
+            f"16{DASH}18h",
+            "1/3",
+            1,
+            SHOP,
+            0.7,
+            progress_max=3,
+        )
+    ]
+
+
+async def test_test_live_activity_shows_a_made_up_pin(env: Env) -> None:
+    """With the option on, the demo shows a made-up PIN, for two minutes."""
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
+    notifier = await env.start()
+    await notifier.async_test_live_activity()
+    assert phone.take() == [
+        activity(
+            "parcels-test",
+            "Parcels",
+            f"Test{SEP}Out for delivery 13:00{DASH}14:00",
+            "Test",
+            3,
+            OUT,
+            0.5,
+            when=at(7, 2),
+        )
+    ]
+    env.token(phone, "parcels-test")
+    await env.goto(at(7) + timedelta(seconds=5))
+    assert phone.take() == [
+        pinned(
+            activity(
+                "parcels-test",
+                "Parcels",
+                f"Test{SEP}Out for delivery\nPIN 4826{SEP}13:00{DASH}14:00",
+                "Test",
+                3,
+                OUT,
+                0.5,
+                silent=True,
+            ),
+            phone,
+        )
+    ]
+    await env.goto(at(7, 2))
+    assert phone.take() == [end("parcels-test")]
 
 
 async def test_failures_are_retried_without_content_in_the_log(

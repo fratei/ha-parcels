@@ -821,6 +821,61 @@ async def test_delivery_to_the_place_still_ahead(info: str) -> None:
     assert map_status("Ready to be picked up", info) is ParcelStatus.IN_TRANSIT
 
 
+@pytest.mark.parametrize(
+    "info",
+    [
+        "A encomenda não será entregue hoje no cacifo",
+        "A encomenda não vai ser entregue hoje no cacifo",
+        "A encomenda não lhe será entregue hoje no cacifo",
+        "O envio não chega hoje ao cacifo",
+        "O envio ainda não está em distribuição",
+        "Não há entrega hoje no cacifo",
+        "El paquete no será entregado hoy en el Citypaq",
+        "El paquete no llega hoy al Citypaq",
+        "El paquete no se entrega hoy en el Citypaq",
+        "El paquete todavía no está en reparto",
+        "Il pacco non arriva oggi al locker",
+        "Il pacco non sarà consegnato oggi nel locker",
+        "Il pacco non è più in consegna",
+        "Your parcel is not out for delivery yet",
+        "Your parcel isn\u2019t out for delivery",
+        "Your parcel is no longer out for delivery",
+        "Die Sendung ist noch nicht in Zustellung",
+        "Keine Zustellung heute an die Packstation",
+        "Le colis n'est plus en cours de livraison",
+        "Het pakket is nog niet in bezorging",
+    ],
+)
+async def test_denied_delivery_today(info: str) -> None:
+    """A delivery today that the carrier's text denies isn't out for delivery.
+
+    Under 17TRACK's pickup status it isn't a pickup either, even at a pickup
+    place: the parcel is in transit. 17TRACK's other statuses stay.
+    """
+    assert map_status("Ready to be picked up", info) is ParcelStatus.IN_TRANSIT
+    assert map_status("In Transit", info) is ParcelStatus.IN_TRANSIT
+    assert map_status("Alert", info) is ParcelStatus.EXCEPTION
+
+
+@pytest.mark.parametrize(
+    "info",
+    [
+        "Envio n\u00ba 12 será entregue hoje no cacifo",
+        "Não se esqueça: o envio chega hoje ao cacifo",
+        "No signature needed, out for delivery",
+        "Not home? Out for delivery to the locker",
+    ],
+)
+async def test_negation_elsewhere_keeps_the_delivery_today(info: str) -> None:
+    """Only a negation right before the delivery today denies it.
+
+    "nº" folds to "no", and a negation in another clause says nothing about
+    the delivery.
+    """
+    assert map_status("Ready to be picked up", info) is ParcelStatus.OUT_FOR_DELIVERY
+    assert map_status("In Transit", info) is ParcelStatus.OUT_FOR_DELIVERY
+
+
 async def test_pickup_status_needs_the_carriers_word(
     engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
 ) -> None:

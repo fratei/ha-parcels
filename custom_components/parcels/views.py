@@ -7,7 +7,9 @@ private when it's marked so or its order's parcel is.
 
 A delivery PIN or pickup code is sent with a parcel's details, and in the
 list only to those who may see the parcel, while it's on its way. Entities,
-events, logs, diagnostics and notifications never have it.
+events, logs, diagnostics, notifications and the persistent notification
+never have it; iPhones' Live Activities show it only with the hub option on
+(see :mod:`.notifier`).
 """
 
 from __future__ import annotations

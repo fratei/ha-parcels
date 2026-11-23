@@ -25,7 +25,7 @@ Each refresh:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 import logging
@@ -130,12 +130,12 @@ _STATUSES: Final[dict[str, ParcelStatus]] = {
 _NO_NEWS: Final = frozenset({"not_found", "expired"})
 
 # The carrier's text can be more precise than the 17TRACK status, in any of
-# the languages the parsers know. The first match wins.
+# the languages the parsers know. The first match wins; a delivery today
+# comes last, and only when the text doesn't deny it (_today).
 _INFO_RULES: Final[tuple[tuple[MailKind, ParcelStatus], ...]] = (
     (MailKind.RETURN, ParcelStatus.RETURNED),
     (MailKind.ATTEMPTED, ParcelStatus.ATTEMPTED),
     (MailKind.READY_FOR_PICKUP, ParcelStatus.READY_FOR_PICKUP),
-    (MailKind.OUT_FOR_DELIVERY, ParcelStatus.OUT_FOR_DELIVERY),
 )
 _REFINED: Final = frozenset(
     {ParcelStatus.IN_TRANSIT, ParcelStatus.EXCEPTION, ParcelStatus.ATTEMPTED}
@@ -175,6 +175,17 @@ _DELIVERY_TODAY_APART: Final = re.compile(
     rf"|(?<!non )(?:verra|verranno|viene|vengono)"
     rf"(?:{_IT}oggi{_IT}consegnat[oaie]|{_IT}consegnat[oaie]{_IT}oggi)"
     r")(?![a-z0-9])"
+)
+# A negation right before a delivery today, or with up to two of these words
+# between, such as "não será entregue hoje", "no se entrega hoy", "non è più
+# in consegna" or "not yet out for delivery". Nothing else may part them, as
+# Portuguese "no" also means "in the" and "nº" folds to "no".
+_DENIAL: Final = re.compile(
+    r"(?<![a-z0-9'])(?:nao|no|non|not|never|nunca|nicht|kein(?:e[mnrs]?)?|niet"
+    r"|pas|n'[a-z]+|[a-z]+n't)"
+    r"(?:[^\S\n]+(?:se|le|les|lhe|lhes|ha|hay|e|esta|estao|estan|sono|ainda"
+    r"|mais|todavia|aun|yet|longer|noch|mehr|encore|plus|ancora|piu|nog|meer)){0,2}"
+    r"[^\S\n]+\Z"
 )
 # A delivery or drop at the place that's still ahead, or denied, in forms
 # the in-transit phrases lack, such as "wird morgen an die Packstation
@@ -245,8 +256,8 @@ def pickup_status(info: str | None) -> ParcelStatus:
     attempt. A text that says none of these but names a place where parcels
     wait, such as a locker or a pickup point, is a pickup, unless it says
     the parcel is still on its way there, that its delivery there is still
-    ahead or won't happen, or that the carrier took it from there.
-    Otherwise it's in transit.
+    ahead or won't happen, today included, or that the carrier took it from
+    there. Otherwise it's in transit.
     """
     if (status := _text_status(info)) is not None:
         return status
@@ -254,7 +265,8 @@ def pickup_status(info: str | None) -> ParcelStatus:
     on_its_way = phrase_regex(KIND_PHRASES[MailKind.IN_TRANSIT])
     if on_its_way.search(text) or _DELIVERY_AHEAD.search(text):
         return ParcelStatus.IN_TRANSIT
-    if _CARRIER_TOOK.search(text):
+    # A delivery today left here is one the text denies.
+    if next(_today(text), None) is not None or _CARRIER_TOOK.search(text):
         return ParcelStatus.IN_TRANSIT
     if phrase_regex(PICKUP_PLACES).search(text):
         return ParcelStatus.READY_FOR_PICKUP
@@ -271,16 +283,26 @@ def refine_status(status: ParcelStatus, info: str | None) -> ParcelStatus:
 def _text_status(info: str | None) -> ParcelStatus | None:
     """Return the status a carrier's text tells, if it tells one.
 
-    A delivery today counts even when a place splits its words.
+    A delivery today counts even when a place splits its words, but not when
+    the text denies it, as in "não será entregue hoje".
     """
     if info:
         text = fold_text(info)
         for kind, status in _INFO_RULES:
             if phrase_regex(KIND_PHRASES[kind]).search(text):
                 return status
-        if _DELIVERY_TODAY_APART.search(text):
+        if any(
+            _DENIAL.search(text, max(0, match.start() - 40), match.start()) is None
+            for match in _today(text)
+        ):
             return ParcelStatus.OUT_FOR_DELIVERY
     return None
+
+
+def _today(text: str) -> Iterator[re.Match[str]]:
+    """Yield the places in folded text that tell of a delivery today."""
+    yield from phrase_regex(KIND_PHRASES[MailKind.OUT_FOR_DELIVERY]).finditer(text)
+    yield from _DELIVERY_TODAY_APART.finditer(text)
 
 
 def repair_pickups(data: ParcelsData, now: datetime, tz: tzinfo) -> int:

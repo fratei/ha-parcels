@@ -70,6 +70,7 @@ HUB_INPUT: dict[str, Any] = {
     "cutoff_time": "21:00:00",
     "collapse_threshold": 4,
     "item_names_on_lock_screen": True,
+    "pin_on_lock_screen": True,
     "seventeentrack": False,
     "test_mode": False,
     "archive_days": 7,

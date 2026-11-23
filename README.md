@@ -154,7 +154,8 @@ api.parcel.app, which Parcels contacts itself with your API key.
   and notifications, and the persistent notification.
 - **Delivery PINs**: delivery PINs, one-time codes and pickup codes found in
   e-mails are shown on the parcel's box until it's delivered, and in its
-  details (see [Privacy and safety](#privacy-and-safety)).
+  details. An option shows them in iPhones' Live Activities too (see
+  [Privacy and safety](#privacy-and-safety)).
 - **A Parcels page** with a Monday-to-Sunday calendar of your deliveries and
   return pickups, the parcels that don't have a date yet, and the e-mails
   Parcels wasn't sure about.
@@ -208,20 +209,46 @@ api.parcel.app, which Parcels contacts itself with your API key.
   status and time window, a pickup point's name and the last day to collect,
   the next attempt after a missed one, and where a delivered parcel was left
   (only "with a neighbour", "in the mailbox" and the like), never item names
-  unless you turn that on. With item names on, a parcel without items shows
-  its name in the Parcel app instead.
+  or delivery PINs unless you turn those options on. With item names on, a
+  parcel without items shows its name in the Parcel app instead.
   A parcel marked private notifies only its owner and is only counted in the
   shared persistent notification. The link that opens a parcel from them
   carries only its ID in Parcels.
-- **Delivery PINs** are shown only on the Parcels page, to the people who can
-  see the parcel: on its box until it's delivered, returned or cancelled, in
-  its details, and to administrators in the e-mails waiting for review. They
-  never appear in entity states or attributes, the recorder, events, logs,
-  diagnostics, notifications or Live Activities. Parcels hides a PIN once
-  its parcel is delivered, returned or cancelled, and deletes it at the
-  nightly cleanup or when the parcel is archived. A delivery that Parcels only
-  inferred keeps its PIN in the details until the parcel is archived, in case
-  it hasn't arrived.
+- **Delivery PINs** are shown on the Parcels page, to the people who can see
+  the parcel: on its box until it's delivered, returned or cancelled, in its
+  details, and to administrators in the e-mails waiting for review. They
+  never appear in entity states or attributes, the recorder, events,
+  Parcels' own logs, diagnostics, the persistent notification or the
+  notifications of iPads and Android phones, and reach iPhones only with the
+  option below. Parcels hides a PIN once its parcel is delivered, returned
+  or cancelled, and deletes it at the nightly cleanup or when the parcel is
+  archived. A delivery that Parcels only inferred keeps its PIN in the
+  details until the parcel is archived, in case it hasn't arrived.
+- **Delivery PINs on the lock screen** are off by default. With **Show
+  delivery PINs on the lock screen** on, the Live Activities of the iPhones
+  that may show a parcel (only its owner's when it's private) show its PIN
+  or pickup code while it's out for delivery or ready for pickup. **Anyone
+  who can see the iPhone can then read the PIN**, without unlocking it.
+  - Where it shows: on the second line of the activity's text, on the lock
+    screen and in Notification Center, and in StandBy once you tap the
+    activity. The one-line views leave it out: the Dynamic Island, a paired
+    Apple Watch's Smart Stack, CarPlay, and the menu bar of a Mac using
+    iPhone Mirroring.
+  - How it travels: an activity always starts without the PIN, and the PIN
+    follows in a silent update, so no alert carries it. Parcels sends that
+    update straight to the companion app's notify service rather than
+    through a service call, whose `call_service` event the recorder would
+    keep. Like every Live Activity update, it goes over Home Assistant's
+    local push connection when the app holds one open, and otherwise through
+    the companion apps' push relay (mobile-apps.home-assistant.io), Firebase
+    Cloud Messaging and Apple's push service (APNs).
+  - Where else it can appear: in the companion app's notification history
+    on the iPhone, for updates that came over the local push connection; in
+    the relay's logs when a push fails; and in Home Assistant's log while
+    debug logging is on for its websocket API.
+  - If you dismiss an activity just as a PIN update reaches it, the app may
+    start it again with the PIN. Started through the relay, it then plays
+    its start alert, and a paired Apple Watch shows the alert with the PIN.
 - **17TRACK** gets tracking numbers only, under a generic name, never item
   names, shops or the numbers of private parcels.
 - **The Parcel app** is off until you enter an API key. Parcels then contacts
@@ -407,7 +434,8 @@ entry.
 | Start time | 08:00 | Live Activities for parcels expected today start at this time. |
 | Cut-off time | 22:00 | Remaining Live Activities end at this time. |
 | Combine Live Activities above | 3 | With more packages than this on one day, they share one Live Activity. Orders that ride along with a package don't count. |
-| Show item names on the lock screen | off | When off, the lock screen shows shop, carrier, status and time window only. |
+| Show item names on the lock screen | off | When off, the lock screen shows shop, carrier, status and time window only (and the delivery PIN, if that option is on). |
+| Show delivery PINs on the lock screen | off | iPhones' Live Activities also show a parcel's PIN or pickup code while it's out for delivery or ready for pickup. Anyone who can see the iPhone can read it. See [Privacy and safety](#privacy-and-safety). |
 | Live status from 17TRACK | on | Has effect only when the 17TRACK integration is set up. See [17TRACK](#17track). |
 | Parcel app API key | none | Turns on the [Parcel app](#parcel-app) source; needs Parcel Premium. The Parcel app options below show once a key is entered. Clear it to stop using Parcel. |
 | Parcel app user | none | Whose Parcel account the key belongs to. Deliveries only in Parcel become their parcels. Required when your mailboxes have owners. |
@@ -658,22 +686,24 @@ their times agreeing as above, or news in Amazon's tracking at least an hour
 after the package came. Parcel updates Amazon's tracking on your phone (see
 [Parcel app](#parcel-app)), so the time of a read alone proves nothing.
 
-The same times narrow the suggestions. When some packages repeat a
-shipment's times, also packages still on their way, **Needs review** and the
-details suggest the shipment only for those repeating the most of them.
-**Merge with…** marks the others "Amazon's tracking points to another
-package" and lists them last, and, on those packages, marks the shipment so.
-You can still merge them if you know better. Narrowing never turns a
-suggestion into a merge.
+The same times narrow the suggestions and the guesses. When some packages
+repeat a shipment's times, also packages still on their way,
+**Needs review** and the details suggest the shipment only for those
+repeating the most of them, and no guess by the shop and the dates, or the
+day, merges it with another package. **Merge with…** marks the others
+"Amazon's tracking points to another package" and lists them last, and, on
+those packages, marks the shipment so. You can still merge them if you know
+better. Narrowing never turns a suggestion into a merge.
 
 A guess that merged a shipment and a package because the shop and the
 dates, or the day, matched (see [What it does](#what-it-does)) is undone,
 as **Undo** would, when Amazon's tracking rules that package out as above,
-or when exactly one other package agrees with the shipment's times as above
-and the merged one doesn't. The two are then kept apart, and the shipment
-joins, rides along or is suggested as above. Your own merges, merges of one
-order's e-mails, archived parcels and parcels you typed a tracking number on
-stay as they are.
+when exactly one other package agrees with the shipment's times as above
+and the merged one doesn't, or when the merged package repeats none of its
+times and others do, even before the shipment came. The two are then kept
+apart, and the shipment joins, rides along or is suggested as above. Your
+own merges, merges of one order's e-mails, archived parcels and parcels you
+typed a tracking number on stay as they are.
 
 ### Live Activities
 
@@ -693,6 +723,8 @@ To get them:
    delivered, delivery attempted, problem).
 3. Optional: run the **Test Live Activity** action (see
    [Actions](#actions)) to check an iPhone. The demo ends after a minute.
+   With **Show delivery PINs on the lock screen** on, it lasts two minutes
+   and shows the made-up PIN 4826 a few seconds after it starts.
 
 How they behave:
 
@@ -719,7 +751,8 @@ How they behave:
   parcel is out for delivery. A shared activity shows no countdown while one
   of its packages has a failed attempt or a problem, so its text says so
   ("2 of 5 delivered · 1 problem · next: Amazon via DPD 13–14h"); a parcel's
-  own activity keeps its countdown.
+  own activity keeps its countdown. No activity counts down while it shows a
+  delivery PIN.
 - Updates are sent only when something changes, and silently unless the
   status changed.
 - The text says what comes next. A pickup says where and until when, such as
@@ -731,6 +764,19 @@ How they behave:
   reported 11:50". A delivered parcel says where it was left when the carrier
   said so: "Delivered ✓ 10:25 · with a neighbour". iPad and Android
   notifications say the same.
+- With **Show delivery PINs on the lock screen** on, a parcel's activity
+  shows its delivery PIN or pickup code while it's out for delivery or ready
+  for pickup: the status takes the first line and the PIN leads the second,
+  such as "Out for delivery" and "PIN 4826 · 13:00–14:00 · DPD". A code
+  longer than 20 characters isn't shown. A shared activity shows the PIN of
+  the package it names next when that one is out for delivery, never a
+  pickup code. Activities start, and restart after 7.5 hours, without the
+  PIN: it follows in a silent update once the iPhone has told Home Assistant
+  that it holds the activity. Parcels checks 5, 20 and 80 seconds after the
+  activity starts or alerts that the parcel is out for delivery or ready for
+  pickup, then every 5 minutes. Turning the option on or off changes running
+  activities silently. See [Privacy and safety](#privacy-and-safety) for
+  where the PIN shows.
 - Tapping a parcel's activity or notification opens its details on the
   Parcels page; the shared activity opens the week.
 - A delivered parcel shows "Delivered ✓" with the time when it's known, and
@@ -787,7 +833,10 @@ own tracking in between.
   in transit. In all seven languages, wording such as "will be delivered to
   the locker today" is out for delivery, and wording such as "wird morgen
   an die Packstation geliefert" or "won't be delivered to the locker" is in
-  transit.
+  transit. Wording that denies a delivery today, such as "não será entregue
+  hoje no cacifo" or "not out for delivery yet", isn't out for delivery:
+  the parcel keeps 17TRACK's status, or is in transit when that status is
+  "ready to be picked up".
 - **What it doesn't add**: delivery dates. Home Assistant's 17TRACK integration
   gives no expected date, so a parcel without one stays under **No date yet**.
 - **What it leaves out**, so they don't take up places in your account:
@@ -1125,7 +1174,7 @@ carrier, status and dates. Each mailbox has a **Last sync** sensor and a
 | `parcels.reprocess` | Reads a parcel's or review item's e-mails again with the current parsers, optionally with the AI. Administrators only. |
 | `parcels.trust_sender` | Trusts a sender's domain, so its e-mails are read as shipping e-mails. Administrators only. |
 | `parcels.ignore_sender` | Stops reading a sender's e-mails. Administrators only. |
-| `parcels.test_live_activity` | Sends a one-minute demo Live Activity to an iPhone. Administrators only. |
+| `parcels.test_live_activity` | Sends a one-minute demo Live Activity to an iPhone, or a two-minute one that shows the made-up PIN 4826 when delivery PINs show on the lock screen. Administrators only. |
 
 ### Events
 
@@ -1311,6 +1360,13 @@ actions:
 - **No Live Activity.** Check the iPhone's Live Activities setting for the
   Home Assistant app, remote access, the **Live Activities** switch, test mode
   and the people to notify, then try `parcels.test_live_activity`.
+- **A delivery PIN doesn't show on the lock screen.** Check that **Show
+  delivery PINs on the lock screen** is on, that the parcel's details show a
+  PIN or pickup code, and that it's out for delivery or ready for pickup. A
+  private parcel's PIN shows only on its owner's iPhones, and a shared
+  activity shows only the PIN of the package it names next. The PIN comes a
+  few seconds after the activity starts; `parcels.test_live_activity` shows
+  a made-up one.
 - **Tapping a Live Activity or notification shows the week, not the
   parcel.** The page at the link needs the week or list card. A parcel merged
   into another one or deleted since then has no details to open.
@@ -1358,6 +1414,11 @@ actions:
   After the update to 0.1.15, and again after 0.1.16, Parcels reads the
   stored pickups again once. The hub's diagnostics count the parcels that
   the latest re-read changed (`seventeentrack_pickups_reread`).
+- **A parcel showed as out for delivery, though the carrier said it wouldn't
+  come today.** Before 0.1.17, 17TRACK's wording that denied a delivery
+  today, such as "não será entregue hoje no cacifo", read as out for
+  delivery. Parcels doesn't read that news again: the carrier's next news
+  replaces it.
 - **Amazon shows as the carrier, but didn't deliver.** Before 0.1.8, Amazon
   became the carrier whenever the local AI, the Parcel app or 17TRACK named
   it, which kept Amazon's orders apart from their carrier's deliveries. After
@@ -1391,8 +1452,11 @@ actions:
   (`seventeentrack_pickups_reread`) and the parcels of late order e-mails
   that the update to 0.1.16 folded into their order's parcel
   (`order_fold`); its
-  notifications part counts today's orders that ride along with a package
-  (`orders_in_a_box`); its 17TRACK part counts the numbers 17TRACK can't
+  notifications part says whether delivery PINs show on the lock screen
+  (`pin_on_lock_screen`) and counts today's running activities that show
+  one (`showing_pin`), never the PINs, and today's orders that ride along
+  with a package (`orders_in_a_box`); its 17TRACK part counts the numbers
+  17TRACK can't
   find, by carrier (`not_found_by_carrier`); its Parcel app part
   (`parcelapp`) counts the deliveries read, matched, shown on their own and
   left out, with Amazon's by how they found their parcel: by shipment ID, by

@@ -8,7 +8,7 @@ from typing import Final
 
 DOMAIN: Final = "parcels"
 NAME: Final = "Parcels"
-VERSION: Final = "0.1.16"
+VERSION: Final = "0.1.17"
 
 STORAGE_KEY: Final = "parcels"
 STORAGE_VERSION: Final = 1
@@ -43,6 +43,7 @@ CONF_START_TIME: Final = "start_time"
 CONF_CUTOFF_TIME: Final = "cutoff_time"
 CONF_COLLAPSE_THRESHOLD: Final = "collapse_threshold"
 CONF_ITEM_NAMES: Final = "item_names_on_lock_screen"
+CONF_PIN_ON_LOCK_SCREEN: Final = "pin_on_lock_screen"
 CONF_SEVENTEENTRACK: Final = "seventeentrack"
 CONF_TEST_MODE: Final = "test_mode"
 CONF_TEST_DEVICE: Final = "test_device"
@@ -68,6 +69,7 @@ DEFAULT_PURGE_DAYS: Final = 90
 DEFAULT_DASHBOARD_PATH: Final = "/dashboard-parcels/week"
 DEFAULT_SEVENTEENTRACK: Final = True
 DEFAULT_ITEM_NAMES: Final = False
+DEFAULT_PIN_ON_LOCK_SCREEN: Final = False
 DEFAULT_PARCEL_APP_ADD: Final = True
 DEFAULT_PARCEL_APP_EVERYONE: Final = False
 DEFAULT_PARCEL_APP_IMPORT: Final = True

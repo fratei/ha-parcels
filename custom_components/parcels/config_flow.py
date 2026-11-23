@@ -64,6 +64,7 @@ from .const import (
     CONF_PARCEL_APP_KEY,
     CONF_PARCEL_APP_OWNER,
     CONF_PARCEL_APP_POSTCODE,
+    CONF_PIN_ON_LOCK_SCREEN,
     CONF_PROVIDER,
     CONF_PURGE_DAYS,
     CONF_SEVENTEENTRACK,
@@ -82,6 +83,7 @@ from .const import (
     DEFAULT_PARCEL_APP_DAILY,
     DEFAULT_PARCEL_APP_EVERYONE,
     DEFAULT_PARCEL_APP_IMPORT,
+    DEFAULT_PIN_ON_LOCK_SCREEN,
     DEFAULT_PURGE_DAYS,
     DEFAULT_SEVENTEENTRACK,
     DEFAULT_START_TIME,
@@ -130,6 +132,7 @@ HUB_DEFAULTS: dict[str, Any] = {
     CONF_CUTOFF_TIME: DEFAULT_CUTOFF_TIME,
     CONF_COLLAPSE_THRESHOLD: DEFAULT_COLLAPSE_THRESHOLD,
     CONF_ITEM_NAMES: DEFAULT_ITEM_NAMES,
+    CONF_PIN_ON_LOCK_SCREEN: DEFAULT_PIN_ON_LOCK_SCREEN,
     CONF_SEVENTEENTRACK: DEFAULT_SEVENTEENTRACK,
     CONF_TEST_MODE: False,
     CONF_ARCHIVE_DAYS: DEFAULT_ARCHIVE_DAYS,
@@ -205,6 +208,9 @@ HUB_SCHEMA = probatio.Schema(
         ),
         probatio.Required(
             CONF_ITEM_NAMES, default=DEFAULT_ITEM_NAMES
+        ): BooleanSelector(),
+        probatio.Required(
+            CONF_PIN_ON_LOCK_SCREEN, default=DEFAULT_PIN_ON_LOCK_SCREEN
         ): BooleanSelector(),
         probatio.Required(
             CONF_SEVENTEENTRACK, default=DEFAULT_SEVENTEENTRACK
@@ -493,6 +499,7 @@ class HubOptionsFlow(OptionsFlow):
             ),
             CONF_COLLAPSE_THRESHOLD: int(user_input[CONF_COLLAPSE_THRESHOLD]),
             CONF_ITEM_NAMES: bool(user_input[CONF_ITEM_NAMES]),
+            CONF_PIN_ON_LOCK_SCREEN: bool(user_input[CONF_PIN_ON_LOCK_SCREEN]),
             CONF_SEVENTEENTRACK: bool(user_input[CONF_SEVENTEENTRACK]),
             CONF_TEST_MODE: test_mode,
             CONF_ARCHIVE_DAYS: int(user_input[CONF_ARCHIVE_DAYS]),

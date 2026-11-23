@@ -8,7 +8,9 @@ after every data change and stops it on unload.
 
 Routing
     Only ``notify.mobile_app_<device>`` services are called, never
-    ``notify.notify`` or a group. A device is notified when one of its persons
+    ``notify.notify`` or a group; an update with a delivery PIN goes straight
+    to that device's mobile_app notify service instead (see Delivery PINs).
+    A device is notified when one of its persons
     (a ``person`` whose ``user_id`` is the mobile_app entry's ``user_id``) is in
     the hub's notify persons and the device isn't excluded. In test mode only
     the test device gets anything. Private parcels go only to their owners'
@@ -68,6 +70,28 @@ Live Activities
     parcel, and where a delivered parcel was left. iPads and Android phones
     get the same text.
 
+Delivery PINs
+    With the hub option on, an iPhone's activity shows a parcel's delivery
+    PIN or pickup code while the parcel is out for delivery or ready for
+    pickup, on the iPhones that may show the parcel. The status takes the
+    message's first line and the PIN leads the second, which the Lock Screen
+    shows and the one-line views (Smart Stack, CarPlay, the expanded Dynamic
+    Island) leave out; ``critical_text`` never has it, and no countdown
+    replaces the message while it shows. A combined activity shows only the
+    PIN of the parcel out for delivery that it names next, never a pickup
+    code. iPads, Android phones and the persistent notification never get it.
+
+    Every start is plain: the PIN follows with a quiet update, sent through
+    mobile_app's notify service object rather than a service call, whose
+    ``call_service`` event the recorder would keep, and only while the
+    activity's update token stays valid for another minute, so a dismissed
+    or expiring activity isn't started again with it. Until then the
+    notifier tries again (5 s, 15 s, 1 min, then every 5 min). The status
+    change that ends the PIN, and turning the option off or on, send quiet
+    updates. Records keep only whether a PIN shows and a fingerprint keyed
+    with a random in-memory key, never the PIN, so after a restart the PIN
+    is sent once more, quietly.
+
 Packages
     The day counts packages, not records. An order without a carrier's
     number that one of the day's packages may hold rides along with it (see
@@ -91,9 +115,11 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 import hashlib
+import hmac
 import json
 import logging
 import re
+import secrets
 import traceback
 from typing import Any, Protocol
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -115,6 +141,7 @@ from .const import (
     CONF_EXCLUDED_DEVICES,
     CONF_ITEM_NAMES,
     CONF_NOTIFY_PERSONS,
+    CONF_PIN_ON_LOCK_SCREEN,
     CONF_START_TIME,
     CONF_TEST_DEVICE,
     CONF_TEST_MODE,
@@ -146,6 +173,19 @@ RESTART_AFTER = timedelta(hours=7, minutes=30)
 APPLE_LIMIT = timedelta(hours=8)
 RETRY_DELAY = timedelta(minutes=5)
 TEST_ACTIVITY_DURATION = timedelta(minutes=1)
+TEST_PIN_DURATION = timedelta(minutes=2)
+TEST_PIN = "4826"
+# A PIN is asked again after 5 s, 20 s and 80 s, then every 5 minutes; each
+# activity that starts, or turns to a status with a PIN, starts over.
+PIN_RETRY = (
+    timedelta(seconds=5),
+    timedelta(seconds=15),
+    timedelta(minutes=1),
+    timedelta(minutes=5),
+)
+# A push token this close to expiring may be gone when the push arrives.
+TOKEN_MARGIN = timedelta(minutes=1)
+MAX_PIN = 20
 DUE_TOLERANCE = timedelta(seconds=1)
 COUNTDOWN = timedelta(hours=1)
 PICKUP_DAYS = 7
@@ -189,6 +229,7 @@ EN_ROUTE = frozenset({S.ORDERED, S.SHIPPED, S.IN_TRANSIT, S.OUT_FOR_DELIVERY})
 MOVABLE = frozenset({S.ORDERED, S.SHIPPED, S.IN_TRANSIT, S.ATTEMPTED, S.EXCEPTION})
 PROBLEMS = frozenset({S.ATTEMPTED, S.EXCEPTION})
 GONE = frozenset({S.RETURNED, S.CANCELLED})
+PIN_STATUSES = frozenset({S.OUT_FOR_DELIVERY, S.READY_FOR_PICKUP})
 
 ICONS: dict[ParcelStatus, str] = {
     S.ORDERED: "mdi:cart-outline",
@@ -240,6 +281,8 @@ _OTHER_APPLE_OS = frozenset(
 )
 # The persistent notification may still be shown after a reload.
 _UNKNOWN = "\x00unknown"
+# Keys the hashes of PINs in stored fingerprints; it never leaves memory.
+_PIN_KEY = secrets.token_bytes(32)
 
 
 class NotifierHost(Protocol):
@@ -301,6 +344,7 @@ class _Options:
     cutoff: time
     threshold: int
     item_names: bool
+    pin: bool
     path: str
 
     @classmethod
@@ -321,6 +365,7 @@ class _Options:
                 options.get(CONF_COLLAPSE_THRESHOLD), DEFAULT_COLLAPSE_THRESHOLD
             ),
             item_names=bool(options.get(CONF_ITEM_NAMES, DEFAULT_ITEM_NAMES)),
+            pin=options.get(CONF_PIN_ON_LOCK_SCREEN) is True,
             path=str(options.get(CONF_DASHBOARD_PATH) or DEFAULT_DASHBOARD_PATH),
         )
 
@@ -353,6 +398,14 @@ class _Result(StrEnum):
     SENT = "sent"
     MISSING = "missing"
     FAILED = "failed"
+
+
+class _Route(StrEnum):
+    """What a push to a Live Activity's tag does on an iPhone."""
+
+    UPDATE = "update"
+    OTHER = "other"
+    UNKNOWN = "unknown"
 
 
 def _user_error(key: str) -> ServiceValidationError:
@@ -556,6 +609,41 @@ def _routed(parcel: Parcel, device: _Device) -> bool:
     have no owner).
     """
     return not parcel.private or bool(device.persons & set(parcel.state.owners))
+
+
+def _pin(parcel: Parcel, device: _Device, options: _Options) -> str | None:
+    """Return the delivery PIN or pickup code an iPhone's activity may show.
+
+    Only with the option on, on iPhones that may show the parcel, while it is
+    out for delivery or ready for pickup. A code too long for the lock screen
+    isn't shown at all, never cut.
+    """
+    state = parcel.state
+    if (
+        not options.pin
+        or device.kind is not DeviceKind.IPHONE
+        or state.status not in PIN_STATUSES
+        or not _routed(parcel, device)
+    ):
+        return None
+    code = _SPACES.sub(" ", state.pickup_code or "").strip()
+    return code if 0 < len(code) <= MAX_PIN else None
+
+
+def _pin_lines(state: ParcelState, today: date) -> tuple[str, list[str]]:
+    """Return the status line above a PIN, and what follows the PIN.
+
+    The Lock Screen shows two lines of the message, and the compact views
+    one: the status, then the PIN with the window or the pickup point.
+    """
+    if state.status is S.READY_FOR_PICKUP:
+        rest = [place] if (place := _place(state.pickup_point)) else []
+        if state.collect_by is not None:
+            rest.append(f"collect by {_short_day(state.collect_by, today)}")
+        return _STATUS_TEXT[S.READY_FOR_PICKUP], rest
+    eta = state.eta
+    window = _window_text(eta) if eta is not None and eta.end == today else None
+    return _STATUS_TEXT[S.OUT_FOR_DELIVERY], [window] if window else []
 
 
 def _countdown(eta: Eta, day: date) -> tuple[datetime, datetime] | None:
@@ -770,16 +858,26 @@ def _status_texts(state: ParcelState, today: date) -> tuple[str, str]:
 
 
 def _parcel_content(
-    parcel: Parcel, ctx: _Context, possibly: Sequence[str] = ()
+    parcel: Parcel,
+    ctx: _Context,
+    possibly: Sequence[str] = (),
+    pin: str | None = None,
 ) -> _Content:
     """Return what a parcel's activity or notification shows.
 
-    ``possibly`` lists the items of the orders the package may hold.
+    ``possibly`` lists the items of the orders the package may hold. With a
+    ``pin``, the status takes the first line and the PIN leads the second; no
+    timer replaces them.
     """
     state = parcel.state
     text, critical = _status_texts(state, ctx.today)
     title = _title(state)
-    parts = [text]
+    first: str | None = None
+    if pin is not None:
+        first, rest = _pin_lines(state, ctx.today)
+        parts = [f"PIN {pin}", *rest]
+    else:
+        parts = [text]
     carrier = _clean(state.carrier_name)
     if carrier and carrier.casefold() != title.casefold():
         parts.append(carrier)
@@ -789,7 +887,7 @@ def _parcel_content(
             more = len(state.items) - 1
             parts.append(f"{item} +{more} more" if more else item)
         elif (name := _clean(state.name, 30)) and name.casefold() not in {
-            shown.casefold() for shown in (title, *parts)
+            shown.casefold() for shown in (title, *([first] if first else []), *parts)
         }:
             # What the user calls it in the Parcel app, unless it's the shop.
             parts.append(name)
@@ -798,10 +896,11 @@ def _parcel_content(
             parts.append(
                 f"Possibly: {_clean(possibly[0], 30)}" + (f" (+{more})" if more else "")
             )
-    end = _chronometer_end(state, ctx)
+    end = _chronometer_end(state, ctx) if pin is None else None
+    message = SEP.join(parts)
     return _Content(
         title=title,
-        message=SEP.join(parts),
+        message=f"{first}\n{message}" if first is not None else message,
         critical=critical,
         progress=max(1, min(PROGRESS_MAX, STATUS_RANK.get(state.status, 1))),
         progress_max=PROGRESS_MAX,
@@ -860,6 +959,20 @@ def _next_state(states: list[ParcelState], today: date) -> ParcelState | None:
     return min(candidates, key=order, default=None)
 
 
+def _next_parcel(parcels: list[Parcel], today: date) -> Parcel | None:
+    """Return the parcel that a combined activity names next."""
+    states = [parcel.state for parcel in parcels]
+    upcoming = _next_state(states, today)
+    return next(
+        (
+            parcel
+            for parcel, state in zip(parcels, states, strict=True)
+            if state is upcoming
+        ),
+        None,
+    )
+
+
 def _next_label(state: ParcelState) -> str:
     """Return who brings the next delivery: Amazon via Paack, else either name."""
     shop = _clean(state.merchant, MAX_NAME)
@@ -869,8 +982,14 @@ def _next_label(state: ParcelState) -> str:
     return shop or carrier or "Parcel"
 
 
-def _combined_content(parcels: list[Parcel], ctx: _Context) -> _Content:
-    """Return what a device's combined activity shows."""
+def _combined_content(
+    parcels: list[Parcel], ctx: _Context, pin: str | None = None
+) -> _Content:
+    """Return what a device's combined activity shows.
+
+    ``pin`` is the code of the parcel out for delivery that it names next:
+    the count keeps the first line, and the PIN leads the second.
+    """
     states = [parcel.state for parcel in parcels]
     total = len(states)
     counts = Counter(state.status for state in states)
@@ -879,20 +998,26 @@ def _combined_content(parcels: list[Parcel], ctx: _Context) -> _Content:
     problems = counts[S.ATTEMPTED] + counts[S.EXCEPTION]
     out = counts[S.OUT_FOR_DELIVERY]
     done = bool(total) and delivered == total
-    parts = [f"{delivered} of {total} delivered" + (f" {CHECK}" if done else "")]
+    head = f"{delivered} of {total} delivered" + (f" {CHECK}" if done else "")
+    parts: list[str] = []
     if pickup:
         parts.append(f"{pickup} ready for pickup")
     if problems:
         parts.append(f"{problems} problem" + ("s" if problems > 1 else ""))
+    upcoming_parts: list[str] = []
     when: int | None = None
     if (upcoming := _next_state(states, ctx.today)) is not None:
         label = _next_label(upcoming)
         if short := _window_short(upcoming.eta):
-            parts.append(f"next: {label} {short}")
+            upcoming_parts.append(f"next: {label} {short}")
         elif upcoming.status is S.OUT_FOR_DELIVERY:
-            parts.append(f"{label} out for delivery")
-        # The timer would hide the text that names a problem.
-        if not problems and (end := _chronometer_end(upcoming, ctx)) is not None:
+            upcoming_parts.append(f"{label} out for delivery")
+        # The timer would hide the text that names a problem, or the PIN.
+        if (
+            pin is None
+            and not problems
+            and (end := _chronometer_end(upcoming, ctx)) is not None
+        ):
             when = int(end.timestamp())
     # The most urgent parcel leads the icon and the colour.
     if out:
@@ -909,9 +1034,13 @@ def _combined_content(parcels: list[Parcel], ctx: _Context) -> _Content:
         (_relevance(state, ctx) for state in states if state.status is not S.DELIVERED),
         default=0.2,
     )
+    if pin is None:
+        message = SEP.join([head, *parts, *upcoming_parts])
+    else:
+        message = f"{head}\n" + SEP.join([f"PIN {pin}", *upcoming_parts, *parts])
     return _Content(
         title=COMBINED_TITLE,
-        message=SEP.join(parts),
+        message=message,
         critical=f"{delivered}/{total}",
         progress=delivered,
         progress_max=max(total, 1),
@@ -973,35 +1102,51 @@ def _key_payload(content: _Content, parcel_id: str, kind: DeviceKind) -> dict[st
     return {"title": content.title, "message": content.message, "data": data}
 
 
-def _test_payload(now: datetime, path: str) -> dict[str, Any]:
-    """Return the demo Live Activity."""
-    return {
-        "title": PERSISTENT_TITLE,
-        "message": f"Test{SEP}Out for delivery 13:00{DASH}14:00",
-        "data": {
-            "tag": TEST_TAG,
-            "live_update": True,
-            "critical_text": "Test",
-            "progress": 3,
-            "progress_max": PROGRESS_MAX,
-            "notification_icon": ICONS[S.OUT_FOR_DELIVERY],
-            "notification_icon_color": COLORS[S.OUT_FOR_DELIVERY],
-            "progress_bar_color": COLORS[S.OUT_FOR_DELIVERY],
-            "url": path,
-            "relevance_score": 0.5,
-            "chronometer": True,
-            "when": int((now + TEST_ACTIVITY_DURATION).timestamp()),
-        },
+def _test_payload(
+    now: datetime,
+    path: str,
+    duration: timedelta = TEST_ACTIVITY_DURATION,
+    pin: str | None = None,
+) -> dict[str, Any]:
+    """Return the demo Live Activity, or its quiet update with a made-up PIN."""
+    data: dict[str, Any] = {
+        "tag": TEST_TAG,
+        "live_update": True,
+        "critical_text": "Test",
+        "progress": 3,
+        "progress_max": PROGRESS_MAX,
+        "notification_icon": ICONS[S.OUT_FOR_DELIVERY],
+        "notification_icon_color": COLORS[S.OUT_FOR_DELIVERY],
+        "progress_bar_color": COLORS[S.OUT_FOR_DELIVERY],
+        "url": path,
+        "relevance_score": 0.5,
     }
+    window = f"13:00{DASH}14:00"
+    if pin is None:
+        message = f"Test{SEP}Out for delivery {window}"
+        data["chronometer"] = True
+        data["when"] = int((now + duration).timestamp())
+    else:
+        message = f"Test{SEP}Out for delivery\nPIN {pin}{SEP}{window}"
+        data["silent"] = True
+    return {"title": PERSISTENT_TITLE, "message": message, "data": data}
 
 
-def _fingerprint(payload: Mapping[str, Any]) -> str:
-    """Return a fingerprint of a payload, ignoring how quietly it is sent."""
+def _fingerprint(payload: Mapping[str, Any], pin: str | None = None) -> str:
+    """Return a fingerprint of a payload, ignoring how quietly it is sent.
+
+    A PIN counts only through a key that lives in memory, so a stored
+    fingerprint can't be matched against every possible PIN.
+    """
     data = {key: value for key, value in payload["data"].items() if key != "silent"}
+    message = payload.get("message")
+    if pin is not None and isinstance(message, str):
+        keyed = hmac.new(_PIN_KEY, pin.encode(), "sha256").hexdigest()
+        message = message.replace(f"PIN {pin}", f"PIN {keyed}")
     raw = json.dumps(
         {
             "title": payload.get("title"),
-            "message": payload.get("message"),
+            "message": message,
             "data": data,
         },
         sort_keys=True,
@@ -1210,6 +1355,10 @@ def _sanitize_record(raw: Any) -> dict[str, Any] | None:
         "fp": _optional_str(raw.get("fp")),
         "status": _optional_str(raw.get("status")),
         "service": _optional_str(raw.get("service")),
+        # Whether the last update showed a PIN, and the fingerprint of the
+        # same update without it.
+        "pin": raw.get("pin") is True,
+        "plain": _optional_str(raw.get("plain")),
     }
 
 
@@ -1273,6 +1422,7 @@ def _sanitize_state(raw: Any) -> dict[str, Any]:
                 "device": device,
                 "service": _optional_str(test.get("service")),
                 "end_at": _iso(end_at),
+                "pin": test.get("pin") is True,
             }
     return state
 
@@ -1302,6 +1452,9 @@ class Notifier:
         self._ready = False
         self._stopped = False
         self._retry_at: datetime | None = None
+        # When to look again for a token that lets a PIN go in a quiet update.
+        self._pin_at: datetime | None = None
+        self._pin_tries = 0
         self._wake_points: list[datetime] = []
         self._persistent_fp: str | None = _UNKNOWN
         self._devices: dict[str, _Device] = {}
@@ -1397,8 +1550,10 @@ class Notifier:
     async def async_test_live_activity(self, device_id: str | None = None) -> None:
         """Send a demo Live Activity to one iPhone and end it a minute later.
 
-        Without a device the test device is used, else the first iPhone that
-        normally gets notifications. In test mode only the test device is used.
+        With the PIN option on it lasts two minutes and shows a made-up PIN
+        after its start. Without a device the test device is used, else the
+        first iPhone that normally gets notifications. In test mode only the
+        test device is used.
         """
         async with self._lock:
             if self._stopped:
@@ -1410,8 +1565,12 @@ class Notifier:
             test = self._data.get("test")
             if test is not None and test["device"] != device.device_id:
                 await self._async_end_test(now, force=True)
+            # With the PIN option on, the demo lasts long enough to show one.
+            duration = TEST_PIN_DURATION if options.pin else TEST_ACTIVITY_DURATION
             result = await self._async_send(
-                device.service, device.kind, _test_payload(now, options.path)
+                device.service,
+                device.kind,
+                _test_payload(now, options.path, duration),
             )
             if result is _Result.MISSING:
                 raise HomeAssistantError(
@@ -1424,8 +1583,13 @@ class Notifier:
             self._data["test"] = {
                 "device": device.device_id,
                 "service": device.service,
-                "end_at": _iso(now + TEST_ACTIVITY_DURATION),
+                "end_at": _iso(now + duration),
+                "pin": False,
             }
+            if options.pin:
+                self._pin_later(now, first=True)
+                # No evaluation follows to count this look.
+                self._pin_tries = 1
             self._save_if_changed()
             if not self._stopped:
                 self._schedule_timer(self._context(now, options))
@@ -1474,6 +1638,7 @@ class Notifier:
             "started": self._ready and not self._stopped,
             "test_mode": options.test_mode,
             "test_device_set": options.test_device is not None,
+            "pin_on_lock_screen": options.pin,
             "notify_persons": len(options.persons),
             "excluded_devices": len(options.excluded),
             "devices": dict(Counter(d.kind.value for d in self._devices.values())),
@@ -1487,6 +1652,9 @@ class Notifier:
                 "activities": len(records),
                 "activity_starts": sum(record["gen"] for record in records),
                 "running": sum(1 for record in records if record["running"]),
+                "showing_pin": sum(
+                    1 for record in records if record["running"] and record["pin"]
+                ),
                 "notifications_sent": sum(len(s) for s in day["notified"].values()),
                 "orders_in_a_box": len(boxes_of_day(self._host.data, board, today)),
             },
@@ -1504,6 +1672,7 @@ class Notifier:
             self._ready = True
             self._cancel_timer()
             self._retry_at = None
+            self._pin_at = None
             ctx = self._context(dt_util.utcnow(), _Options.from_entry(self.entry))
             try:
                 await self._async_evaluate_locked(ctx)
@@ -1513,6 +1682,8 @@ class Notifier:
                     _describe_error(err),
                 )
             finally:
+                # Each look for a token that finds none waits longer.
+                self._pin_tries = 0 if self._pin_at is None else self._pin_tries + 1
                 self._save_if_changed()
                 self._schedule_timer(ctx)
 
@@ -1522,6 +1693,7 @@ class Notifier:
         self._recipients = self._recipients_for(ctx.options)
         await self._async_close_past_days(ctx)
         await self._async_end_test(ctx.now, force=not self.live_activities_enabled)
+        await self._async_test_pin(ctx)
         parcels = {parcel.id: parcel for parcel in self._host.visible_parcels()}
         # Chronometers appear and disappear with today's delivery windows.
         self._wake_points = [
@@ -1761,22 +1933,33 @@ class Notifier:
         record = day["activities"].get(device.device_id, {}).get(parcel.id)
         status = parcel.state.status
         content = _parcel_content(parcel, ctx, possibly)
+        pin = _pin(parcel, device, ctx.options)
+        pinned = (
+            None if pin is None else (_parcel_content(parcel, ctx, possibly, pin), pin)
+        )
         if record is None or not record["running"]:
             if status is S.DELIVERED:
                 return
+            pin_later = pinned is not None
             if record is None:
-                await self._async_start(ctx, day, device, parcel.id, 1, content)
+                await self._async_start(
+                    ctx, day, device, parcel.id, 1, content, pin_later=pin_later
+                )
             elif record["end_reason"] in RESTARTABLE or (
                 record["end_reason"] == REASON_MOVED and status is S.OUT_FOR_DELIVERY
             ):
                 gen = record["gen"] + 1
-                await self._async_start(ctx, day, device, parcel.id, gen, content)
+                await self._async_start(
+                    ctx, day, device, parcel.id, gen, content, pin_later=pin_later
+                )
             return
         if status is S.DELIVERED:
             await self._async_linger(ctx, device, record, content, REASON_DELIVERED)
             return
         record["linger"] = record["end_at"] = None
-        await self._async_keep_alive(ctx, day, device, parcel.id, record, content)
+        await self._async_keep_alive(
+            ctx, day, device, parcel.id, record, content, pinned
+        )
 
     async def _async_combined(
         self,
@@ -1789,14 +1972,28 @@ class Notifier:
         record = day["activities"].get(device.device_id, {}).get(COMBINED)
         pending = any(parcel.state.status is not S.DELIVERED for parcel in members)
         content = _combined_content(members, ctx)
+        # Only the PIN of the delivery it names: pickup codes stay with their
+        # parcels' own activities.
+        upcoming = _next_parcel(members, ctx.today)
+        pin = (
+            _pin(upcoming, device, ctx.options)
+            if upcoming is not None and upcoming.state.status is S.OUT_FOR_DELIVERY
+            else None
+        )
+        pinned = None if pin is None else (_combined_content(members, ctx, pin), pin)
         if record is None or not record["running"]:
             if not pending:
                 return
+            pin_later = pinned is not None
             if record is None:
-                await self._async_start(ctx, day, device, COMBINED, 1, content)
+                await self._async_start(
+                    ctx, day, device, COMBINED, 1, content, pin_later=pin_later
+                )
             elif record["end_reason"] in (*RESTARTABLE, REASON_DELIVERED):
                 gen = record["gen"] + 1
-                await self._async_start(ctx, day, device, COMBINED, gen, content)
+                await self._async_start(
+                    ctx, day, device, COMBINED, gen, content, pin_later=pin_later
+                )
             return
         if not members:
             await self._async_end(device.device_id, record, REASON_REMOVED, ctx.now)
@@ -1805,7 +2002,9 @@ class Notifier:
             await self._async_linger(ctx, device, record, content, REASON_DELIVERED)
             return
         record["linger"] = record["end_at"] = None
-        await self._async_keep_alive(ctx, day, device, COMBINED, record, content)
+        await self._async_keep_alive(
+            ctx, day, device, COMBINED, record, content, pinned
+        )
 
     async def _async_keep_alive(
         self,
@@ -1815,8 +2014,12 @@ class Notifier:
         key: str,
         record: dict[str, Any],
         content: _Content,
+        pinned: tuple[_Content, str] | None = None,
     ) -> None:
-        """Update an activity, restarting it before Apple ends it after 8 hours."""
+        """Update an activity, restarting it before Apple ends it after 8 hours.
+
+        A restart is plain, like every start: the PIN follows it quietly.
+        """
         started = _parse_dt(record["started"])
         if (
             started is not None
@@ -1825,9 +2028,11 @@ class Notifier:
         ):
             if await self._async_end(device.device_id, record, REASON_RESTART, ctx.now):
                 gen = record["gen"] + 1
-                await self._async_start(ctx, day, device, key, gen, content)
+                await self._async_start(
+                    ctx, day, device, key, gen, content, pin_later=pinned is not None
+                )
             return
-        await self._async_update(ctx, device, record, content)
+        await self._async_update(ctx, device, record, content, pinned)
 
     async def _async_linger(
         self,
@@ -1856,8 +2061,14 @@ class Notifier:
         key: str,
         gen: int,
         content: _Content,
+        *,
+        pin_later: bool = False,
     ) -> bool:
-        """Start an activity; return True when it was sent."""
+        """Start an activity; return True when it was sent.
+
+        A start never carries a PIN: with ``pin_later`` the PIN follows in a
+        quiet update, once the iPhone has registered the activity.
+        """
         tag = (
             _combined_tag(ctx.today, gen) if key == COMBINED else _parcel_tag(key, gen)
         )
@@ -1879,7 +2090,11 @@ class Notifier:
             "fp": _fingerprint(payload),
             "status": content.status,
             "service": device.service,
+            "pin": False,
+            "plain": None,
         }
+        if pin_later:
+            self._pin_later(ctx.now, first=True)
         return True
 
     async def _async_update(
@@ -1888,27 +2103,69 @@ class Notifier:
         device: _Device,
         record: dict[str, Any],
         content: _Content,
+        pinned: tuple[_Content, str] | None = None,
     ) -> None:
         """Update a running activity when what it shows changed.
 
         The title stays the one the activity started with; the update is quiet
-        when the status didn't change.
+        when the status didn't change. ``pinned`` is what it shows with a PIN:
+        that goes only in a quiet update, pushed straight to an iPhone known to
+        hold the activity, so no alert and no new start ever carries a PIN.
         """
+        silent = record["status"] == content.status
         payload = _activity_payload(
-            content,
-            record["tag"],
-            record["title"],
-            silent=record["status"] == content.status,
+            content, record["tag"], record["title"], silent=silent
         )
-        fingerprint = _fingerprint(payload)
-        if fingerprint == record["fp"]:
+        plain = _fingerprint(payload)
+        if pinned is not None and silent:
+            pin_content, pin = pinned
+            pin_payload = _activity_payload(
+                pin_content, record["tag"], record["title"], silent=True
+            )
+            keyed = _fingerprint(pin_payload, pin)
+            if keyed == record["fp"]:
+                record["service"] = device.service
+                return
+            route, webhook = self._live_route(device, record["tag"], ctx.now)
+            if route is _Route.UPDATE and webhook is not None:
+                if await self._async_push(device, webhook, pin_payload):
+                    record["fp"] = keyed
+                    record["pin"] = True
+                    record["plain"] = plain
+                    record["status"] = content.status
+                    record["service"] = device.service
+                else:
+                    self._retry(ctx.now)
+                return
+            self._pin_later(ctx.now)
+            if record["pin"] and plain == record["plain"]:
+                # Keep the PIN shown until its change can be pushed.
+                record["service"] = device.service
+                return
+        elif pinned is not None:
+            # A new status alerts without the PIN, which follows quietly.
+            self._pin_later(ctx.now)
+        elif record["pin"] and plain == record["plain"]:
+            route, _webhook = self._live_route(device, record["tag"], ctx.now)
+            if route is _Route.OTHER:
+                # Dismissed or ended with its PIN: taking the PIN away would
+                # start it again.
+                record["pin"] = False
+                record["fp"] = plain
+                record["plain"] = None
+                return
+        if plain == record["fp"]:
             record["service"] = device.service
             return
         result = await self._async_send(device.service, device.kind, payload)
         if result is _Result.SENT:
-            record["fp"] = fingerprint
+            record["fp"] = plain
             record["status"] = content.status
             record["service"] = device.service
+            record["pin"] = False
+            record["plain"] = None
+            if pinned is not None and not silent:
+                self._pin_later(ctx.now, first=True)
         elif result is _Result.FAILED:
             self._retry(ctx.now)
 
@@ -1937,6 +2194,8 @@ class Notifier:
         record["running"] = False
         record["end_reason"] = reason
         record["linger"] = record["end_at"] = None
+        record["pin"] = False
+        record["plain"] = None
         return True
 
     async def _async_end_test(self, now: datetime, *, force: bool = False) -> None:
@@ -1986,6 +2245,108 @@ class Notifier:
         at = now + RETRY_DELAY
         if self._retry_at is None or at < self._retry_at:
             self._retry_at = at
+
+    def _pin_later(self, now: datetime, *, first: bool = False) -> None:
+        """Look again soon for an activity a PIN can go to, then less often.
+
+        A ``first`` look, for an activity just started or just turned to a
+        status with a PIN, comes soon even while another PIN waits longer.
+        """
+        if first:
+            self._pin_tries = 0
+        at = now + PIN_RETRY[min(self._pin_tries, len(PIN_RETRY) - 1)]
+        if self._pin_at is None or at < self._pin_at:
+            self._pin_at = at
+
+    def _live_route(
+        self, device: _Device, tag: str, now: datetime
+    ) -> tuple[_Route, str | None]:
+        """Return what a push to an activity's tag does now, and its webhook.
+
+        mobile_app updates an activity whose push token it holds and starts
+        one otherwise. A token about to expire counts as gone, and anything
+        unexpected in what mobile_app keeps reads as unknown.
+        """
+        try:
+            mobile = self.hass.data.get(MOBILE_APP_DOMAIN)
+            if not isinstance(mobile, Mapping):
+                return _Route.UNKNOWN, None
+            targets = getattr(mobile.get("notify"), "registered_targets", None)
+            entries = mobile.get("config_entries")
+            tokens = mobile.get("live_activity_tokens")
+            if not (
+                isinstance(targets, Mapping)
+                and isinstance(entries, Mapping)
+                and isinstance(tokens, Mapping)
+            ):
+                return _Route.UNKNOWN, None
+            webhook = targets.get(device.service)
+            if not isinstance(webhook, str) or webhook not in entries:
+                return _Route.UNKNOWN, None
+            stored = (tokens.get(webhook) or {}).get(tag)
+            if stored is None:
+                return _Route.OTHER, webhook
+            if not isinstance(stored, Mapping):
+                return _Route.UNKNOWN, None
+            if float(stored["expires_at"]) > (now + TOKEN_MARGIN).timestamp():
+                return _Route.UPDATE, webhook
+        except Exception:
+            return _Route.UNKNOWN, None
+        return _Route.OTHER, webhook
+
+    async def _async_push(
+        self, device: _Device, webhook: str, payload: dict[str, Any]
+    ) -> bool:
+        """Push a quiet update straight to an iPhone; return True when sent.
+
+        Unlike a notify service call it fires no event, so what it carries
+        stays off the event bus, the recorder and the logbook.
+        """
+        title = payload.get("title")
+        try:
+            await self.hass.data[MOBILE_APP_DOMAIN]["notify"].async_send_message(
+                payload["message"],
+                target=[webhook],
+                data=dict(payload["data"]),
+                **({"title": title} if title else {}),
+            )
+        except Exception as err:
+            _LOGGER.warning(
+                "Notifying a device (%s) failed: %s",
+                device.kind,
+                _describe_error(err),
+            )
+            return False
+        return True
+
+    async def _async_test_pin(self, ctx: _Context) -> None:
+        """Show the made-up PIN on the demo activity once the iPhone holds it."""
+        test = self._data.get("test")
+        if (
+            test is None
+            or test["pin"]
+            or not ctx.options.pin
+            or not self.live_activities_enabled
+        ):
+            return
+        end_at = _parse_dt(test["end_at"])
+        device = self._devices.get(test["device"])
+        if (
+            end_at is None
+            or ctx.now >= end_at - DUE_TOLERANCE
+            or device is None
+            or device.kind is not DeviceKind.IPHONE
+        ):
+            return
+        route, webhook = self._live_route(device, TEST_TAG, ctx.now)
+        if route is not _Route.UPDATE or webhook is None:
+            self._pin_later(ctx.now)
+            return
+        payload = _test_payload(ctx.now, ctx.options.path, pin=TEST_PIN)
+        if await self._async_push(device, webhook, payload):
+            test["pin"] = True
+        else:
+            self._retry(ctx.now)
 
     async def _async_key_notifications(
         self,
@@ -2098,6 +2459,8 @@ class Notifier:
         ]
         if self._retry_at is not None:
             points.append(self._retry_at)
+        if self._pin_at is not None:
+            points.append(self._pin_at)
         test = self._data.get("test")
         if test is not None and (end_at := _parse_dt(test["end_at"])) is not None:
             points.append(end_at)

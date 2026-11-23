@@ -232,9 +232,11 @@ _SUBJECT_PATTERNS: tuple[KindPattern, ...] = (
         r"|obrigad[oa]\s+pela\s+sua\s+encomenda|^\s*encomenda\s*:"
         # Newer e-mails say "pedido"; "pedido confirmado/realizado" and
         # "pedido:" are Spanish too and stay with es, so that a Spanish
-        # e-mail of unknown language isn't read as Portuguese.
+        # e-mail of unknown language isn't read as Portuguese. "O seu
+        # pedido da Amazon" starts the subject, as an update about the
+        # order can name it further on.
         r"|pedido\s+(?:efetuado|recebido)|confirmacao\s+d[eo]\s+(?:seu\s+)?pedido"
-        r"|o\s+seu\s+pedido\s+(?:d[aeo]|n[ao])\s+amazon"
+        r"|^\s*o\s+seu\s+pedido\s+(?:d[aeo]|n[ao])\s+amazon"
         r"|obrigad[oa]\s+pelo\s+seu\s+pedido",
         es=r"pedido\s+(?:realizado|confirmado|recibido|efectuado)"
         r"|confirmacion\s+del?\s+pedido|tu\s+pedido\s+(?:de|en)\s+amazon"

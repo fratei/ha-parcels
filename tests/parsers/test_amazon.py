@@ -272,6 +272,25 @@ def test_portuguese_order_says_pedido(
     assert shipment.eta == Eta(date(2026, 12, 7), date(2026, 12, 7))
 
 
+def test_update_about_the_pedido_reads_its_body(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """Only a subject that starts with "O seu pedido da Amazon" is an order.
+
+    An update about the order further on in the subject is read by its body.
+    """
+    message = load_eml("amazon/shipped_recommendations_pt.eml")
+    message = dataclasses.replace(
+        message, subject="Atualização sobre o seu pedido da Amazon.es"
+    )
+    result = parse_amazon(message, verdict_for(message), tz)
+    assert result is not None
+    assert result.kind is MailKind.SHIPPED
+    assert result.language == "pt"
+
+
 def test_portuguese_order_by_its_body(
     load_eml: Callable[..., MailMessage],
     verdict_for: Callable[..., SenderVerdict],

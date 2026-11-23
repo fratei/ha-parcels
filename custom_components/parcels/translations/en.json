@@ -56,6 +56,7 @@
           "parcel_app_key": "Parcel app API key",
           "parcel_app_owner": "Parcel app user",
           "parcel_app_postcode": "Delivery postcode",
+          "pin_on_lock_screen": "Show delivery PINs on the lock screen",
           "purge_days": "Delete delivered parcels after",
           "seventeentrack": "Live status from 17TRACK",
           "start_time": "Start time",
@@ -69,7 +70,7 @@
           "collapse_threshold": "When more packages than this are expected on the same day, they share one Live Activity. Orders that one of the day's packages may hold don't count.",
           "cutoff_time": "Remaining Live Activities end at this time. Undelivered parcels stay in the persistent notification.",
           "excluded_devices": "Companion app devices that never get Live Activities, such as a shared tablet.",
-          "item_names_on_lock_screen": "Live Activities are visible on the lock screen. When off, they show merchant, carrier, status and time window only.",
+          "item_names_on_lock_screen": "Live Activities are visible on the lock screen. When off, they show merchant, carrier, status and time window only (and the delivery PIN, if that option is on).",
           "notify_persons": "The companion app devices of these people get Live Activities.",
           "parcel_app_add": "Sends the tracking number, the carrier, the shop's name and Home Assistant's language, never item names or e-mails. Private parcels are never sent.",
           "parcel_app_daily": "Parcel accepts at most 20 new deliveries a day, refused ones included.",
@@ -78,6 +79,7 @@
           "parcel_app_key": "Reads your deliveries from the Parcel app and adds new tracking numbers to it. Needs Parcel Premium; make the key at web.parcelapp.net. Leave empty to stop using Parcel.",
           "parcel_app_owner": "The person whose Parcel account the key belongs to. Deliveries from Parcel become their parcels.",
           "parcel_app_postcode": "Sent only for carriers that Parcel can't follow without it, such as Paack. In Portugal, NNNN-NNN.",
+          "pin_on_lock_screen": "While a parcel is out for delivery or ready for pickup, its iPhone Live Activity shows the delivery PIN or pickup code. Anyone who can see the phone can read it.",
           "purge_days": "Days after delivery. Must be more than the archive period.",
           "seventeentrack": "Sends tracking numbers, never item names or e-mails, to the 17TRACK integration.",
           "start_time": "Live Activities for parcels expected today start at this time.",
@@ -555,7 +557,7 @@
     },
     "test_live_activity": {
       "name": "Test Live Activity",
-      "description": "Sends a demo Live Activity to an iPhone. It ends after a minute. Only administrators can use this action.",
+      "description": "Sends a demo Live Activity to an iPhone. It ends after a minute, or after two with delivery PINs on the lock screen, when it also shows the made-up PIN 4826. Only administrators can use this action.",
       "fields": {
         "device_id": {
           "name": "Device",
