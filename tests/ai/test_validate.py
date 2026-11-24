@@ -591,6 +591,77 @@ def test_mail_day_with_other_evidence(
     assert result.shipments[0].eta == eta
 
 
+@pytest.mark.parametrize("kind", ["order", "shipped"])
+@pytest.mark.parametrize(
+    ("text", "language"),
+    [
+        ("Receberá a sua encomenda hoje.", "pt"),
+        ("Receberás a tua encomenda hoje.", "pt"),
+        ("Vai receber a sua encomenda hoje.", "pt"),
+        ("Vais receber a tua encomenda hoje.", "pt"),
+        ("Recebe hoje a sua encomenda.", "pt"),
+        ("Recebes hoje a tua encomenda.", "pt"),
+        ("You'll receive your order today.", "en"),
+        ("You will get your parcel today.", "en"),
+        ("Recibirá su pedido hoy.", "es"),
+        ("Recibirás tu pedido hoy.", "es"),
+        ("Vous recevrez votre colis aujourd'hui.", "fr"),
+        ("Tu recevras ton colis aujourd'hui.", "fr"),
+        ("Sie erhalten Ihr Paket heute.", "de"),
+        ("Du erhältst dein Paket heute.", "de"),
+        ("Riceverai il tuo ordine oggi.", "it"),
+        ("Riceverà il suo ordine oggi.", "it"),
+        ("Je ontvangt je pakket vandaag.", "nl"),
+        ("U ontvangt uw pakket vandaag.", "nl"),
+    ],
+)
+def test_receiving_the_parcel_today_keeps_the_mail_day(
+    kind: str, text: str, language: str
+) -> None:
+    """A sentence saying the customer receives the parcel today keeps the
+    e-mail's own day."""
+    result = checked(
+        answer(kind=kind, eta_start="2026-11-18", eta_end="2026-11-18"),
+        text,
+        language=language,
+    )
+    assert result.notes == ()
+    assert result.shipments[0].eta == Eta(REFERENCE, REFERENCE)
+
+
+@pytest.mark.parametrize("kind", ["order", "shipped"])
+@pytest.mark.parametrize(
+    ("text", "language"),
+    [
+        ("Recebemos hoje a sua encomenda.", "pt"),
+        ("We received your order today.", "en"),
+        ("Hemos recibido tu pedido hoy.", "es"),
+        ("Nous avons reçu votre commande aujourd'hui.", "fr"),
+        ("Wir haben Ihre Bestellung heute erhalten.", "de"),
+        ("Abbiamo ricevuto il tuo ordine oggi.", "it"),
+        ("We hebben je bestelling vandaag ontvangen.", "nl"),
+        ("Receberá hoje um e-mail com o código de seguimento.", "pt"),
+        ("You'll receive a tracking number today.", "en"),
+        ("Sie erhalten heute eine Versandbestätigung.", "de"),
+        ("Recibirá un SMS hoy.", "es"),
+        ("Envio hoje, 18/11.", "pt"),
+        ("Ships today.", "en"),
+    ],
+)
+def test_receiving_something_else_today_drops_the_mail_day(
+    kind: str, text: str, language: str
+) -> None:
+    """The shop receiving the order, the customer receiving something other
+    than the parcel, and shipping today don't keep the e-mail's own day."""
+    result = checked(
+        answer(kind=kind, eta_start="2026-11-18", eta_end="2026-11-18"),
+        text,
+        language=language,
+    )
+    assert "eta_is_mail_day" in result.notes
+    assert result.shipments[0].eta is None
+
+
 # Carriers
 
 

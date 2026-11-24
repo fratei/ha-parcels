@@ -704,7 +704,7 @@ async def test_test_mode(env: Env, hass: HomeAssistant) -> None:
 
 
 async def test_start_time_and_joiners(env: Env, hass: HomeAssistant) -> None:
-    """Today's parcels start at 08:00; later only deliveries and pickups join."""
+    """Today's parcels start at 08:00; one found later joins until the cut-off."""
     phone = env.phone("Alex iPhone", ALEX)
     today = env.parcel(eta=on(), items=("Blue scarf",))
     tomorrow = env.parcel(eta=on(NEXT_DAY), merchant="Zalando", carrier="ctt")
@@ -734,13 +734,129 @@ async def test_start_time_and_joiners(env: Env, hass: HomeAssistant) -> None:
         )
     ]
 
-    # Expected today but found late: listed, but it doesn't start an activity.
+    # Expected today but found late: it joins too.
     await env.goto(at(12))
-    env.parcel(eta=on(), merchant="Late Shop", carrier="gls")
+    late = env.parcel(eta=on(), merchant="Late Shop", carrier="gls")
     env.changed()
     await env.settle()
-    assert phone.take() == []
+    assert phone.take() == [
+        activity(
+            tag_of(late), "Late Shop", f"Expected today{SEP}GLS", "Today", 2, TRUCK, 0.5
+        )
+    ]
     assert f"- Late Shop{SEP}GLS{SEP}Expected today" in (persistent(hass) or "")
+
+
+async def test_due_today_after_the_start_joins(env: Env) -> None:
+    """A parcel whose date becomes today after the start time joins, once a day.
+
+    Moved to tomorrow and back, it doesn't start a second activity.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on(NEXT_DAY), merchant="Zalando", carrier="ctt")
+    tag = tag_of(parcel)
+    notifier = await env.start()
+    await env.goto(at(8))
+    assert phone.take() == []
+    assert notifier.diagnostics()["today"]["parcels"] == 0
+
+    await env.goto(at(8, 24))
+    env.change(parcel, eta=on())
+    await env.settle()
+    assert phone.take() == [
+        activity(tag, "Zalando", f"Expected today{SEP}CTT", "Today", 2, TRUCK, 0.5)
+    ]
+    assert notifier.diagnostics()["today"]["parcels"] == 1
+
+    await env.goto(at(9))
+    env.change(parcel, eta=on(NEXT_DAY))
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            tag,
+            "Zalando",
+            f"Expected tomorrow{SEP}CTT",
+            "Tomorrow",
+            2,
+            TRUCK,
+            0.1,
+            silent=True,
+        )
+    ]
+    await env.goto(at(9, 31))
+    assert phone.take() == [end(tag)]
+
+    await env.goto(at(10))
+    env.change(parcel, eta=on())
+    await env.settle()
+    assert phone.take() == []
+    today = notifier.diagnostics()["today"]
+    assert (today["parcels"], today["activity_starts"]) == (1, 1)
+
+
+async def test_late_joiners_follow_the_morning_rules(env: Env) -> None:
+    """After the start time, finished parcels and old pickups don't join either."""
+    phone = env.phone("Alex iPhone", ALEX)
+    waiting = env.parcel(
+        S.READY_FOR_PICKUP,
+        eta=on(NEXT_DAY),
+        merchant="Decathlon",
+        carrier="ctt",
+        when=at(9, day=DAY - timedelta(days=1)),
+    )
+    notifier = await env.start()
+    await env.goto(at(8))
+    assert phone.take() == []
+
+    await env.goto(at(10))
+    env.parcel(S.DELIVERED, on(), carrier="ctt")
+    env.parcel(S.CANCELLED, on(), merchant="Zalando", carrier="gls")
+    env.parcel(S.RETURNED, on(), merchant="IKEA", carrier="seur")
+    # Ready since yesterday: news only once it's ready, as in the morning.
+    env.change(waiting, eta=on())
+    await env.settle()
+    assert phone.take() == []
+    assert notifier.diagnostics()["today"]["parcels"] == 0
+
+
+async def test_late_joiner_updates_the_combined_activity(env: Env) -> None:
+    """On a device showing one activity, a parcel due today later updates it."""
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    env.parcel(eta=on())
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    late = env.parcel(eta=on(NEXT_DAY), merchant="Decathlon", carrier="gls")
+    notifier = await env.start()
+    await env.goto(at(8))
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "0 of 2 delivered",
+            "0/2",
+            0,
+            BOX,
+            0.5,
+            progress_max=2,
+        )
+    ]
+
+    await env.goto(at(8, 24))
+    env.change(late, eta=on())
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "0 of 3 delivered",
+            "0/3",
+            0,
+            BOX,
+            0.5,
+            progress_max=3,
+        )
+    ]
+    assert notifier.diagnostics()["today"]["activity_starts"] == 1
 
 
 async def test_cutoff(env: Env) -> None:
@@ -2042,7 +2158,7 @@ async def test_delivery_day_counts_packages(env: Env, hass: HomeAssistant) -> No
         activity(
             COMBINED,
             "Parcels today",
-            "0 of 3 delivered",
+            f"0 of 3 delivered{SEP}may hold 2 Amazon orders",
             "0/3",
             0,
             BOX,
@@ -2058,7 +2174,7 @@ async def test_delivery_day_counts_packages(env: Env, hass: HomeAssistant) -> No
         activity(
             COMBINED,
             "Parcels today",
-            "1 of 3 delivered",
+            f"1 of 3 delivered{SEP}may hold 2 Amazon orders",
             "1/3",
             1,
             BOX,
@@ -2075,7 +2191,7 @@ async def test_delivery_day_counts_packages(env: Env, hass: HomeAssistant) -> No
         activity(
             COMBINED,
             "Parcels today",
-            f"3 of 3 delivered {CHECK}",
+            f"3 of 3 delivered {CHECK}{SEP}may hold 2 Amazon orders",
             "3/3",
             3,
             DONE,
@@ -2123,7 +2239,7 @@ async def test_order_no_package_could_hold_counts_alone(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            "0 of 2 delivered",
+            f"0 of 2 delivered{SEP}may hold 1 Amazon order",
             "0/2",
             0,
             BOX,
@@ -2139,7 +2255,7 @@ async def test_order_no_package_could_hold_counts_alone(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            "1 of 2 delivered",
+            f"1 of 2 delivered{SEP}may hold 1 Amazon order",
             "1/2",
             1,
             BOX,
@@ -2164,7 +2280,7 @@ async def test_orders_wait_for_their_package(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            "0 of 2 delivered",
+            f"0 of 2 delivered{SEP}may hold 1 Amazon order",
             "0/2",
             0,
             BOX,
@@ -2180,7 +2296,7 @@ async def test_orders_wait_for_their_package(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            "1 of 2 delivered",
+            f"1 of 2 delivered{SEP}may hold 1 Amazon order",
             "1/2",
             1,
             BOX,
@@ -2198,7 +2314,7 @@ async def test_orders_wait_for_their_package(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            f"2 of 2 delivered {CHECK}",
+            f"2 of 2 delivered {CHECK}{SEP}may hold 1 Amazon order",
             "2/2",
             2,
             DONE,
@@ -2226,7 +2342,7 @@ async def test_order_of_another_shop_counts_alone(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            "0 of 3 delivered",
+            f"0 of 3 delivered{SEP}may hold 1 Amazon order",
             "0/3",
             0,
             BOX,
@@ -2243,7 +2359,7 @@ async def test_order_of_another_shop_counts_alone(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            "2 of 3 delivered",
+            f"2 of 3 delivered{SEP}may hold 1 Amazon order",
             "2/3",
             2,
             BOX,
@@ -2270,7 +2386,8 @@ async def test_package_shows_the_orders_it_may_hold(
     )
     await env.start()
     await env.goto(at(8))
-    possibly = f"CTT{SEP}Possibly: Desk lamp (+2)"
+    # The private order is Alex's: his devices count it, without its items.
+    possibly = f"CTT{SEP}Possibly: Desk lamp (+2){SEP}may hold 3 Amazon orders"
     assert iphone.take() == [
         activity(
             tag_of(box),
@@ -2314,6 +2431,322 @@ async def test_package_shows_the_orders_it_may_hold(
         "",
         f"[Open Parcels]({PATH})",
     )
+
+
+async def test_one_package_may_hold_the_days_orders(env: Env) -> None:
+    """The day's orders ride in the package that comes: 0 of 1, may hold 8.
+
+    The package still counts once; its text says what it may hold.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    for _ in range(8):
+        env.parcel(eta=on(), carrier=None)
+    notifier = await env.start()
+    await env.goto(at(8))
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "0 of 8 delivered",
+            "0/8",
+            0,
+            BOX,
+            0.5,
+            progress_max=8,
+        )
+    ]
+
+    # A package of no known shop goes out for delivery: it may hold them all.
+    await env.goto(at(11, 15))
+    box = env.parcel(S.OUT_FOR_DELIVERY, on(), merchant=None, carrier="paack")
+    env.changed()
+    await env.settle()
+    holds = "may hold 8 Amazon orders"
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"0 of 1 delivered{SEP}Paack out for delivery{SEP}{holds}",
+            "0/1",
+            0,
+            OUT,
+            0.9,
+            progress_max=1,
+        )
+    ]
+    today = notifier.diagnostics()["today"]
+    assert (today["parcels"], today["orders_in_a_box"]) == (9, 8)
+
+    await env.goto(at(14, 20))
+    env.change(box, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"1 of 1 delivered {CHECK}{SEP}{holds}",
+            "1/1",
+            1,
+            DONE,
+            0.2,
+            progress_max=1,
+        )
+    ]
+    await env.goto(at(14, 55))
+    assert phone.take() == [end(COMBINED)]
+
+
+async def test_orders_several_packages_may_hold_count_once(env: Env) -> None:
+    """Each package names the orders it may hold; the day counts each once."""
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 2})
+    paack = env.parcel(eta=on(), merchant=None, carrier="paack")
+    seur = env.parcel(eta=on(), merchant=None, carrier="seur")
+    for _ in range(2):
+        env.parcel(eta=on(), carrier=None)
+    gls = env.parcel(eta=on(NEXT_DAY), merchant="Zalando", carrier="gls")
+    await env.start()
+    await env.goto(at(8))
+    holds = "may hold 2 Amazon orders"
+    assert phone.take() == [
+        activity(
+            tag_of(paack),
+            "Paack",
+            f"Expected today{SEP}{holds}",
+            "Today",
+            2,
+            TRUCK,
+            0.5,
+        ),
+        activity(
+            tag_of(seur), "SEUR", f"Expected today{SEP}{holds}", "Today", 2, TRUCK, 0.5
+        ),
+    ]
+
+    # The mention comes last, after what's next.
+    await env.goto(at(9))
+    env.change(gls, S.OUT_FOR_DELIVERY, eta=on())
+    await env.settle()
+    assert phone.take() == [
+        end(tag_of(paack)),
+        end(tag_of(seur)),
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"0 of 3 delivered{SEP}Zalando via GLS out for delivery{SEP}{holds}",
+            "0/3",
+            0,
+            OUT,
+            0.9,
+            progress_max=3,
+        ),
+    ]
+
+
+async def test_private_order_counts_only_for_its_owner(env: Env) -> None:
+    """Another person's device neither counts a private order nor names its shop."""
+    alex = env.phone("Alex iPhone", ALEX)
+    sam = env.phone("Sam iPhone", SAM)
+    box = env.parcel(eta=on(), merchant=None, carrier="paack")
+    env.parcel(eta=on(), carrier=None)
+    env.parcel(eta=on(), merchant="Zalando", carrier=None, owners=(ALEX,), private=True)
+    await env.start()
+    await env.goto(at(8))
+    assert alex.take() == [
+        activity(
+            tag_of(box),
+            "Paack",
+            f"Expected today{SEP}may hold 2 orders",
+            "Today",
+            2,
+            TRUCK,
+            0.5,
+        )
+    ]
+    assert sam.take() == [
+        activity(
+            tag_of(box),
+            "Paack",
+            f"Expected today{SEP}may hold 1 Amazon order",
+            "Today",
+            2,
+            TRUCK,
+            0.5,
+        )
+    ]
+
+
+async def test_pin_leads_what_a_package_may_hold(env: Env) -> None:
+    """With a PIN, what a package may hold still comes last, never critical.
+
+    iPads and Android phones show it too, without the PIN.
+    """
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    android = env.phone("Sam Pixel", SAM, "android")
+    env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
+    box = env.parcel(S.OUT_FOR_DELIVERY, eta=window(13, 14), pickup_code="4826")
+    for _ in range(2):
+        env.parcel(eta=on(), carrier=None)
+    tag = tag_of(box)
+    await env.start()
+    await env.goto(at(8))
+    holds = "may hold 2 Amazon orders"
+    plain = f"Out for delivery 13:00{DASH}14:00{SEP}DPD{SEP}{holds}"
+    short = f"13{DASH}14h"
+    assert iphone.take() == [activity(tag, "Amazon", plain, short, 3, OUT, 0.9)]
+    env.token(iphone, tag)
+    await env.goto(at(8) + timedelta(seconds=5))
+    shown = f"Out for delivery\nPIN 4826{SEP}13:00{DASH}14:00{SEP}DPD{SEP}{holds}"
+    assert iphone.take() == [
+        pinned(activity(tag, "Amazon", shown, short, 3, OUT, 0.9, silent=True), iphone)
+    ]
+    assert ipad.take() == [
+        {"title": "Amazon", "message": plain, "data": {"tag": tag, "url": link_of(box)}}
+    ]
+    assert android.take() == [
+        {
+            "title": "Amazon",
+            "message": plain,
+            "data": {
+                "tag": tag,
+                "clickAction": link_of(box),
+                "notification_icon": OUT,
+                "color": ORANGE,
+            },
+        }
+    ]
+
+
+async def test_combined_pin_leads_what_packages_may_hold(env: Env) -> None:
+    """The combined activity puts what packages may hold last, also with a PIN."""
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1, CONF_PIN_ON_LOCK_SCREEN: True})
+    env.parcel(
+        S.OUT_FOR_DELIVERY,
+        eta=window(13, 15),
+        merchant="Zalando",
+        carrier="ctt",
+        pickup_code="4826",
+    )
+    pickup = env.parcel(eta=on(), merchant="Decathlon", carrier="ctt")
+    env.parcel(eta=on())
+    for _ in range(2):
+        env.parcel(eta=on(), carrier=None)
+    await env.start()
+    await env.goto(at(8))
+    next_up = f"next: Zalando via CTT 13{DASH}15h"
+    holds = "may hold 2 Amazon orders"
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"0 of 3 delivered{SEP}{next_up}{SEP}{holds}",
+            "0/3",
+            0,
+            OUT,
+            0.9,
+            progress_max=3,
+        )
+    ]
+    env.token(phone, COMBINED)
+    await env.goto(at(8) + timedelta(seconds=5))
+    assert phone.take() == [
+        pinned(
+            activity(
+                COMBINED,
+                "Parcels today",
+                f"0 of 3 delivered\nPIN 4826{SEP}{next_up}{SEP}{holds}",
+                "0/3",
+                0,
+                OUT,
+                0.9,
+                progress_max=3,
+                silent=True,
+            ),
+            phone,
+        )
+    ]
+
+    await env.goto(at(10))
+    env.change(
+        pickup,
+        S.READY_FOR_PICKUP,
+        sent=at(10),
+        pickup_point="Locker 12",
+        pickup_code="59031",
+    )
+    await env.settle()
+    assert summary(phone.take()) == [
+        (COMBINED, f"0 of 3 delivered{SEP}1 ready for pickup{SEP}{next_up}{SEP}{holds}")
+    ]
+    await env.goto(at(10, 1))
+    assert phone.take() == [
+        pinned(
+            activity(
+                COMBINED,
+                "Parcels today",
+                f"0 of 3 delivered\nPIN 4826{SEP}{next_up}{SEP}1 ready for pickup"
+                f"{SEP}{holds}",
+                "0/3",
+                0,
+                OUT,
+                0.9,
+                progress_max=3,
+                silent=True,
+            ),
+            phone,
+        )
+    ]
+
+
+async def test_what_a_package_may_hold_changes_quietly(env: Env) -> None:
+    """A change in how many orders a package may hold alone is a quiet update.
+
+    An order whose date becomes today rides along without an activity of its
+    own, and the mention goes once no order rides along.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    box = env.parcel(eta=on(), carrier="ctt")
+    first = env.parcel(eta=on(), carrier=None)
+    second = env.parcel(eta=on(NEXT_DAY), carrier=None)
+    tag = tag_of(box)
+    notifier = await env.start()
+    await env.goto(at(8))
+    one = f"Expected today{SEP}CTT{SEP}may hold 1 Amazon order"
+    assert phone.take() == [activity(tag, "Amazon", one, "Today", 2, TRUCK, 0.5)]
+
+    await env.goto(at(9))
+    env.change(second, eta=on())
+    await env.settle()
+    two = f"Expected today{SEP}CTT{SEP}may hold 2 Amazon orders"
+    assert phone.take() == [
+        activity(tag, "Amazon", two, "Today", 2, TRUCK, 0.5, silent=True)
+    ]
+
+    await env.goto(at(10))
+    env.change(first, eta=on(NEXT_DAY))
+    await env.settle()
+    assert phone.take() == [
+        activity(tag, "Amazon", one, "Today", 2, TRUCK, 0.5, silent=True)
+    ]
+
+    await env.goto(at(11))
+    env.change(second, eta=on(NEXT_DAY))
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            tag,
+            "Amazon",
+            f"Expected today{SEP}CTT",
+            "Today",
+            2,
+            TRUCK,
+            0.5,
+            silent=True,
+        )
+    ]
+    assert notifier.diagnostics()["today"]["activity_starts"] == 1
 
 
 @pytest.mark.parametrize(

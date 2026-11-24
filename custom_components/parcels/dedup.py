@@ -54,6 +54,10 @@ arrive in any order and a shop's e-mail rarely names the carrier's number:
 Item titles never link different orders, and titles that unrelated orders
 share (a shop's recommendations read as items) don't count at all.
 
+When the Parcel app switches an Amazon delivery to the carrier's number, its
+sync joins the carrier's delivery to the order's parcel, flagged (see
+:func:`join_switched` and :func:`flag_switch`).
+
 :func:`infer_deliveries` then closes parcels without a tracking number whose
 date has passed when the same merchant delivered another parcel then. Shops
 pack several orders in one carrier parcel, so these are marked as inferred,
@@ -99,6 +103,7 @@ from .models import (
     day_known,
     dt_from_str,
     is_carrier_mail,
+    is_carrier_name,
     local_date,
     merchant_key,
     new_id,
@@ -135,6 +140,7 @@ REASON_SAME_MERCHANT_DOMAIN = "same_merchant_domain"
 REASON_SAME_ORDER = "same_order"
 REASON_SAME_REFERENCE = "same_reference"
 REASON_AMAZON_TRACKING = "amazon_tracking"
+REASON_PARCEL_SWITCH = "parcel_switch"
 
 # How far back reconcile() looks, and how soon after a shop's order e-mails
 # its tracked shipments must follow to absorb the order's parcel.
@@ -1707,6 +1713,18 @@ def _apart_checker(data: ParcelsData) -> Callable[[Parcel, Parcel], bool]:
     return apart
 
 
+def kept_apart_from(
+    data: ParcelsData, origin_ids: Collection[str], parcel: Parcel
+) -> bool:
+    """Return True when the user keeps origins apart from a parcel."""
+    one, two = set(origin_ids), parcel.origins.keys()
+    return any(
+        (not left.isdisjoint(one) and not right.isdisjoint(two))
+        or (not left.isdisjoint(two) and not right.isdisjoint(one))
+        for left, right in _kept_apart_pairs(data)
+    )
+
+
 # --- Shops, carriers and their names -------------------------------------------
 
 
@@ -2100,6 +2118,72 @@ def _may_auto_merge(target: Parcel, other: Parcel) -> bool:
     return target.auto_merged is None and (
         other.auto_merged is None or other.auto_merged.reason == REASON_SAME_ORDER
     )
+
+
+def switch_target_open(parcel: Parcel) -> bool:
+    """Return True when an order's parcel may take the carrier's number.
+
+    An archived or finished parcel, or one with a number already, may not.
+    """
+    state = parcel.state
+    return parcel.archived is None and not state.terminal and not state.tracking_number
+
+
+def join_switched(
+    data: ParcelsData, target_id: str, other_id: str, now: datetime
+) -> bool:
+    """Merge a carrier's parcel into the Amazon order's parcel it continues.
+
+    The Parcel app may switch an Amazon delivery to the carrier's number,
+    and the carrier's delivery became a parcel of its own. The merge is
+    flagged, so the user can undo it. Not when the user keeps them apart,
+    the order's parcel may not take the number (:func:`switch_target_open`),
+    or they can't be one parcel: another order, shipment or shop. Returns
+    True when merged.
+    """
+    target, other = data.parcels.get(target_id), data.parcels.get(other_id)
+    if (
+        target is None
+        or other is None
+        or target is other
+        or other.archived is not None
+        or not switch_target_open(target)
+        or _parcels_conflict(target, other)
+        or _apart_checker(data)(target, other)
+    ):
+        return False
+    shops = {key for key in _shop_keys(other) if not is_carrier_name(key)}
+    if shops and shops.isdisjoint(_shop_keys(target)):
+        return False
+    _auto_merge(data, target, other, REASON_PARCEL_SWITCH, now, Reconciled())
+    return True
+
+
+def flag_switch(
+    data: ParcelsData, parcel_id: str, origin_ids: Collection[str], now: datetime
+) -> None:
+    """Flag origins that joined a parcel because the Parcel app switched it.
+
+    They leave on undo. A parcel already flagged by a guess has its flag
+    grow, so one undo takes back both.
+    """
+    parcel = data.parcels[parcel_id]
+    joined = sorted(
+        set(origin_ids) & parcel.origins.keys(),
+        key=lambda oid: (parcel.origins[oid].time, oid),
+    )
+    if not joined:
+        return
+    if parcel.auto_merged is not None:
+        parcel.auto_merged = _grown(parcel.auto_merged, parcel, set(joined))
+    else:
+        parcel.auto_merged = AutoMerge(
+            origin=joined[0],
+            at=now,
+            reason=REASON_PARCEL_SWITCH,
+            origins=tuple(joined[1:]),
+        )
+    parcel.touch(now)
 
 
 def _merge_by_order(

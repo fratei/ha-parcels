@@ -361,7 +361,7 @@ address, HTML or control character.
 | `eta_end_before_start` | The last delivery day is before the first. |
 | `eta_not_delivery_date` | The date overlaps no delivery date in the e-mail, and it had passed when the e-mail arrived or the e-mail gives it as another date: a deadline, or an order, shipping, offer or replaced date. |
 | `eta_not_in_text` | The e-mail has no date, weekday or span at all. A delivery today, in an out-for-delivery e-mail, is allowed. |
-| `eta_is_mail_day` | In an order or shipping e-mail, the date is the day the e-mail arrived, and no delivery phrase in its subject or text gives that day. |
+| `eta_is_mail_day` | In an order or shipping e-mail, the date is the day the e-mail arrived, and no delivery phrase in its subject or text gives that day, nor a sentence saying the customer receives the parcel that day. |
 | `window_start_unparsed`, `window_end_unparsed` | A time can't be read. |
 | `window_end_before_start` | The time window doesn't end after it starts. |
 | `window_without_date` | A time window comes without a date. |

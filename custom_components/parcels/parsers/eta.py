@@ -1070,12 +1070,23 @@ def _eta_from(
                 return None
         if expression is None:
             continue
-        first, last, span_start, span_end = expression
-        spans = [(a.start, a.end) for a in atoms] + [(span_start, span_end)]
-        window = parse_time_window(_mask(s, spans, start, end))
-        window_start, window_end = window or (None, None)
-        return Eta(first, last, window_start, window_end)
+        return _eta_of(atoms, expression, s, start, end)
     return None
+
+
+def _eta_of(
+    atoms: list[_Atom],
+    expression: tuple[date, date, int, int],
+    s: str,
+    start: int,
+    end: int,
+) -> Eta:
+    """Return an expression's ETA with the time window in ``s[start:end]``."""
+    first, last, span_start, span_end = expression
+    spans = [(a.start, a.end) for a in atoms] + [(span_start, span_end)]
+    window = parse_time_window(_mask(s, spans, start, end))
+    window_start, window_end = window or (None, None)
+    return Eta(first, last, window_start, window_end)
 
 
 def parse_eta(
@@ -1947,6 +1958,497 @@ def date_expressions(
     return [found for found, _, _ in _located_expressions(text, reference, tz, lang)]
 
 
+# A sentence saying the customer receives the parcel on a day ("You'll
+# receive your order today", "Recebe hoje a sua encomenda", "Sie werden Ihr
+# Paket morgen erhalten") gives a delivery date too. The verb must be the
+# customer's (the shop receiving the order is no delivery), what is received
+# must be the parcel or the order, not an e-mail, a code or a tracking
+# number, and the date must stand right next to them. Questions, negations,
+# conditions ("if you order by 2 pm") and imperatives ("Ontvang je pakket
+# vandaag") state nothing.
+RECEIVE_MAX_GAP_WORDS = 4
+# Words between the verb and a date that comes before what is received.
+RECEIVE_NEAR_WORDS = 2
+
+
+@dataclass(frozen=True, slots=True)
+class _ReceiveForm:
+    """A verb form in which the customer receives something."""
+
+    regex: re.Pattern[str]
+    # The bare verb also takes a third person ("o vendedor recebe").
+    third: bool = False
+    # The verb comes before its subject ("Heute erhalten Sie"); with nothing
+    # before it in the sentence it is a question or an imperative.
+    inverted: bool = False
+    # The infinitive that closes a split verb ("Sie werden ... erhalten").
+    final: re.Pattern[str] | None = None
+
+
+def _receive_verb(pattern: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<![a-z'-])(?:{pattern})(?![a-z-])")
+
+
+_DE_RECEIVE_FINAL = re.compile(
+    r"(?<![a-z])(?:erhalten|bekommen)(?![a-z])(?!\s+(?:haben|hast|hat))"
+)
+_NL_RECEIVE_FINAL = re.compile(r"(?<![a-z])(?:ontvangen|krijgen)(?![a-z])(?!\s+hebben)")
+_RECEIVE_FORMS = (
+    _ReceiveForm(
+        _receive_verb(
+            r"(?:voce\s+)?(?:recebera|receberas|receberao|recebereis"
+            r"|recebes|recebem|recebe)"
+        ),
+        third=True,
+    ),
+    _ReceiveForm(
+        _receive_verb(
+            r"(?:vai|vais|vao|ira|iras|irao|deve|deves|devem|devera|deveras"
+            r"|deverao)\s+(?:receber|recebe-(?P<pro>lo|la|los|las))"
+        ),
+        third=True,
+    ),
+    _ReceiveForm(
+        _receive_verb(
+            r"(?:usted\s+)?(?:(?P<pro>lo|la|los|las)\s+)?(?:recibira|recibiras"
+            r"|recibiran|recibireis|recibes|reciben|recibe)"
+        ),
+        third=True,
+    ),
+    _ReceiveForm(
+        _receive_verb(r"(?:va|vas|van|vais)\s+a\s+recibir(?P<pro>lo|la|los|las)?"),
+        third=True,
+    ),
+    _ReceiveForm(
+        _receive_verb(
+            r"(?:debe|debes|deben|deberia|deberias|deberian)\s+recibir"
+            r"(?P<pro>lo|la|los|las)?"
+        ),
+        third=True,
+    ),
+    _ReceiveForm(
+        _receive_verb(r"vous\s+(?:(?P<pro>le|la|les)\s+)?(?:recevrez|recevez)")
+    ),
+    _ReceiveForm(_receive_verb(r"tu\s+(?:(?P<pro>le|la|les)\s+)?(?:recevras|recois)")),
+    _ReceiveForm(
+        _receive_verb(
+            r"vous\s+(?:allez|devriez|devrez|pourrez)\s+"
+            r"(?:(?P<pro>le|la|les)\s+)?recevoir"
+        )
+    ),
+    _ReceiveForm(
+        _receive_verb(
+            r"tu\s+(?:vas|devrais|devras|pourras)\s+(?:(?P<pro>le|la|les)\s+)?recevoir"
+        )
+    ),
+    _ReceiveForm(
+        _receive_verb(
+            r"(?:(?P<pro>lo|la|li|le)\s+)?(?:riceverai|ricevera|riceverete|riceve)"
+        ),
+        third=True,
+    ),
+    _ReceiveForm(
+        _receive_verb(r"(?:stai|sta|state)\s+per\s+ricever(?:e|(?P<pro>lo|la|li|le))"),
+        third=True,
+    ),
+    _ReceiveForm(
+        _receive_verb(
+            r"(?:dovresti|dovrebbe|dovreste)\s+ricever(?:e|(?P<pro>lo|la|li|le))"
+        ),
+        third=True,
+    ),
+    _ReceiveForm(
+        _receive_verb(r"(?:sie|du)\s+(?:erhalten|erhaltst|bekommen|bekommst)")
+    ),
+    _ReceiveForm(
+        _receive_verb(r"erhalten\s+sie|erhaltst\s+du|bekommen\s+sie|bekommst\s+du"),
+        inverted=True,
+    ),
+    _ReceiveForm(
+        _receive_verb(r"(?:sie|du)\s+(?:werden|wirst|sollten|solltest)"),
+        final=_DE_RECEIVE_FINAL,
+    ),
+    _ReceiveForm(
+        _receive_verb(r"werden\s+sie|wirst\s+du|sollten\s+sie|solltest\s+du"),
+        inverted=True,
+        final=_DE_RECEIVE_FINAL,
+    ),
+    _ReceiveForm(_receive_verb(r"(?:je|jij|u)\s+(?:ontvangt|krijgt)")),
+    _ReceiveForm(
+        _receive_verb(r"(?:ontvang|krijg)\s+(?:je|jij)|(?:ontvangt|krijgt)\s+u"),
+        inverted=True,
+    ),
+    _ReceiveForm(
+        _receive_verb(r"(?:je|jij|u)\s+(?:zult|zal|gaat|zou|zoudt)"),
+        final=_NL_RECEIVE_FINAL,
+    ),
+    _ReceiveForm(
+        _receive_verb(r"(?:zul|zal|ga|zou)\s+(?:je|jij)|(?:zult|gaat|zoudt)\s+u"),
+        inverted=True,
+        final=_NL_RECEIVE_FINAL,
+    ),
+    _ReceiveForm(
+        _receive_verb(
+            r"you(?:'ll|\s+will|\s+should|\s+shall)\s+"
+            r"(?:receive|get|be\s+(?:receiving|getting))"
+        )
+    ),
+    _ReceiveForm(
+        _receive_verb(
+            r"you(?:'re|\s+are)\s+(?:going\s+to\s+(?:receive|get)|receiving|getting)"
+        )
+    ),
+)
+_RECEIVE_NOUNS = (
+    *("order", "orders", "parcel", "parcels", "package", "packages", "shipment"),
+    *("shipments", "item", "items", "purchase", "purchases", "goods", "delivery"),
+    "deliveries",
+    *("encomenda", "encomendas", "pedido", "pedidos", "compra", "compras"),
+    *("pacote", "pacotes", "artigo", "artigos", "produto", "produtos", "envio"),
+    *("envios", "entrega", "entregas"),
+    *("paquete", "paquetes", "articulo", "articulos", "producto", "productos"),
+    *("colis", "commande", "commandes", "paquet", "paquets", "article"),
+    *("articles", "achat", "achats"),
+    *("paket", "pakete", "packchen", "sendung", "sendungen", "bestellung"),
+    *("bestellungen", "lieferung", "lieferungen", "ware", "waren", "artikel"),
+    *("ordine", "ordini", "pacco", "pacchi", "spedizione", "spedizioni"),
+    *("articolo", "articoli", "acquisto", "acquisti", "prodotto", "prodotti"),
+    *("collo", "colli"),
+    *("pakket", "pakketten", "pakje", "pakjes", "bestelling", "bestellingen"),
+    *("zending", "zendingen", "artikelen"),
+)
+_RECEIVE_DETERMINERS = (
+    *("your", "the", "this", "these", "a", "an", "all your"),
+    *("a sua", "o seu", "as suas", "os seus", "a tua", "o teu", "as tuas"),
+    *("os teus", "a vossa", "o vosso", "as vossas", "os vossos", "o", "as"),
+    *("os", "uma", "um", "esta", "este", "estas", "estes", "sua", "seu"),
+    *("suas", "seus", "tua", "teu", "tuas", "teus"),
+    *("su", "sus", "tu", "tus", "el", "la", "los", "las", "un", "una"),
+    *("estos", "vuestro", "vuestra", "vuestros", "vuestras"),
+    *("votre", "vos", "ton", "ta", "tes", "le", "les", "une", "ce", "cet"),
+    *("cette", "ces"),
+    *("ihr", "ihre", "ihren", "dein", "deine", "deinen", "das", "die", "den"),
+    *("ein", "eine", "einen", "diese", "dieses", "diesen"),
+    *("il tuo", "la tua", "i tuoi", "le tue", "il suo", "la sua", "i suoi"),
+    *("le sue", "il vostro", "la vostra", "i vostri", "le vostre", "il", "lo"),
+    *("i", "gli", "uno", "questo", "questa", "questi", "queste"),
+    *("je", "jouw", "uw", "het", "de", "een", "dit", "deze", "jullie"),
+)
+# What is received, right after the verb or the date: "your order", "a sua
+# nova encomenda", "l'article".
+_RECEIVE_OBJECT_RE = re.compile(
+    rf"[\s,]*(?:(?:{_alternation(_RECEIVE_DETERMINERS)})\s+|l')"
+    rf"(?:[a-z]+\s+)?(?:{_alternation(_RECEIVE_NOUNS)})(?![a-z])"
+)
+# "your order number", "the parcel's tracking link", "the order-status page".
+_RECEIVE_NOT_PARCEL_RE = re.compile(
+    r"'s(?![a-z])|-(?=[a-z])|\s+(?:number|numbers|confirmation|confirmations"
+    r"|tracking|details|detail|update|updates|status|code|codes|receipt|receipts"
+    r"|invoice|invoices|email|emails|e-mail|mail|sms|text|notification"
+    r"|notifications|link|links|id|reference|info|information|summary|history"
+    r"|label|labels|date|dates|time|times|window|slot|estimate|notice|reminder"
+    r"|survey|review|feedback|refund)(?![a-z])"
+)
+_RECEIVE_NOUN_RE = re.compile(rf"(?<![a-z])(?:{_alternation(_RECEIVE_NOUNS)})(?![a-z])")
+# Things a pronoun may stand for that aren't the parcel.
+_RECEIVE_OTHER_THINGS = (
+    *("e-mail", "mail", "sms", "code", "codigo", "codice", "number", "numero"),
+    *("link", "notification", "notificacao", "notificacion", "mensagem"),
+    *("mensaje", "message", "messaggio", "bericht", "confirmation"),
+    *("confirmacao", "confirmacion", "conferma", "bevestiging", "invoice"),
+    *("fatura", "factura", "facture", "fattura", "factuur", "receipt"),
+    *("recibo", "tracking", "update", "refund", "reembolso", "voucher"),
+)
+_RECEIVE_OTHER_THING_RE = re.compile(
+    rf"(?<![a-z])(?:{_alternation(_RECEIVE_OTHER_THINGS)})(?![a-z])"
+    # German compounds: Versandbestatigung, Textnachricht, Sendungsnummer.
+    r"|bestatigung|nachricht|nummer|rechnung"
+)
+_RECEIVE_IT_RE = re.compile(r"\s+(?:it|them)(?![a-z'])")
+_RECEIVE_CONDITION_RE = re.compile(
+    r"(?<![a-z])(?:if|when|whenever|once|unless|quando|caso|cuando|quand"
+    r"|lorsque|lorsqu|des\s+que|appena|wenn|sobald|falls|sofern|nachdem|zodra"
+    r"|wanneer|indien|mits|nadat)(?![a-z])"
+    r"|(?:\A|,)\s*(?:se|si)(?![a-z])"
+)
+# "Order by 2 pm and you'll get it tomorrow": an offer, not a delivery date.
+_RECEIVE_ORDER_BY_RE = re.compile(
+    r"(?<![a-z])(?:ate|antes\s+d[aeo]s?|before|by|until|hasta|entro|bis|vor"
+    r"|voor|avant)\s+(?:(?:as|a|las|la|le|ore|o|den|de)\s+)?\d{1,2}"
+    r"(?:[:h.]\d{2}\s*(?:uhr|uur|h|am|pm|u)?|\s*(?:uhr|uur|h|am|pm|u))(?![a-z\d])"
+)
+_RECEIVE_IF_AFTER_RE = re.compile(
+    r"[\s,]*(?:if|unless|provided|se|si(?!\s+prega)|caso|wenn|falls|sofern"
+    r"|indien|mits|als|sauf|salvo|tranne)(?![a-z])"
+)
+_RECEIVE_NEGATION_RE = re.compile(
+    r"(?<![a-z])(?:not|nicht|kein|keine|keinen|keiner|niet|geen|nie|niemals"
+    r"|nooit)(?![a-z])"
+)
+# A bare verb's own subject right before it: "o vendedor recebe", "la
+# tienda recibe", "l'ufficio riceve".
+_SUBJECT_DETERMINERS = frozenset(
+    {
+        *("o", "a", "os", "as", "um", "uma", "el", "la", "los", "las", "un"),
+        *("una", "il", "lo", "i", "gli", "le", "seu", "sua", "seus", "suas"),
+        *("su", "sus", "suo", "tuo", "teu", "tua", "nosso", "nossa", "nuestro"),
+        *("nuestra", "nostro", "nostra"),
+    }
+)
+# "Recebe a tua encomenda hoje" is an imperative; "Recebe a sua" isn't.
+_IMPERATIVE_VERBS = frozenset({"recebe", "recibe"})
+_INFORMAL_WORDS = frozenset({"tua", "teu", "tuas", "teus", "tu", "tus"})
+# "am 20. November": a German day's own full stop ends no sentence.
+_MONTH_AFTER_DOT_RE = re.compile(rf"\.\s+(?:{_MONTH})(?![a-z])")
+# The only words that may stand around a date opening the sentence: "E
+# hoje, vai receber", "Already tomorrow morning you'll get", "Am Freitag
+# erhalten Sie". So "Envio hoje, receberá a sua encomenda" or "Order today
+# and you'll get your parcel" give no date.
+_OPENING_WORDS = frozenset(
+    {
+        # Connectives.
+        *("and", "but", "so", "then", "e", "mas", "entao", "y", "pero"),
+        *("luego", "et", "mais", "alors", "puis", "und", "aber", "dann", "en"),
+        *("maar", "dan", "ed", "ma", "poi", "quindi"),
+        # Before a day.
+        *("on", "the", "from", "no", "na", "em", "dia", "a", "o", "ao", "el"),
+        *("al", "le", "au", "am", "ab", "den", "der", "il", "op", "de", "het"),
+        *("vanaf", "in"),
+        # Adverbs.
+        *("already", "also", "ja", "tambem", "ya", "tambien", "deja", "aussi"),
+        *("schon", "bereits", "auch", "gia", "anche", "ook"),
+        # Times of day.
+        *("morning", "afternoon", "evening", "manha", "tarde", "noite"),
+        *("manana", "noche", "por", "la", "matin", "apres", "midi", "soir"),
+        *("fruh", "vormittag", "nachmittag", "abend", "mattina", "pomeriggio"),
+        *("sera", "ochtend", "middag", "avond"),
+    }
+)
+
+
+def _breaks_clause(s: str, text: str, match: re.Match[str]) -> bool:
+    """Return True when a clause break ends the sentence."""
+    if match.group(0)[0] != ".":
+        return True
+    end = match.end()
+    if "\n" in match.group(0) or end >= len(text):
+        return True
+    if not text[end].isupper():
+        return False
+    return not (
+        match.start() > 0
+        and s[match.start() - 1].isdigit()
+        and _MONTH_AFTER_DOT_RE.match(s, match.start())
+    )
+
+
+def _receive_clause(s: str, text: str, pos: int) -> tuple[int, int]:
+    """Return the bounds of the sentence around ``pos``."""
+    start = max(0, pos - CLAUSE_MAX_CHARS)
+    for match in _CLAUSE_BREAK_RE.finditer(s, start, pos):
+        if _breaks_clause(s, text, match):
+            start = match.end()
+    end = min(len(s), pos + CLAUSE_MAX_CHARS)
+    for match in _CLAUSE_BREAK_RE.finditer(s, pos, end):
+        if _breaks_clause(s, text, match):
+            return start, match.start()
+    return start, end
+
+
+def _receive_object(s: str, pos: int) -> re.Match[str] | None:
+    """Return the parcel or order received, when it starts at ``pos``."""
+    found = _RECEIVE_OBJECT_RE.match(s, pos)
+    if (
+        found is None
+        or _RECEIVE_NOT_PARCEL_RE.match(s, found.end())
+        or any(word in _FREE_WORDS for word in _WORD_RE.findall(found.group(0)))
+    ):
+        return None
+    return found
+
+
+def _names_parcel(s: str, pos: int) -> bool:
+    """Return True when a pronoun at ``pos`` stands for a parcel or an order.
+
+    That is the last thing named before it in the paragraph.
+    """
+    start = max(0, pos - CLAUSE_MAX_CHARS)
+    paragraph = s.rfind("\n\n", start, pos)
+    if paragraph >= 0:
+        start = paragraph + 2
+    nouns = list(_RECEIVE_NOUN_RE.finditer(s, start, pos))
+    return bool(nouns) and not _RECEIVE_OTHER_THING_RE.search(s, nouns[-1].end(), pos)
+
+
+def _has_subject(words: list[str]) -> bool:
+    """Return True when the words before a bare verb end in another subject."""
+    if not words:
+        return False
+    if words[-1].startswith("l'"):
+        return True
+    return (
+        len(words) >= 2
+        and words[-2] in _SUBJECT_DETERMINERS
+        and not any(char.isdigit() for char in words[-1])
+    )
+
+
+def _date_after(
+    atoms: list[_Atom], s: str, ref: date, pos: int, end: int, max_gap: int
+) -> tuple[Eta, int] | None:
+    """Return the date within ``max_gap`` words after ``pos``, and its end."""
+    later = [atom for atom in atoms if atom.start >= pos]
+    if not later or (expression := _expression(later, 0, s, ref)) is None:
+        return None
+    gap = s[pos : min(later[0].start, expression[2])]
+    if _OTHER_DATE_RE.search(gap) or len(_WORD_RE.findall(gap)) > max_gap:
+        return None
+    return _eta_of(later, expression, s, pos, end), expression[3]
+
+
+def _date_before(
+    atoms: list[_Atom], s: str, ref: date, start: int, pos: int, end: int
+) -> Eta | None:
+    """Return a date that opens the sentence right before the verb at ``pos``.
+
+    "Hoje, vai receber a sua encomenda", "Heute erhalten Sie Ihr Paket".
+    """
+    found = None
+    covered = -1
+    for index, atom in enumerate(atoms):
+        if atom.start >= pos:
+            break
+        if atom.start < covered:
+            continue
+        expression = _expression(atoms, index, s, ref)
+        if expression is None:
+            continue
+        covered = expression[3]
+        if expression[3] <= pos:
+            found = expression
+    if found is None:
+        return None
+    around = (
+        _WORD_RE.findall(s[start : found[2]]),
+        _WORD_RE.findall(s[found[3] : pos]),
+    )
+    if any(
+        len(words) > RECEIVE_NEAR_WORDS or not _OPENING_WORDS.issuperset(words)
+        for words in around
+    ):
+        return None
+    return _eta_of(atoms, found, s, found[2], end)
+
+
+def _words_end(s: str, pos: int, count: int, limit: int) -> int:
+    """Return where the ``count`` words after ``pos`` end, at most ``limit``."""
+    end = pos
+    for match in _WORD_RE.finditer(s, pos, limit):
+        end = match.end()
+        count -= 1
+        if not count:
+            break
+    return end
+
+
+def _date_next_to(
+    atoms: list[_Atom],
+    s: str,
+    ref: date,
+    bounds: tuple[int, int],
+    verb_start: int,
+    pos: int,
+) -> tuple[Eta, int] | None:
+    """Return the date after what is received, or one opening the sentence.
+
+    ``pos`` is where what is received ends; ``bounds`` are the sentence's.
+    Also returns where the phrase ends.
+    """
+    start, end = bounds
+    if after := _date_after(atoms, s, ref, pos, end, RECEIVE_MAX_GAP_WORDS):
+        return after
+    if eta := _date_before(atoms, s, ref, start, verb_start, end):
+        return eta, pos
+    return None
+
+
+def _received_on(
+    s: str,
+    text: str,
+    ref: date,
+    verb: re.Match[str],
+    form: _ReceiveForm,
+    lang: str | None,
+) -> Eta | None:
+    """Return the day a receive verb says the customer receives the parcel."""
+    start, end = _receive_clause(s, text, verb.start())
+    before = s[start : verb.start()]
+    words = _WORD_RE.findall(before)
+    if (
+        s.startswith("?", end)
+        or _negated(s, verb.start())
+        or _RECEIVE_CONDITION_RE.search(before)
+        or _RECEIVE_ORDER_BY_RE.search(before)
+        or (form.inverted and not words)
+        or (form.third and _has_subject(words))
+    ):
+        return None
+    atoms = _find_atoms(s, text, start, end, lang)
+    if not atoms:
+        return None
+    received = None
+    it = _RECEIVE_IT_RE.match(s, verb.end())
+    if verb.groupdict().get("pro") or it:
+        if not _names_parcel(s, verb.start()):
+            return None
+        pos = it.end() if it else verb.end()
+        found = _date_next_to(atoms, s, ref, (start, end), verb.start(), pos)
+    elif received := _receive_object(s, verb.end()):
+        found = _date_next_to(atoms, s, ref, (start, end), verb.start(), received.end())
+    else:
+        # The date comes first: "Recebe hoje a sua encomenda".
+        after = _date_after(atoms, s, ref, verb.end(), end, RECEIVE_NEAR_WORDS)
+        received = _receive_object(s, after[1]) if after else None
+        found = (after[0], received.end()) if after and received else None
+    if found is None:
+        return None
+    eta, phrase_end = found
+    if received is not None and (
+        _WORD_RE.findall(verb.group(0))[-1] in _IMPERATIVE_VERBS
+        and _INFORMAL_WORDS.intersection(_WORD_RE.findall(received.group(0)))
+    ):
+        return None
+    if form.final is not None:
+        comma = s.find(",", phrase_end, end)
+        final = form.final.search(s, verb.end(), comma if comma >= 0 else end)
+        if final is None:
+            return None
+        phrase_end = max(phrase_end, final.end())
+    tail = _words_end(s, phrase_end, 2, end)
+    if _RECEIVE_NEGATION_RE.search(s, verb.end(), tail) or _RECEIVE_IF_AFTER_RE.match(
+        s, phrase_end
+    ):
+        return None
+    return eta
+
+
+def _receive_eta(
+    text: str, reference: datetime, tz: tzinfo, lang: str | None = None
+) -> Eta | None:
+    """Return the first day a sentence says the customer receives the parcel."""
+    text = text[:MAX_FIND_CHARS]
+    s = _prepare(text)
+    ref = _reference_date(reference, tz)
+    verbs = sorted(
+        ((verb, form) for form in _RECEIVE_FORMS for verb in form.regex.finditer(s)),
+        key=lambda found: found[0].start(),
+    )
+    for verb, form in verbs:
+        if eta := _received_on(s, text, ref, verb, form, lang):
+            return eta
+    return None
+
+
 def find_delivery_eta(
     text: str, reference: datetime, tz: tzinfo, lang: str | None = None
 ) -> Eta | None:
@@ -1954,14 +2456,19 @@ def find_delivery_eta(
 
     Deadlines and order, shipping, offer or superseded dates are blanked
     out first, so a delivery phrase never takes them ("Entrega prevista
-    para 20/11 foi adiada. Nova data: 24/11" gives 24/11).
+    para 20/11 foi adiada. Nova data: 24/11" gives 24/11). A sentence
+    saying the customer receives the parcel on a day gives a delivery date
+    too ("Receberá a sua encomenda hoje", "You'll get your parcel today").
     """
     text = text[:MAX_FIND_CHARS]
     chars = list(text)
     for found, start, end in _located_expressions(text, reference, tz, lang):
         if found.deadline or found.other:
             chars[start:end] = " " * (end - start)
-    return find_eta("".join(chars), reference, tz, lang)
+    blanked = "".join(chars)
+    return find_eta(blanked, reference, tz, lang) or _receive_eta(
+        blanked, reference, tz, lang
+    )
 
 
 # Collect-by dates (see find_collect_by). A stem's group says what a

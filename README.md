@@ -660,10 +660,16 @@ packages that may hold it:
 
 One package may hold several orders, since shops pack orders together. An
 order that rides along doesn't count, and starts no Live Activity or
-notification of its own. With **Show item names on the lock screen** on, the
-package's Live Activity or notification says what it may hold, such as
-"Possibly: Desk lamp (+2)". That's a guess: on the Parcels page the order
-stays as it is. An order that no package may hold counts on its own, as
+notification of its own. Instead, the package's Live Activity or
+notification says, last, how many orders it may hold, with their shop when
+they're all from one: "0 of 1 delivered · Paack out for delivery · may hold
+8 Amazon orders", "may hold 1 Amazon order", or "may hold 3 orders" from
+several shops. A shared activity counts each order once, even when several
+of its packages may hold it. Only orders the device may show count: another
+person's private orders don't, and their shop isn't named. With **Show item
+names on the lock screen** on, the package also says what it may hold, such
+as "Possibly: Desk lamp (+2)". Both are guesses: on the Parcels page the
+order stays as it is. An order that no package may hold counts on its own, as
 "Expected today", and so does one with a failed attempt or a problem. When an
 order stops riding along, for example after **Not this one**, it counts on its
 own again.
@@ -744,16 +750,20 @@ How they behave:
 
 - At the start time (08:00), each parcel expected today starts an activity:
   one with a single-day date, on the last day of its date range, or announced
-  for today. Orders that ride along with a package don't. Later in the day a
-  parcel starts one as soon as it's out for delivery or ready for pickup.
-  Return pickups get theirs too (see [Return pickups](#return-pickups)).
+  for today. Orders that ride along with a package don't. Until the cut-off, a
+  parcel joins later in the day as soon as its date becomes today, on the same
+  terms, or it goes out for delivery or becomes ready for pickup: it starts an
+  activity, or the shared activity counts it. Return pickups get theirs too
+  (see [Return pickups](#return-pickups)).
 - With more packages than the threshold (3) on one iPhone, they share one
   activity, such as "2 of 5 delivered · next: Amazon via DPD 13–14h", for the
   rest of the day. It names the next package's shop and carrier, or the one
-  that's known. Orders that ride along with a package don't count (see
-  [How the day is counted](#how-the-day-is-counted)). Return pickups count,
-  and the text counts them: "2 of 3 delivered · 1 return pickup · next:
-  Amazon via DPD 13–14h".
+  that's known. Orders that ride along with a package don't count, and the
+  text ends with how many its packages may hold, such as "0 of 1 delivered ·
+  Paack out for delivery · may hold 8 Amazon orders" (see
+  [How the day is counted](#how-the-day-is-counted)); so does a package's own
+  activity. Return pickups count, and the text counts them: "2 of 3
+  delivered · 1 return pickup · next: Amazon via DPD 13–14h".
 - The icon and the progress bar take the color of the status: blue on the
   way, orange out for delivery, green delivered, purple ready for pickup,
   red for a failed attempt or a problem, and pink for a return pickup. The
@@ -772,7 +782,8 @@ How they behave:
   own activity keeps its countdown. No activity counts down while it shows a
   delivery PIN.
 - Updates are sent only when something changes, and silently unless the
-  status changed.
+  status changed, as when only the number of orders a package may hold
+  changes.
 - The text says what comes next. A pickup says where and until when, such as
   "Ready at Locker 12 · collect by Wed 24", with the pickup point's name up to
   its first comma. A missed delivery says when and what next: "Missed 11:20 ·
@@ -785,7 +796,8 @@ How they behave:
 - With **Show delivery PINs on the lock screen** on, a parcel's activity
   shows its delivery PIN or pickup code while it's out for delivery or ready
   for pickup: the status takes the first line and the PIN leads the second,
-  such as "Out for delivery" and "PIN 4826 · 13:00–14:00 · DPD". A code
+  such as "Out for delivery" and "PIN 4826 · 13:00–14:00 · DPD". How many
+  orders the package may hold stays at the end, after the PIN. A code
   longer than 20 characters isn't shown. A shared activity shows the PIN of
   the package it names next when that one is out for delivery. Otherwise, when
   exactly one of its packages is ready for pickup, it shows that package's
@@ -1016,6 +1028,35 @@ or asked in **Needs review** when several parcels could match. If a delivery
 leaves your Parcel list before it's delivered, its parcel goes after two
 reads without it, with any changes you made to it. Turn off **Show
 deliveries only in Parcel** and these parcels go at the next read.
+
+**When Parcel switches to the carrier's number.** Parcel may stop following
+an Amazon delivery under the order number and follow the carrier's number
+instead: the Amazon delivery leaves your list, and the carrier's appears
+with the same name, the item's title. That delivery then joins the order's
+parcel, as if the number were the parcel's own, marked as merged
+automatically ("the Parcel app switched Amazon's tracking to the carrier's
+number"), with **Undo**. The parcel takes the carrier, its number and its
+date, newer news winning as always, and 17TRACK follows that number. It
+joins only when:
+
+- the name is an item's title: not one word, not a shop's or a carrier's
+  name, also with words like "order" ("Amazon", "SHEIN", "Amazon.es
+  order"), and not the name Parcels sent;
+- exactly one parcel open when the carrier's delivery appeared had an Amazon
+  delivery with that name: two orders of the same item join neither, even
+  once one of them is delivered;
+- that parcel has no tracking number, isn't delivered or archived, and has
+  more than the Parcel app's deliveries, such as Amazon's e-mails;
+- the Amazon delivery left your list at most three days before the carrier's
+  appeared, and isn't still in it;
+- you haven't kept the two apart.
+
+A carrier's delivery that already showed as a parcel of its own, or joined a
+carrier's e-mail by its number, before the Amazon delivery left, joins the
+order's parcel at the next read on the same terms. After **Undo** it never
+joins again: it shows as a parcel of its own, or not at all with **Show
+deliveries only in Parcel** off. The hub's diagnostics count the deliveries
+held this way in the last read (`switched`).
 
 **Reading.** Parcels reads your list every 15 minutes, every 10 while a
 parcel that Parcel follows is out for delivery or due that day, and never
@@ -1416,6 +1457,15 @@ actions:
   order's parcels it is (see [Parcel app](#parcel-app)), and once you've
   typed another tracking number on its parcel. The hub's diagnostics count
   Amazon's deliveries by how they found their parcel (`amazon`).
+- **The same parcel shows twice: an Amazon order and a carrier's number.**
+  The Parcel app may switch an Amazon delivery to the carrier's number, and
+  the carrier's delivery joins the order's parcel by its name in Parcel (see
+  [Parcel app](#parcel-app)). Before 0.1.20 it showed as a parcel of its
+  own; it joins at the next read when the Amazon delivery left your list at
+  most three days before it appeared. When Parcels can't tell which order it
+  is, such as when two open orders had the same item, or its name in Parcel
+  isn't an item's title, select both and merge them. The hub's diagnostics
+  count the deliveries joined this way (`switched`).
 - **A parcel isn't added to Parcel.** See which parcels Parcels adds in
   [Parcel app](#parcel-app). A carrier with several codes in Parcel, such as
   GLS or DPD, is added only once Parcels has learned its code from a delivery
@@ -1471,7 +1521,8 @@ actions:
   into another one or deleted since then, or a return removed since then,
   has no details to open.
 - **Live Activities count fewer parcels than the page.** Orders that one of
-  the day's packages may hold ride along with it (see
+  the day's packages may hold ride along with it, and its text ends with how
+  many, such as "may hold 8 Amazon orders" (see
   [How the day is counted](#how-the-day-is-counted)). The notifications part
   of the hub's diagnostics counts today's (`orders_in_a_box`).
 - **A Live Activity or notification says "Possibly: …" for an order the
@@ -1564,7 +1615,9 @@ actions:
   (`parcelapp`) counts the deliveries read, matched, shown on their own and
   left out, with Amazon's by how they found their parcel: by shipment ID, by
   order number, as a parcel of their own, another way such as a guess, or
-  not at all (`amazon`), and today's adds, lists the carrier codes in use,
+  not at all (`amazon`), the carriers' deliveries held in the Amazon order's
+  parcel they continue (`switched`), and today's adds, lists the carrier
+  codes in use,
   and counts the last read's event dates that Parcels couldn't read or that
   were after tomorrow, and those it read without their time, with the forms
   of both and of those read with a part of the day or a time zone

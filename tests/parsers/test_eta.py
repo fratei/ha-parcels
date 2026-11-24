@@ -699,6 +699,102 @@ def test_parenthesised_delivery_date(
     assert _dates(find_delivery_eta(text, REF, tz, lang)) == (day, day)
 
 
+@pytest.mark.parametrize(
+    ("text", "lang", "day"),
+    [
+        ("Receberá a sua encomenda hoje.", "pt", _day(17)),
+        ("Receberás a tua encomenda hoje.", "pt", _day(17)),
+        ("Vai receber a sua encomenda hoje.", "pt", _day(17)),
+        ("Vais receber a tua encomenda hoje.", "pt", _day(17)),
+        ("Recebe hoje a sua encomenda.", "pt", _day(17)),
+        ("Recebes hoje a tua encomenda.", "pt", _day(17)),
+        ("Você receberá o seu pedido hoje.", "pt", _day(17)),
+        ("You'll receive your order today.", "en", _day(17)),
+        ("You will receive your order today.", "en", _day(17)),
+        ("You will get your parcel today.", "en", _day(17)),
+        ("You'll get your parcel today.", "en", _day(17)),
+        ("Recibirá su pedido hoy.", "es", _day(17)),
+        ("Recibirás tu pedido hoy.", "es", _day(17)),
+        ("Usted recibirá su pedido hoy.", "es", _day(17)),
+        ("Vous recevrez votre colis aujourd'hui.", "fr", _day(17)),
+        ("Tu recevras ton colis aujourd'hui.", "fr", _day(17)),
+        ("Sie erhalten Ihr Paket heute.", "de", _day(17)),
+        ("Du erhältst dein Paket heute.", "de", _day(17)),
+        ("Riceverai il tuo ordine oggi.", "it", _day(17)),
+        ("Riceverà il suo ordine oggi.", "it", _day(17)),
+        ("Je ontvangt je pakket vandaag.", "nl", _day(17)),
+        ("U ontvangt uw pakket vandaag.", "nl", _day(17)),
+        # The day first, other days and other word orders.
+        ("Hoje, vai receber a sua encomenda.", "pt", _day(17)),
+        ("Today you'll receive your parcel.", "en", _day(17)),
+        ("Heute erhalten Sie Ihr Paket.", "de", _day(17)),
+        ("Vandaag ontvang je je pakket.", "nl", _day(17)),
+        ("Sie werden Ihr Paket morgen erhalten.", "de", _day(18)),
+        ("Am 20. November erhalten Sie Ihr Paket.", "de", _day(20)),
+        ("Vous recevrez votre colis demain.", "fr", _day(18)),
+        ("You'll receive your order on 20 November.", "en", _day(20)),
+        ("Olá, receberá a sua nova encomenda amanhã.", "pt", _day(18)),
+        # A pronoun stands for the parcel the sentence names.
+        ("O seu pedido foi enviado e vai recebê-lo amanhã.", "pt", _day(18)),
+        ("Tu pedido está en camino y lo recibirá hoy.", "es", _day(17)),
+        ("Votre colis est en route, vous le recevrez demain.", "fr", _day(18)),
+        ("Il tuo pacco è in viaggio e lo riceverai domani.", "it", _day(18)),
+        ("Your order has shipped and you will receive it today.", "en", _day(17)),
+    ],
+)
+def test_receive_phrase(text: str, lang: str, day: date, tz: ZoneInfo) -> None:
+    """The day the customer receives the parcel is a delivery date."""
+    assert _dates(find_delivery_eta(text, REF, tz, lang)) == (day, day)
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        # The shop receives the order.
+        ("Recebemos hoje a sua encomenda.", "pt"),
+        ("We received your order today.", "en"),
+        ("Hemos recibido tu pedido hoy.", "es"),
+        ("Nous avons reçu votre commande aujourd'hui.", "fr"),
+        ("Wir haben Ihre Bestellung heute erhalten.", "de"),
+        ("Abbiamo ricevuto il tuo ordine oggi.", "it"),
+        ("We hebben je bestelling vandaag ontvangen.", "nl"),
+        ("O vendedor recebe hoje a sua encomenda.", "pt"),
+        # Something else is received.
+        ("Receberá hoje um e-mail com o código de seguimento.", "pt"),
+        ("You'll receive a tracking number today.", "en"),
+        ("You'll receive your order confirmation today.", "en"),
+        ("Sie erhalten heute eine Versandbestätigung.", "de"),
+        ("Recibirá un SMS hoy.", "es"),
+        ("Receberá o código de entrega por SMS no dia 20.", "pt"),
+        ("Enviámos-lhe um e-mail. Vai recebê-lo hoje.", "pt"),
+        ("Sobald die Sendung zugestellt wurde, erhalten Sie eine E-Mail.", "de"),
+        ("Zodra je pakket is bezorgd, ontvang je een e-mail.", "nl"),
+        ("You'll get free delivery today.", "en"),
+        # Shipping today.
+        ("Envio hoje, 17/11.", "pt"),
+        ("Ships today.", "en"),
+        ("Envio hoje, receberá a sua encomenda.", "pt"),
+        # An offer.
+        ("Encomende hoje e receberá a sua encomenda.", "pt"),
+        ("Order today and you'll receive your parcel.", "en"),
+        # No statement that the parcel comes that day.
+        ("Não receberá a sua encomenda hoje.", "pt"),
+        ("Sie erhalten Ihr Paket heute nicht.", "de"),
+        ("Recebe hoje a sua encomenda?", "pt"),
+        ("Erhalten Sie Ihr Paket heute?", "de"),
+        ("Ontvang je pakket vandaag.", "nl"),
+        ("Quand vous recevrez votre colis demain, vérifiez son contenu.", "fr"),
+        ("Receberá a sua encomenda hoje se encomendar até às 14h.", "pt"),
+    ],
+)
+def test_receive_phrase_needs_the_customer_and_the_parcel(
+    text: str, lang: str, tz: ZoneInfo
+) -> None:
+    """The shop receiving, something else received, shipping, negations,
+    questions and conditions give no delivery date."""
+    assert find_delivery_eta(text, REF, tz, lang) is None
+
+
 def _june(day: int, month: int = 6) -> date:
     return date(2026, month, day)
 

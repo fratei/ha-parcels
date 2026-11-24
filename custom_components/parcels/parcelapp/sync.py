@@ -11,6 +11,10 @@ which other tools using the key may share:
 - follows each shipment of an Amazon order, which Parcel lists by the order
   number with the shipment ID as extra information: it joins the parcel with
   that shipment, else its order's parcel when which one is clear;
+- follows Parcel when it switches an Amazon delivery to the carrier's number:
+  the order's delivery leaves the list and the carrier's arrives with the
+  same description. The carrier's delivery joins the order's parcel, flagged
+  so the user can undo it (see ``_switched_target``);
 - shows the deliveries that are only in Parcel as parcels, named after their
   description, unless the user turned that off;
 - learns the carrier code Parcel gave each carrier in the deliveries he added;
@@ -65,11 +69,15 @@ from ..dedup import (
     apply_contribution,
     carrier_family,
     find_parcels_by_number,
+    flag_switch,
+    join_switched,
+    kept_apart_from,
     number_key_text,
     order_parcels,
     origin_order_keys,
     remove_origins,
     shipment_parcels,
+    switch_target_open,
 )
 from ..models import (
     PARCELAPP_PREFIX,
@@ -83,6 +91,7 @@ from ..models import (
     dt_to_str,
     eta_from_dict,
     eta_to_dict,
+    is_generic_title,
     known_merchant_name,
     order_key,
 )
@@ -147,6 +156,10 @@ DATES_REPAIR_KEY: Final = "parcel_app_dates"
 MISSING_READS: Final = 2
 # A delivery not seen for this long is forgotten.
 RECORD_DAYS: Final = timedelta(days=30)
+# When Parcel switches an Amazon delivery to the carrier's number, the most
+# time between the last read listing the order's delivery and the first
+# listing the carrier's.
+SWITCH_WINDOW: Final = timedelta(days=3)
 LEARN_MAX: Final = 200
 LEARN_DAYS: Final = timedelta(days=365)
 MAX_DESCRIPTION: Final = 100
@@ -271,6 +284,14 @@ def _entries(deliveries: list[Any]) -> list[_Entry]:
     return entries
 
 
+def _description(delivery: Mapping[str, Any]) -> str | None:
+    """Return a delivery's description as Parcels keeps it, or None."""
+    description = clip_text(delivery.get("description"))
+    if description is None:
+        return None
+    return description[:MAX_DESCRIPTION].rstrip() or None
+
+
 def _record_shipment(record: Mapping[str, Any]) -> str | None:
     """Return the shipment a delivery Parcels keeps is, if known."""
     shipment = record.get("shipment")
@@ -297,6 +318,20 @@ def removable(parcel: Parcel) -> bool:
     return any(oid.startswith(PARCELAPP_PREFIX) for oid in parcel.origins) and all(
         oid.startswith(PARCELAPP_PREFIX) or origin.source is Source.MANUAL
         for oid, origin in parcel.origins.items()
+    )
+
+
+def _open_at(parcel: Parcel, time: datetime) -> bool:
+    """Return True when a parcel was still open at ``time``.
+
+    Not archived nor finished before it. A parcel finished with no time for
+    its status counts as open: it may have finished since.
+    """
+    if parcel.archived is not None and parcel.archived < time:
+        return False
+    state = parcel.state
+    return not (
+        state.terminal and state.status_time is not None and state.status_time < time
     )
 
 
@@ -640,6 +675,8 @@ class ParcelAppSync:
         self._snapshot: tuple[Any, ...] | None = None
         self._logged: str | None = None
         self._add_logged: str | None = None
+        # The keys of the deliveries in the list, during a read.
+        self._present: set[str] = set()
         self.last_refresh: datetime | None = None
         self.last_error: str | None = None
 
@@ -996,9 +1033,11 @@ class ParcelAppSync:
                 record["seen"] = stamp
                 record["missing"] = 0
             counts[_UNMATCHED] += 1
+        self._present = set(found) | twice
         changed |= not self.importing and self._remove_imports(now)
         unplaced = self._unplaced(found)
         orders: set[str] = set()
+        switched = 0
         for key, entry in found.items():
             record = records.get(key)
             if not isinstance(record, dict):
@@ -1022,10 +1061,13 @@ class ParcelAppSync:
             moved, outcome = self._read_delivery(key, record, entry, alone, now, tz)
             changed |= moved
             counts[outcome] += 1
+            if outcome == _MATCHED and record.get("switch"):
+                switched += 1
         changed |= self._missing(set(found) | twice, now)
         self._learn({key: entry.delivery for key, entry in found.items()}, orders, now)
         self._amazon_counts(found, orders, amazon)
         counts["amazon"] = amazon
+        counts["switched"] = switched
         self._state["counts"] = counts
         self._state["dates"] = _date_stats(deliveries, now, tz)
         return changed, {entry.number for entry in entries}
@@ -1218,10 +1260,15 @@ class ParcelAppSync:
                 remove_origins(data, holder, {oid}, now)
                 self._close(record)
                 return True, _UNMATCHED
+            if order is None and self._join_held(key, record, entry, holder, now):
+                return self._apply(key, record, entry, now, tz) or True, _MATCHED
             return self._apply(key, record, entry, now, tz), outcome
         if record.get("held"):
             # Its parcel was purged after archiving: don't bring it back.
             self._close(record)
+        if record.get("switch"):
+            # It left the order's parcel: the user undid the join.
+            record["switch"] = ""
         if record.get("closed"):
             return False, _UNMATCHED
         if order is not None:
@@ -1271,6 +1318,10 @@ class ParcelAppSync:
                 return False, _UNMATCHED
             if matches:
                 return False, _MATCHED
+            if "switch" not in record and (
+                found := self._switched_target(key, record, entry)
+            ):
+                return self._join_switched(key, record, entry, *found, now, tz)
         if not self.importing:
             return False, _UNMATCHED
         record["import"] = True
@@ -1279,6 +1330,159 @@ class ParcelAppSync:
         if (holder := self._holder(oid)) is None:
             return moved, _UNMATCHED
         return moved, _IMPORTED if removable(holder) else _MATCHED
+
+    def _switched_target(
+        self, key: str, record: dict[str, Any], entry: _Entry
+    ) -> tuple[Parcel, str] | None:
+        """Return the Amazon order's parcel a carrier's delivery continues.
+
+        The Parcel app may switch an Amazon delivery to the carrier's number:
+        the Amazon delivery leaves the list and the carrier's appears, with
+        its description, the item's title. Returns the order's parcel and
+        the key of the Amazon delivery that left, or None. Only when:
+
+        - the description is an item's title: not one word, a shop's or a
+          carrier's name, also with words like "order", or what Parcels
+          itself sent;
+        - one parcel open when this delivery appeared had an Amazon delivery
+          with it: two orders of the same item are a tie, even while one is
+          still listed or once one has finished. A tie is final: the record
+          is marked, so it isn't judged again when the facts change;
+        - that parcel may take the number (:func:`switch_target_open`) and
+          has more than the Parcel app's deliveries;
+        - its Amazon delivery left the list before this one appeared, at
+          most ``SWITCH_WINDOW`` before;
+        - the user doesn't keep them apart.
+        """
+        if entry.order is not None:
+            return None
+        title = _description(entry.delivery)
+        since = dt_from_str(record.get("since"))
+        if (
+            title is None
+            or since is None
+            or title.casefold()
+            in (
+                FALLBACK_DESCRIPTION.casefold(),
+                str(record.get("sent") or "").casefold(),
+            )
+            or is_generic_title(title)
+        ):
+            return None
+        data = self.engine.data
+        wanted = title.casefold()
+        sources: list[tuple[Parcel, list[str]]] = []
+        for parcel in data.parcels.values():
+            if not _open_at(parcel, since):
+                continue
+            if keys := [
+                oid.removeprefix(PARCELAPP_PREFIX)
+                for oid, origin in parcel.origins.items()
+                if oid.startswith(PARCELAPP_PREFIX)
+                and origin.order_numbers
+                and not origin.tracking_number
+                and (origin.name or "").casefold() == wanted
+            ]:
+                sources.append((parcel, keys))
+        if len(sources) > 1:
+            # Later, an order finished or gone would seem to settle it.
+            record["switch"] = ""
+            return None
+        if not sources:
+            return None
+        target, keys = sources[0]
+        if not switch_target_open(target) or removable(target):
+            return None
+        records = self._records
+        left: list[str] = []
+        for source in keys:
+            source_record = records.get(source)
+            if source in self._present or not isinstance(source_record, dict):
+                continue
+            seen = dt_from_str(source_record.get("seen"))
+            if seen is not None and seen < since <= seen + SWITCH_WINDOW:
+                left.append(source)
+        if not left:
+            return None
+        names = {
+            name
+            for parcel in data.parcels.values()
+            for origin in parcel.origins.values()
+            for name in (origin.merchant, origin.seller)
+            if name
+        }
+        if is_generic_title(title, names) or kept_apart_from(
+            data, {PARCELAPP_PREFIX + key}, target
+        ):
+            return None
+        return target, min(left)
+
+    def _join_switched(
+        self,
+        key: str,
+        record: dict[str, Any],
+        entry: _Entry,
+        target: Parcel,
+        source: str,
+        now: datetime,
+        tz: tzinfo,
+    ) -> tuple[bool, str]:
+        """Join a carrier's delivery to the Amazon order's parcel it continues.
+
+        As if the number were the parcel's own; flagged, so the user can
+        undo it. ``source`` is the key of the Amazon delivery that left.
+        """
+        record["switch"] = source
+        record.pop("import", None)
+        moved = self._apply(key, record, entry, now, tz, anchor=target)
+        oid = PARCELAPP_PREFIX + key
+        if (holder := self._holder(oid)) is None:
+            record.pop("switch", None)
+            return moved, _UNMATCHED
+        flag_switch(self.engine.data, holder.id, {oid}, now)
+        return True, _MATCHED
+
+    def _join_held(
+        self,
+        key: str,
+        record: dict[str, Any],
+        entry: _Entry,
+        holder: Parcel,
+        now: datetime,
+    ) -> bool:
+        """Join a held carrier's delivery's parcel to the order's it continues.
+
+        For one imported, or matched by number, before the Amazon delivery
+        left: see ``_switched_target``. The merge is flagged, so the user
+        can undo it. Returns True when they merged. A join the user undid
+        is marked, and a parcel made only of deliveries is an import again
+        when importing.
+        """
+        if "switch" in record:
+            source = record["switch"]
+            if (
+                isinstance(source, str)
+                and source
+                and (keeper := self._holder(PARCELAPP_PREFIX + source)) is not None
+                and keeper is not holder
+            ):
+                # The user took it back out of the order's parcel.
+                record["switch"] = ""
+                if self.importing and removable(holder):
+                    record["import"] = True
+                    record.pop("fp", None)
+            return False
+        found = self._switched_target(key, record, entry)
+        if (
+            found is None
+            or found[0] is holder
+            or not join_switched(self.engine.data, found[0].id, holder.id, now)
+        ):
+            return False
+        record["switch"] = found[1]
+        record.pop("import", None)
+        record.pop("fp", None)
+        return True
 
     @staticmethod
     def _close(record: dict[str, Any]) -> None:
@@ -1312,9 +1516,7 @@ class ParcelAppSync:
             events.append(eta)
         code = record.get("code")
         imported = bool(record.get("import"))
-        description = clip_text(delivery.get("description"))
-        if description is not None:
-            description = description[:MAX_DESCRIPTION].rstrip() or None
+        description = _description(delivery)
         merchant: str | None = None
         if imported:
             merchant = (
@@ -1323,13 +1525,18 @@ class ParcelAppSync:
                 else known_merchant_name(description)
             )
         since = dt_from_str(record.get("since")) or now
+        carrier = parcels_carrier(code, number)
+        base_carrier = base_state.carrier if base_state else None
         origin = Origin(
             id=oid,
             source=Source.PARCELAPP,
             time=min([event.time for event in events] + [since]),
             label=ORIGIN_LABEL,
-            carrier=(base_state.carrier if base_state else None)
-            or parcels_carrier(code, number),
+            # Parcel's carrier fills one the parcel doesn't know; but the
+            # number Parcel switched an Amazon order to is the carrier's.
+            carrier=(carrier or base_carrier)
+            if record.get("switch")
+            else (base_carrier or carrier),
             tracking_number=None if order is not None else number,
             merchant=merchant,
             order_numbers=(order,) if order is not None else (),
@@ -1829,6 +2036,9 @@ class ParcelAppSync:
                 "unmatched": _count(counts.get(_UNMATCHED)),
                 # Of those, Amazon's, by how each found its parcel.
                 "amazon": {name: _count(amazon.get(name)) for name in _AMAZON_COUNTS},
+                # Carriers' deliveries held in the Amazon order's parcel they
+                # continue: see ``_switched_target``.
+                "switched": _count(counts.get("switched")),
             },
             "added_today": {
                 "sent": _count(adds.get("sent")),

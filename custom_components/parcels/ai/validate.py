@@ -1756,7 +1756,8 @@ class _Checker:
           or range, and it isn't a deadline, an order or shipping date or a
           replaced date;
         * an order or shipping e-mail's own day stays only when a delivery
-          phrase gives that day;
+          phrase, or a sentence saying the customer receives the parcel,
+          gives that day;
         * otherwise the date next to a delivery phrase, as the parsers read
           it, is used;
         * otherwise the model's date is dropped when it has passed, when the

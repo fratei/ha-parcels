@@ -260,6 +260,38 @@ _LEGAL_WORDS = frozenset(
     }
 )
 _REGION_WORDS = frozenset({"eu", "europe"})
+# Words a shop's or carrier's name may end with: "DHL Express", "Amazon Spain".
+_NAME_TAIL_WORDS = frozenset(
+    {
+        "be",
+        "belgium",
+        "de",
+        "delivery",
+        "deutschland",
+        "es",
+        "espana",
+        "eu",
+        "europe",
+        "express",
+        "fr",
+        "france",
+        "international",
+        "it",
+        "italia",
+        "logistics",
+        "marketplace",
+        "nederland",
+        "nl",
+        "online",
+        "parcel",
+        "portugal",
+        "pt",
+        "shipping",
+        "shop",
+        "spain",
+        "store",
+    }
+)
 
 
 def _name_tokens(name: str) -> list[str]:
@@ -291,13 +323,8 @@ _KNOWN_MERCHANTS: dict[tuple[str, ...], str] = {
 }
 
 
-def merchant_key(name: str | None) -> str:
-    """Normalise a merchant name for comparisons: ``Amazon.es`` -> ``amazon``.
-
-    Legal suffixes don't count: ``AMAZON EU SARL SUCURSAL EN`` -> ``amazon``.
-    """
-    if not name:
-        return ""
+def _merchant_tokens(name: str) -> list[str]:
+    """Return a merchant name's words without its legal suffix."""
     tokens = _name_tokens(name)
     for index, token in enumerate(tokens):
         if index and token in _LEGAL_WORDS:
@@ -305,10 +332,142 @@ def merchant_key(name: str | None) -> str:
             while len(tokens) > 1 and tokens[-1] in _REGION_WORDS:
                 tokens.pop()
             break
+    return tokens
+
+
+def merchant_key(name: str | None) -> str:
+    """Normalise a merchant name for comparisons: ``Amazon.es`` -> ``amazon``.
+
+    Legal suffixes don't count: ``AMAZON EU SARL SUCURSAL EN`` -> ``amazon``.
+    """
+    if not name:
+        return ""
+    tokens = _merchant_tokens(name)
     for words in _KNOWN_MERCHANTS:
         if tuple(tokens[: len(words)]) == words:
             return "".join(words)
     return "".join(tokens)
+
+
+def _named(tokens: list[str], keys: Iterable[str]) -> bool:
+    """Return True when words are one of keys, then only a name's tail words."""
+    keys = set(keys) - {""}
+    return any(
+        "".join(tokens[:end]) in keys
+        and all(token in _NAME_TAIL_WORDS for token in tokens[end:])
+        for end in range(1, len(tokens) + 1)
+    )
+
+
+def is_merchant_name(text: str | None, names: Iterable[str | None] = ()) -> bool:
+    """Return True when a text is only a shop's name: a known one, or one of names.
+
+    Unlike :func:`known_merchant_name`, an item named after its shop isn't:
+    ``Amazon.es`` and ``Amazon Spain`` are, ``Amazon Basics cable`` isn't.
+    """
+    if not text or not (tokens := _merchant_tokens(text)):
+        return False
+    return _named(
+        tokens,
+        (
+            *("".join(words) for words in _KNOWN_MERCHANTS),
+            *(merchant_key(name) for name in names if name),
+        ),
+    )
+
+
+def is_one_word(text: str | None) -> bool:
+    """Return True when a text is at most one word, besides a name's tail words.
+
+    Like a shop's name Parcels may not know: ``SHEIN``, ``Temu Store``.
+    An item's title rarely is.
+    """
+    tokens = _merchant_tokens(text) if text else []
+    while len(tokens) > 1 and tokens[-1] in _NAME_TAIL_WORDS:
+        tokens.pop()
+    return len(tokens) <= 1
+
+
+# Words a description may add to a shop's name without naming an item:
+# "Amazon.es order", "Encomenda da Amazon", "Commande Amazon".
+_GENERIC_TITLE_WORDS = frozenset(
+    {
+        # en
+        "a",
+        "an",
+        "delivery",
+        "from",
+        "my",
+        "of",
+        "order",
+        "package",
+        "parcel",
+        "shipment",
+        "the",
+        # pt
+        "da",
+        "de",
+        "do",
+        "encomenda",
+        "entrega",
+        "envio",
+        "meu",
+        "minha",
+        "pacote",
+        "pedido",
+        # es
+        "del",
+        "mi",
+        "paquete",
+        # fr
+        "colis",
+        "commande",
+        "du",
+        "la",
+        "le",
+        "livraison",
+        "ma",
+        "mon",
+        # de
+        "bestellung",
+        "lieferung",
+        "mein",
+        "meine",
+        "paket",
+        "sendung",
+        "von",
+        # it
+        "consegna",
+        "di",
+        "il",
+        "mio",
+        "ordine",
+        "pacco",
+        "spedizione",
+        # nl
+        "bestelling",
+        "levering",
+        "mijn",
+        "pakket",
+        "van",
+        "zending",
+    }
+)
+
+
+def is_generic_title(text: str | None, names: Iterable[str | None] = ()) -> bool:
+    """Return True when a description names no item, only who sends it.
+
+    One word, or a shop's or carrier's name, also with words like ``order``:
+    ``SHEIN``, ``Correos Express``, ``Amazon.es order``, ``Encomenda da
+    Amazon``; names adds shops Parcels doesn't know.
+    """
+    core = " ".join(
+        token
+        for token in (_name_tokens(text) if text else [])
+        if token not in _GENERIC_TITLE_WORDS
+    )
+    return is_one_word(core) or is_carrier_name(core) or is_merchant_name(core, names)
 
 
 _KNOWN_MERCHANT_NAMES: dict[str, str] = {
@@ -789,6 +948,19 @@ def carrier_like(name: str | None) -> bool:
     if not key or key in _KNOWN_MERCHANT_NAMES:
         return False
     return key in _CARRIER_KEYS or bool(brand_carriers(name))
+
+
+def is_carrier_name(text: str | None) -> bool:
+    """Return True when a text is only a carrier's name: "Correos Express".
+
+    Unlike :func:`carrier_like`, an item named after a carrier isn't:
+    ``UPS battery backup`` names a UPS but isn't the carrier.
+    """
+    if not text:
+        return False
+    return merchant_key(text) in _CARRIER_KEYS or _named(
+        _merchant_tokens(text), _CARRIER_KEYS
+    )
 
 
 def _own_mail(origin: Origin) -> bool:

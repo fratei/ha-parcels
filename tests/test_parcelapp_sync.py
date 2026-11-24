@@ -84,6 +84,7 @@ from custom_components.parcels.parcelapp.sync import (
     RECONFIGURE_DELAY,
     RECORD_DAYS,
     START_DELAY,
+    SWITCH_WINDOW,
     TASK_NAME,
     ParcelAppSync,
     delivery_key,
@@ -2756,6 +2757,513 @@ async def test_archived_parcel_takes_no_news(
     assert counts(engine) == outcome
 
 
+# -- Carrier switches ----------------------------------------------------------
+
+# Parcel may switch an Amazon delivery to the carrier's number: the Amazon
+# delivery leaves the list, and the carrier's appears with its description,
+# the item's title.
+TITLE = "Example desk lamp, warm white, 2 pack…"
+CORREOS = "38123456789012345678901"
+OTHER_CORREOS = "38123456789012345678902"
+SECOND_ORDER_KEY = "40576543217654321"
+NO_IMPORTS = {**OPTIONS, CONF_PARCEL_APP_IMPORT: False}
+
+
+def switched_amazon(
+    number: str = ORDER, shipment: str = SHIPMENT, *, description: str | None = TITLE
+) -> dict[str, Any]:
+    """Return an Amazon order's delivery, described with its item's title."""
+    return delivery(
+        number,
+        code="amzles",
+        description=description,
+        extra_information=shipment,
+        events=(("Arrived at the carrier's facility", "2026-11-15 15:12:00"),),
+    )
+
+
+def carrier_delivery(
+    description: str | None = TITLE,
+    number: str = CORREOS,
+    *,
+    status: int = 2,
+    events: Iterable[tuple[str, str]] = (("Accepted", "2026-11-15 15:12:00"),),
+) -> dict[str, Any]:
+    """Return the carrier's delivery Parcel switched the Amazon order to."""
+    return delivery(
+        number,
+        code="chrexp",
+        status=status,
+        description=description,
+        events=events,
+        date_expected="2026-11-18 00:00:00",
+    )
+
+
+async def switch(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    parcel_app: FakeParcelApp,
+    after: timedelta = MIN_INTERVAL,
+) -> None:
+    """Read the Amazon order's delivery, then only the carrier's, ``after``."""
+    parcel_app.deliveries = [switched_amazon()]
+    await read(hass, freezer, parcel_app)
+    parcel_app.deliveries = [carrier_delivery()]
+    await read(hass, freezer, parcel_app, after)
+
+
+def switched(engine: ParcelsEngine) -> int:
+    """Return how many deliveries the diagnostics count as switched."""
+    return sync_of(engine).diagnostics()["deliveries"]["switched"]
+
+
+@pytest.mark.parametrize("options", [OPTIONS, NO_IMPORTS], ids=["import", "no_import"])
+async def test_switch_joins_the_orders_parcel(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A carrier's delivery that continues an Amazon order's joins its parcel.
+
+    As if the number were the parcel's own: the parcel takes the number, the
+    carrier and the newer date, and other news of the number finds it. The
+    join is flagged, so the user can undo it.
+    """
+    order = amazon_order(engine, "a", eta=Eta(day(25), day(25)))
+    parcel_app.deliveries = [switched_amazon()]
+    await read(hass, freezer, parcel_app)
+    first = holder(engine, ORDER_KEY)
+    assert first is not None
+    assert first.id == order.id
+
+    parcel_app.deliveries = [carrier_delivery()]
+    await read(hass, freezer, parcel_app)
+
+    assert list(engine.data.parcels) == [order.id]
+    joined = engine.data.parcels[order.id]
+    carried = holder(engine, CORREOS)
+    assert carried is not None
+    assert carried.id == order.id
+    assert joined.state.tracking_number == CORREOS
+    assert joined.state.carrier == "correos_express"
+    assert joined.state.eta == Eta(day(18), day(18))
+    assert joined.auto_merged is not None
+    assert joined.auto_merged.reason == "parcel_switch"
+    assert joined.auto_merged.all_origins == {PARCELAPP_PREFIX + CORREOS}
+    assert counts(engine) == (1, 1, 0, 0)
+    assert switched(engine) == 1
+    assert record(engine, CORREOS)["switch"] == ORDER_KEY
+    assert parcel_app.adds == []
+
+    await read(hass, freezer, parcel_app)
+
+    assert list(engine.data.parcels) == [order.id]
+    assert counts(engine) == (1, 1, 0, 0)
+    assert switched(engine) == 1
+
+    tracked_news(
+        engine,
+        ParcelStatus.OUT_FOR_DELIVERY,
+        at(17, 9, 45),
+        number=CORREOS,
+        carrier="correos_express",
+    )
+    add_parcel(engine, "b", CORREOS, carrier="correos_express")
+
+    assert list(engine.data.parcels) == [order.id]
+    assert engine.data.parcels[order.id].state.status is (ParcelStatus.OUT_FOR_DELIVERY)
+
+
+@pytest.mark.parametrize("case", ["imported", "email"])
+async def test_switch_joins_a_held_delivery_on_the_next_read(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    case: str,
+) -> None:
+    """A carrier's delivery that already had a parcel joins on the next read.
+
+    Imported before Parcels saw that it continues an Amazon order, or held by
+    the carrier's own e-mail: the parcels merge, and the user can undo it.
+    Then it doesn't join again.
+    """
+    order = amazon_order(engine, "a", eta=Eta(day(25), day(25)))
+    parcel_app.deliveries = [switched_amazon()]
+    await read(hass, freezer, parcel_app)
+    parcel_app.deliveries = [carrier_delivery()]
+    if case == "email":
+        add_parcel(engine, "c", CORREOS, carrier="correos_express")
+        await read(hass, freezer, parcel_app)
+    else:
+        # As before carrier switches were known.
+        with patch.object(ParcelAppSync, "_switched_target", return_value=None):
+            await read(hass, freezer, parcel_app)
+    held = (1, 1, 0, 0) if case == "email" else (1, 0, 1, 0)
+    own = holder(engine, CORREOS)
+    assert own is not None
+    assert own.id != order.id
+    assert counts(engine) == held
+    assert switched(engine) == 0
+
+    await read(hass, freezer, parcel_app)
+
+    assert list(engine.data.parcels) == [order.id]
+    joined = engine.data.parcels[order.id]
+    carried = holder(engine, CORREOS)
+    assert carried is not None
+    assert carried.id == order.id
+    assert joined.state.tracking_number == CORREOS
+    assert joined.state.eta == Eta(day(18), day(18))
+    assert joined.auto_merged is not None
+    assert joined.auto_merged.reason == "parcel_switch"
+    assert counts(engine) == (1, 1, 0, 0)
+    assert switched(engine) == 1
+
+    restored = engine.undo_merge(order.id)
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+
+    back = holder(engine, CORREOS)
+    assert back is not None
+    assert back.id == restored
+    assert engine.data.parcels[order.id].auto_merged is None
+    assert engine.data.parcels[order.id].state.tracking_number is None
+    assert record(engine, CORREOS)["switch"] == ""
+    assert counts(engine) == held
+    assert switched(engine) == 0
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        None,
+        "",
+        FALLBACK_DESCRIPTION,
+        "Amazon",
+        "SHEIN",
+        "Correos Express",
+        "Amazon.es order",
+    ],
+)
+async def test_switch_needs_an_items_title(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    description: str | None,
+) -> None:
+    """Not when the description isn't an item's title: many deliveries share it.
+
+    None, Parcels' own, or a shop's or carrier's name.
+    """
+    order = amazon_order(engine, "a")
+    parcel_app.deliveries = [switched_amazon(description=description)]
+    await read(hass, freezer, parcel_app)
+    parcel_app.deliveries = [carrier_delivery(description)]
+    await read(hass, freezer, parcel_app)
+
+    own = holder(engine, CORREOS)
+    assert own is not None
+    assert own.id != order.id
+    assert engine.data.parcels[order.id].auto_merged is None
+    assert "switch" not in record(engine, CORREOS)
+    assert counts(engine) == (1, 0, 1, 0)
+
+
+@pytest.mark.parametrize("options", [{**OPTIONS, CONF_PARCEL_APP_ADD: False}])
+@pytest.mark.parametrize(
+    ("case", "joins"),
+    [
+        ("none", True),
+        ("shop", False),
+        ("sent", False),
+        ("delivered", False),
+        ("archived", False),
+        ("numbered", False),
+        ("imported", False),
+        ("overlap", False),
+        ("tie", False),
+        ("tie_listed", False),
+    ],
+)
+async def test_switch_guards(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    case: str,
+    joins: bool,
+) -> None:
+    """Only to one open order's parcel, whose Amazon delivery left before.
+
+    Not when the title names a shop, or is what Parcels sent; the order's
+    parcel is delivered, archived, has a number, or is only the Amazon
+    delivery's import; the Amazon delivery is still listed; or two orders'
+    deliveries had the title, even with one still listed: a tie, which is
+    final.
+    """
+    title = "Northwind Home Goods order" if case == "shop" else TITLE
+    if case == "shop":
+        add_parcel(engine, "n", OTHER_UPS, merchant="Northwind Home Goods")
+    if case == "numbered":
+        add_parcel(
+            engine, "a", TBA, carrier="amazon", merchant="Amazon", orders=(ORDER,)
+        )
+    elif case != "imported":
+        amazon_order(engine, "a")
+    listed = [switched_amazon(description=title)]
+    if case.startswith("tie"):
+        amazon_order(engine, "b", SECOND_ORDER)
+        listed.append(switched_amazon(SECOND_ORDER, OTHER_SHIPMENT, description=title))
+    parcel_app.deliveries = listed
+    await read(hass, freezer, parcel_app)
+    target = holder(engine, ORDER_KEY)
+    assert target is not None
+    if case == "sent":
+        engine.data.parcelapp["records"][CORREOS] = {"sent": title}
+    elif case == "delivered":
+        engine.mark_delivered(target.id)
+    elif case == "archived":
+        engine.archive(target.id)
+
+    still = {"overlap": listed[:1], "tie_listed": listed[1:]}.get(case, [])
+    parcel_app.deliveries = [*still, carrier_delivery(title)]
+    await read(hass, freezer, parcel_app)
+    if case == "overlap":
+        parcel_app.deliveries = [carrier_delivery(title)]
+        await read(hass, freezer, parcel_app)
+
+    own = holder(engine, CORREOS)
+    assert own is not None
+    assert (own.id == target.id) is joins
+    tie = "" if case.startswith("tie") else None
+    assert record(engine, CORREOS).get("switch") == (ORDER_KEY if joins else tie)
+    if not joins:
+        assert engine.data.parcels[target.id].auto_merged is None
+
+
+@pytest.mark.parametrize(
+    ("after", "joins"), [(SWITCH_WINDOW, True), (SWITCH_WINDOW + SECOND, False)]
+)
+async def test_switch_window(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    after: timedelta,
+    joins: bool,
+) -> None:
+    """The Amazon delivery left at most ``SWITCH_WINDOW`` before."""
+    order = amazon_order(engine, "a")
+
+    await switch(hass, freezer, parcel_app, after)
+
+    own = holder(engine, CORREOS)
+    assert own is not None
+    assert (own.id == order.id) is joins
+
+
+@pytest.mark.parametrize(
+    ("options", "outcome"),
+    [(OPTIONS, (1, 0, 1, 0)), (NO_IMPORTS, (1, 0, 0, 1))],
+    ids=["import", "no_import"],
+)
+async def test_switch_undo(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    outcome: tuple[int, int, int, int],
+) -> None:
+    """Undo takes the carrier's delivery back out, and it doesn't join again.
+
+    The order's parcel is as before. The delivery is then like any other
+    with no e-mail: imported, or not shown when not importing.
+    """
+    order = amazon_order(engine, "a", eta=Eta(day(25), day(25)))
+    await switch(hass, freezer, parcel_app)
+
+    restored = engine.undo_merge(order.id)
+    assert restored is not None
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+
+    kept = engine.data.parcels[order.id]
+    assert kept.auto_merged is None
+    assert set(kept.origins) == {"msg:a#0", PARCELAPP_PREFIX + ORDER_KEY}
+    assert kept.state.tracking_number is None
+    assert kept.state.eta == Eta(day(25), day(25))
+    assert counts(engine) == outcome
+    assert switched(engine) == 0
+    assert record(engine, CORREOS)["switch"] == ""
+    back = holder(engine, CORREOS)
+    if outcome[2]:
+        assert back is not None
+        assert back.id == restored
+    else:
+        assert back is None
+
+
+@pytest.mark.parametrize("options", [OPTIONS, NO_IMPORTS], ids=["import", "no_import"])
+@pytest.mark.parametrize("case", ["one", "two", "listed"])
+async def test_switch_tie_is_final(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    case: str,
+) -> None:
+    """A tie stays one once a tied order is delivered.
+
+    Two orders' Amazon deliveries had the title when a carrier's delivery
+    appeared: it may be either's. The other order's parcel doesn't take it
+    later, as it may be the delivered order's, nor its news.
+    """
+    order = amazon_order(engine, "a")
+    other = amazon_order(engine, "b", SECOND_ORDER)
+    second = switched_amazon(SECOND_ORDER, OTHER_SHIPMENT)
+    parcel_app.deliveries = [switched_amazon(), second]
+    await read(hass, freezer, parcel_app)
+    carriers = {
+        "one": [carrier_delivery(number=OTHER_CORREOS)],
+        "two": [carrier_delivery(number=OTHER_CORREOS), carrier_delivery()],
+        "listed": [second, carrier_delivery()],
+    }[case]
+    parcel_app.deliveries = carriers
+    await read(hass, freezer, parcel_app)
+
+    engine.mark_delivered(other.id)
+    delivered = carrier_delivery(
+        number=OTHER_CORREOS,
+        status=0,
+        events=(
+            ("Accepted", "2026-11-15 15:12:00"),
+            ("Delivered", "2026-11-18 11:15:00"),
+        ),
+    )
+    parcel_app.deliveries = [
+        delivered if item["tracking_number"] == OTHER_CORREOS else item
+        for item in carriers
+    ]
+    await read(hass, freezer, parcel_app, timedelta(days=2))
+    await read(hass, freezer, parcel_app)
+
+    kept = engine.data.parcels[order.id]
+    assert kept.auto_merged is None
+    assert kept.state.tracking_number is None
+    assert not kept.state.terminal
+    numbers = [item["tracking_number"] for item in carriers if item is not second]
+    for number in numbers:
+        assert record(engine, number)["switch"] == ""
+        own = holder(engine, number)
+        assert own is None or own.id != order.id
+    assert switched(engine) == 0
+
+
+async def test_switch_tie_counts_orders_open_when_it_appeared(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A carrier's delivery is judged as it was when it appeared.
+
+    Also when that's on a later read, as for one imported before carrier
+    switches were known: an order delivered since it appeared still ties.
+    """
+    order = amazon_order(engine, "a")
+    other = amazon_order(engine, "b", SECOND_ORDER)
+    parcel_app.deliveries = [
+        switched_amazon(),
+        switched_amazon(SECOND_ORDER, OTHER_SHIPMENT),
+    ]
+    await read(hass, freezer, parcel_app)
+    parcel_app.deliveries = [carrier_delivery()]
+    # As before carrier switches were known.
+    with patch.object(ParcelAppSync, "_switched_target", return_value=None):
+        await read(hass, freezer, parcel_app)
+    assert "switch" not in record(engine, CORREOS)
+    engine.mark_delivered(other.id)
+
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+
+    own = holder(engine, CORREOS)
+    assert own is not None
+    assert own.id != order.id
+    assert engine.data.parcels[order.id].auto_merged is None
+    assert record(engine, CORREOS)["switch"] == ""
+    assert counts(engine) == (1, 0, 1, 0)
+
+
+async def test_switch_tie_outlasts_an_order_that_left(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A tie stays one when a tied order's parcel goes.
+
+    That order had no e-mail: its parcel was only its Amazon delivery's
+    import, and went once the delivery had left the list.
+    """
+    order = amazon_order(engine, "a")
+    parcel_app.deliveries = [
+        switched_amazon(),
+        switched_amazon(SECOND_ORDER, OTHER_SHIPMENT),
+    ]
+    await read(hass, freezer, parcel_app)
+    assert holder(engine, SECOND_ORDER_KEY) is not None
+    parcel_app.deliveries = [carrier_delivery()]
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+    assert holder(engine, SECOND_ORDER_KEY) is None
+
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+
+    own = holder(engine, CORREOS)
+    assert own is not None
+    assert own.id != order.id
+    assert engine.data.parcels[order.id].auto_merged is None
+    assert record(engine, CORREOS)["switch"] == ""
+    assert counts(engine) == (1, 0, 1, 0)
+
+
+@pytest.mark.parametrize("finish", ["delivered", "archived"])
+async def test_switch_leaves_out_orders_finished_before(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    finish: str,
+) -> None:
+    """An order finished before the carrier's delivery appeared doesn't tie."""
+    order = amazon_order(engine, "a")
+    other = amazon_order(engine, "b", SECOND_ORDER)
+    parcel_app.deliveries = [
+        switched_amazon(),
+        switched_amazon(SECOND_ORDER, OTHER_SHIPMENT),
+    ]
+    await read(hass, freezer, parcel_app)
+    if finish == "delivered":
+        engine.mark_delivered(other.id)
+    else:
+        engine.archive(other.id)
+
+    parcel_app.deliveries = [carrier_delivery()]
+    await read(hass, freezer, parcel_app)
+
+    own = holder(engine, CORREOS)
+    assert own is not None
+    assert own.id == order.id
+    assert record(engine, CORREOS)["switch"] == ORDER_KEY
+    assert switched(engine) == 1
+
+
 # -- Corrections ---------------------------------------------------------------
 
 
@@ -3992,6 +4500,7 @@ async def test_diagnostics_count_without_numbers(
         "imported": 0,
         "unmatched": 0,
         "amazon": no_amazon,
+        "switched": 0,
     }
     assert before["added_today"] == no_adds
     assert before["carriers"]["learned"] == {}
@@ -4030,6 +4539,7 @@ async def test_diagnostics_count_without_numbers(
         "imported": 2,
         "unmatched": 1,
         "amazon": no_amazon,
+        "switched": 0,
     }
     assert diagnostics["added_today"] == {
         "sent": 2,

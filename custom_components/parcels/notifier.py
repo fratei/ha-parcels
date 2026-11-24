@@ -29,12 +29,14 @@ The day
     Everything happens between the start time and the cut-off, in Home
     Assistant's time zone. At the start time the day's board is built from
     non-terminal parcels expected today (the last day of the ETA is today) and
-    parcels that became ready for pickup since the previous cut-off. Later in
-    the day a parcel joins when it goes out for delivery today or becomes ready
-    for pickup. Nothing starts after the cut-off, and the cut-off ends every
-    remaining activity. A pickup parcel is on the lock screen on the day it
-    became ready (or the next day when that happened after the cut-off); on
-    later days only the persistent notification lists it, for up to a week.
+    parcels that became ready for pickup since the previous cut-off. Until the
+    cut-off, a parcel joins on the same terms as soon as it's expected today,
+    also when its date became today after the start time, or when it goes out
+    for delivery today or becomes ready for pickup. Nothing starts after the
+    cut-off, and the cut-off ends every remaining activity. A pickup parcel is
+    on the lock screen on the day it became ready (or the next day when that
+    happened after the cut-off); on later days only the persistent
+    notification lists it, for up to a week.
 
 Live Activities
     One activity per parcel and iPhone (tag ``parcel-<id>``), or one combined
@@ -102,8 +104,12 @@ Packages
     number that one of the day's packages may hold rides along with it (see
     :func:`~.dedup.boxes_of_day`): it doesn't count, start an activity or
     notify on its own, and with item names on, the package says what it may
-    hold ("Possibly: ..."). An order that no package may hold counts on its
-    own. When an order stops riding along, its activity starts again.
+    hold ("Possibly: ..."). The package's text ends with how many orders it
+    may hold, by shop when they're one shop's ("may hold 8 Amazon orders"):
+    each once, and only those the device may show (see :func:`_holds`). A
+    change in that alone is a quiet update. An order that no package may hold
+    counts on its own. When an order stops riding along, its activity starts
+    again.
 
 Return pickups
     A return whose carrier collects it today (see
@@ -138,7 +144,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
@@ -187,7 +193,14 @@ from .const import (
 )
 from .customer_returns import linked_parcels, order_index, pickup_today
 from .dedup import boxes_of_day
-from .models import Parcel, ParcelsData, ParcelState, ReturnEntry, local_date
+from .models import (
+    Parcel,
+    ParcelsData,
+    ParcelState,
+    ReturnEntry,
+    local_date,
+    merchant_key,
+)
 from .parsers.base import Eta
 from .parsers.items import unique_items
 from .views import shipment_groups
@@ -960,12 +973,15 @@ def _parcel_content(
     ctx: _Context,
     possibly: Sequence[str] = (),
     pin: str | None = None,
+    *,
+    holds: str | None = None,
 ) -> _Content:
     """Return what a parcel's activity or notification shows.
 
-    ``possibly`` lists the items of the orders the package may hold. With a
-    ``pin``, the status takes the first line and the PIN leads the second; no
-    timer replaces them.
+    ``possibly`` lists the items of the orders the package may hold, and
+    ``holds`` says how many they are (see :func:`_holds`): last, so the
+    Lock Screen cuts it first. With a ``pin``, the status takes the first
+    line and the PIN leads the second; no timer replaces them.
     """
     state = parcel.state
     text, critical = _status_texts(state, ctx.today)
@@ -994,6 +1010,8 @@ def _parcel_content(
             parts.append(
                 f"Possibly: {_clean(possibly[0], 30)}" + (f" (+{more})" if more else "")
             )
+    if holds:
+        parts.append(holds)
     end = _chronometer_end(state, ctx) if pin is None else None
     message = SEP.join(parts)
     return _Content(
@@ -1050,23 +1068,43 @@ def _return_content(item: _DayReturn, ctx: _Context) -> _Content:
 
 def _packages(
     data: ParcelsData, parcels: list[Parcel], day: date
-) -> tuple[list[Parcel], dict[str, list[str]]]:
+) -> tuple[list[Parcel], dict[str, list[str]], dict[str, list[Parcel]]]:
     """Return the parcels that count on a day, and what each package may hold.
 
     An order that one of the day's packages may hold rides along with it and
     doesn't count. Each package gets the items of the public orders it may
-    hold.
+    hold, and every order it may hold: one that several packages may hold
+    rides with each of them.
     """
     covered = boxes_of_day(data, parcels, day)
     items: dict[str, list[str]] = {}
+    riding: dict[str, list[Parcel]] = {}
     for parcel in parcels:
-        if not parcel.private:
-            for box in covered.get(parcel.id, ()):
+        for box in covered.get(parcel.id, ()):
+            riding.setdefault(box, []).append(parcel)
+            if not parcel.private:
                 items.setdefault(box, []).extend(parcel.state.items)
     return (
         [parcel for parcel in parcels if parcel.id not in covered],
         {box: unique_items(names) for box, names in items.items()},
+        riding,
     )
+
+
+def _holds(orders: Iterable[Parcel]) -> str | None:
+    """Return how many orders a package, or the day's packages, may hold.
+
+    Each order counts once, even when several packages may hold it, and
+    the shop is named when they're all from one shop: "may hold 8 Amazon
+    orders", "may hold 3 orders". None when no order rides along.
+    """
+    unique = list({order.id: order for order in orders}.values())
+    if not unique:
+        return None
+    one_shop = len({merchant_key(order.state.merchant) for order in unique}) == 1
+    shop = _clean(unique[0].state.merchant, MAX_NAME) if one_shop else ""
+    words = [f"may hold {len(unique)}", *([shop] if shop else [])]
+    return " ".join([*words, "order" if len(unique) == 1 else "orders"])
 
 
 def _next_state(states: list[ParcelState], today: date) -> ParcelState | None:
@@ -1124,13 +1162,15 @@ def _combined_content(
     *,
     returns: Sequence[ReturnEntry] = (),
     place: str | None = None,
+    holds: str | None = None,
 ) -> _Content:
     """Return what a device's combined activity shows.
 
     ``pin`` is the code of the parcel out for delivery that it names next, or
     of the one parcel ready for pickup at ``place``: the count keeps the
     first line, and the PIN leads the second. ``returns`` are the device's
-    return pickups of the day; they count after the parcels.
+    return pickups of the day; they count after the parcels. ``holds`` says
+    how many orders its packages may hold, last (see :func:`_holds`).
     """
     states = [parcel.state for parcel in parcels]
     total = len(states)
@@ -1194,12 +1234,13 @@ def _combined_content(
         ],
         default=0.2,
     )
+    tail = [holds] if holds and total else []
     if pin is not None and total:
         message = f"{head}\n" + SEP.join(
-            [f"PIN {pin}", *([place] if place else []), *upcoming_parts, *parts]
+            [f"PIN {pin}", *([place] if place else []), *upcoming_parts, *parts, *tail]
         )
     else:
-        message = SEP.join([*([head] if total else []), *parts, *upcoming_parts])
+        message = SEP.join([*([head] if total else []), *parts, *upcoming_parts, *tail])
     status = f"{delivered}/{total}/{out}/{pickup}/{problems}"
     return _Content(
         title=COMBINED_TITLE,
@@ -2039,22 +2080,24 @@ class Notifier:
     ) -> None:
         """Add the parcels and return pickups on the lock screen today; none leave.
 
-        A return pickup marked done before it joined stays off, and one set
-        before the start time joins only soon after it (see
-        :meth:`_return_joins`).
+        Until the cut-off, a parcel joins once it's expected today, also when
+        its date became today after the start time; one ready for pickup only
+        when that's news (see :meth:`_joins`). A return pickup marked done
+        before it joined stays off, and one set before the start time joins
+        only soon after it (see :meth:`_return_joins`).
         """
         board: list[str] = day["board"]
         added = set(board)
-        candidates: list[Parcel] = []
-        if not day["morning"]:
-            day["morning"] = True
-            candidates += [
-                parcel
-                for parcel in parcels.values()
-                if _expected_today(parcel.state, ctx.today)
+        day["morning"] = True
+        candidates = [
+            parcel
+            for parcel in parcels.values()
+            if (
+                _expected_today(parcel.state, ctx.today)
                 and parcel.state.status is not S.READY_FOR_PICKUP
-            ]
-        candidates += [p for p in parcels.values() if self._joins(p.state, ctx)]
+            )
+            or self._joins(parcel.state, ctx)
+        ]
         for parcel in candidates:
             if parcel.id not in added:
                 added.add(parcel.id)
@@ -2143,7 +2186,7 @@ class Notifier:
                 moved.append(parcel)
             else:
                 members.append(parcel)
-        entries, possibly = _packages(self._host.data, members, ctx.today)
+        entries, possibly, riding = _packages(self._host.data, members, ctx.today)
         records: dict[str, Any] = day["activities"].get(device_id, {})
         if (
             device_id in day["combined"]
@@ -2155,7 +2198,14 @@ class Notifier:
                 if key != COMBINED and record["running"]:
                     await self._async_end(device_id, record, REASON_COLLAPSED, ctx.now)
             await self._async_combined(
-                ctx, day, device, entries, [item.entry for item in pickups]
+                ctx,
+                day,
+                device,
+                entries,
+                [item.entry for item in pickups],
+                holds=_holds(
+                    order for box in entries for order in riding.get(box.id, ())
+                ),
             )
             return
         keep = {
@@ -2167,7 +2217,12 @@ class Notifier:
                 await self._async_end(device_id, record, REASON_REMOVED, ctx.now)
         for parcel in entries:
             await self._async_individual(
-                ctx, day, device, parcel, possibly.get(parcel.id, ())
+                ctx,
+                day,
+                device,
+                parcel,
+                possibly.get(parcel.id, ()),
+                _holds(riding.get(parcel.id, ())),
             )
         for parcel in moved:
             record = day["activities"].get(device_id, {}).get(parcel.id)
@@ -2184,14 +2239,17 @@ class Notifier:
         device: _Device,
         parcel: Parcel,
         possibly: Sequence[str] = (),
+        holds: str | None = None,
     ) -> None:
         """Start, update, restart or end the activity of one parcel."""
         record = day["activities"].get(device.device_id, {}).get(parcel.id)
         status = parcel.state.status
-        content = _parcel_content(parcel, ctx, possibly)
+        content = _parcel_content(parcel, ctx, possibly, holds=holds)
         pin = _pin(parcel, device, ctx.options)
         pinned = (
-            None if pin is None else (_parcel_content(parcel, ctx, possibly, pin), pin)
+            None
+            if pin is None
+            else (_parcel_content(parcel, ctx, possibly, pin, holds=holds), pin)
         )
         if record is None or not record["running"]:
             if status is S.DELIVERED:
@@ -2251,13 +2309,15 @@ class Notifier:
         device: _Device,
         members: list[Parcel],
         returns: Sequence[ReturnEntry] = (),
+        *,
+        holds: str | None = None,
     ) -> None:
         """Start, update, restart or end the combined activity of one iPhone."""
         record = day["activities"].get(device.device_id, {}).get(COMBINED)
         pending = any(
             parcel.state.status is not S.DELIVERED for parcel in members
         ) or any(not entry.done(ctx.today) for entry in returns)
-        content = _combined_content(members, ctx, returns=returns)
+        content = _combined_content(members, ctx, returns=returns, holds=holds)
         # The PIN of the delivery it names; else the code of its one parcel
         # ready for pickup, with the place.
         upcoming = _next_parcel(members, ctx.today)
@@ -2275,7 +2335,9 @@ class Notifier:
             None
             if pin is None
             else (
-                _combined_content(members, ctx, pin, returns=returns, place=place),
+                _combined_content(
+                    members, ctx, pin, returns=returns, place=place, holds=holds
+                ),
                 pin,
             )
         )
@@ -2670,13 +2732,18 @@ class Notifier:
             and _routed(parcel, device)
             and parcel.state.status not in GONE
         ]
-        entries, possibly = _packages(self._host.data, board, ctx.today)
+        entries, possibly, riding = _packages(self._host.data, board, ctx.today)
         for parcel in entries:
             status = parcel.state.status
             sent = day["notified"].get(device.device_id, {})
             if status not in KEY_STATUSES or sent.get(parcel.id) == status.value:
                 continue
-            content = _parcel_content(parcel, ctx, possibly.get(parcel.id, ()))
+            content = _parcel_content(
+                parcel,
+                ctx,
+                possibly.get(parcel.id, ()),
+                holds=_holds(riding.get(parcel.id, ())),
+            )
             payload = _key_payload(content, _parcel_tag(parcel.id), device.kind)
             result = await self._async_send(device.service, device.kind, payload)
             if result is _Result.SENT:
