@@ -662,6 +662,34 @@ def test_receiving_something_else_today_drops_the_mail_day(
     assert result.shipments[0].eta is None
 
 
+@pytest.mark.parametrize("kind", ["order", "shipped"])
+@pytest.mark.parametrize(
+    ("text", "language"),
+    [
+        ("Encomende hoje e receberá a sua encomenda amanhã.", "pt"),
+        ("Prime members: order today, you'll receive your order tomorrow.", "en"),
+        ("Unfortunately you'll receive your order today only if you are home.", "en"),
+        ("Get it tomorrow if you order within 3 hrs.", "en"),
+    ],
+)
+def test_offer_or_condition_gives_no_delivery_date(
+    kind: str, text: str, language: str
+) -> None:
+    """An offer to whoever orders now, or a day that holds only if the
+    customer is home, neither keeps the e-mail's own day nor gives a date
+    when the model gives none."""
+    mail_day = checked(
+        answer(kind=kind, eta_start="2026-11-18", eta_end="2026-11-18"),
+        text,
+        language=language,
+    )
+    assert "eta_is_mail_day" in mail_day.notes
+    assert mail_day.shipments[0].eta is None
+    no_date = checked(answer(kind=kind), text, language=language)
+    assert NOTE_ETA_FROM_TEXT not in no_date.notes
+    assert no_date.shipments[0].eta is None
+
+
 # Carriers
 
 

@@ -795,6 +795,138 @@ def test_receive_phrase_needs_the_customer_and_the_parcel(
     assert find_delivery_eta(text, REF, tz, lang) is None
 
 
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        # The order verb before the date.
+        ("Encomende hoje e receberá a sua encomenda amanhã.", "pt"),
+        ("Compre hoje e receberá a sua encomenda amanhã.", "pt"),
+        ("Se encomendar hoje, a sua encomenda chega amanhã.", "pt"),
+        ("Prime members: order today, you'll receive your order tomorrow.", "en"),
+        ("Order within 2 hrs and you'll get it tomorrow.", "en"),
+        ("Order now and you'll get it today.", "en"),
+        ("Buy today, get it tomorrow.", "en"),
+        ("If you order today, your parcel arrives tomorrow.", "en"),
+        ("Pide hoy y recibirás tu pedido mañana.", "es"),
+        ("Si compras hoy, tu pedido llega mañana.", "es"),
+        ("Commandez aujourd'hui, vous recevrez votre colis demain.", "fr"),
+        ("Si vous commandez aujourd'hui, votre colis arrive demain.", "fr"),
+        ("Bestellen Sie heute und Sie erhalten Ihr Paket morgen.", "de"),
+        ("Wenn Sie heute bestellen, kommt Ihr Paket morgen an.", "de"),
+        ("Ordina oggi e riceverai il tuo ordine domani.", "it"),
+        ("Se ordini oggi, il tuo pacco arriva domani.", "it"),
+        ("Bestel vandaag en je ontvangt je pakket morgen.", "nl"),
+        ("Als je vandaag bestelt, komt je pakket morgen aan.", "nl"),
+        # The order verb after it, as the date's condition.
+        ("Get it tomorrow if you order within 3 hrs.", "en"),
+        ("Get it tomorrow when you order within 3 hrs.", "en"),
+        ("Your parcel arrives tomorrow morning if you order today.", "en"),
+        ("A sua encomenda chega amanhã se encomendar hoje.", "pt"),
+        ("Entrega mañana si pides antes de las 14h.", "es"),
+        ("Livraison demain si vous commandez avant 14h.", "fr"),
+        ("Ihr Paket kommt morgen an, wenn Sie heute bestellen.", "de"),
+        ("Consegna domani se ordini entro le 14.", "it"),
+        ("Je pakket komt morgen aan als je vandaag bestelt.", "nl"),
+        ("Je ontvangt je pakket morgen als je vandaag bestelt.", "nl"),
+    ],
+)
+def test_offer_gives_no_delivery_date(text: str, lang: str, tz: ZoneInfo) -> None:
+    """An offer to whoever orders now gives no delivery date, whether its
+    order verb comes before the date or after it."""
+    assert find_delivery_eta(text, REF, tz, lang) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        ("Unfortunately you'll receive your order today only if you are home.", "en"),
+        ("You'll receive your parcel today, but only if you are home.", "en"),
+        ("Your parcel arrives today only if you are home.", "en"),
+        ("Receberá a sua encomenda hoje apenas se estiver em casa.", "pt"),
+        ("A sua encomenda chega hoje, mas só se estiver em casa.", "pt"),
+        ("Recibirás tu pedido hoy solo si estás en casa.", "es"),
+        ("Vous recevrez votre colis aujourd'hui seulement si vous êtes là.", "fr"),
+        ("Sie erhalten Ihr Paket heute nur, wenn Sie zu Hause sind.", "de"),
+        ("Ihr Paket kommt heute an, aber nur wenn Sie zu Hause sind.", "de"),
+        ("Riceverai il tuo ordine oggi solo se sei a casa.", "it"),
+        ("Je ontvangt je pakket vandaag alleen als je thuis bent.", "nl"),
+        ("Je pakket komt vandaag aan, maar alleen als je thuis bent.", "nl"),
+    ],
+)
+def test_only_if_gives_no_delivery_date(text: str, lang: str, tz: ZoneInfo) -> None:
+    """A day that holds only if something else happens is no delivery date."""
+    assert find_delivery_eta(text, REF, tz, lang) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "lang", "first", "last"),
+    [
+        # Receiving on a day.
+        ("A sua encomenda foi enviada. Receberá a sua encomenda hoje.", "pt", 17, 17),
+        ("Receberá a sua encomenda entre 20 e 22 de novembro.", "pt", 20, 22),
+        ("Deverá receber a sua encomenda até 25 de novembro.", "pt", 25, 25),
+        ("You'll receive your order within 2-3 business days.", "en", 19, 20),
+        ("Sie werden Ihr Paket am 20. November erhalten.", "de", 20, 20),
+        ("Your order is on its way. You'll get it on Friday.", "en", 20, 20),
+        # Order words that make no offer.
+        ("Encomenda enviada, receberá a sua encomenda amanhã.", "pt", 18, 18),
+        ("Purchase confirmed, you'll receive it tomorrow.", "en", 18, 18),
+        ("Thank you for your order. You'll receive it tomorrow.", "en", 18, 18),
+        ("Order now shipped: you'll receive it tomorrow.", "en", 18, 18),
+        ("Tu compra ha sido enviada y la recibirás mañana.", "es", 18, 18),
+        ("Commande expédiée : vous la recevrez demain.", "fr", 18, 18),
+        ("Vielen Dank für Ihren Kauf, Sie erhalten Ihr Paket morgen.", "de", 18, 18),
+        ("Ordine spedito, riceverai il tuo ordine domani.", "it", 18, 18),
+        ("Bestelling verzonden, je ontvangt je pakket morgen.", "nl", 18, 18),
+        # An offer that isn't the date's condition.
+        ("Arriving tomorrow - order more today!", "en", 18, 18),
+        (
+            "Your order arrives tomorrow. Order more today for free shipping.",
+            "en",
+            18,
+            18,
+        ),
+        (
+            "Your parcel arrives tomorrow and, if you order more today, we'll add it.",
+            "en",
+            18,
+            18,
+        ),
+        (
+            "Je pakket komt morgen aan. Als je vandaag bestelt, sturen we het apart.",
+            "nl",
+            18,
+            18,
+        ),
+        # Other conditions.
+        ("Your parcel arrives tomorrow morning if all goes well.", "en", 18, 18),
+        ("A sua encomenda chega amanhã se tudo correr bem.", "pt", 18, 18),
+        ("Llega mañana si no hay incidencias.", "es", 18, 18),
+        ("Zustellung morgen, falls keine Verzögerung eintritt.", "de", 18, 18),
+        (
+            "You'll receive your parcel today, but if you're out we'll try again.",
+            "en",
+            17,
+            17,
+        ),
+        ("Tu pedido llega hoy, solo se necesita tu firma.", "es", 17, 17),
+        (
+            "Your parcel arrives today\nOnly if you're out, ask a neighbour.",
+            "en",
+            17,
+            17,
+        ),
+    ],
+)
+def test_delivery_date_beside_an_offer_or_condition(
+    text: str, lang: str, first: int, last: int, tz: ZoneInfo
+) -> None:
+    """Order words that make no offer, an offer that isn't the date's
+    condition, other conditions, Spanish "solo se" and a condition in the
+    next sentence keep the delivery date."""
+    assert _dates(find_delivery_eta(text, REF, tz, lang)) == (_day(first), _day(last))
+
+
 def _june(day: int, month: int = 6) -> date:
     return date(2026, month, day)
 

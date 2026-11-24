@@ -479,3 +479,7 @@ next honest measure.
 - A shop named only mid-sentence after a "sent by" phrase (pt
   `enviado por <shop>`) isn't read as the merchant.
 - The carrier detector doesn't know Colis Privé, so only the model can name it.
+- A date that the model gives itself is kept when the e-mail writes it, even
+  in an advert's promise to whoever orders now ("order today and get it
+  tomorrow"), unless it's the day an order or shipping e-mail arrived. Only
+  Parcels' own reading of the delivery words skips adverts.

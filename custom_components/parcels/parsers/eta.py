@@ -1964,8 +1964,9 @@ def date_expressions(
 # customer's (the shop receiving the order is no delivery), what is received
 # must be the parcel or the order, not an e-mail, a code or a tracking
 # number, and the date must stand right next to them. Questions, negations,
-# conditions ("if you order by 2 pm") and imperatives ("Ontvang je pakket
-# vandaag") state nothing.
+# conditions ("if you order by 2 pm", "only if you are home"), offers
+# ("Encomende hoje e receberá...", see find_delivery_eta) and imperatives
+# ("Ontvang je pakket vandaag") state nothing.
 RECEIVE_MAX_GAP_WORDS = 4
 # Words between the verb and a date that comes before what is received.
 RECEIVE_NEAR_WORDS = 2
@@ -2177,9 +2178,19 @@ _RECEIVE_ORDER_BY_RE = re.compile(
     r"|voor|avant)\s+(?:(?:as|a|las|la|le|ore|o|den|de)\s+)?\d{1,2}"
     r"(?:[:h.]\d{2}\s*(?:uhr|uur|h|am|pm|u)?|\s*(?:uhr|uur|h|am|pm|u))(?![a-z\d])"
 )
-_RECEIVE_IF_AFTER_RE = re.compile(
+_IF_AFTER_RE = re.compile(
     r"[\s,]*(?:if|unless|provided|se|si(?!\s+prega)|caso|wenn|falls|sofern"
     r"|indien|mits|als|sauf|salvo|tranne)(?![a-z])"
+)
+# "only if you are home", "mas apenas se", "nur, wenn".
+_ONLY_IF_AFTER_RE = re.compile(
+    r"[\s,-]*(?:(?:but|mas|pero|mais|aber|ma|maar)[\s,]+)?"
+    r"(?:only[\s,]+(?:if|when|once|provided)"
+    r"|(?:apenas|so|somente|unicamente)[\s,]+(?:se|caso|quando)"
+    r"|(?:solo|solamente|soltanto|unicamente)[\s,]+(?:si|cuando|se|quando)"
+    r"|(?:seulement|uniquement)[\s,]+(?:si|quand|lorsque|lorsqu(?='))"
+    r"|nur[\s,]+(?:wenn|falls|sofern)"
+    r"|(?:alleen|enkel|slechts)[\s,]+(?:als|indien|wanneer|zodra))(?![a-z])"
 )
 _RECEIVE_NEGATION_RE = re.compile(
     r"(?<![a-z])(?:not|nicht|kein|keine|keinen|keiner|niet|geen|nie|niemals"
@@ -2425,11 +2436,24 @@ def _received_on(
             return None
         phrase_end = max(phrase_end, final.end())
     tail = _words_end(s, phrase_end, 2, end)
-    if _RECEIVE_NEGATION_RE.search(s, verb.end(), tail) or _RECEIVE_IF_AFTER_RE.match(
-        s, phrase_end
+    if (
+        _RECEIVE_NEGATION_RE.search(s, verb.end(), tail)
+        or _IF_AFTER_RE.match(s, phrase_end)
+        or _only_if_at(s, phrase_end, lang, end)
     ):
         return None
     return eta
+
+
+def _only_if_at(s: str, pos: int, lang: str | None, endpos: int) -> bool:
+    """Return True when "only if" or one of its forms starts at ``pos``
+    and ends by ``endpos``.
+
+    Spanish "solo se" is reflexive ("Llega hoy, solo se necesita su firma"),
+    not "only if".
+    """
+    found = _ONLY_IF_AFTER_RE.match(s, pos, endpos)
+    return found is not None and not (lang == "es" and found.group(0).endswith("se"))
 
 
 def _receive_eta(
@@ -2449,6 +2473,184 @@ def _receive_eta(
     return None
 
 
+# An offer promises a day to whoever orders now ("Encomende hoje e receberá
+# a sua encomenda amanhã", "Prime members: order today, you'll receive your
+# order tomorrow", "Si compras hoy, tu pedido llega mañana"). It says
+# nothing about a parcel already ordered, so its sentence is skipped from
+# the order verb, or the "if" before it, on; a date before still counts
+# ("Arriving tomorrow - order more today!") unless the offer is its
+# condition ("Get it tomorrow if you order within 3 hrs").
+_OFFER_VERBS = (
+    *("encomende", "encomendem", "compre", "comprem", "voce encomenda"),
+    *("voce compra", "tu encomendas", "tu compras"),
+    *("pida", "pidan", "pides"),
+    *("commandez", "achetez", "tu commandes", "tu achetes"),
+    *("bestelle", "bestellst", "kaufe", "kaufst", "bestellen sie"),
+    *("kaufen sie", "sie bestellen", "sie kaufen"),
+    *("ordina", "acquista", "compri", "tu ordini", "tu acquisti"),
+    *("bestel", "bestelt", "koopt"),
+)
+_OFFER_VERB_RE = re.compile(
+    rf"(?<![a-z'-])(?P<offer>{_alternation(_OFFER_VERBS)}"
+    r"|(?<!thank\s)you\s+(?:order|buy|shop|purchase)"
+    r"|(?:jetzt|heute|gleich|sofort)\s+(?:bestellen|kaufen)"
+    r"|(?:vandaag|nu|meteen|direct)\s+(?:bestellen|kopen)"
+    r"|place\s+(?:(?:your|an|a\s+new)\s+)?orders?"
+    r"|(?:faca|efetue|efectue)\s+(?:ja\s+)?(?:(?:a\s+sua|o\s+seu|a\s+tua"
+    r"|o\s+teu|uma|um|sua|seu)\s+)?(?:encomenda|pedido)"
+    r"|(?:haz|haga|realiza|realice)\s+(?:(?:tu|su|un)\s+)?pedido"
+    r"|passez\s+(?:(?:votre|une|ta)\s+)?commande"
+    r"|(?:effettua|effettui)\s+(?:l'|(?:il\s+tuo|il\s+suo|un)\s+)?ordine"
+    r"|plaats\s+(?:(?:je|uw|een)\s+)?bestelling)(?![a-z-])"
+)
+# These are nouns too ("Encomenda enviada", "Purchase confirmed"), so they
+# make an offer only first in the sentence, or after a colon, a comma or a
+# dash, and followed by a word such as "today", "now" or "by".
+_OFFER_NOUN_VERBS = (
+    *("order", "shop", "buy", "purchase", "encomenda", "compra", "peca"),
+    *("pide", "commande", "achete", "kauf", "bestell", "ordini", "acquisti"),
+    "koop",
+)
+_OFFER_WORDS = (
+    *("today", "now", "tonight", "within", "by", "before", "until", "again"),
+    *("yours", "it", "them", "more", "hoje", "agora", "ate", "antes"),
+    *("dentro", "novamente", "hoy", "ahora", "hasta", "nuevamente"),
+    *("aujourd'hui", "maintenant", "avant", "d'ici", "jusqu'a", "jusqu'au"),
+    *("heute", "jetzt", "gleich", "bis", "innerhalb", "oggi", "ora"),
+    *("adesso", "subito", "entro", "prima", "vandaag", "nu", "meteen"),
+    *("voor", "binnen", "direct", "opnieuw"),
+)
+_OFFER_CONNECTIVES = (
+    *("so", "just", "simply", "then", "and", "or", "e", "y", "et", "und"),
+    *("en", "ed"),
+)
+# A status after them makes it no offer: "Order now on its way",
+# "Encomenda agora a caminho".
+_OFFER_STATUS_WORDS = (
+    *("on its way", "on the way", "on their way", "in transit", "out", "is"),
+    *("has", "was", "will", "shipped", "dispatched", "sent", "ready"),
+    *("available", "delivered", "arriving", "complete", "completed"),
+    *("confirmed", "processed", "processing", "packed", "received", "placed"),
+    *("cancelled", "canceled", "a caminho", "em transito", "foi", "enviada"),
+    *("enviado", "expedida", "expedido", "pronta", "pronto", "disponivel"),
+    *("entregue", "confirmada", "confirmado", "recebida", "recebido"),
+    *("cancelada", "cancelado", "en camino", "en transito", "fue", "listo"),
+    *("lista", "disponible", "entregado", "entregada", "recibido"),
+    *("recibida", "en route", "en cours", "est", "expediee", "expedie"),
+    *("prete", "livree", "confirmee", "recue", "annulee", "unterwegs", "ist"),
+    *("wurde", "versandt", "verschickt", "bereit", "zugestellt", "bestatigt"),
+    *("storniert", "in viaggio", "in consegna", "in transito", "spedito"),
+    *("spedita", "consegnato", "consegnata", "confermato", "confermata"),
+    *("annullato", "onderweg", "wordt", "werd", "verzonden", "klaar"),
+    *("bezorgd", "afgeleverd", "bevestigd", "geannuleerd"),
+)
+_OFFER_IMPERATIVE_RE = re.compile(
+    r"(?:\A[^a-z0-9]*|[:,(-]\s*)"
+    rf"(?:(?:{_alternation(_OFFER_CONNECTIVES)})\s+)?"
+    rf"(?P<offer>(?:{_alternation(_OFFER_NOUN_VERBS)})\s+"
+    rf"(?:{_alternation(_OFFER_WORDS)})(?![a-z])"
+    rf"(?!\s+(?:{_alternation(_OFFER_STATUS_WORDS)})(?![a-z]))"
+    r"|(?:peca|pide)\s+(?:ja|ya)(?![a-z]))"
+)
+# "if you order" is an offer too: "Se encomendar hoje, a sua encomenda
+# chega amanhã", "Wenn Sie bis 14 Uhr bestellen, ...". It starts at "if",
+# since German and Dutch put the date before the verb ("als je vandaag
+# bestelt").
+_OFFER_IF_RES = tuple(
+    re.compile(
+        rf"(?<![a-z])(?P<offer>(?:{conditions})\s+{between}(?:{verbs}))(?![a-z-])"
+    )
+    for conditions, between, verbs in (
+        ("se|caso|quando", r"(?:voce\s+)?", "encomendar|comprar|pedir"),
+        (
+            "si|cuando",
+            "",
+            r"compras|compra|pides|pide|haces\s+tu\s+pedido"
+            r"|realizas\s+tu\s+pedido",
+        ),
+        ("se|quando", "", "ordini|acquisti|compri|ordina|acquista|compra"),
+        (
+            "wenn|falls|sobald",
+            r"(?:sie|du)\s+(?:[a-z0-9:.']+\s+){0,4}?",
+            "bestellen|bestellst|kaufen|kaufst",
+        ),
+        (
+            "als|indien|wanneer|zodra",
+            r"(?:je|jij|u)\s+(?:[a-z0-9:.']+\s+){0,4}?",
+            "bestelt|koopt",
+        ),
+    )
+)
+_OFFER_RES = (_OFFER_VERB_RE, _OFFER_IMPERATIVE_RE, *_OFFER_IF_RES)
+# How far after "if" its order verb may start ("if you order", "wenn Sie
+# bis 14 Uhr bestellen").
+_OFFER_IF_GAP = 40
+# A date's condition: "only if", or "if" or "when" with an order verb.
+_OFFER_CONDITION_RE = re.compile(
+    r"[\s,]*(?:if|when|once|se|caso|quando|si|cuando|quand|lorsque|lorsqu"
+    r"|wenn|falls|sofern|sobald|als|indien|wanneer|zodra)(?![a-z])"
+)
+# Up to three words may come between: "komt morgen aan als je vandaag
+# bestelt", "arrives tomorrow morning if you order now". A conjunction
+# starts another clause ("arrives tomorrow and, if you order more today,
+# ...").
+_CONDITION_GAP_WORDS = 3
+_CONDITION_CONJUNCTIONS = (
+    *("and", "or", "but", "then", "so", "e", "ed", "ou", "mas", "y", "o"),
+    *("u", "pero", "et", "mais", "und", "oder", "aber", "sowie", "ma"),
+    *("oppure", "en", "of", "maar"),
+)
+_CONDITION_GAP_RE = re.compile(
+    rf"\s+(?!(?:{_alternation(_CONDITION_CONJUNCTIONS)})(?![a-z]))[a-z0-9:'-]+"
+)
+
+
+def _offer_spans(s: str, text: str) -> list[tuple[int, int]]:
+    """Return where offers run in ``text`` (prepared as ``s``): from the
+    order verb, or the "if" before it, to the end of its sentence."""
+    bounds = [
+        (match.start(), match.end())
+        for match in _CLAUSE_BREAK_RE.finditer(s)
+        if _breaks_clause(s, text, match)
+    ]
+    spans = []
+    start = 0
+    for end, after in [*bounds, (len(s), len(s))]:
+        clause = s[start:end]
+        offers = [
+            found.start("offer")
+            for regex in _OFFER_RES
+            if (found := regex.search(clause))
+        ]
+        if offers:
+            offer = start + min(offers)
+            spans.append((offer, min(end, offer + CLAUSE_MAX_CHARS)))
+        start = after
+    return spans
+
+
+def _conditional(
+    s: str, text: str, end: int, offers: list[tuple[int, int]], lang: str | None
+) -> bool:
+    """Return True when a condition follows the date that ends at ``end``:
+    "only if" ("Llega hoy solo si estás en casa"), or "if" with an order
+    verb ("Get it tomorrow if you order within 3 hrs")."""
+    stop = _receive_clause(s, text, end)[1]
+    pos = end
+    for _ in range(_CONDITION_GAP_WORDS + 1):
+        if _only_if_at(s, pos, lang, stop):
+            return True
+        if found := _OFFER_CONDITION_RE.match(s, pos, stop):
+            return any(
+                found.start() <= start <= found.end() + _OFFER_IF_GAP
+                for start, _ in offers
+            )
+        if (word := _CONDITION_GAP_RE.match(s, pos, stop)) is None:
+            return False
+        pos = word.end()
+    return False
+
+
 def find_delivery_eta(
     text: str, reference: datetime, tz: tzinfo, lang: str | None = None
 ) -> Eta | None:
@@ -2456,15 +2658,22 @@ def find_delivery_eta(
 
     Deadlines and order, shipping, offer or superseded dates are blanked
     out first, so a delivery phrase never takes them ("Entrega prevista
-    para 20/11 foi adiada. Nova data: 24/11" gives 24/11). A sentence
-    saying the customer receives the parcel on a day gives a delivery date
-    too ("Receberá a sua encomenda hoje", "You'll get your parcel today").
+    para 20/11 foi adiada. Nova data: 24/11" gives 24/11). So are dates
+    with a condition after them ("today only if you are home", "tomorrow
+    if you order today") and offers, from the order verb to the end of the
+    sentence ("Order today and you'll get it tomorrow"). A sentence saying
+    the customer receives the parcel on a day gives a delivery date too
+    ("Receberá a sua encomenda hoje", "You'll get your parcel today").
     """
     text = text[:MAX_FIND_CHARS]
+    s = _prepare(text)
+    offers = _offer_spans(s, text)
     chars = list(text)
     for found, start, end in _located_expressions(text, reference, tz, lang):
-        if found.deadline or found.other:
+        if found.deadline or found.other or _conditional(s, text, end, offers, lang):
             chars[start:end] = " " * (end - start)
+    for start, end in offers:
+        chars[start:end] = " " * (end - start)
     blanked = "".join(chars)
     return find_eta(blanked, reference, tz, lang) or _receive_eta(
         blanked, reference, tz, lang

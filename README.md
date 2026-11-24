@@ -1205,12 +1205,14 @@ detector always runs as well. The kind, the delivery date, the merchant and
 the pickup point are checked against the e-mail's own wording: a date to
 collect, pay or return by, or the day the order was placed, is never taken
 as a delivery date, nor is the day an order or shipping e-mail arrived, unless
-its words give that day for the delivery. When the e-mail's words give a
-kind, a kind they don't support is replaced by it. An answer that a parcel
-was returned is then sorted by the e-mail's own wording, as the parsers'
-readings are: an item sent back to the shop becomes a return, a parcel going
-back to its sender stays one, and a refund is dropped, as is a refund e-mail
-that the answer says with confidence isn't about a parcel.
+its words give that day for the delivery. An advert's promise to whoever
+orders now ("order today and get it tomorrow") and a day that holds only on a
+condition ("today only if you're home") don't count as such words. When the
+e-mail's words give a kind, a kind they don't support is replaced by it. An
+answer that a parcel was returned is then sorted by the e-mail's own wording,
+as the parsers' readings are: an item sent back to the shop becomes a return,
+a parcel going back to its sender stays one, and a refund is dropped, as is a
+refund e-mail that the answer says with confidence isn't about a parcel.
 The last day to collect, the next attempt and where a parcel was left are
 read from the e-mail's own wording, as for the parsers, never from the
 answer.
