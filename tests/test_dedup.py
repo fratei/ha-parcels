@@ -10,6 +10,7 @@ import json
 import pytest
 
 from custom_components.parcels.const import MailKind, ParcelStatus
+from custom_components.parcels.convert import fill_contribution
 from custom_components.parcels.dedup import (
     REASON_SAME_MERCHANT_ETA,
     REASON_SAME_NUMBER,
@@ -33,7 +34,13 @@ from custom_components.parcels.dedup import (
     undo_auto_merge,
     update_parcel,
 )
-from custom_components.parcels.models import Origin, ParcelEvent, ParcelsData, Source
+from custom_components.parcels.models import (
+    Origin,
+    ParcelEvent,
+    ParcelsData,
+    Source,
+    Suggestion,
+)
 from custom_components.parcels.parsers.base import Eta
 
 from .factories import T0, at, contribution
@@ -956,6 +963,35 @@ def test_restoring_leaves_partial_cancellations(
     parcel = data.parcels[pid]
     assert parcel.state.status is status
     assert [e.status for e in parcel.events if e.kind is MailKind.CANCELLED] == [None]
+
+
+def test_restoring_leaves_a_date_the_ai_filled_in() -> None:
+    """Only a cancellation gets its status back, not another event without one.
+
+    Here the date the local AI filled in for the parsers' reading of an order.
+    """
+    data = ParcelsData()
+    pid = apply_contribution(
+        data,
+        contribution(
+            "msg:o#0", kind=MailKind.ORDER, merchant="Amazon", orders=[AI_READ_ORDER]
+        ),
+        T0,
+    ).parcel_id
+    assert pid is not None
+    fill = fill_contribution(
+        Suggestion(kind=MailKind.ORDER, eta_start=date(2026, 11, 6)),
+        message_hash="o",
+        time=T0,
+    )
+    assert fill is not None
+    assert apply_contribution(data, fill, at(hours=1)).parcel_id == pid
+    parcel = data.parcels[pid]
+    filled = [e for e in parcel.events if e.origin == fill.origin.id]
+    assert [e.status for e in filled] == [None]
+    assert restore_cancellations(data, {"o"}, at(hours=41)) == 0
+    assert parcel.state.status is S.ORDERED
+    assert [e.status for e in filled] == [None]
 
 
 def test_a_later_cancellation_skips_a_cancelled_parcel() -> None:

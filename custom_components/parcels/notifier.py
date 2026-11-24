@@ -110,15 +110,22 @@ Return pickups
     :func:`~.customer_returns.pickup_today`) has its own activity
     (``return-<id>``) on the iPhones that may show the return: a shared
     return on every notified iPhone, a private one only on its owners'. It
-    starts at the start time, or as soon as a pickup is set for today, and
-    names the shop, the carrier and, with item names on, a shared return's
-    first item.
+    starts at the start time, or as soon as an e-mail sent since then sets
+    its pickup for today, and names the shop, the carrier and, with item
+    names on, a shared return's first item. A return set before the start
+    time that the notifier first sees more than 15 minutes after it, as when
+    Home Assistant was down or Parcels was updated, starts nothing that day:
+    the carrier may have come hours ago. The page and the persistent
+    notification still list it. The time of the e-mail counts, not when it
+    was read. iPads and Android phones get their notification on the same
+    terms.
     Marking it picked up updates it quietly to "Return picked up ✓" with the
     time at 4/4, and it ends 30 minutes later; undo brings it back, and
     starts it again once it has ended. A return picked up before the start
-    time starts nothing, and one moved to another day ends at once. Return
-    pickups count towards the collapse threshold, and the combined activity
-    counts them in its text and its progress.
+    time starts nothing until someone takes that back, and one moved to
+    another day ends at once. Return pickups count towards the collapse
+    threshold, and the combined activity counts them in its text and its
+    progress.
 
 Persistent notification
     ``parcels_today`` lists the day's parcels and return pickups from the
@@ -212,6 +219,8 @@ MAX_PIN = 20
 DUE_TOLERANCE = timedelta(seconds=1)
 COUNTDOWN = timedelta(hours=1)
 PICKUP_DAYS = 7
+# Return pickups set before the start time join only this soon after it.
+RETURN_GRACE = timedelta(minutes=15)
 
 PROGRESS_MAX = 4
 COMBINED = "combined"
@@ -2003,6 +2012,24 @@ class Notifier:
             )
         return False
 
+    @staticmethod
+    def _return_joins(entry: ReturnEntry, ctx: _Context) -> bool:
+        """Return True when a return pickup of today may join now.
+
+        Within 15 minutes of the start time, every one may. After that, the
+        carrier may have come hours ago, as when Parcels was updated or Home
+        Assistant was down at the start time: only a return whose pickup was
+        set for today by an e-mail sent since the start joins, or one someone
+        took back from picked up since. Reading an older e-mail later counts
+        as before the start.
+        """
+        if ctx.now < ctx.start + RETURN_GRACE:
+            return True
+        return any(
+            moment is not None and moment >= ctx.start
+            for moment in (entry.pickup_set, entry.reopened)
+        )
+
     def _update_board(
         self,
         ctx: _Context,
@@ -2012,7 +2039,9 @@ class Notifier:
     ) -> None:
         """Add the parcels and return pickups on the lock screen today; none leave.
 
-        A return pickup marked done before it joined stays off.
+        A return pickup marked done before it joined stays off, and one set
+        before the start time joins only soon after it (see
+        :meth:`_return_joins`).
         """
         board: list[str] = day["board"]
         added = set(board)
@@ -2034,7 +2063,9 @@ class Notifier:
         pickups += [
             return_id
             for return_id, item in returns.items()
-            if return_id not in pickups and not item.entry.done(ctx.today)
+            if return_id not in pickups
+            and not item.entry.done(ctx.today)
+            and self._return_joins(item.entry, ctx)
         ]
 
     @staticmethod

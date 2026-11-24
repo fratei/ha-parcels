@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from itertools import count
 import json
@@ -501,13 +501,17 @@ class Env:
         order_numbers: tuple[str, ...] = (),
         received: bool = False,
         rule: PickupRule = PickupRule.EMAIL,
+        sent: datetime | None = None,
     ) -> ReturnEntry:
-        """Add a return whose one e-mail gives its pickup day."""
+        """Add a return whose one e-mail gives its pickup day.
+
+        With ``sent``, the e-mail is older than the return.
+        """
         number = next(self._numbers)
         moment = dt_util.utcnow()
         origin = ReturnOrigin(
             message=f"m-{number}",
-            time=moment,
+            time=sent or moment,
             merchant=merchant,
             order_numbers=order_numbers,
             items=items,
@@ -1526,7 +1530,8 @@ async def test_one_activity_per_return_pickup(env: Env) -> None:
 async def test_return_pickup_joins_and_leaves(env: Env, hass: HomeAssistant) -> None:
     """A return whose pickup becomes today joins; one moved to another day leaves.
 
-    One picked up before the start time starts nothing.
+    One picked up before the start time starts nothing, until someone takes
+    that back.
     """
     phone = env.phone("Alex iPhone", ALEX)
     early = env.ret()
@@ -1570,6 +1575,11 @@ async def test_return_pickup_joins_and_leaves(env: Env, hass: HomeAssistant) -> 
             0.6,
         )
     ]
+
+    await env.goto(at(12))
+    env.picked_up(early, False)
+    await env.settle()
+    assert phone.take() == [pending_return(early)]
 
 
 async def test_return_pickups_in_the_combined_activity(env: Env) -> None:
@@ -1800,6 +1810,103 @@ async def test_return_pickup_on_ipads_and_android(env: Env) -> None:
     await env.settle()
     await env.restart()
     assert ipad.take() == android.take() == []
+
+
+@pytest.mark.parametrize("updated", [True, False], ids=["updated", "started late"])
+async def test_return_pickups_set_before_the_start_wait(
+    env: Env, hass: HomeAssistant, updated: bool
+) -> None:
+    """Started after the start time, returns set before it start nothing that day.
+
+    Their carrier may have come hours ago: after an update from a release
+    without return pickups, whose day has none, or when Home Assistant was
+    down at the start time. The persistent notification still lists them.
+    A return an e-mail sets for today afterwards joins; one from an older
+    e-mail, read only now, doesn't. Taking back a "picked up" makes a waiting
+    return join.
+    """
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    waiting = env.ret()
+    env.ret("Decathlon", "dpd")
+    if updated:
+        env.host.data.engine[STATE_KEY] = {
+            "version": 1,
+            "days": {
+                DAY.isoformat(): {
+                    "morning": True,
+                    "board": [],
+                    "combined": [],
+                    "activities": {},
+                    "notified": {},
+                }
+            },
+        }
+    env.freezer.move_to(at(15))
+    notifier = await env.start()
+    await env.settle()
+    assert iphone.take() == ipad.take() == []
+    assert notifier.diagnostics()["today"]["return_pickups"] == 0
+    listed = str(persistent(hass)).splitlines()
+    assert f"- Zalando{SEP}CTT{SEP}Return pickup today" in listed
+    assert f"- Decathlon{SEP}DPD{SEP}Return pickup today" in listed
+
+    await env.goto(at(15, 10))
+    late = env.ret("IKEA", "gls")
+    env.ret("Etsy", "dpd", sent=at(18, day=DAY - timedelta(days=1)))
+    env.changed()
+    await env.settle()
+    joined = [(ret_tag(late), f"Return pickup today{SEP}GLS")]
+    assert summary(iphone.take()) == summary(ipad.take()) == joined
+    assert notifier.diagnostics()["today"]["return_pickups"] == 1
+
+    await env.goto(at(15, 20))
+    env.picked_up(waiting)
+    await env.settle()
+    assert iphone.take() == ipad.take() == []
+    env.picked_up(waiting, False)
+    await env.settle()
+    joined = [(ret_tag(waiting), f"Return pickup today{SEP}CTT")]
+    assert summary(iphone.take()) == summary(ipad.take()) == joined
+    assert notifier.diagnostics()["today"]["return_pickups"] == 2
+
+
+@pytest.mark.parametrize(("minute", "joins"), [(14, True), (15, False)])
+async def test_return_pickups_join_within_15_minutes_of_the_start(
+    env: Env, minute: int, joins: bool
+) -> None:
+    """Started shortly after the start time, the day's return pickups join."""
+    phone = env.phone("Alex iPhone", ALEX)
+    entry = env.ret()
+    env.freezer.move_to(at(8, minute))
+    await env.start()
+    await env.settle()
+    assert phone.take() == ([pending_return(entry)] if joins else [])
+
+
+async def test_return_pickup_moved_to_today_after_the_start(env: Env) -> None:
+    """After the start time, an e-mail that moves a pickup to today makes it join.
+
+    One that repeats a pickup already today before the start doesn't.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    moved = env.ret(pickup=NEXT_DAY)
+    repeated = env.ret("Decathlon", "dpd")
+    env.freezer.move_to(at(15))
+    await env.start()
+    await env.settle()
+    assert phone.take() == []
+
+    await env.goto(at(15, 10))
+    for entry in (moved, repeated):
+        origin = next(iter(entry.origins.values()))
+        later = replace(
+            origin, message=f"{origin.message}-later", time=dt_util.utcnow(), pickup=DAY
+        )
+        entry.origins[later.message] = later
+    env.changed()
+    await env.settle()
+    assert phone.take() == [pending_return(moved)]
 
 
 @pytest.mark.parametrize(

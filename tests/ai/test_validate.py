@@ -513,6 +513,84 @@ def test_date_not_in_text(kind: str, day: str, text: str, kept: bool) -> None:
     assert result.shipments[0].eta == (expected if kept else None)
 
 
+@pytest.mark.parametrize(
+    ("heading", "language"),
+    [
+        ("[Encomenda #10001] (18 de Novembro de 2026)", "pt"),
+        ("Encomenda #10001 (18 de Novembro de 2026)", "pt"),
+        ("[ENCOMENDA #10001] (18 DE NOVEMBRO DE 2026)", "pt"),
+        ("[Encomenda #10001] (18/11/2026)", "pt"),
+        ("[Order #10001] (November 18, 2026)", "en"),
+        ("Order #10001 (November 18, 2026)", "en"),
+        ("[Pedido #10001] (18 de noviembre de 2026)", "es"),
+        ("[Commande n°10001] (18 novembre 2026)", "fr"),
+        ("[Bestellung #10001] (18. November 2026)", "de"),
+        ("[Ordine #10001] (18 Novembre 2026)", "it"),
+        ("[Bestelling #10001] (18 november 2026)", "nl"),
+    ],
+)
+def test_order_heading_date_is_not_a_delivery_date(heading: str, language: str) -> None:
+    """The order date a shop prints after the order number is dropped."""
+    result = checked(
+        answer(kind="order", eta_start="2026-11-18", eta_end="2026-11-18"),
+        heading,
+        language=language,
+    )
+    assert "eta_not_delivery_date" in result.notes
+    assert result.shipments[0].eta is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "text"),
+    [
+        ("order", "Envio em 2 a 3 dias úteis."),
+        ("order", "Lisboa, 18 de novembro de 2026\nObrigado pela sua encomenda."),
+        ("shipped", "Lisboa, 18 de novembro de 2026\nA sua encomenda foi enviada."),
+    ],
+)
+def test_mail_day_is_not_a_delivery_date(kind: str, text: str) -> None:
+    """An order or shipping e-mail's own day needs a delivery phrase."""
+    result = checked(
+        answer(kind=kind, eta_start="2026-11-18", eta_end="2026-11-18"), text
+    )
+    assert "eta_is_mail_day" in result.notes
+    assert result.shipments[0].eta is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "subject", "text", "expected", "error"),
+    [
+        ("order", "", "Obrigado pela sua encomenda.", None, "eta_not_in_text"),
+        ("order", "", "Data da encomenda: 18/11/2026", None, "eta_not_delivery_date"),
+        ("order", "", "Entrega prevista: hoje, 18 de novembro.", REFERENCE, None),
+        ("order", "", "Entrega prevista: 20 de novembro.", date(2026, 11, 20), None),
+        ("order", "", "A sua encomenda será entregue hoje.", REFERENCE, None),
+        (
+            "shipped",
+            "A sua encomenda chega hoje",
+            "A sua encomenda foi enviada.",
+            REFERENCE,
+            None,
+        ),
+    ],
+)
+def test_mail_day_with_other_evidence(
+    kind: str, subject: str, text: str, expected: date | None, error: str | None
+) -> None:
+    """A delivery phrase for today, in the text or the subject, keeps the
+    e-mail's own day; a delivery phrase for another day gives that day; the
+    other checks keep their own reasons."""
+    result = checked(
+        answer(kind=kind, eta_start="2026-11-18", eta_end="2026-11-18"),
+        text,
+        subject=subject,
+    )
+    assert "eta_is_mail_day" not in result.notes
+    assert error is None or error in result.notes
+    eta = None if expected is None else Eta(expected, expected)
+    assert result.shipments[0].eta == eta
+
+
 # Carriers
 
 

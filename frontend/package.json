@@ -1,6 +1,6 @@
 {
   "name": "parcels-cards",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "private": true,
   "description": "Lovelace cards for the Parcels Home Assistant integration",
   "license": "MIT",

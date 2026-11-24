@@ -176,6 +176,10 @@ _NO_ETA_KINDS = frozenset(
         MailKind.NOT_PARCEL,
     }
 )
+# The day an order or shipping e-mail was sent is printed in it as the order
+# or shipping date, so it is a delivery date only when a delivery phrase
+# gives that day.
+_MAIL_DAY_KINDS = frozenset({MailKind.ORDER, MailKind.SHIPPED})
 _ETA_FIELDS = ("eta_start", "eta_end", "window_start", "window_end")
 
 # Carrier domains that aren't listed as carriers in parsers/senders.py.
@@ -1751,11 +1755,14 @@ class _Checker:
         * the model's date stays when the e-mail writes exactly that date
           or range, and it isn't a deadline, an order or shipping date or a
           replaced date;
+        * an order or shipping e-mail's own day stays only when a delivery
+          phrase gives that day;
         * otherwise the date next to a delivery phrase, as the parsers read
           it, is used;
         * otherwise the model's date is dropped when it has passed, when the
-          e-mail gives it only as one of those other dates, or when the
-          e-mail mentions no date at all.
+          e-mail gives it only as one of those other dates, when the e-mail
+          mentions no date at all, or when it is an order or shipping
+          e-mail's own day.
         """
         if kind in _NO_ETA_KINDS:
             if any(self.data.get(field) for field in _ETA_FIELDS):
@@ -1777,11 +1784,17 @@ class _Checker:
             for found in expressions
             if found.deadline or found.other
         } - candidates
-        if eta is not None and (eta.start, eta.end) in candidates:
-            return eta
         found = find_delivery_eta(
             text, self.received, self.tz, self.language
         ) or find_delivery_eta(subject, self.received, self.tz, self.language)
+        mail_day = (
+            eta is not None
+            and kind in _MAIL_DAY_KINDS
+            and eta.start == eta.end == self.reference
+            and (found is None or (found.start, found.end) != (eta.start, eta.end))
+        )
+        if eta is not None and (eta.start, eta.end) in candidates and not mail_day:
+            return eta
         if (
             found is not None
             and found.end >= self.reference
@@ -1812,6 +1825,9 @@ class _Checker:
             )
         ):
             self.error("eta_not_in_text")
+            return None
+        if mail_day:
+            self.error("eta_is_mail_day")
             return None
         return eta
 

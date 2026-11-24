@@ -1830,6 +1830,35 @@ def _is_other(before: str, after: str, atom: _Atom) -> bool:
     return atom.kind == "weekday" and bool(_SALE_DAY_RE.search(before))
 
 
+# WooCommerce prints the order date in parentheses after the order number:
+# "[Order #10001] (18 November 2026)", "Encomenda #10001 (18/11/2026)",
+# "Pedido n.º 10001 (...)", "Bestellnummer 10001 (...)", in its own words
+# for the 7 languages and pt-BR, folded ("nº" reads "no").
+_ORDER_HEADING_BEFORE_RE = re.compile(
+    r"(?<![a-z0-9])"
+    r"(?:(?:order|encomenda|pedido|commande|bestellung|ordine|bestelling)"
+    r"\s*(?:#|n\.?\s*[°o]\.?|nr\.?)|bestellnummer|bestelnummer)"
+    r"\s*#?\s*(?=[a-z_-]*\d)[a-z0-9][a-z0-9_-]*\s*\]?\s*\(\s*\Z"
+)
+# Inside the parentheses only a time may follow the date.
+_ORDER_HEADING_AFTER_RE = re.compile(
+    r"\.?(?:,?\s*(?:a las|alle|at|as|um|om|a|@|-)?\s*"
+    r"\d{1,2}(?:[:.h]\d{2}){0,2}(?:\s?(?:[ap]\.?\s?m\.?|uhr|h|u))?)?\s*\)"
+)
+ORDER_HEADING_MAX_CHARS = 60
+
+
+def _in_order_heading(s: str, start: int, end: int) -> bool:
+    """Return True when a date is all a pair of parentheses holds, right
+    after an order number."""
+    return bool(
+        _ORDER_HEADING_AFTER_RE.match(s, end)
+        and _ORDER_HEADING_BEFORE_RE.search(
+            s, max(0, start - ORDER_HEADING_MAX_CHARS), start
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _Located:
     """A date expression with the words around it, in folded text."""
@@ -1845,6 +1874,8 @@ class _Located:
     after: str
     # The clause's words before the date, earlier dates included.
     clause: str
+    # The date is the order date after an order number (see _in_order_heading).
+    order_heading: bool
 
 
 def _located(
@@ -1876,6 +1907,7 @@ def _located(
             before=s[max(previous_end, clause_start) : span_start],
             after=_AFTER_BREAK_RE.split(rest)[0],
             clause=s[clause_start:span_start],
+            order_heading=_in_order_heading(s, span_start, span_end),
         )
         previous_end = span_end
 
@@ -1890,7 +1922,8 @@ def _located_expressions(
                 found.start,
                 found.end,
                 deadline=_is_deadline(found.before, found.after, found.atom),
-                other=_is_other(found.before, found.after, found.atom),
+                other=found.order_heading
+                or _is_other(found.before, found.after, found.atom),
             ),
             found.span_start,
             found.span_end,
@@ -1907,7 +1940,8 @@ def date_expressions(
     Each one says whether its words make it a deadline (a date to collect,
     pay, return or be refunded by, or the end of a hold period) or another
     date that isn't a delivery date (an order, shipping, offer or
-    superseded date). Words before a date belong to it only when no other
+    superseded date, or the date a shop prints in parentheses after the
+    order number). Words before a date belong to it only when no other
     date comes between them.
     """
     return [found for found, _, _ in _located_expressions(text, reference, tz, lang)]

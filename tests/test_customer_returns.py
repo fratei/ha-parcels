@@ -285,6 +285,30 @@ def test_pickup_from_an_email_beats_next_working_day_beats_assumed() -> None:
     assert entry.pickup == (date(2026, 11, 17), PickupRule.NEXT_WORKING_DAY)
 
 
+def test_when_the_pickup_day_was_set() -> None:
+    """The time of the e-mail that last changed the pickup day."""
+    entry = _entry(_bare("m1", _nov(3, 9), date(2026, 11, 6), PickupRule.ASSUMED))
+    assert entry.pickup_set == _nov(3, 9)
+    # The same day, from a date in an e-mail or a reminder: not changed.
+    entry.origins["m2"] = _bare("m2", _nov(4, 9), date(2026, 11, 6), PickupRule.EMAIL)
+    entry.origins["m3"] = _bare("m3", _nov(5, 9), date(2026, 11, 6), PickupRule.EMAIL)
+    assert entry.pickup_set == _nov(3, 9)
+    entry.origins["m4"] = _bare("m4", _nov(5, 18), date(2026, 11, 9), PickupRule.EMAIL)
+    assert entry.pickup_set == _nov(5, 18)
+    # A weaker rule doesn't move the day; an e-mail moving it back does.
+    entry.origins["m5"] = _bare(
+        "m5", _nov(6, 8), date(2026, 11, 10), PickupRule.ASSUMED
+    )
+    assert entry.pickup_set == _nov(5, 18)
+    entry.origins["m6"] = _bare("m6", _nov(6, 10), date(2026, 11, 6), PickupRule.EMAIL)
+    assert entry.pickup == (date(2026, 11, 6), PickupRule.EMAIL)
+    assert entry.pickup_set == _nov(6, 10)
+    # Without the e-mails that moved it, the day was set by the first one.
+    del entry.origins["m4"], entry.origins["m6"]
+    assert entry.pickup_set == _nov(3, 9)
+    assert _entry(_bare("m7", _nov(3))).pickup_set is None
+
+
 def test_day_and_done() -> None:
     entry = _entry(_bare("m1", _nov(10, 15), date(2026, 11, 11), PickupRule.ASSUMED))
     assert entry.day == date(2026, 11, 11)
@@ -314,9 +338,11 @@ def test_marking_a_return_picked_up() -> None:
     entry.archived = _nov(10, 19)
     _apply(data, "m2", _nov(10, 20))
     assert entry.archived == _nov(10, 19)
-    # Undo: waiting for the carrier again.
+    assert entry.reopened is None
+    # Undo: waiting for the carrier again, since then.
     mark_return_picked_up(data, entry.id, False, _nov(10, 21))
     assert (entry.picked_up, entry.updated) == (None, _nov(10, 21))
+    assert entry.reopened == _nov(10, 21)
     assert not entry.done(date(2026, 11, 11))
     with pytest.raises(KeyError):
         mark_return_picked_up(data, "ret_unknown", True, _nov(10, 21))
@@ -667,10 +693,11 @@ def test_a_return_survives_a_restart() -> None:
     _apply(data, "m2", _nov(20), notes=(NOTE_RETURN_RECEIVED,))
     entry.archived = _nov(21)
     entry.picked_up = _nov(11, 9)
+    entry.reopened = _nov(11, 8)
     restored = ParcelsData.from_dict(data.as_dict()).returns[entry.id]
     assert restored == entry
     assert restored.received
-    assert restored.picked_up == _nov(11, 9)
+    assert (restored.picked_up, restored.reopened) == (_nov(11, 9), _nov(11, 8))
 
 
 def test_a_pickup_rule_from_a_newer_release_is_dropped() -> None:

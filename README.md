@@ -441,7 +441,7 @@ entry.
 | --- | --- | --- |
 | People to notify | none | The companion app devices of these people get Live Activities and notifications. |
 | Excluded devices | none | Devices that never get them, such as a shared tablet. |
-| Start time | 08:00 | Live Activities for parcels expected today, and for the day's return pickups, start at this time. |
+| Start time | 08:00 | Live Activities for parcels expected today, and for the day's return pickups, start at this time. A return pickup set before it starts none if Parcels first sees it more than 15 minutes later (see [Return pickups](#return-pickups)). |
 | Cut-off time | 22:00 | Remaining Live Activities end at this time. |
 | Combine Live Activities above | 3 | With more packages than this on one day, they share one Live Activity. Return pickups count; orders that ride along with a package don't. |
 | Show item names on the lock screen | off | When off, the lock screen shows shop, carrier, status and time window only (and the delivery PIN, if that option is on). |
@@ -841,12 +841,20 @@ it off and on.
 A return whose carrier comes for it today shows like a delivery, on the
 devices of the people to notify who may see it:
 
-- From the start time, or as soon as an e-mail sets its pickup for today,
-  each iPhone gets a pink Live Activity. Its title is the shop, or the
-  carrier when no shop is known, and its text says "Return pickup today ·
+- From the start time, or as soon as an e-mail sent after it sets its pickup
+  for today, each iPhone gets a pink Live Activity. Its title is the shop, or
+  the carrier when no shop is known, and its text says "Return pickup today ·
   CTT", with the carrier unless it's the title. With **Show item names on the
   lock screen** on, the first item follows ("· Wool hat +1 more"). iPads and
   Android phones get one notification instead.
+- The carrier may come early, so a return whose pickup was set for today
+  before the start time starts its activity, and its iPad and Android
+  notification, only within 15 minutes of the start time. If Home Assistant
+  was down then, or Parcels was updated later that day, it starts none that
+  day; the Parcels page and the persistent notification still list it. What
+  counts is when the e-mail was sent, not when Parcels read it, so one read
+  late, such as when a mailbox is added, starts nothing either. To start its
+  activity anyway, select **Mark picked up** and then **Undo**.
 - The persistent notification lists it after the parcels ("Example Shop ·
   CTT · Return pickup today") and counts it in its title ("2 parcels and 1
   return pickup today").
@@ -861,7 +869,7 @@ devices of the people to notify who may see it:
 - When the shop says that the return arrived, the activity says "Return
   picked up ✓" and ends 30 minutes later. A return whose pickup moves to
   another day, or that's removed, ends at once, and one marked picked up
-  before the start time starts nothing.
+  before the start time starts nothing until someone takes that back.
 - Return pickups count towards **Combine Live Activities above**. A shared
   activity counts them in its text and its progress ("2 of 3 delivered · 1
   return pickup · next: Amazon via DPD 13–14h"), and a marked one as done
@@ -1154,12 +1162,14 @@ exactly one number in it is that close, and so does an order number given as
 only a part of a hyphen- or slash-joined number. Parcels' own tracking number
 detector always runs as well. The kind, the delivery date, the merchant and
 the pickup point are checked against the e-mail's own wording: a date to
-collect, pay or return by is never taken as a delivery date, and when the
-e-mail's words give a kind, a kind they don't support is replaced by it. An
-answer that a parcel was returned is then sorted by the e-mail's own wording,
-as the parsers' readings are: an item sent back to the shop becomes a return,
-a parcel going back to its sender stays one, and a refund is dropped, as is a
-refund e-mail that the answer says with confidence isn't about a parcel.
+collect, pay or return by, or the day the order was placed, is never taken
+as a delivery date, nor is the day an order or shipping e-mail arrived, unless
+its words give that day for the delivery. When the e-mail's words give a
+kind, a kind they don't support is replaced by it. An answer that a parcel
+was returned is then sorted by the e-mail's own wording, as the parsers'
+readings are: an item sent back to the shop becomes a return, a parcel going
+back to its sender stays one, and a refund is dropped, as is a refund e-mail
+that the answer says with confidence isn't about a parcel.
 The last day to collect, the next attempt and where a parcel was left are
 read from the e-mail's own wording, as for the parsers, never from the
 answer.
@@ -1366,8 +1376,10 @@ actions:
   never the local AI. Where they read an order from a verified sender with
   confidence, their reading replaces the AI's and the parcel stays accepted,
   without reopening a parcel that was delivered or archived; not where the
-  e-mail added a tracking number or a shipment. What you typed, merged or
-  split stays. E-mails from ignored senders are skipped. Then Amazon's
+  answer you accepted has a tracking number or a shipment, typed in or not.
+  Other corrections you typed while accepting it are part of the answer and
+  are replaced with it; what you changed on the parcel, merged or split
+  stays. E-mails from ignored senders are skipped. Then Amazon's
   cancellations of the last 30 days that were taken for partial ones cancel
   their parcel, where no news says that it shipped (see
   [What it does](#what-it-does)). The hub's diagnostics count the e-mails
@@ -1441,6 +1453,11 @@ actions:
 - **No Live Activity.** Check the iPhone's Live Activities setting for the
   Home Assistant app, remote access, the **Live Activities** switch, test mode
   and the people to notify, then try `parcels.test_live_activity`.
+- **A return pickup has no Live Activity.** One set for today before the
+  start time starts only within 15 minutes of it, not after a restart or an
+  update later that day, nor from an older e-mail read late (see
+  [Return pickups](#return-pickups)). To start it, select **Mark picked up**
+  and then **Undo** in its details.
 - **A delivery PIN doesn't show on the lock screen.** Check that **Show
   delivery PINs on the lock screen** is on, that the parcel's details show a
   PIN or pickup code, and that it's out for delivery or ready for pickup. A

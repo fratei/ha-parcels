@@ -651,6 +651,54 @@ def test_find_delivery_eta(
     assert _dates(find_delivery_eta(text, REF, tz, lang)) == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "lang"),
+    [
+        ("[Order #10001] (November 13, 2026)", "en"),
+        ("Order #10001 (November 13, 2026)", "en"),
+        ("[ORDER #10001] (NOVEMBER 13, 2026)", "en"),
+        ("Order #WC-10001 (Friday, November 13, 2026 at 10:00 am)", "en"),
+        ("Order #10001 (2026-11-13)", "en"),
+        ("[Encomenda #10001] (13 de Novembro de 2026)", "pt"),
+        ("Encomenda #10001 (13/11/2026 às 10:00)", "pt"),
+        ("Pedido nº10001 (13/11/2026)", "pt"),
+        ("[Pedido #10001] (13 de noviembre de 2026)", "es"),
+        ("Pedido n.º 10001 (viernes, 13 de noviembre de 2026)", "es"),
+        ("[Commande n°10001] (13 novembre 2026)", "fr"),
+        ("Commande #10001 (13/11/2026 à 10h00)", "fr"),
+        ("[Bestellung Nr. 10001] (13. November 2026)", "de"),
+        ("Bestellnummer 10001 (13.11.2026 um 10:00 Uhr)", "de"),
+        ("[Ordine #10001] (13 Novembre 2026)", "it"),
+        ("[Bestelling # 10001] (13 november 2026)", "nl"),
+        ("Bestelnummer 10001 (vrijdag 13 november 2026)", "nl"),
+    ],
+)
+def test_order_heading_date_is_other(text: str, lang: str, tz: ZoneInfo) -> None:
+    """A date that is all a pair of parentheses holds after an order number
+    is the order date, as WooCommerce's e-mails print it."""
+    (found,) = date_expressions(text, REF, tz, lang)
+    assert (found.start, found.end) == (_day(13), _day(13))
+    assert found.other
+
+
+@pytest.mark.parametrize(
+    ("text", "lang", "day"),
+    [
+        ("Encomenda #10001 (entrega 20/11)", "pt", _day(20)),
+        ("Order #10001 (delivery on November 25)", "en", _day(25)),
+        ("Entrega prevista (25/11)", "pt", _day(25)),
+    ],
+)
+def test_parenthesised_delivery_date(
+    text: str, lang: str, day: date, tz: ZoneInfo
+) -> None:
+    """Parentheses that hold other words, or follow no order number, keep a
+    delivery date."""
+    (found,) = date_expressions(text, REF, tz, lang)
+    assert not found.other
+    assert _dates(find_delivery_eta(text, REF, tz, lang)) == (day, day)
+
+
 def _june(day: int, month: int = 6) -> date:
     return date(2026, month, day)
 

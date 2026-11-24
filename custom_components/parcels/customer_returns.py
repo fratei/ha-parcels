@@ -317,13 +317,16 @@ def mark_return_picked_up(
 ) -> ReturnEntry:
     """Mark a return picked up now, or take that back; return it.
 
-    Marking it again keeps the first time. Raises KeyError for an unknown
-    return.
+    Marking it again keeps the first time. Taking it back records when
+    (``reopened``), so the notifier shows it again that day. Raises KeyError
+    for an unknown return.
     """
     entry = data.returns[entry_id]
     if picked_up == (entry.picked_up is not None):
         return entry
     entry.picked_up = now if picked_up else None
+    if not picked_up:
+        entry.reopened = now
     entry.updated = now
     return entry
 

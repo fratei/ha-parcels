@@ -1559,6 +1559,11 @@ PICKUP_RANK: dict[PickupRule, int] = {
 }
 
 
+def _pickup_key(origin: ReturnOrigin) -> tuple[int, datetime]:
+    """Return how strongly an e-mail's pickup day counts: by rule, then newest."""
+    return PICKUP_RANK[origin.pickup_rule or PickupRule.ASSUMED], origin.time
+
+
 @dataclass(slots=True)
 class ReturnOrigin:
     """What one e-mail said about a customer return.
@@ -1632,8 +1637,9 @@ class ReturnEntry:
 
     Kept apart from parcels: it never changes the state of the order's own
     parcels, and it isn't tracked or sent to 17TRACK. On its pickup day the
-    notifier shows it until someone marks it picked up (``picked_up``).
-    ``origins`` are keyed by the e-mail's hash.
+    notifier shows it until someone marks it picked up (``picked_up``);
+    ``reopened`` is when someone last took that back. ``origins`` are keyed
+    by the e-mail's hash.
     """
 
     id: str
@@ -1643,6 +1649,7 @@ class ReturnEntry:
     private: bool = False
     archived: datetime | None = None
     picked_up: datetime | None = None
+    reopened: datetime | None = None
 
     def _oldest_first(self) -> list[ReturnOrigin]:
         return sorted(self.origins.values(), key=lambda o: (o.time, o.message))
@@ -1704,6 +1711,25 @@ class ReturnEntry:
         """Return the time of the newest e-mail."""
         return max((o.time for o in self.origins.values()), default=self.created)
 
+    def _pickup_origin(self) -> tuple[ReturnOrigin | None, datetime | None]:
+        """Return the e-mail whose pickup day counts, and when the day was set.
+
+        The e-mails are replayed oldest first. The day was set by the last
+        one that changed it; one giving the same day, like a reminder,
+        doesn't change it.
+        """
+        best: ReturnOrigin | None = None
+        since: datetime | None = None
+        for origin in self._oldest_first():
+            if origin.pickup is None or origin.pickup_rule is None:
+                continue
+            if best is not None and _pickup_key(origin) <= _pickup_key(best):
+                continue
+            if best is None or origin.pickup != best.pickup:
+                since = origin.time
+            best = origin
+        return best, since
+
     @property
     def pickup(self) -> tuple[date, PickupRule] | None:
         """Return the pickup day and where it comes from.
@@ -1711,14 +1737,15 @@ class ReturnEntry:
         A date in an e-mail beats "next working day", which beats the day
         assumed for the shop; among equals the newest e-mail wins.
         """
-        best = max(
-            (o for o in self.origins.values() if o.pickup and o.pickup_rule),
-            key=lambda o: (PICKUP_RANK[o.pickup_rule or PickupRule.ASSUMED], o.time),
-            default=None,
-        )
+        best, _ = self._pickup_origin()
         if best is None or best.pickup is None or best.pickup_rule is None:
             return None
         return best.pickup, best.pickup_rule
+
+    @property
+    def pickup_set(self) -> datetime | None:
+        """Return the time of the e-mail that set the pickup day, if there is one."""
+        return self._pickup_origin()[1]
 
     @property
     def received(self) -> bool:
@@ -1749,6 +1776,7 @@ class ReturnEntry:
                 "private": self.private,
                 "archived": dt_to_str(self.archived),
                 "picked_up": dt_to_str(self.picked_up),
+                "reopened": dt_to_str(self.reopened),
             }
         )
 
@@ -1765,6 +1793,7 @@ class ReturnEntry:
             private=bool(data.get("private", False)),
             archived=dt_from_str(data.get("archived")),
             picked_up=dt_from_str(data.get("picked_up")),
+            reopened=dt_from_str(data.get("reopened")),
         )
 
 
