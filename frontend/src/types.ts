@@ -22,13 +22,14 @@ export type ParcelSource = "parser" | "ai" | "manual" | "seventeentrack" | "parc
 
 /**
  * A timeline entry's source. Inferred deliveries: "inferred" when worked out
- * from another parcel's, "inferred_return" from a return of its order, "quiet"
- * after three weeks without news.
+ * from another parcel's, "inferred_return" from a return of its order,
+ * "inferred_shipment" from another package of its shipment, "quiet" after
+ * three weeks without news.
  */
-export type TimelineSource = ParcelSource | "inferred" | "inferred_return" | "quiet";
+export type TimelineSource = ParcelSource | "inferred" | "inferred_return" | "inferred_shipment" | "quiet";
 
 /** Why a delivery was inferred; see `TimelineSource`. */
-export type InferredReason = "shop" | "return" | "quiet";
+export type InferredReason = "shop" | "return" | "shipment" | "quiet";
 
 /** Where a delivered parcel was left: fixed categories, never names or numbers. */
 export const LEFT_AT = ["neighbour", "mailbox", "door", "reception", "garage", "locker"] as const;
@@ -115,8 +116,9 @@ export interface Parcel {
   inferred: boolean;
   /**
    * Why: "shop" when another parcel from the shop was delivered around its
-   * dates, "return" when its items are being sent back, "quiet" when it had no
-   * news for three weeks; null when not inferred.
+   * dates, "return" when its items are being sent back, "shipment" when
+   * another package of its shipment was delivered on or after its day,
+   * "quiet" when it had no news for three weeks; null when not inferred.
    */
   inferred_reason: InferredReason | null;
   pickup_point: string | null;

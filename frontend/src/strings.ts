@@ -292,6 +292,8 @@ export const STRINGS = {
   inferredNotice:
     "Probably delivered: another parcel from this shop was delivered around the expected day. Undo if it hasn't arrived.",
   inferredQuietNotice: "Probably delivered: no news for three weeks. Undo if it hasn't arrived.",
+  inferredShipmentNotice:
+    "Probably delivered: another package of this shipment was delivered. Undo if it hasn't arrived.",
 
   markDelivered: "Mark delivered",
   editDate: "Edit date",
@@ -470,6 +472,7 @@ export const SOURCE_LABELS: Readonly<Record<string, string>> = {
   parcelapp: "Parcel app",
   inferred: "Inferred from another delivery",
   inferred_return: "Inferred from a return",
+  inferred_shipment: "Inferred from another package",
   quiet: "No news for three weeks",
 };
 

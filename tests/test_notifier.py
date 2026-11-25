@@ -41,6 +41,7 @@ from custom_components.parcels.const import (
     DOMAIN,
     PERSISTENT_NOTIFICATION_ID,
     LeftAt,
+    MailKind,
     ParcelStatus,
 )
 from custom_components.parcels.customer_returns import mark_return_picked_up
@@ -456,8 +457,10 @@ class Env:
         With ``sent``, the event comes from an e-mail sent then, which may
         name a pickup point and a code; an event at the time its e-mail was
         sent has only that time. ``timeless`` gives the day without the time.
+        As news does, it replaces a delivery Parcels only inferred.
         """
         moment = when or dt_util.utcnow()
+        parcel.events = [event for event in parcel.events if not event.inferred]
         origin: str | None = None
         if sent is not None:
             origin = f"origin-{next(self._numbers)}"
@@ -487,6 +490,29 @@ class Env:
             )
         )
         parcel.touch(moment)
+        self.changed()
+
+    def infer(self, parcel: Parcel) -> None:
+        """Deliver a parcel as another package of its shipment was, and tell."""
+        moment = dt_util.utcnow()
+        parcel.events.append(
+            ParcelEvent(
+                time=moment,
+                source=Source.PARSER,
+                status=S.DELIVERED,
+                kind=MailKind.DELIVERED,
+                label="shipment",
+                inferred=True,
+            )
+        )
+        parcel.touch(moment)
+        self.changed()
+
+    def uninfer(self, parcel: Parcel) -> None:
+        """Take back an inferred delivery, as the user can, and tell."""
+        parcel.events = [event for event in parcel.events if not event.inferred]
+        parcel.delivery_rejected = True
+        parcel.touch(dt_util.utcnow())
         self.changed()
 
     def ret(
@@ -1028,6 +1054,179 @@ async def test_delivered(env: Env) -> None:
     assert phone.take() == []
 
 
+async def test_probably_delivered(env: Env, hass: HomeAssistant) -> None:
+    """An inferred delivery alerts no one, and shows no time it isn't sure of."""
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    android = env.phone("Sam Pixel", SAM, "android")
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert len(iphone.take()) == 1
+
+    await env.goto(at(10, 42))
+    env.infer(parcel)
+    await env.settle()
+    assert iphone.take() == [
+        activity(
+            tag_of(parcel),
+            "Amazon",
+            f"Probably delivered{SEP}DPD",
+            "Probably",
+            4,
+            DONE,
+            0.2,
+            silent=True,
+        )
+    ]
+    assert ipad.take() == android.take() == []
+    assert persistent(hass) == lines(
+        "**1 parcel today**",
+        "",
+        f"- Amazon{SEP}DPD{SEP}Probably delivered",
+        "",
+        f"[Open Parcels]({PATH})",
+    )
+
+    await env.goto(at(11, 13))
+    assert iphone.take() == [end(tag_of(parcel))]
+    assert ipad.take() == android.take() == []
+
+
+async def test_probably_delivered_confirmed(env: Env) -> None:
+    """The carrier's news that it was delivered alerts, as any delivery does."""
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert len(iphone.take()) == 1
+
+    await env.goto(at(10, 42))
+    env.infer(parcel)
+    await env.settle()
+    assert len(iphone.take()) == 1
+    assert ipad.take() == []
+
+    await env.goto(at(10, 55))
+    env.change(parcel, S.DELIVERED)
+    await env.settle()
+    assert [
+        (payload["message"], payload["data"].get("silent")) for payload in iphone.take()
+    ] == [(f"Delivered {CHECK} 10:55{SEP}DPD", None)]
+    assert [payload["message"] for payload in ipad.take()] == [
+        f"Delivered {CHECK} 10:55{SEP}DPD"
+    ]
+
+
+async def test_probably_delivered_taken_back_once_ended(env: Env) -> None:
+    """Taking back an inferred delivery once its activity ended starts it anew."""
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+
+    await env.goto(at(10, 42))
+    env.infer(parcel)
+    await env.settle()
+    assert len(phone.take()) == 1
+    await env.goto(at(11, 13))
+    assert phone.take() == [end(tag_of(parcel))]
+
+    await env.goto(at(14))
+    env.uninfer(parcel)
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            tag_of(parcel, 2),
+            "Amazon",
+            f"Expected today{SEP}DPD",
+            "Today",
+            2,
+            TRUCK,
+            0.5,
+        )
+    ]
+
+
+async def test_probably_delivered_in_the_combined_activity(env: Env) -> None:
+    """An inferred delivery counts in the combined activity, without an alert.
+
+    Even when the parcel was out for delivery; taking it back is quiet too,
+    and a real delivery alerts.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    parcel = env.parcel(eta=on())
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+
+    await env.goto(at(9))
+    env.change(parcel, S.OUT_FOR_DELIVERY)
+    await env.settle()
+    assert [payload["data"].get("silent") for payload in phone.take()] == [None]
+
+    await env.goto(at(10, 42))
+    env.infer(parcel)
+    await env.settle()
+    assert phone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            "1 of 2 delivered",
+            "1/2",
+            1,
+            BOX,
+            0.5,
+            progress_max=2,
+            silent=True,
+        )
+    ]
+
+    await env.goto(at(10, 50))
+    env.uninfer(parcel)
+    await env.settle()
+    assert [
+        (payload["message"], payload["data"].get("silent")) for payload in phone.take()
+    ] == [(f"0 of 2 delivered{SEP}Amazon via DPD out for delivery", True)]
+
+    await env.goto(at(11))
+    env.change(parcel, S.DELIVERED)
+    await env.settle()
+    assert [
+        (payload["message"], payload["data"].get("silent")) for payload in phone.take()
+    ] == [("1 of 2 delivered", None)]
+
+
+async def test_probably_delivered_taken_back(env: Env) -> None:
+    """Taking back an inferred delivery is quiet; a real delivery alerts."""
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    [started] = phone.take()
+
+    await env.goto(at(10, 42))
+    env.infer(parcel)
+    await env.settle()
+    assert len(phone.take()) == 1
+
+    await env.goto(at(10, 50))
+    env.uninfer(parcel)
+    await env.settle()
+    assert phone.take() == [{**started, "data": {**started["data"], "silent": True}}]
+
+    await env.goto(at(11))
+    env.change(parcel, S.DELIVERED)
+    await env.settle()
+    assert [
+        (payload["message"], payload["data"].get("silent")) for payload in phone.take()
+    ] == [(f"Delivered {CHECK} 11:00{SEP}DPD", None)]
+
+
 @pytest.mark.parametrize("undated", [False, True])
 async def test_delivered_at_a_time_not_known(
     env: Env, hass: HomeAssistant, undated: bool
@@ -1418,6 +1617,52 @@ async def test_persistent_notification_one_line_per_shipment(
         f"- Zalando{SEP}CTT{SEP}Expected today",
         f"- Loja Exemplo{SEP}GLS{SEP}Delivered 10:42 {CHECK}",
         f"- Loja Exemplo{SEP}GLS{SEP}Delivered 11:05 {CHECK}",
+        "",
+        f"[Open Parcels]({PATH})",
+    )
+
+
+async def test_persistent_notification_packages_probably_delivered(
+    env: Env, hass: HomeAssistant
+) -> None:
+    """Packages only inferred delivered share a line, after those delivered.
+
+    Their time is another package's: they come after those with a time.
+    """
+    env.hub()
+    packages = [
+        env.parcel(eta=on(), merchant="Loja Exemplo", carrier="gls") for _ in range(4)
+    ]
+    other = env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+
+    await env.goto(at(10, 42))
+    env.infer(packages[1])
+    env.infer(packages[2])
+    env.change(packages[0], S.DELIVERED)
+    await env.settle()
+    assert persistent(hass) == lines(
+        "**5 parcels today**",
+        "",
+        f"- Loja Exemplo{SEP}GLS{SEP}Expected today",
+        f"- Zalando{SEP}CTT{SEP}Expected today",
+        f"- Loja Exemplo{SEP}GLS{SEP}Delivered 10:42 {CHECK}",
+        f"- Loja Exemplo{SEP}GLS{SEP}2 packages{SEP}Probably delivered",
+        "",
+        f"[Open Parcels]({PATH})",
+    )
+
+    await env.goto(at(11, 5))
+    env.change(other, S.DELIVERED)
+    await env.settle()
+    assert persistent(hass) == lines(
+        "**5 parcels today**",
+        "",
+        f"- Loja Exemplo{SEP}GLS{SEP}Expected today",
+        f"- Loja Exemplo{SEP}GLS{SEP}Delivered 10:42 {CHECK}",
+        f"- Zalando{SEP}CTT{SEP}Delivered 11:05 {CHECK}",
+        f"- Loja Exemplo{SEP}GLS{SEP}2 packages{SEP}Probably delivered",
         "",
         f"[Open Parcels]({PATH})",
     )

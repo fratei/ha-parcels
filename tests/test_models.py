@@ -816,6 +816,37 @@ def test_delivery_code_until_the_parcel_arrives() -> None:
     assert parcel.state.pickup_code is None
 
 
+def test_an_inferred_delivery_is_not_news() -> None:
+    """The news gave the status before an inferred delivery.
+
+    A delivery reported after it takes its own time: the inferred one was
+    only a guess.
+    """
+    guessed = _event(S.DELIVERED, at(hours=2), origin=None, inferred=True)
+    assert _parcel(guessed).state.inferred_over is S.ORDERED
+    parcel = _parcel(_event(S.SHIPPED, at()), guessed)
+    state = parcel.state
+    assert (state.status, state.inferred_over, state.news_status) == (
+        S.DELIVERED,
+        S.SHIPPED,
+        S.SHIPPED,
+    )
+
+    parcel.origins["man"] = _origin("man", source=Source.MANUAL, time=at(hours=3))
+    parcel.events.append(
+        _event(S.DELIVERED, at(hours=3), source=Source.MANUAL, origin="man", force=True)
+    )
+    parcel.touch(at(hours=3))
+    state = parcel.state
+    assert (state.status, state.inferred, state.inferred_over, state.news_status) == (
+        S.DELIVERED,
+        False,
+        None,
+        S.DELIVERED,
+    )
+    assert (state.status_time, state.delivered_at) == (at(hours=3), at(hours=3))
+
+
 def test_keys() -> None:
     """Merchant and order keys ignore case, accents and marketplaces."""
     assert merchant_key("Amazon.es") == merchant_key("amazon.co.uk") == "amazon"

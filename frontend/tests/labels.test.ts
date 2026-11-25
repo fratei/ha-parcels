@@ -149,6 +149,7 @@ describe("labels", () => {
     assert.equal(sourceLabel("seventeentrack"), "17TRACK");
     assert.equal(sourceLabel("parcelapp"), "Parcel app");
     assert.equal(sourceLabel("quiet"), "No news for three weeks");
+    assert.equal(sourceLabel("inferred_shipment"), "Inferred from another package");
     assert.equal(reasonLabel("unknown_sender"), "Unknown sender");
     assert.equal(reasonLabel("ai_timeout"), "The local AI took too long on this e-mail");
     // Items stored before the timeout reason existed keep their label.
@@ -195,6 +196,9 @@ describe("labels", () => {
     assert.match(shop, /another parcel from this shop/);
     const sentBack = inferredNotice(makeParcel({ inferred: true, inferred_reason: "return" }));
     assert.match(sentBack, /sending its items back/);
+    const sibling = inferredNotice(makeParcel({ inferred: true, inferred_reason: "shipment" }));
+    assert.match(sibling, /another package of this shipment/);
+    assert.match(sibling, /Undo/);
     // Parcels sent before the reason existed.
     assert.equal(inferredNotice(makeParcel({ inferred: true })), shop);
   });

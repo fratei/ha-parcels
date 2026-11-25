@@ -110,6 +110,8 @@ export function inferredNotice(parcel: Pick<Parcel, "inferred_reason">): string 
       return STRINGS.inferredQuietNotice;
     case "return":
       return STRINGS.inferredReturnNotice;
+    case "shipment":
+      return STRINGS.inferredShipmentNotice;
     default:
       return STRINGS.inferredNotice;
   }

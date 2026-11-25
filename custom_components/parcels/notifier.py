@@ -913,6 +913,8 @@ class _Content:
     color: str
     relevance: float
     when: int | None
+    # An update alerts only when this changes: the real news, see
+    # ParcelState.news_status.
     status: str
     url: str
 
@@ -927,6 +929,9 @@ def _status_texts(state: ParcelState, today: date) -> tuple[str, str]:
     short = _window_short(eta) if expected_today else None
     if status is S.OUT_FOR_DELIVERY:
         text, critical = "Out for delivery", short or "Today"
+    elif status is S.DELIVERED and state.inferred:
+        # No check mark and no time: it may not have come.
+        text, critical = "Probably delivered", "Probably"
     elif status is S.DELIVERED:
         delivered = _delivered_time(state)
         at = _local_hm(delivered) if delivered is not None else None
@@ -1028,7 +1033,7 @@ def _parcel_content(
         color=COLORS.get(state.status, DEFAULT_COLOR),
         relevance=_relevance(state, ctx),
         when=int(end.timestamp()) if end is not None else None,
-        status=state.status.value,
+        status=state.news_status.value,
         url=_detail_url(ctx.options.path, "parcel", parcel.id),
     )
 
@@ -1245,7 +1250,17 @@ def _combined_content(
         )
     else:
         message = SEP.join([*([head] if total else []), *parts, *upcoming_parts, *tail])
-    status = f"{delivered}/{total}/{out}/{pickup}/{problems}"
+    news = Counter(state.news_status for state in states)
+    status = "/".join(
+        str(count)
+        for count in (
+            news[S.DELIVERED],
+            total,
+            news[S.OUT_FOR_DELIVERY],
+            news[S.READY_FOR_PICKUP],
+            news[S.ATTEMPTED] + news[S.EXCEPTION],
+        )
+    )
     return _Content(
         title=COMBINED_TITLE,
         message=message,
@@ -1374,8 +1389,11 @@ _GROUPS: dict[ParcelStatus, int] = {
 
 
 def _delivered_time(state: ParcelState) -> datetime | None:
-    """Return when a parcel was delivered, or None when the time isn't known."""
-    if state.delivered_undated:
+    """Return when a parcel was delivered, or None when the time isn't known.
+
+    An inferred delivery's time is another parcel's, so it isn't known.
+    """
+    if state.delivered_undated or state.inferred:
         return None
     return state.delivered_at or state.status_time
 
@@ -1403,6 +1421,8 @@ def _persistent_status(state: ParcelState, day: date, today: date) -> str:
     expected = eta is not None and eta.end == day and status in EN_ROUTE
     if status is S.OUT_FOR_DELIVERY:
         text = "Out for delivery"
+    elif status is S.DELIVERED and state.inferred:
+        text = "Probably delivered"
     elif status is S.DELIVERED:
         delivered = _delivered_time(state)
         text = "Delivered"
@@ -1469,7 +1489,8 @@ def _persistent_message(
 
     ``listed`` pairs each parcel with its shipment. Packages of one shipment
     with the same status share a line; a delivered one keeps its own, with
-    its time. The count in the title stays in packages. ``riders`` pairs each
+    its time, unless the delivery is only inferred. The count in the title
+    stays in packages. ``riders`` pairs each
     public order that packages of the day may hold with those packages; the
     orders of a shop that the same packages may hold share a line.
     ``returns`` are the day's return pickups, after the parcels; private ones
@@ -1486,7 +1507,7 @@ def _persistent_message(
     ordered = sorted(listed, key=lambda item: _persistent_order(item[1]))
     for index, (shipment, state) in enumerate(ordered):
         status = _persistent_status(state, day, today)
-        alone = index if state.status is S.DELIVERED else -1
+        alone = index if state.status is S.DELIVERED and not state.inferred else -1
         rows.setdefault((shipment, status, alone), []).append(state)
     for (_, status, _), states in rows.items():
         parts = _names(states[0]) or ["Parcel"]
@@ -2264,7 +2285,11 @@ class Notifier:
         possibly: Sequence[str] = (),
         holds: str | None = None,
     ) -> None:
-        """Start, update, restart or end the activity of one parcel."""
+        """Start, update, restart or end the activity of one parcel.
+
+        Delivered, it shows that for 30 minutes and ends; taking back the
+        delivery brings it back.
+        """
         record = day["activities"].get(device.device_id, {}).get(parcel.id)
         status = parcel.state.status
         content = _parcel_content(parcel, ctx, possibly, holds=holds)
@@ -2282,7 +2307,7 @@ class Notifier:
                 await self._async_start(
                     ctx, day, device, parcel.id, 1, content, pin_later=pin_later
                 )
-            elif record["end_reason"] in RESTARTABLE or (
+            elif record["end_reason"] in (*RESTARTABLE, REASON_DELIVERED) or (
                 record["end_reason"] == REASON_MOVED and status is S.OUT_FOR_DELIVERY
             ):
                 gen = record["gen"] + 1
@@ -2744,7 +2769,8 @@ class Notifier:
     ) -> None:
         """Notify an iPad or an Android phone of key changes of today's parcels.
 
-        Each return pickup gets one notification while it waits.
+        Each return pickup gets one notification while it waits. An inferred
+        delivery isn't news, so it notifies no one.
         """
         if not ctx.in_window or not self.live_activities_enabled:
             return
@@ -2759,7 +2785,11 @@ class Notifier:
         for parcel in entries:
             status = parcel.state.status
             sent = day["notified"].get(device.device_id, {})
-            if status not in KEY_STATUSES or sent.get(parcel.id) == status.value:
+            if (
+                status not in KEY_STATUSES
+                or parcel.state.inferred
+                or sent.get(parcel.id) == status.value
+            ):
                 continue
             content = _parcel_content(
                 parcel,

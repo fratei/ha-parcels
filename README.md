@@ -102,7 +102,16 @@ api.parcel.app, which Parcels contacts itself with your API key.
 - **Shipments of several packages**: packages sent together that arrive on the
   same day share one box, which says how many packages it holds. The details
   list every package with its tracking number. Packages that arrive on
-  different days get a box each.
+  different days get a box each. Parcels takes packages as sent together when
+  they have the same carrier, tracking numbers close together, and first
+  e-mails within two days of each other about the same order or from the same
+  shop. Carriers often e-mail about only one package of a shipment, and some
+  packages, such as GLS's in Portugal, can't be followed on 17TRACK without a
+  postcode. So once one package is delivered, the others of its shipment that
+  were expected that day or earlier, still show as on their way and have had
+  no news since are marked as probably delivered, at the same time. Only a
+  delivery that everyone who can see a package can also see counts. You can
+  undo that, and later news about a package takes it back.
 - **Shop and carrier apart**: shops such as Amazon often hand their parcels to
   a local carrier. A carrier's e-mail joins the shop's parcel when they share a
   tracking number or an order number, and the details then show the shop and
@@ -858,6 +867,14 @@ How they behave:
   its activity ends 30 minutes later. So does a shared activity once every
   package is delivered ("3 of 3 delivered ✓") and its return pickups are
   done.
+- A delivery that Parcels only inferred, such as from another package of the
+  same shipment (see [What it does](#what-it-does)), shows "Probably
+  delivered", without a time, and alerts no one: the activity changes
+  silently and ends 30 minutes later, and iPads and Android phones get no
+  notification. Undoing it is silent too, and brings back an activity that
+  already ended. When the carrier then reports the delivery, it alerts while
+  the activity still shows, as "Delivered ✓" with its time, and iPads and
+  Android phones get their notification.
 - Apple ends activities after 8 hours, so an undelivered parcel's activity,
   or that of a return pickup still waiting, is restarted after 7.5 hours.
   The new activity plays the start alert once, because iOS doesn't let a new
@@ -883,8 +900,9 @@ Assistant (`parcels_today`) lists the day's parcels with their shop, carrier,
 status and time window, and links to the Parcels page. It also gives the
 pickup point and the last day to collect, the time of a missed attempt and
 what comes next, and where a delivered parcel was left, such as "Delivered
-10:25 with a neighbour ✓". Packages of one shipment with the same status
-share a line, with their count ("4 packages"); delivered
+10:25 with a neighbour ✓". A delivery that Parcels only inferred reads
+"Probably delivered", without a time. Packages of one shipment with the same
+status share a line, with their count ("4 packages"); delivered
 ones keep their own line, with the time when it's known. Orders that ride
 along with a package aren't in the count: a shop's orders that the same
 packages may hold share a line, such as "Amazon · 2 orders · Possibly in a
@@ -1340,7 +1358,7 @@ downloaded or read doesn't turn it on.
 | `parcels.merge` | Merges parcels that are the same delivery. |
 | `parcels.split` | Moves e-mails or entries of a parcel to a new parcel. |
 | `parcels.undo_merge` | Splits a parcel that Parcels merged automatically. |
-| `parcels.undo_delivery` | Takes back a delivery that Parcels inferred, from another parcel of the same shop, from a return of its items or from three weeks without news, and doesn't infer it again. |
+| `parcels.undo_delivery` | Takes back a delivery that Parcels inferred, from another parcel of the same shop, from another package of the same shipment, from a return of its items or from three weeks without news, and doesn't infer it again. |
 | `parcels.mark_return_picked_up` | Marks a return picked up now (see [Return pickups](#return-pickups)). Its `return_id` is in the return's details on the Parcels page. |
 | `parcels.undo_return_picked_up` | Takes back marking a return picked up. |
 | `parcels.refresh` | Checks all mailboxes, and 17TRACK and the Parcel app when they're on, now. The Parcel app is read at most every 10 minutes. |
@@ -1355,8 +1373,12 @@ downloaded or read doesn't turn it on.
 `parcels_delivered` carry `parcel_id`, `status`, `carrier`, `eta_start`,
 `eta_end`, `private` and `owners`, and for shared parcels also `merchant` and
 `tracking_number`. They never carry item names. Returns fire no events, and
-neither do deliveries that Parcels only inferred, archived parcels, or news
-more than a day old, such as old e-mails read in a mailbox's first sync.
+neither do deliveries that Parcels only inferred, taking them back, archived
+parcels, or news more than a day old, such as old e-mails read in a mailbox's
+first sync. When the carrier reports an inferred delivery later, or you mark
+it delivered or keep it, `parcels_status_changed`, with the status the news
+gave before as `previous_status`, and `parcels_delivered` fire. News read
+together with an inferred delivery fires if that delivery is taken back.
 News without a date that Parcels can read, such as some events from the
 Parcel app, goes on the parcel's last known day (see
 [Parcel app](#parcel-app)). When that day is more than a day back, or isn't
@@ -1400,7 +1422,8 @@ actions:
   delivery was inferred, select **Undo**. A parcel without news for three
   weeks shows as delivered in a past week, on its last expected day or the
   day of its last news, whichever is later. So does a parcel whose items you
-  send back, never later than the day the return started.
+  send back, never later than the day the return started, and a package
+  whose shipment's other package was delivered, on that one's day.
 - **A parcel has no date yet.** Shops and carriers often give the day only in
   a later e-mail. With the [local AI](#local-ai), Parcels asks it for a date
   a parser missed, and administrators can select **Check again** in the

@@ -735,6 +735,19 @@ def test_renamed_package_stays_in_its_shipment(
     assert groups == dict.fromkeys(parcels, min(parcels))
 
 
+def test_packages_read_in_any_order_are_one_shipment() -> None:
+    """A shop's packages read between others' are still found together."""
+    data = ParcelsData()
+    first = _apply(data, _shop_gls("msg:g1#0", "61000012310052", _nov(21, 17, 40)))
+    far = _apply(data, _shop_gls("msg:g2#0", "61000012319052", _nov(21, 17, 41)))
+    second = _apply(data, _shop_gls("msg:g3#0", "61000012310157", _nov(21, 17, 42)))
+    assert len({first, far, second}) == 3
+
+    groups = shipment_groups(data.parcels.values())
+
+    assert groups == dict.fromkeys((first, second), min(first, second))
+
+
 def test_leroy_merlin_notices_absorb_the_order() -> None:
     """Leroy Merlin forwards GLS's notices; they absorb its order's parcel."""
     data = ParcelsData()

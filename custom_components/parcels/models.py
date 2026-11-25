@@ -627,17 +627,21 @@ class Origin:
 
 
 # Why a delivery was only inferred: another parcel of the shop was delivered
-# around its dates, a return of its order was started, or it had no news for
-# three weeks.
-type InferredReason = Literal["shop", "return", "quiet"]
+# around its dates, a return of its order was started, another package of its
+# shipment was delivered, or it had no news for three weeks.
+type InferredReason = Literal["shop", "return", "shipment", "quiet"]
 # The label of a delivery inferred from a return of the parcel's order.
 INFERRED_RETURN = "return"
+# The label of a delivery inferred from another package of its shipment.
+INFERRED_SHIPMENT = "shipment"
 
 
 def inference_reason(kind: MailKind | None, label: str | None) -> InferredReason:
     """Return why an inferred event concluded a delivery."""
     if label == INFERRED_RETURN:
         return "return"
+    if label == INFERRED_SHIPMENT:
+        return "shipment"
     return "quiet" if kind is None else "shop"
 
 
@@ -656,7 +660,8 @@ class ParcelEvent:
     force: bool = False
     # A delivery concluded from another parcel of the same merchant (kind
     # "delivered"), from a return of the parcel's order (``label`` is then
-    # "return"), or from three weeks without news (no kind).
+    # "return"), from another package of its shipment (``label`` is then
+    # "shipment"), or from three weeks without news (no kind).
     inferred: bool = False
     # The source gave no date it could read: ``time`` only places the event
     # after the last thing known to have come before it, on that day. With
@@ -822,10 +827,13 @@ class ParcelState:
     last_event: datetime | None
     timeline: tuple[TimelineEntry, ...]
     # Delivered by inference only: from another parcel of the same merchant,
-    # from a return of the parcel's order, or after three weeks without news.
+    # from a return of the parcel's order, from another package of its
+    # shipment, or after three weeks without news.
     inferred: bool = False
     # Why the delivery was inferred, see :func:`inference_reason`.
     inferred_reason: InferredReason | None = None
+    # The status the news gave before the inferred delivery, while inferred.
+    inferred_over: ParcelStatus | None = None
     # Some details were filled in by the local AI and aren't confirmed yet.
     ai_filled: bool = False
     # What the user calls the parcel in the Parcel app.
@@ -865,6 +873,15 @@ class ParcelState:
     def terminal(self) -> bool:
         """Return True for delivered, returned and cancelled parcels."""
         return self.status in TERMINAL_STATUSES
+
+    @property
+    def news_status(self) -> ParcelStatus:
+        """Return the status the news gave: an inferred delivery isn't news.
+
+        So inferring a delivery, or undoing one, tells nobody, and a reported
+        delivery confirming it is news.
+        """
+        return self.inferred_over or self.status
 
 
 @dataclass(slots=True)
@@ -1214,6 +1231,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
     status_timeless = False
     status_inferred = False
     inferred_by: InferredReason | None = None
+    inferred_over: ParcelStatus | None = None
     delivered_at: datetime | None = None
     delivered_found = False
     delivered_undated = False
@@ -1237,6 +1255,8 @@ def derive_state(parcel: Parcel) -> ParcelState:
         ):
             accepted, new_status = False, status
         if accepted and new_status is not status:
+            if event.inferred:
+                inferred_over = status or ParcelStatus.ORDERED
             status = new_status
             status_time = None if event.dayless else event.time
             status_undated = event.undated
@@ -1263,6 +1283,17 @@ def derive_state(parcel: Parcel) -> ParcelState:
                 delivered_timeless = status_timeless
         elif accepted and not event.inferred:
             # A real e-mail confirming an inferred status makes it a fact.
+            if status_inferred:
+                # With its own time: the inferred one was only a guess.
+                status_time = None if event.dayless else event.time
+                status_undated = event.undated
+                status_timeless = event.undated and event.timeless
+                status_by = event.by if event.undated else None
+                status_origin = event.origin
+                status_reported = _reported(parcel, event)
+                delivered_at = status_time
+                delivered_undated = event.undated
+                delivered_timeless = status_timeless
             status_inferred = False
             if (
                 status_undated
@@ -1364,6 +1395,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
         timeline=tuple(timeline),
         inferred=inferred,
         inferred_reason=inferred_by if inferred else None,
+        inferred_over=inferred_over if inferred else None,
         ai_filled=ai_filled,
         name=next((o.name for o in reversed(origins) if o.name), None),
         eta_source=eta_source,

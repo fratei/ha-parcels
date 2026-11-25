@@ -1558,7 +1558,7 @@ def message_shells(data: ParcelsData, message_hash: str) -> tuple[ParcelShell, .
                 id=parcel.id,
                 created=parcel.created,
                 origins=tuple(sorted(own)),
-                status=parcel.state.status,
+                status=parcel.state.news_status,
                 private=parcel.private,
                 archived=parcel.archived,
                 delivery_rejected=parcel.delivery_rejected,
@@ -1811,6 +1811,8 @@ def update_parcel(
                 event.inferred = False
                 event.source = Source.MANUAL
                 event.origin = origin.id
+                # The reason's word isn't a label the details should show.
+                event.label = None
     parcel.touch(now)
 
     if edits.get("tracking_number") and (
@@ -2375,23 +2377,32 @@ def _real_delivery(parcel: Parcel) -> datetime | None:
     return delivered
 
 
-def _reported_delivery(parcel: Parcel) -> datetime | None:
-    """Return when an e-mail or 17TRACK said a parcel was delivered.
+def reported_delivery_event(parcel: Parcel) -> ParcelEvent | None:
+    """Return the news that a parcel was delivered, from an e-mail, 17TRACK or Parcel.
 
     A delivery the user marked or confirmed doesn't say which carrier's
     package it was, so it never pairs parcels or infers other deliveries.
     """
     if (delivered := _real_delivery(parcel)) is None:
         return None
-    for event in parcel.events:
-        if (
-            event.time == delivered
-            and event.status is ParcelStatus.DELIVERED
-            and event.source is not Source.MANUAL
-            and not event.inferred
-        ):
-            return delivered
-    return None
+    events = [
+        event
+        for event in parcel.events
+        if event.time == delivered
+        and event.status is ParcelStatus.DELIVERED
+        and event.source is not Source.MANUAL
+        and not event.inferred
+    ]
+    # The one that tells the day, when another at that time doesn't.
+    return next((event for event in events if day_known(event)), None) or next(
+        iter(events), None
+    )
+
+
+def _reported_delivery(parcel: Parcel) -> datetime | None:
+    """Return when an e-mail, 17TRACK or Parcel said a parcel was delivered."""
+    event = reported_delivery_event(parcel)
+    return None if event is None else event.time
 
 
 def _parcels_conflict(

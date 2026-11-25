@@ -70,6 +70,7 @@ UNREAD_SENDERS = 5
 _INFERRED_SOURCES: dict[InferredReason, str] = {
     "shop": "inferred",
     "return": "inferred_return",
+    "shipment": "inferred_shipment",
     "quiet": "quiet",
 }
 
@@ -228,8 +229,13 @@ def shipment_groups(parcels: Iterable[Parcel]) -> dict[str, str]:
         return parcel_id
 
     for packages in buckets.values():
+        # In order of serial, only the next few can be close enough.
+        packages.sort(key=lambda package: package.serial)
         for index, first in enumerate(packages):
-            for second in packages[index + 1 :]:
+            for later in range(index + 1, len(packages)):
+                second = packages[later]
+                if second.serial - first.serial > SHIPMENT_SPREAD:
+                    break
                 if _one_shipment(first, second):
                     one, other = root(first.parcel_id), root(second.parcel_id)
                     # The smallest ID stays the root, so it names the shipment.
@@ -638,8 +644,9 @@ def _timeline_source(entry: TimelineEntry) -> str:
     """Return where a timeline entry comes from, as the page names it.
 
     An inferred delivery comes from another delivery ("inferred"), from a
-    return of the parcel's order ("inferred_return"), or from three weeks
-    without news ("quiet").
+    return of the parcel's order ("inferred_return"), from another package
+    of its shipment ("inferred_shipment"), or from three weeks without news
+    ("quiet").
     """
     if not entry.inferred:
         return entry.source.value

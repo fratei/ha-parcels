@@ -48,6 +48,7 @@ from custom_components.parcels.engine import ParcelsEngine
 from custom_components.parcels.mail.errors import MailError, MailServerError
 from custom_components.parcels.models import (
     FINAL_ATTEMPTS,
+    INFERRED_SHIPMENT,
     PARCELAPP_PREFIX,
     AutoMerge,
     MessageRecord,
@@ -1899,6 +1900,46 @@ async def test_origin_restore_brings_the_parcel_back(
     key = parcel.origins[origin_id].message
     assert key is not None
     assert not data.messages[key].shells
+
+
+async def test_origin_restore_keeps_a_probable_delivery_quiet(
+    hass: HomeAssistant, engine: ParcelsEngine, ws: MockHAClientWebSocket
+) -> None:
+    """A parcel probably delivered comes back so; its delivery is news later.
+
+    Automations last heard of it on its way: a delivery reported or marked
+    afterwards tells them.
+    """
+    data = engine.data
+    ((parcel_id, parcel),) = data.parcels.items()
+    (origin_id,) = parcel.origins
+    parcel.events.append(
+        ParcelEvent(
+            time=dt_util.utcnow() - timedelta(hours=1),
+            source=Source.PARSER,
+            status=ParcelStatus.DELIVERED,
+            kind=MailKind.DELIVERED,
+            label=INFERRED_SHIPMENT,
+            inferred=True,
+        )
+    )
+    parcel.touch(dt_util.utcnow())
+    engine.async_changed()
+    removed = await result(
+        ws, "parcels/origin/remove", parcel_id=parcel_id, origin_id=origin_id
+    )
+    assert not data.parcels
+    await result(ws, "parcels/review/restore", filtered_id=removed["filtered_id"])
+    await hass.async_block_till_done()
+    assert data.parcels[parcel_id].state.inferred
+    changed = async_capture_events(hass, EVENT_STATUS_CHANGED)
+    delivered = async_capture_events(hass, EVENT_DELIVERED)
+
+    await call(hass, "mark_delivered", {"parcel_id": parcel_id})
+    await hass.async_block_till_done()
+
+    assert [event.data["previous_status"] for event in changed] == ["in_transit"]
+    assert [event.data["parcel_id"] for event in delivered] == [parcel_id]
 
 
 async def test_review_senders(

@@ -78,7 +78,7 @@ function list<T>(value: unknown, convert: (item: unknown) => T | null): T[] {
 }
 
 function inferredReason(value: unknown): InferredReason | null {
-  return value === "shop" || value === "return" || value === "quiet" ? value : null;
+  return value === "shop" || value === "return" || value === "shipment" || value === "quiet" ? value : null;
 }
 
 function leftAt(value: unknown): LeftAt | null {
@@ -414,7 +414,9 @@ export function normalizeReturn(raw: unknown): CustomerReturn | null {
 }
 
 function timelineSource(value: unknown): TimelineSource {
-  return value === "inferred" || value === "inferred_return" || value === "quiet" ? value : source(value);
+  return value === "inferred" || value === "inferred_return" || value === "inferred_shipment" || value === "quiet"
+    ? value
+    : source(value);
 }
 
 function timelineEntry(raw: unknown): TimelineEntry | null {

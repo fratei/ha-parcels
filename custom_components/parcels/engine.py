@@ -174,6 +174,7 @@ from .seventeentrack import (
     repair_pickups,
     restore_pickup_places,
 )
+from .siblings import infer_shipment_deliveries
 from .store import FORGOTTEN_KEY, ParcelsStore, apply_retention, forgotten_before
 from .workdays import WorkingDays
 
@@ -558,7 +559,7 @@ class ParcelsEngine:
                 if data.messages
                 else {"done": dt_to_str(now)},
             )
-        self._statuses = {pid: p.state.status for pid, p in data.parcels.items()}
+        self._statuses = {pid: p.state.news_status for pid, p in data.parcels.items()}
         self._started = True
         self._run_retention(now)
         self._unsubs.append(
@@ -737,9 +738,11 @@ class ParcelsEngine:
         try:
             data = self.data
             result = reconcile(data, now)
-            # A return is stronger evidence than another parcel of the shop,
-            # and both are stronger than three weeks without news.
+            # A return is stronger evidence than another package of the
+            # shipment, which is stronger than another parcel of the shop, and
+            # all are stronger than three weeks without news.
             inferred = infer_return_deliveries(data, now)
+            inferred |= infer_shipment_deliveries(data, now)
             inferred |= infer_deliveries(data, now)
             inferred |= infer_quiet_deliveries(data, now)
         finally:
@@ -801,14 +804,16 @@ class ParcelsEngine:
         statuses: dict[str, ParcelStatus] = {}
         for parcel in self.data.parcels.values():
             state = parcel.state
-            statuses[parcel.id] = state.status
             previous = self._statuses.get(parcel.id)
-            # An inferred delivery isn't news: nothing reported it.
-            if (
-                previous == state.status
-                or parcel.archived is not None
-                or state.inferred
-            ):
+            # An inferred delivery isn't news: nothing reported it. Neither
+            # is taking it back, and a delivery reported later is. News read
+            # with it waits for one of them, told from the last status told.
+            if state.inferred:
+                if previous is not None:
+                    statuses[parcel.id] = previous
+                continue
+            statuses[parcel.id] = state.status
+            if previous == state.status or parcel.archived is not None:
                 continue
             happened = state.status_time
             if happened is not None and state.status_timeless:

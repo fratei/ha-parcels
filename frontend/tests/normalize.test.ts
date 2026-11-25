@@ -238,6 +238,12 @@ describe("normalizeParcel", () => {
     assert.deepEqual(normalizeParcel({ id: "p1", senders: "DHL" })?.senders, []);
   });
 
+  test("reads why a delivery was inferred", () => {
+    for (const reason of ["shop", "return", "quiet", "shipment"]) {
+      assert.equal(normalizeParcel({ id: "p1", inferred: true, inferred_reason: reason })?.inferred_reason, reason);
+    }
+  });
+
   test("never trusts the types it gets", () => {
     const parcel = normalizeParcel({
       id: "p1",
@@ -463,6 +469,7 @@ describe("normalizeDetails", () => {
         5,
         { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "" },
         { time: "2026-07-15T09:00:00Z", status: "delivered", source: "inferred_return", label: "" },
+        { time: "2026-07-15T10:00:00Z", status: "delivered", source: "inferred_shipment", label: "" },
         { time: "2026-07-16T08:00:00Z", status: "delivered", source: "pigeon", label: "" },
         { time: "2026-07-17T08:00:00Z", status: "delivered", source: "quiet", label: "" },
         { time: "2026-07-18T08:00:00Z", status: "in_transit", source: "parcelapp", label: "Sorted", undated: true },
@@ -484,6 +491,7 @@ describe("normalizeDetails", () => {
       { time: "2026-07-14T08:00:00Z", status: "delivered", source: "ai", label: "Delivered", undated: false, timeless: false },
       { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "", undated: false, timeless: false },
       { time: "2026-07-15T09:00:00Z", status: "delivered", source: "inferred_return", label: "", undated: false, timeless: false },
+      { time: "2026-07-15T10:00:00Z", status: "delivered", source: "inferred_shipment", label: "", undated: false, timeless: false },
       { time: "2026-07-16T08:00:00Z", status: "delivered", source: "parser", label: "", undated: false, timeless: false },
       { time: "2026-07-17T08:00:00Z", status: "delivered", source: "quiet", label: "", undated: false, timeless: false },
       { time: "2026-07-18T08:00:00Z", status: "in_transit", source: "parcelapp", label: "Sorted", undated: true, timeless: false },
