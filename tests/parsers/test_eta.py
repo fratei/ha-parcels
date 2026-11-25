@@ -863,7 +863,7 @@ def test_only_if_gives_no_delivery_date(text: str, lang: str, tz: ZoneInfo) -> N
     [
         # Receiving on a day.
         ("A sua encomenda foi enviada. Receberá a sua encomenda hoje.", "pt", 17, 17),
-        ("Receberá a sua encomenda entre 20 e 22 de novembro.", "pt", 20, 22),
+        ("Receberá a sua encomenda entre 17 e 18 de novembro.", "pt", 17, 18),
         ("Deverá receber a sua encomenda até 25 de novembro.", "pt", 25, 25),
         ("You'll receive your order within 2-3 business days.", "en", 19, 20),
         ("Sie werden Ihr Paket am 20. November erhalten.", "de", 20, 20),

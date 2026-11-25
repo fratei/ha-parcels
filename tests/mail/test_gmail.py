@@ -564,7 +564,7 @@ def nested_mime(depth: int) -> bytes:
         b"To: alex@example.com\r\n"
         b"Subject: A sua encomenda foi enviada\r\n"
         b"Message-ID: <nested@shop.example>\r\n"
-        b"Date: Mon, 16 Nov 2026 09:11:30 +0000\r\n"
+        b"Date: Mon, 9 Nov 2026 09:11:30 +0000\r\n"
         b"MIME-Version: 1.0\r\n" + inner
     )
 
