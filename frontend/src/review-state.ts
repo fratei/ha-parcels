@@ -1,6 +1,6 @@
 /** The review card's optimistic state and its text, kept apart so they can be tested. */
 import { STRINGS, fmt } from "./strings.ts";
-import type { RetryResult, SenderChecks, TrustResult, UnreadEmails } from "./types.ts";
+import type { RetryResult, SenderChecks, Snapshot, TrustResult, UnreadEmails } from "./types.ts";
 
 /**
  * Why an item is hidden: "pending" while its command runs, then the snapshot
@@ -198,4 +198,28 @@ export function filteredTitle(item: { subject: string; removed: boolean }): stri
     return subject;
   }
   return item.removed ? STRINGS.removedFromParcel : STRINGS.noSubject;
+}
+
+/** Asks a review card on the page to show Needs review; it cancels the event when it does. */
+export const SHOW_REVIEW_EVENT = "parcels-show-review";
+
+/** Shows Needs review in the page's review card; false when no review card took it. */
+export function showReview(target: EventTarget | null = globalThis.window ?? null): boolean {
+  if (!target) {
+    return false;
+  }
+  const event = new CustomEvent(SHOW_REVIEW_EVENT, { cancelable: true });
+  target.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
+/** What Needs review lists: review items, merge suggestions, and the unread e-mails as one item. */
+export function reviewCount(
+  snapshot: Pick<Snapshot, "review" | "merge_suggestions" | "unread_emails">,
+): number {
+  return (
+    snapshot.review.length +
+    snapshot.merge_suggestions.length +
+    (snapshot.unread_emails.count > 0 ? 1 : 0)
+  );
 }

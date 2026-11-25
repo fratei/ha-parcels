@@ -116,6 +116,31 @@ export function formatDate(
   return date ? formatter(locale, options, true).format(date) : value;
 }
 
+const WEEKDAY_DAY: Intl.DateTimeFormatOptions = { weekday: "short", day: "numeric" };
+const ENGLISH = /^en(?:-|$)/;
+
+/**
+ * "Tue 14": a calendar date's short weekday and day. US English would say
+ * "14 Tue", so English always reads weekday first, as British English does;
+ * other languages keep their own order.
+ */
+export function formatWeekdayDay(value: string, locale: LocaleOptions): string {
+  const date = calendarDate(value);
+  if (!date) {
+    return value;
+  }
+  const dateFormatter = formatter(locale, WEEKDAY_DAY, true);
+  if (ENGLISH.test(dateFormatter.resolvedOptions().locale)) {
+    const parts = dateFormatter.formatToParts(date);
+    const weekday = parts.find((part) => part.type === "weekday")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    if (weekday && day) {
+      return `${weekday} ${day}`;
+    }
+  }
+  return dateFormatter.format(date);
+}
+
 /** Formats an inclusive range of calendar dates, e.g. "14 – 16 Jul". */
 export function formatDateRange(
   from: string,

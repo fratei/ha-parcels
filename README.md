@@ -528,10 +528,19 @@ add a resource.
   status, delivered parcels show ✓ on their delivery day, and parcels found
   by the AI carry an "AI" badge until you confirm them. Packages of one
   shipment that arrive on the same day share a box with a package count.
+  A parcel still on its way after its expected day is late: it moves to the
+  top of today, marked "Late · expected Tue 24", or "Late · since Tue 24"
+  after a missed delivery or a problem with no new date, and earlier weeks
+  no longer show it. Delivered, returned, cancelled and archived parcels are
+  never late. On a phone, late parcels have a **Late** group before today.
+  Under the title, a line such as "2 late · 1 to review" counts the late
+  parcels the chosen filter shows and, for administrators, what waits in
+  **Needs review**: "late" goes back to this week's late parcels, and
+  "to review" jumps to the review card.
   Above the week you can show **All** parcels, the **Active** ones (not
   delivered, returned or cancelled), the **Recent** ones (changed or expected
-  this week) or the **Completed** ones. Each device remembers the choice, and
-  **Parcels without a date** follows it too.
+  this week, or late) or the **Completed** ones. Each device remembers the
+  choice, and **Parcels without a date** follows it too.
   Return pickups are pink, with an outgoing-parcel icon, the shop, "Return
   pickup" (later "Return picked up" or "Received by the shop", and "Return
   started" while there's no pickup day), the carrier and the items. They're
@@ -655,6 +664,7 @@ views:
 
 For a month view, add Home Assistant's own calendar card with
 `calendar.parcels`. It has no week grid, which is why Parcels brings its own.
+The calendar keeps late parcels on the days they were expected.
 
 A parcel marked private shows in full only to its owners. Others see
 "Private parcel" on its day, with its status and time window, but not its
@@ -1365,7 +1375,7 @@ with made-up e-mails before you rely on it.
 | `sensor.parcels_ready_for_pickup` | Parcels waiting at a pickup point or locker. |
 | `sensor.parcels_delivered_today` | Parcels delivered today. |
 | `sensor.parcels_ai_queue` | E-mails waiting for the local AI. |
-| `calendar.parcels` | Expected and actual deliveries, and return pickups. |
+| `calendar.parcels` | Expected and actual deliveries, and return pickups. Late parcels stay on their expected days. |
 | `switch.parcels_live_activities` | Live Activities and phone notifications. |
 | `switch.parcels_daily_notification` | The persistent notification. |
 

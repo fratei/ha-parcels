@@ -1,7 +1,8 @@
 """Shared rules for the sensors and the calendar.
 
-The calendar places parcels exactly like the week card
-(``frontend/src/placement.ts``), so both show the same days.
+The calendar places parcels like the week card
+(``frontend/src/placement.ts``), so both show the same days, except that the
+week card carries late parcels into today; the calendar keeps their days.
 """
 
 from __future__ import annotations

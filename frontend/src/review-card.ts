@@ -30,6 +30,7 @@ import { normalizeRetryResult } from "./normalize.ts";
 import { compareLikelihood, etaRange } from "./parcels.ts";
 import { defineElement, registerCard } from "./register.ts";
 import {
+  SHOW_REVIEW_EVENT,
   aiQueueText,
   filteredTitle,
   hideHandled,
@@ -380,6 +381,29 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   protected override hassChanged(): void {
     this._syncVisibility();
   }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener(SHOW_REVIEW_EVENT, this._onShowReview);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    window.removeEventListener(SHOW_REVIEW_EVENT, this._onShowReview);
+  }
+
+  /** The week card's "N to review": the first visible review card shows Needs review and takes it. */
+  private readonly _onShowReview = (event: Event): void => {
+    if (event.defaultPrevented || !this._visible()) {
+      return;
+    }
+    event.preventDefault();
+    this._tab = "review";
+    this.scrollIntoView?.({ block: "start" });
+    void this.updateComplete.then(() =>
+      this.renderRoot.querySelector<HTMLElement>("#tab-review")?.focus({ preventScroll: true }),
+    );
+  };
 
   /** Only administrators see the card; before the first snapshot, their Home Assistant role decides. */
   private _visible(): boolean {

@@ -5,6 +5,7 @@
  */
 import { addDays, compareYmd, localDateOf, startOfWeek } from "./dates.ts";
 import { etaRange } from "./parcels.ts";
+import { placeParcel } from "./placement.ts";
 import { isReturnDone } from "./returns.ts";
 import { isActiveStatus } from "./status.ts";
 import { STRINGS } from "./strings.ts";
@@ -71,13 +72,19 @@ export function saveFilter(
   target?.dispatchEvent(new CustomEvent(FILTER_EVENT, { detail: filter }));
 }
 
-/** Changed (status or delivery) or expected during the current Monday-to-Sunday week. */
+/**
+ * Changed (status or delivery) or expected during the current Monday-to-Sunday
+ * week, or late (the week shows it today).
+ */
 function isRecent(parcel: Parcel, { today, timeZone }: FilterContext): boolean {
   const monday = startOfWeek(today);
   const sunday = addDays(monday, 6);
   const inWeek = (day: string | null): boolean =>
     day !== null && compareYmd(day, monday) >= 0 && compareYmd(day, sunday) <= 0;
   if (inWeek(localDateOf(parcel.status_time, timeZone)) || inWeek(localDateOf(parcel.delivered_at, timeZone))) {
+    return true;
+  }
+  if (placeParcel(parcel, { today, timeZone })?.kind === "late") {
     return true;
   }
   const eta = etaRange(parcel);

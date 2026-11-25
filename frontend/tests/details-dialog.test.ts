@@ -9,7 +9,7 @@ import { ParcelsDetailsDialog } from "../src/details-dialog.ts";
 import { normalizeSnapshot } from "../src/normalize.ts";
 import type { Parcel, Snapshot } from "../src/types.ts";
 import { makeParcel } from "./helpers.ts";
-import { renderText } from "./render.ts";
+import { listener, renderText } from "./render.ts";
 
 interface DetailsHost {
   hass: unknown;
@@ -21,50 +21,6 @@ interface DetailsHost {
   _renderActions(parcel: Parcel): TemplateResult;
   _undoDelivery(): void;
   _keepInferred(): void;
-}
-
-interface Template {
-  strings: readonly string[];
-  values: readonly unknown[];
-}
-
-function isTemplate(value: unknown): value is Template {
-  return typeof value === "object" && value !== null && "strings" in value && "values" in value;
-}
-
-/**
- * The listener bound to `@event` on the element whose opening tag, attribute
- * values included, has `marker`.
- */
-function listener(value: unknown, marker: string, event = "click"): unknown {
-  if (Array.isArray(value)) {
-    for (const part of value) {
-      const found = listener(part, marker, event);
-      if (found !== undefined) {
-        return found;
-      }
-    }
-    return undefined;
-  }
-  if (!isTemplate(value)) {
-    return undefined;
-  }
-  let out = "";
-  for (const [index, part] of value.values.entries()) {
-    out += value.strings[index] ?? "";
-    const tag = out.slice(out.lastIndexOf("<"));
-    if (typeof part === "function" && tag.includes(marker) && tag.endsWith(`@${event}=`)) {
-      return part;
-    }
-    if (typeof part === "string" || typeof part === "number" || typeof part === "boolean") {
-      out += String(part);
-    }
-    const found = listener(part, marker, event);
-    if (found !== undefined) {
-      return found;
-    }
-  }
-  return undefined;
 }
 
 const MARKED = makeParcel({

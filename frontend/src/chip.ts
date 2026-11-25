@@ -2,7 +2,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { classMap } from "lit/directives/class-map.js";
 import { styleMap } from "lit/directives/style-map.js";
-import { chipMeta, chipPin, describeParcel, itemsSummary, sellerLine, sellerName } from "./describe.ts";
+import { chipMeta, chipPin, describeParcel, itemsSummary, lateText, sellerLine, sellerName } from "./describe.ts";
 import type { LocaleOptions } from "./format.ts";
 import { boxParcel } from "./groups.ts";
 import { parcelTitle } from "./labels.ts";
@@ -173,8 +173,10 @@ export function renderChip(first: Parcel, options: ChipOptions): TemplateResult 
     showStatus: options.showStatus,
     showRange: options.showRange,
   });
+  const late = lateText(placement, locale);
   const classes = {
     chip: true,
+    late: late !== null,
     "cont-before": options.continuesBefore === true,
     "cont-after": options.continuesAfter === true,
     returned: parcel.status === "returned",
@@ -185,6 +187,7 @@ export function renderChip(first: Parcel, options: ChipOptions): TemplateResult 
     ${options.continuesBefore ? html`<span class="cont">‹</span>` : nothing}
     ${parcel.status === "delivered" ? html`<span class="check">✓</span>` : nothing}
     <span class="chip-text">
+      ${late ? html`<span class="chip-late">${late}</span>` : nothing}
       <span class=${classMap({ "chip-title": true, unknown: !parcel.restricted && sellerName(parcel) === null })}
         >${sellerLine(parcel)}</span
       >

@@ -40,4 +40,20 @@ describe("renderChip", () => {
       /<span class="chip-title">Private parcel<\/span>/,
     );
   });
+
+  test("says first that a parcel is late, also to screen readers", () => {
+    const parcel = makeParcel({ merchant: "Example Shop", carrier: "ups", window_start: "13:00", window_end: "15:00" });
+    const placement = { kind: "late", from: "2026-07-15", to: "2026-07-15", expected: "2026-07-14" } as const;
+    const text = renderText(renderChip(parcel, { ...OPTIONS, placement }));
+    assert.match(text, /<div class="chip late"/);
+    assert.match(
+      text,
+      /<span class="chip-text"> <span class="chip-late">Late · expected Tue 14<\/span> <span class="chip-title">Example Shop</,
+    );
+    assert.match(text, /aria-label="Late, expected Tue 14, Example Shop, carrier UPS, In transit"/);
+    assert.doesNotMatch(text, /13:00/);
+    const onTime = renderText(renderChip(parcel, { ...OPTIONS, placement: { kind: "eta", from: "2026-07-15", to: "2026-07-15" } }));
+    assert.match(onTime, /<div class="chip"/);
+    assert.doesNotMatch(onTime, /chip-late|Late/);
+  });
 });

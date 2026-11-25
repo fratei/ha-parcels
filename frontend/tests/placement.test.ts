@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { itemKey, layoutWeek, placeParcel } from "../src/placement.ts";
+import { isLateItem, itemKey, lateItems, layoutWeek, placeParcel } from "../src/placement.ts";
 import type { PlacementContext } from "../src/placement.ts";
 import { PARCEL_STATUSES, type Parcel } from "../src/types.ts";
 import { makeParcel, makeReturn } from "./helpers.ts";
@@ -10,6 +10,8 @@ import { makeParcel, makeReturn } from "./helpers.ts";
 const ctx: PlacementContext = { today: "2026-07-15", timeZone: "Europe/Lisbon" };
 const MONDAY = "2026-07-13";
 const SHOW_ALL = { showArchived: true };
+// Today in the week before, so that nothing in the week shown is late.
+const EARLIER: PlacementContext = { today: "2026-07-06", timeZone: "Europe/Lisbon" };
 
 describe("placeParcel", () => {
   test("puts delivered parcels on the local day of delivered_at", () => {
@@ -73,11 +75,11 @@ describe("placeParcel", () => {
 
   test("puts attempted and exception parcels without an ETA on their status day", () => {
     for (const status of ["attempted", "exception"] as const) {
-      const parcel = makeParcel({ status, status_time: "2026-07-14T18:00:00Z" });
+      const parcel = makeParcel({ status, status_time: "2026-07-15T09:00:00Z" });
       assert.deepEqual(placeParcel(parcel, ctx), {
         kind: "status",
-        from: "2026-07-14",
-        to: "2026-07-14",
+        from: "2026-07-15",
+        to: "2026-07-15",
       });
       assert.equal(placeParcel(makeParcel({ status }), ctx), null);
       const withEta = makeParcel({
@@ -98,15 +100,15 @@ describe("placeParcel", () => {
   });
 
   test("uses a single day when the ETA has no usable end", () => {
-    assert.deepEqual(placeParcel(makeParcel({ eta_start: "2026-07-14" }), ctx), {
+    assert.deepEqual(placeParcel(makeParcel({ eta_start: "2026-07-16" }), ctx), {
       kind: "eta",
-      from: "2026-07-14",
-      to: "2026-07-14",
+      from: "2026-07-16",
+      to: "2026-07-16",
     });
-    assert.deepEqual(placeParcel(makeParcel({ eta_start: "2026-07-14", eta_end: "2026-07-12" }), ctx), {
+    assert.deepEqual(placeParcel(makeParcel({ eta_start: "2026-07-16", eta_end: "2026-07-12" }), ctx), {
       kind: "eta",
-      from: "2026-07-14",
-      to: "2026-07-14",
+      from: "2026-07-16",
+      to: "2026-07-16",
     });
     assert.equal(placeParcel(makeParcel({ eta_start: "next week" }), ctx), null);
   });
@@ -155,7 +157,7 @@ describe("layoutWeek", () => {
       makeParcel({ id: "earlier", eta_start: "2026-07-06", eta_end: "2026-07-12" }),
       makeParcel({ id: "later", eta_start: "2026-07-20" }),
     ];
-    const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL);
+    const layout = layoutWeek(parcels, MONDAY, EARLIER, SHOW_ALL);
     const byId = new Map(layout.items.map((item) => [itemKey(item), item]));
     assert.deepEqual([...byId.keys()].sort(), ["after", "before", "both", "inside"]);
     const pick = (id: string) => {
@@ -184,7 +186,7 @@ describe("layoutWeek", () => {
 
   test("shows archived parcels only when asked to", () => {
     const parcels = [
-      makeParcel({ id: "active", eta_start: "2026-07-14" }),
+      makeParcel({ id: "active", eta_start: "2026-07-16" }),
       makeParcel({ id: "old", status: "delivered", delivered_at: "2026-07-13T12:00:00Z", archived: true }),
     ];
     assert.deepEqual(
@@ -212,7 +214,7 @@ describe("layoutWeek", () => {
       makeParcel({ id: "c", merchant: "Charlie", eta_start: "2026-07-16", eta_end: "2026-07-17" }),
       makeParcel({ id: "d", merchant: "Delta", eta_start: "2026-07-14", window_start: "09:00" }),
     ];
-    const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL);
+    const layout = layoutWeek(parcels, MONDAY, EARLIER, SHOW_ALL);
     const lanes = Object.fromEntries(layout.items.map((item) => [itemKey(item), item.lane]));
     assert.deepEqual(lanes, { a: 0, d: 1, b: 2, c: 0 });
     assert.equal(layout.lanes, 3);
@@ -229,7 +231,7 @@ describe("layoutWeek", () => {
       makeParcel({ id: "long", merchant: "B", eta_start: "2026-07-14", eta_end: "2026-07-16" }),
     ];
     assert.deepEqual(
-      layoutWeek(parcels, MONDAY, ctx, SHOW_ALL).items.map(itemKey),
+      layoutWeek(parcels, MONDAY, EARLIER, SHOW_ALL).items.map(itemKey),
       ["long", "short"],
     );
   });
@@ -263,7 +265,7 @@ describe("layoutWeek", () => {
       pkg("p8", { status: "delivered", delivered_at: "2026-07-14T10:00:00Z" }),
       pkg("p9", { status: "delivered", delivered_at: "2026-07-15T10:00:00Z" }),
     ];
-    const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL);
+    const layout = layoutWeek(parcels, MONDAY, EARLIER, SHOW_ALL);
     const boxes = Object.fromEntries(
       layout.items.map((item) => [itemKey(item), item.type === "parcel" ? item.members.map((member) => member.id) : []]),
     );
@@ -305,7 +307,7 @@ describe("layoutWeek with returns", () => {
       makeReturn({ id: "r2", merchant: "Alpha", day: "2026-07-16", pickup: "2026-07-16" }),
       makeReturn({ id: "r1", merchant: "Alpha", day: "2026-07-14", pickup: "2026-07-14" }),
     ];
-    const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL, returns);
+    const layout = layoutWeek(parcels, MONDAY, EARLIER, SHOW_ALL, returns);
     assert.deepEqual(layout.items.map(itemKey), ["long", "zulu", "return:r1", "return:r2"]);
     assert.deepEqual(
       layout.perDay.map((items) => items.map(itemKey)),
@@ -357,5 +359,132 @@ describe("layoutWeek with returns", () => {
     const item = layoutWeek([], MONDAY, ctx, SHOW_ALL, [ret]).items[0];
     assert.ok(item);
     assert.equal(item.startCol, 4);
+  });
+});
+
+describe("late parcels", () => {
+  const late = (expected: string) => ({ kind: "late", from: "2026-07-15", to: "2026-07-15", expected });
+
+  test("carry an active parcel whose expected day has passed into today", () => {
+    for (const status of ["ordered", "shipped", "in_transit", "out_for_delivery", "attempted", "exception", "held"]) {
+      const parcel = makeParcel({ status: status as never, eta_start: "2026-07-14" });
+      assert.deepEqual(placeParcel(parcel, ctx), late("2026-07-14"), status);
+    }
+    const range = makeParcel({ eta_start: "2026-07-10", eta_end: "2026-07-14" });
+    assert.deepEqual(placeParcel(range, ctx), late("2026-07-14"));
+    const old = makeParcel({ eta_start: "2026-06-22" });
+    assert.deepEqual(placeParcel(old, ctx), late("2026-06-22"));
+  });
+
+  test("aren't late while their expected days include today", () => {
+    assert.deepEqual(placeParcel(makeParcel({ eta_start: "2026-07-15" }), ctx), {
+      kind: "eta",
+      from: "2026-07-15",
+      to: "2026-07-15",
+    });
+    assert.deepEqual(placeParcel(makeParcel({ eta_start: "2026-07-13", eta_end: "2026-07-15" }), ctx), {
+      kind: "eta",
+      from: "2026-07-13",
+      to: "2026-07-15",
+    });
+  });
+
+  test("carry a missed delivery or a problem without an ETA from its day into today", () => {
+    for (const status of ["attempted", "exception"] as const) {
+      const parcel = makeParcel({ status, status_time: "2026-07-14T18:00:00Z" });
+      assert.deepEqual(placeParcel(parcel, ctx), { ...late("2026-07-14"), since: true }, status);
+    }
+    const shipped = makeParcel({ status: "shipped", status_time: "2026-07-14T18:00:00Z" });
+    assert.equal(placeParcel(shipped, ctx), null);
+  });
+
+  test("are never delivered, returned, cancelled, waiting for pickup or archived parcels", () => {
+    const parcels = [
+      makeParcel({ status: "delivered", eta_start: "2026-07-10", delivered_at: "2026-07-14T10:00:00Z" }),
+      makeParcel({ status: "returned", eta_start: "2026-07-10", status_time: "2026-07-14T10:00:00Z" }),
+      makeParcel({ status: "ready_for_pickup", eta_start: "2026-07-10", status_time: "2026-07-10T10:00:00Z" }),
+    ];
+    assert.deepEqual(
+      parcels.map((parcel) => placeParcel(parcel, ctx)?.kind),
+      ["delivered", "returned", "pickup"],
+    );
+    assert.equal(placeParcel(makeParcel({ status: "cancelled", eta_start: "2026-07-10" }), ctx), null);
+    const archived = makeParcel({ eta_start: "2026-07-10", archived: true });
+    assert.deepEqual(placeParcel(archived, ctx), { kind: "eta", from: "2026-07-10", to: "2026-07-10" });
+    const archivedProblem = makeParcel({ status: "exception", status_time: "2026-07-10T10:00:00Z", archived: true });
+    assert.deepEqual(placeParcel(archivedProblem, ctx), { kind: "status", from: "2026-07-10", to: "2026-07-10" });
+  });
+
+  test("go first in today's column, above the parcels expected today", () => {
+    const parcels = [
+      makeParcel({ id: "late2", merchant: "Alpha", status: "out_for_delivery", eta_start: "2026-07-10", eta_end: "2026-07-12" }),
+      makeParcel({ id: "late1", merchant: "Bravo", eta_start: "2026-07-14" }),
+      makeParcel({ id: "span", merchant: "Charlie", eta_start: "2026-07-13", eta_end: "2026-07-17" }),
+      makeParcel({ id: "got", merchant: "Delta", status: "delivered", delivered_at: "2026-07-14T10:00:00Z" }),
+      makeParcel({ id: "today", merchant: "Foxtrot", eta_start: "2026-07-15", eta_end: "2026-07-16" }),
+      makeParcel({ id: "fri", merchant: "Echo", eta_start: "2026-07-17" }),
+    ];
+    const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL);
+    assert.deepEqual(layout.items.map(itemKey), ["span", "got", "late2", "late1", "today", "fri"]);
+    const lanes = Object.fromEntries(layout.items.map((item) => [itemKey(item), item.lane]));
+    assert.deepEqual(lanes, { late2: 0, late1: 1, span: 2, got: 0, today: 3, fri: 0 });
+    assert.equal(layout.lanes, 4);
+    assert.deepEqual(
+      layout.perDay.map((items) => items.map(itemKey)),
+      [["span"], ["got", "span"], ["late2", "late1", "span", "today"], ["span", "today"], ["fri", "span"], [], []],
+    );
+    const first = layout.items[2];
+    assert.ok(first?.type === "parcel");
+    assert.deepEqual(
+      [first.startCol, first.endCol, first.continuesBefore, first.continuesAfter],
+      [2, 2, false, false],
+    );
+    assert.deepEqual(layout.items.filter(isLateItem).map(itemKey), ["late2", "late1"]);
+  });
+
+  test("leave their old days, and show in no other week", () => {
+    const parcel = makeParcel({ id: "late", eta_start: "2026-07-08" });
+    assert.equal(layoutWeek([parcel], "2026-07-06", ctx, SHOW_ALL).items.length, 0);
+    assert.equal(layoutWeek([parcel], "2026-07-20", ctx, SHOW_ALL).items.length, 0);
+    assert.deepEqual(layoutWeek([parcel], MONDAY, ctx, SHOW_ALL).items.map(itemKey), ["late"]);
+  });
+
+  test("of one shipment share a box only when expected on the same day", () => {
+    const pkg = (id: string, eta: string): Parcel =>
+      makeParcel({ id, merchant: "Example Shop", eta_start: eta, shipment_group: "g1" });
+    const parcels = [pkg("p1", "2026-07-14"), pkg("p2", "2026-07-14"), pkg("p3", "2026-07-13"), pkg("p4", "2026-07-15")];
+    const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL);
+    const boxes = Object.fromEntries(
+      layout.items.map((item) => [itemKey(item), item.type === "parcel" ? item.members.map((member) => member.id) : []]),
+    );
+    assert.deepEqual(boxes, { p1: ["p1", "p2"], p3: ["p3"], p4: ["p4"] });
+  });
+
+  test("of one shipment share a box only when late for the same reason", () => {
+    const missed = (id: string, overrides: Partial<Parcel>): Parcel =>
+      makeParcel({ id, merchant: "Example Shop", status: "attempted", shipment_group: "g1", ...overrides });
+    const parcels = [
+      missed("p1", { eta_start: "2026-07-14" }),
+      missed("p2", { status_time: "2026-07-14T18:00:00Z" }),
+      missed("p3", { status_time: "2026-07-14T09:00:00Z" }),
+    ];
+    const layout = layoutWeek(parcels, MONDAY, ctx, SHOW_ALL);
+    const boxes = Object.fromEntries(
+      layout.items.map((item) => [itemKey(item), item.type === "parcel" ? item.members.map((member) => member.id) : []]),
+    );
+    assert.deepEqual(boxes, { p1: ["p1"], p2: ["p2", "p3"] });
+  });
+
+  test("are counted by box, without archived or completed parcels", () => {
+    const parcels = [
+      makeParcel({ id: "p1", eta_start: "2026-07-14", shipment_group: "g1" }),
+      makeParcel({ id: "p2", eta_start: "2026-07-14", shipment_group: "g1" }),
+      makeParcel({ id: "secret", eta_start: "2026-07-13", restricted: true, private: true }),
+      makeParcel({ id: "old", eta_start: "2026-07-01", archived: true }),
+      makeParcel({ id: "got", status: "delivered", eta_start: "2026-07-14", delivered_at: "2026-07-15T08:00:00Z" }),
+      makeParcel({ id: "today", eta_start: "2026-07-15" }),
+    ];
+    assert.deepEqual(lateItems(parcels, ctx).map(itemKey), ["p1", "secret"]);
+    assert.deepEqual(lateItems([], ctx), []);
   });
 });

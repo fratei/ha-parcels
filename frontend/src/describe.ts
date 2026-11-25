@@ -8,11 +8,12 @@ import {
   formatDateRange,
   formatDayTime,
   formatDayWithoutTime,
+  formatWeekdayDay,
   formatWindow,
   type LocaleOptions,
 } from "./format.ts";
 import { carrierLabel, statusLabel } from "./labels.ts";
-import { localDateOf } from "./dates.ts";
+import { diffDays, localDateOf } from "./dates.ts";
 import { etaRange, isActiveParcel } from "./parcels.ts";
 import type { Placement } from "./placement.ts";
 import { STRINGS, fmt } from "./strings.ts";
@@ -41,12 +42,39 @@ export interface MetaOptions {
   showRange?: boolean;
 }
 
-/** A delivery window only matters while the parcel is still on its way. */
+/**
+ * A delivery window only matters while the parcel is still on its way, and
+ * not once its day has passed.
+ */
 function windowText(parcel: Parcel, placement: Placement | null, locale: LocaleOptions): string | null {
-  if (placement?.kind === "delivered" || placement?.kind === "returned") {
+  if (placement?.kind === "delivered" || placement?.kind === "returned" || placement?.kind === "late") {
     return null;
   }
   return formatWindow(parcel.window_start, parcel.window_end, locale);
+}
+
+const OLDER_DAY: Intl.DateTimeFormatOptions = { day: "numeric", month: "short" };
+
+/** The day a late parcel was expected: "Tue 14" within a week, else "8 Jul"; null unless late. */
+function lateDate(placement: Placement | null | undefined, locale: LocaleOptions): string | null {
+  if (placement?.kind !== "late" || !placement.expected) {
+    return null;
+  }
+  return diffDays(placement.expected, placement.from) <= 6
+    ? formatWeekdayDay(placement.expected, locale)
+    : formatDate(placement.expected, locale, OLDER_DAY);
+}
+
+/** "Late · expected Tue 14" (or "Late · since …"), for a late placement only. */
+export function lateText(placement: Placement | null | undefined, locale: LocaleOptions): string | null {
+  const date = lateDate(placement, locale);
+  return date && fmt(placement?.since ? STRINGS.lateSince : STRINGS.lateExpected, { date });
+}
+
+/** The accessible form of lateText, with the same date: "Late, expected Tue 14". */
+function lateLabel(placement: Placement | null, locale: LocaleOptions): string | null {
+  const date = lateDate(placement, locale);
+  return date && fmt(placement?.since ? STRINGS.lateSinceLabel : STRINGS.lateExpectedLabel, { date });
 }
 
 /** Whether to say the carrier isn't known yet: never for another user's private parcel. */
@@ -216,12 +244,14 @@ export function possiblyLine(candidates: readonly Parcel[]): string | null {
 /**
  * Everything a chip shows, as one sentence for screen readers and the tooltip,
  * e.g. "Example Shop, carrier DPD, In transit, expected Tue 14 Jul,
- * 13:00–14:00, 2 items · Lumen lamp, Brava bin, PIN 4711, private".
+ * 13:00–14:00, 2 items · Lumen lamp, Brava bin, PIN 4711, private". A late
+ * parcel's starts with "Late, expected Tue 14", as its chip does.
  */
 export function describeParcel(parcel: Parcel, context: ChipContext): string {
   const { locale } = context;
   const placement = context.placement ?? null;
-  const parts: string[] = [sellerLine(parcel)];
+  const late = lateLabel(placement, locale);
+  const parts: string[] = late ? [late, sellerLine(parcel)] : [sellerLine(parcel)];
   const packages = packagesText(context.count);
   if (packages) {
     parts.push(packages);
@@ -246,6 +276,11 @@ export function describeParcel(parcel: Parcel, context: ChipContext): string {
       break;
     case "status":
       parts.push(fmt(STRINGS.statusOn, { status, date: day }));
+      break;
+    case "late":
+      if (status) {
+        parts.push(status);
+      }
       break;
     case "eta":
       if (status) {

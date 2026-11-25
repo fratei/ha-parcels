@@ -63,6 +63,18 @@ describe("matchesFilter", () => {
       ["changed", "mondayMorning", "overlapping", "lastDay", "deliveredNow"],
     );
   });
+
+  test("keeps late parcels, which the week shows today", () => {
+    assert.deepEqual(
+      shown("recent", {
+        late: { eta_start: "2026-06-29", eta_end: "2026-07-01" },
+        lateProblem: { status: "exception", status_time: "2026-07-01T10:00:00Z" },
+        lateArchived: { eta_start: "2026-07-01", archived: true },
+        delivered: { status: "delivered", eta_start: "2026-07-01", delivered_at: "2026-07-02T10:00:00Z" },
+      }),
+      ["late", "lateProblem"],
+    );
+  });
 });
 
 class MemoryStorage {

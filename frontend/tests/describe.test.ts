@@ -11,6 +11,7 @@ import {
   couldAlsoBe,
   describeParcel,
   itemsSummary,
+  lateText,
   possiblyLine,
   sellerLine,
   sellerName,
@@ -90,6 +91,33 @@ describe("describeParcel", () => {
     });
     assert.equal(describeParcel(parcel, { locale: GB }), "Private parcel, carrier DHL, In transit, private");
     assert.equal(chipMeta(parcel, { locale: GB }), "DHL");
+  });
+});
+
+describe("late parcels", () => {
+  const late: Placement = { kind: "late", from: "2026-07-15", to: "2026-07-15", expected: "2026-07-14" };
+
+  test("say when they were expected, with the month once that's a week ago", () => {
+    assert.equal(lateText(late, GB), "Late · expected Tue 14");
+    assert.equal(lateText(late, { ...GB, language: "en" }), "Late · expected Tue 14");
+    assert.equal(lateText({ ...late, since: true }, GB), "Late · since Tue 14");
+    assert.equal(lateText({ ...late, expected: "2026-07-09" }, GB), "Late · expected Thu 9");
+    assert.equal(lateText({ ...late, expected: "2026-07-08" }, GB), "Late · expected 8 Jul");
+    assert.equal(lateText({ ...late, expected: "2026-06-22", since: true }, GB), "Late · since 22 Jun");
+    assert.equal(lateText(span, GB), null);
+    assert.equal(lateText(null, GB), null);
+  });
+
+  test("start their description with it, and show no window", () => {
+    assert.equal(
+      describeParcel(windowed, { locale: GB, placement: late }),
+      "Late, expected Tue 14, Example Shop, carrier DHL, In transit",
+    );
+    assert.equal(
+      describeParcel({ ...windowed, status: "attempted" }, { locale: GB, placement: { ...late, since: true } }),
+      "Late since Tue 14, Example Shop, carrier DHL, Delivery attempted",
+    );
+    assert.equal(chipMeta(windowed, { locale: GB, placement: late, showRange: true }), "DHL");
   });
 });
 

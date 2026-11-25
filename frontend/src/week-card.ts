@@ -18,8 +18,17 @@ import { cardTitle, weekCardConfig, type WeekCardConfig } from "./config.ts";
 import { addDays, startOfWeek } from "./dates.ts";
 import { FILTER_LABELS, PARCEL_FILTERS, type ParcelFilter } from "./filter.ts";
 import { RANGE_FORMAT, formatDate, formatDateRange } from "./format.ts";
-import { itemKey, layoutWeek, type LayoutItem, type WeekLayout } from "./placement.ts";
+import {
+  isLateItem,
+  itemKey,
+  lateItems,
+  layoutWeek,
+  type LayoutItem,
+  type WeekItem,
+  type WeekLayout,
+} from "./placement.ts";
 import { defineElement, registerCard } from "./register.ts";
+import { reviewCount, showReview } from "./review-state.ts";
 import { STRINGS, fmt } from "./strings.ts";
 import { baseStyles, chipStyles } from "./styles.ts";
 import type { Snapshot } from "./types.ts";
@@ -56,6 +65,22 @@ export class ParcelsWeekCard extends ParcelsChipCard {
       }
       .title + .range {
         margin-top: 2px;
+      }
+      .attention {
+        margin: 2px 0 0;
+        font-size: 0.875rem;
+        color: var(--primary-text-color, #212121);
+      }
+      .attention .link-btn {
+        color: inherit;
+      }
+      .attention .link-btn:first-child {
+        margin-inline-start: -4px;
+      }
+      .attention .late-link,
+      .day.late-group .day-label {
+        /* As the chips' "Late" line: at least 4.5:1, light and dark. */
+        color: color-mix(in srgb, var(--error-color, #db4437) 40%, var(--primary-text-color, #212121));
       }
       .controls {
         display: flex;
@@ -251,6 +276,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
     filter: ParcelFilter;
     layout: WeekLayout;
   } | null = null;
+  private _lateCache: { snapshot: Snapshot; filter: ParcelFilter; count: number } | null = null;
 
   constructor() {
     super();
@@ -275,7 +301,8 @@ export class ParcelsWeekCard extends ParcelsChipCard {
     }
     if (this._narrow) {
       const chips = layout.perDay.reduce((total, items) => total + items.length, 0);
-      return 2 + 7 + chips;
+      const lateGroup = layout.items.some(isLateItem) ? 1 : 0;
+      return 2 + 7 + lateGroup + chips;
     }
     return 3 + Math.max(1, layout.lanes);
   }
@@ -366,6 +393,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
           <div class="heading">
             ${title ? html`<h2 class="title">${title}</h2>` : nothing}
             ${range ? html`<p class="range" aria-live="polite">${range}</p>` : nothing}
+            ${snapshot ? this._renderAttention(snapshot) : nothing}
           </div>
           <div class="controls">
             <div class="nav" role="group" aria-label=${STRINGS.weekNavigation}>
@@ -424,6 +452,67 @@ export class ParcelsWeekCard extends ParcelsChipCard {
       ></parcels-add-dialog>`;
   }
 
+  /** "2 late · 1 to review" under the title, each a link; nothing when there's neither. */
+  private _renderAttention(snapshot: Snapshot): TemplateResult | typeof nothing {
+    const late = this._lateCount(snapshot);
+    const review = snapshot.settings.user_is_admin ? reviewCount(snapshot) : 0;
+    if (late === 0 && review === 0) {
+      return nothing;
+    }
+    const lateLink = late
+      ? html`<button
+          type="button"
+          class="link-btn late-link"
+          title=${STRINGS.attentionLateLabel}
+          @click=${this._showLate}
+        >
+          ${fmt(STRINGS.attentionLate, { count: late })}
+        </button>`
+      : nothing;
+    const reviewLink = review
+      ? html`<button
+          type="button"
+          class="link-btn"
+          title=${STRINGS.attentionReviewLabel}
+          @click=${this._showReview}
+        >
+          ${review === 1 ? STRINGS.attentionReviewOne : fmt(STRINGS.attentionReview, { count: review })}
+        </button>`
+      : nothing;
+    const separator = late && review ? html`<span aria-hidden="true"> · </span>` : nothing;
+    return html`<p class="attention">${lateLink}${separator}${reviewLink}</p>`;
+  }
+
+  /** The late parcels the chosen filter shows, a box counting once, as today's column has them. */
+  private _lateCount(snapshot: Snapshot): number {
+    const filter = this._filter;
+    const cache = this._lateCache;
+    if (cache && cache.snapshot === snapshot && cache.filter === filter) {
+      return cache.count;
+    }
+    const context = { today: snapshot.settings.today, timeZone: snapshot.settings.time_zone };
+    const count = lateItems(this.filterParcels(snapshot, snapshot.parcels), context).length;
+    this._lateCache = { snapshot, filter, count };
+    return count;
+  }
+
+  /** Back to this week, to the first late parcel at the top of today. */
+  private _showLate(): void {
+    this._thisWeek();
+    void this.updateComplete.then(() => {
+      const chip = this.renderRoot.querySelector<HTMLElement>(".chip.late");
+      chip?.scrollIntoView?.({ block: "nearest" });
+      chip?.querySelector<HTMLElement>("button.chip-main")?.focus({ preventScroll: true });
+    });
+  }
+
+  /** Asks the page's review card to show Needs review; says so when the page has none. */
+  private _showReview(): void {
+    if (!showReview()) {
+      this.showActionError(STRINGS.reviewCardMissing);
+    }
+  }
+
   private _renderGrid(snapshot: Snapshot, layout: WeekLayout, range: string): TemplateResult {
     const locale = this.locale;
     const today = snapshot.settings.today;
@@ -480,9 +569,12 @@ export class ParcelsWeekCard extends ParcelsChipCard {
     return html`${filteredOut ? html`<p class="week-empty stacked">${this._emptyText()}</p>` : nothing}
       <ol class="days" aria-label=${fmt(STRINGS.weekOf, { range })}>
       ${layout.days.map((day, column) => {
-        const items = layout.perDay[column] ?? [];
+        const all = layout.perDay[column] ?? [];
+        // Late parcels, carried into today, come first in a group of their own.
+        const late = all.filter(isLateItem);
+        const items = late.length ? all.filter((item) => !isLateItem(item)) : all;
         const isToday = day === today;
-        return html`<li
+        return html`${late.length ? this._renderLateGroup(late, column) : nothing}<li
           class="day ${items.length ? "" : "compact"} ${isToday ? "today" : ""}"
           aria-current=${isToday ? "date" : nothing}
         >
@@ -503,6 +595,16 @@ export class ParcelsWeekCard extends ParcelsChipCard {
         </li>`;
       })}
     </ol>`;
+  }
+
+  /** The narrow card's "Late" group, just before today. */
+  private _renderLateGroup(late: readonly WeekItem[], column: number): TemplateResult {
+    return html`<li class="day late-group">
+      <p class="day-label">${STRINGS.lateGroup}</p>
+      <ul class="day-chips">
+        ${repeat(late, itemKey, (item) => html`<li>${this._chip(item, true, undefined, column)}</li>`)}
+      </ul>
+    </li>`;
   }
 
   /**

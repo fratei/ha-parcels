@@ -377,12 +377,21 @@ export const chipStyles = css`
     flex-direction: column;
     min-width: 0;
   }
+  .chip-late,
   .chip-title,
   .chip-meta,
   .chip-items {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* "Late · expected Tue 14", in a red that keeps 4.5:1 on every chip colour, light or dark. */
+  .chip-late {
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--primary-text-color, #212121);
+    color: color-mix(in srgb, var(--error-color, #db4437) 40%, var(--primary-text-color, #212121));
   }
   .chip-title {
     font-size: 0.875rem;

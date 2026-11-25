@@ -1,5 +1,8 @@
 """The Parcels calendar: one event per parcel, on the days the week card shows it.
 
+Late parcels are the exception: the week card carries them into today, while
+the calendar keeps them on the days they were expected.
+
 A customer return is an all-day event on its pickup day.
 """
 

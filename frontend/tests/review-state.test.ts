@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  SHOW_REVIEW_EVENT,
   aiQueueText,
   filteredTitle,
   hideHandled,
   hidePending,
   isHidden,
+  reviewCount,
   senderCheckRows,
   settleHidden,
+  showReview,
   trustResultText,
   unhide,
   unreadEmailsText,
@@ -16,6 +19,7 @@ import {
   withoutHidden,
   type HiddenItems,
 } from "../src/review-state.ts";
+import type { MergeSuggestion, ReviewItem } from "../src/types.ts";
 
 interface FakeSnapshot {
   readonly name: string;
@@ -201,5 +205,29 @@ describe("e-mails Parcels couldn't read", () => {
       "Tried again: 3 still couldn't be read, 2 are no longer in the mailbox.",
     );
     assert.equal(unreadRetryText({ read: 0, failed: 0, gone: 0 }), "No e-mails were waiting to be read again.");
+  });
+});
+
+describe("the week card's link to Needs review", () => {
+  test("counts what the review tab lists, the unread e-mails as one item", () => {
+    const review = [{ id: "r1" }, { id: "r2" }] as ReviewItem[];
+    const merge_suggestions = [{ id: "m1" }] as MergeSuggestion[];
+    const unread = (count: number) => ({ count, senders: [], newest: null });
+    assert.equal(reviewCount({ review, merge_suggestions, unread_emails: unread(3) }), 4);
+    assert.equal(reviewCount({ review, merge_suggestions, unread_emails: unread(0) }), 3);
+    assert.equal(reviewCount({ review: [], merge_suggestions: [], unread_emails: unread(0) }), 0);
+  });
+
+  test("reports whether a review card on the page took the request", () => {
+    const page = new EventTarget();
+    assert.equal(showReview(page), false);
+    let seen: Event | null = null;
+    page.addEventListener(SHOW_REVIEW_EVENT, (event) => {
+      seen = event;
+      event.preventDefault();
+    });
+    assert.equal(showReview(page), true);
+    assert.equal((seen as Event | null)?.cancelable, true);
+    assert.equal(showReview(null), false);
   });
 });

@@ -5,6 +5,7 @@
  */
 import { noChange, nothing } from "lit";
 import { classMap } from "lit/directives/class-map.js";
+import { repeat } from "lit/directives/repeat.js";
 import { styleMap } from "lit/directives/style-map.js";
 
 interface Template {
@@ -18,6 +19,7 @@ interface Directive {
 }
 
 const CLASS_MAP = (classMap({}) as unknown as Directive)._$litDirective$;
+const REPEAT = (repeat([], () => "") as unknown as Directive)._$litDirective$;
 const STYLE_MAP = (styleMap({}) as unknown as Directive)._$litDirective$;
 const BINDING = /\s([.?@]?)([\w-]+)=$/;
 
@@ -33,7 +35,15 @@ function empty(value: unknown): boolean {
   return value === nothing || value === noChange || value === null || value === undefined;
 }
 
+type ItemTemplate = (item: unknown, index: number) => unknown;
+
 function directiveText(value: Directive): string {
+  if (value._$litDirective$ === REPEAT) {
+    // repeat(items, template) or repeat(items, key, template).
+    const [items, first, second] = value.values as [Iterable<unknown>, ItemTemplate, ItemTemplate?];
+    const template = second ?? first;
+    return [...items].map((item, index) => text(template(item, index))).join("");
+  }
   const info = Object.entries((value.values[0] ?? {}) as Record<string, unknown>);
   if (value._$litDirective$ === CLASS_MAP) {
     return info
@@ -88,4 +98,39 @@ export function renderText(value: unknown): string {
     .replace(/\s+/g, " ")
     .replace(/\s+>/g, ">")
     .trim();
+}
+
+/**
+ * The listener bound to `@event` on the element whose opening tag, attribute
+ * values included, has `marker`.
+ */
+export function listener(value: unknown, marker: string, event = "click"): unknown {
+  if (Array.isArray(value)) {
+    for (const part of value) {
+      const found = listener(part, marker, event);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  if (!isTemplate(value)) {
+    return undefined;
+  }
+  let out = "";
+  for (const [index, part] of value.values.entries()) {
+    out += value.strings[index] ?? "";
+    const tag = out.slice(out.lastIndexOf("<"));
+    if (typeof part === "function" && tag.includes(marker) && tag.endsWith(`@${event}=`)) {
+      return part;
+    }
+    if (typeof part === "string" || typeof part === "number" || typeof part === "boolean") {
+      out += String(part);
+    }
+    const found = listener(part, marker, event);
+    if (found !== undefined) {
+      return found;
+    }
+  }
+  return undefined;
 }

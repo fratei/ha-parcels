@@ -8,6 +8,7 @@ import {
   formatDateTime,
   formatDayTime,
   formatDayWithoutTime,
+  formatWeekdayDay,
   formatWindow,
   localeOptions,
   MEDIUM_DATE,
@@ -84,6 +85,20 @@ describe("calendar dates", () => {
   test("invalid dates are shown as sent", () => {
     assert.equal(formatDate("soon", GB), "soon");
     assert.equal(formatDateRange("soon", "", GB), "soon");
+    assert.equal(formatWeekdayDay("soon", GB), "soon");
+  });
+
+  test("a weekday and day read weekday first in English, also in the US", () => {
+    assert.equal(formatWeekdayDay("2026-07-14", GB), "Tue 14");
+    assert.equal(formatWeekdayDay("2026-07-14", US), "Tue 14");
+    assert.equal(formatWeekdayDay("2026-07-14", { ...GB, language: "en" }), "Tue 14");
+  });
+
+  test("a weekday and day keep other languages' own order", () => {
+    const expected = { de: "Di., 14.", ja: "14日(火)", tr: "14 Sal", "zh-TW": "14 週二" };
+    for (const [language, text] of Object.entries(expected)) {
+      assert.equal(formatWeekdayDay("2026-07-14", { ...GB, language }), text, language);
+    }
   });
 });
 

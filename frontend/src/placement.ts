@@ -4,6 +4,7 @@ import {
   diffDays,
   localDateOf,
   maxYmd,
+  startOfWeek,
   weekDates,
 } from "./dates.ts";
 import { byId, groupItems, shipmentKey } from "./groups.ts";
@@ -13,13 +14,17 @@ import { returnTitle } from "./returns.ts";
 import type { CustomerReturn, Parcel } from "./types.ts";
 
 /** Why a parcel is on the days it's on. */
-export type PlacementKind = "delivered" | "returned" | "pickup" | "status" | "eta";
+export type PlacementKind = "delivered" | "returned" | "pickup" | "status" | "eta" | "late";
 
 /** Inclusive range of "YYYY-MM-DD" days on which a parcel shows. */
 export interface Placement {
   kind: PlacementKind;
   from: string;
   to: string;
+  /** A late parcel's last expected day, or the day of its problem when `since`. */
+  expected?: string;
+  /** Late since its missed delivery or problem, as it had no expected day. */
+  since?: true;
 }
 
 export interface PlacementContext {
@@ -38,6 +43,9 @@ export interface PlacementContext {
  * - anything else with an ETA: eta_start..eta_end;
  * - attempted or exception without an ETA: its status day;
  * - no ETA: not in the calendar (the list card shows those).
+ * A parcel still on its way whose ETA ended before today, or whose missed
+ * delivery or problem without an ETA was before today, is late: it moves to
+ * today, with the day it was expected. Archived parcels stay on their days.
  */
 export function placeParcel(parcel: Parcel, context: PlacementContext): Placement | null {
   const statusDay = localDateOf(parcel.status_time, context.timeZone);
@@ -57,11 +65,18 @@ export function placeParcel(parcel: Parcel, context: PlacementContext): Placemen
     default:
       break;
   }
+  const { today } = context;
   const eta = etaRange(parcel);
   if (eta) {
+    if (!parcel.archived && compareYmd(eta.end, today) < 0) {
+      return { kind: "late", from: today, to: today, expected: eta.end };
+    }
     return { kind: "eta", from: eta.start, to: eta.end };
   }
   if ((parcel.status === "attempted" || parcel.status === "exception") && statusDay) {
+    if (!parcel.archived && compareYmd(statusDay, today) < 0) {
+      return { kind: "late", from: today, to: today, expected: statusDay, since: true };
+    }
     return { kind: "status", from: statusDay, to: statusDay };
   }
   return null;
@@ -101,6 +116,11 @@ export type LayoutItem = WeekItem | ReturnItem;
 /** A key unique among a week's items. */
 export function itemKey(item: LayoutItem): string {
   return item.type === "parcel" ? item.parcel.id : `return:${item.ret.id}`;
+}
+
+/** A late parcel (or box), carried into today. */
+export function isLateItem(item: LayoutItem): item is WeekItem {
+  return item.type === "parcel" && item.placement.kind === "late";
 }
 
 export interface WeekLayout {
@@ -148,6 +168,7 @@ function compareReturns(a: ReturnItem, b: ReturnItem): number {
 function compareItems(a: LayoutItem, b: LayoutItem): number {
   const order =
     a.startCol - b.startCol ||
+    Number(isLateItem(b)) - Number(isLateItem(a)) ||
     b.endCol - b.startCol - (a.endCol - a.startCol) ||
     (a.type === b.type ? 0 : a.type === "parcel" ? -1 : 1);
   if (order) {
@@ -162,7 +183,9 @@ function compareItems(a: LayoutItem, b: LayoutItem): number {
 /**
  * Places parcels on the week that starts on the Monday `weekStart` and packs
  * them into lanes. Packages of one shipment with the same status on the same
- * days share one box. Customer returns go on their day, after its parcels.
+ * days (and, when late, expected on the same day) share one box. Late
+ * parcels take the top lanes of today. Customer returns go on their day,
+ * after its parcels.
  */
 export function layoutWeek(
   parcels: readonly Parcel[],
@@ -199,7 +222,14 @@ export function layoutWeek(
     });
   }
   const items: LayoutItem[] = groupItems(placed, (item) =>
-    shipmentKey(item.parcel, item.placement.kind, item.placement.from, item.placement.to),
+    shipmentKey(
+      item.parcel,
+      item.placement.kind,
+      item.placement.from,
+      item.placement.to,
+      item.placement.expected ?? "",
+      item.placement.since ? "since" : "",
+    ),
   ).map((box): WeekItem => {
     const first = box.reduce((min, item) => (byId(item.parcel, min.parcel) < 0 ? item : min));
     return { ...first, members: box.map((item) => item.parcel).sort(byId) };
@@ -225,14 +255,19 @@ export function layoutWeek(
     });
   }
   items.sort(compareItems);
-  const laneEnds: number[] = [];
-  for (const item of items) {
-    let lane = laneEnds.findIndex((end) => end < item.startCol);
-    if (lane === -1) {
-      lane = laneEnds.length;
+  // The days each lane has taken; late parcels go first, to top today's column.
+  const taken: boolean[][] = [];
+  for (const item of [...items.filter(isLateItem), ...items.filter((item) => !isLateItem(item))]) {
+    const columns = days.map((_, column) => column).slice(item.startCol, item.endCol + 1);
+    let lane = taken.find((busy) => columns.every((column) => !busy[column]));
+    if (!lane) {
+      lane = days.map(() => false);
+      taken.push(lane);
     }
-    laneEnds[lane] = item.endCol;
-    item.lane = lane;
+    for (const column of columns) {
+      lane[column] = true;
+    }
+    item.lane = taken.indexOf(lane);
   }
   const perDay = days.map((_, column) =>
     items
@@ -244,8 +279,15 @@ export function layoutWeek(
     end: weekEnd,
     days,
     items,
-    lanes: laneEnds.length,
+    lanes: taken.length,
     perDay,
     busy: perDay.map((dayItems) => dayItems.length > 0),
   };
+}
+
+/** The late parcels (a box counting once) of the current week, carried into today. */
+export function lateItems(parcels: readonly Parcel[], context: PlacementContext): WeekItem[] {
+  return layoutWeek(parcels, startOfWeek(context.today), context, { showArchived: false }).items.filter(
+    isLateItem,
+  );
 }
