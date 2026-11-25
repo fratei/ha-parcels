@@ -63,6 +63,7 @@ from .const import (
     REASON_RESTORED,
     REASON_UNKNOWN_FORMAT,
     REASON_UNKNOWN_SENDER,
+    SIGNAL_AI_UPDATED,
     SIGNAL_DATA_UPDATED,
     AIMode,
     MailKind,
@@ -99,6 +100,7 @@ from .dedup import (
     MergeSuggestion,
     accept_suggestion,
     add_owner,
+    add_owner_to,
     amazon_shipment_id_counts,
     apply_contribution,
     archive_parcel,
@@ -116,6 +118,7 @@ from .dedup import (
     reconcile,
     remove_message,
     remove_origins,
+    remove_owner_from,
     remove_parcel_origins,
     remove_return_origins,
     repair_store,
@@ -850,6 +853,7 @@ class ParcelsEngine:
     def async_add_mailbox(self, mailbox: MailboxRuntime) -> CALLBACK_TYPE:
         """Register a loaded mailbox; returns a callback that removes it."""
         self.mailboxes[mailbox.entry_id] = mailbox
+        self._apply_owner(mailbox)
         self.ai.wake()
 
         @callback
@@ -862,11 +866,101 @@ class ParcelsEngine:
         return remove
 
     @callback
+    def _apply_owner(self, mailbox: MailboxRuntime) -> None:
+        """Make a mailbox's owner the owner of the e-mails it read before.
+
+        The owner can be chosen, or changed, after the mailbox was read. The
+        former owner is taken off its e-mails, unless another mailbox that has
+        them is theirs too. Reviews of the mailbox and of those e-mails get
+        their owner again, as when they were made. A mailbox of an earlier
+        release, which didn't keep the owner it applied, only gets its owner
+        added.
+        """
+        data = self.data
+        entry_id = mailbox.entry_id
+        new = mailbox.owner
+        applied: dict[str, str] = data.engine.setdefault("owners", {})
+        known = entry_id in applied
+        old = applied.get(entry_id) or None
+        if known and old == new:
+            return
+        applied[entry_id] = new or ""
+        if new is None and not known:
+            self.async_schedule_save()
+            return
+        now = dt_util.utcnow()
+        entries = self.hass.config_entries
+
+        def configured(ref: str | None) -> str | None:
+            other = entries.async_get_entry(ref) if ref else None
+            return (other.options.get(CONF_OWNER) or None) if other else None
+
+        dropped: set[str] = set()
+        added: set[str] = set()
+        for key, record in data.messages.items():
+            if entry_id not in record.refs:
+                continue
+            owners = list(record.owners)
+            at = len(owners)
+            if (
+                old is not None
+                and old in owners
+                and not any(configured(ref) == old for ref in record.refs)
+            ):
+                at = owners.index(old)
+                owners.remove(old)
+                dropped.add(key)
+            if new is not None and new not in owners:
+                owners.insert(at, new)
+                added.add(key)
+            record.owners = tuple(owners)
+        if old is not None and dropped:
+            remove_owner_from(data, dropped, old, now)
+        if new is not None and added:
+            add_owner_to(data, added, new, now)
+        changed = dropped | added
+
+        def owner_of(
+            message: str | None, ref: str | None, current: str | None
+        ) -> str | None:
+            # As when the review was made: its e-mail's first owner, else the
+            # owner of its mailbox. A removed mailbox has none.
+            if ref != entry_id and message not in changed:
+                return current
+            record = data.messages.get(message) if message else None
+            if record is not None and record.owners:
+                return record.owners[0]
+            return configured(ref)
+
+        touched = False
+        for item in data.review.values():
+            owner = owner_of(item.message, item.mailbox, item.owner)
+            if owner != item.owner:
+                item.owner = owner
+                touched = True
+        queued = False
+        for entry in self.ai.queue:
+            review = entry["review"]
+            owner = owner_of(
+                entry.get("hash"), review.get("mailbox"), review.get("owner")
+            )
+            if owner != review.get("owner"):
+                review["owner"] = owner
+                queued = True
+        if queued:
+            async_dispatcher_send(self.hass, SIGNAL_AI_UPDATED)
+        if changed or touched:
+            self.async_changed()
+        else:
+            self.async_schedule_save()
+
+    @callback
     def async_forget_mailbox(self, entry_id: str) -> None:
         """Drop the sync state and e-mail references of a removed mailbox."""
         data = self.data
         data.cursors.pop(entry_id, None)
         data.engine.get("synced", {}).pop(entry_id, None)
+        data.engine.get("owners", {}).pop(entry_id, None)
         for key, record in list(data.messages.items()):
             record.refs.pop(entry_id, None)
             if record.state is MessageState.FAILED and not record.refs:
@@ -881,6 +975,7 @@ class ParcelsEngine:
         stale = {
             *(key for key in data.cursors if key not in known),
             *(key for key in data.engine.get("synced", {}) if key not in known),
+            *(key for key in data.engine.get("owners", {}) if key not in known),
         }
         for record in data.messages.values():
             stale.update(key for key in record.refs if key not in known)

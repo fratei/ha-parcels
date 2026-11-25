@@ -33,8 +33,10 @@ from custom_components.parcels.customer_returns import (
 )
 from custom_components.parcels.dedup import (
     add_owner,
+    add_owner_to,
     apply_contribution,
     remove_message,
+    remove_owner_from,
 )
 from custom_components.parcels.models import (
     Parcel,
@@ -685,6 +687,27 @@ def test_an_email_in_another_mailbox_adds_its_owner_to_the_return() -> None:
     assert add_owner(data, "m1", SAM, _nov(11)) == set()
     assert entry.owners == (ALEX, SAM)
     assert entry.updated == _nov(11)
+
+
+def test_a_mailbox_owner_change_reaches_its_returns() -> None:
+    data = ParcelsData()
+    _apply(data, "m1", _nov(10))
+    _apply(data, "m2", _nov(11))
+    (entry,) = data.returns.values()
+
+    assert add_owner_to(data, {"m1", "m2"}, SAM, _nov(12)) == set()
+    assert [o.owners for o in entry.origins.values()] == [(ALEX, SAM)] * 2
+    assert entry.updated == _nov(12)
+
+    assert remove_owner_from(data, {"m1"}, ALEX, _nov(13)) == set()
+    assert entry.owners == (ALEX, SAM)
+    assert entry.updated == _nov(13)
+    assert remove_owner_from(data, {"m1", "m2"}, ALEX, _nov(13, 13)) == set()
+    assert entry.owners == (SAM,)
+    assert entry.updated == _nov(13, 13)
+    # Nothing left to remove.
+    remove_owner_from(data, {"m1", "m2"}, ALEX, _nov(13, 14))
+    assert entry.updated == _nov(13, 13)
 
 
 def test_a_return_survives_a_restart() -> None:

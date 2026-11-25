@@ -1774,29 +1774,74 @@ def add_owner(
     owners get a suggestion instead. Returns the IDs of the parcels that
     changed.
     """
+    return add_owner_to(data, {message_hash}, owner, now)
+
+
+def add_owner_to(
+    data: ParcelsData, messages: Collection[str], owner: str, now: datetime
+) -> set[str]:
+    """Make a person an owner of what some e-mails added, as :func:`add_owner`.
+
+    E.g. the owner chosen for a mailbox after its e-mails were read. Returns
+    the IDs of the parcels that changed.
+    """
+    keys = set(messages)
     affected: set[str] = set()
     for parcel in list(data.parcels.values()):
         if (
             parcel.private
             and parcel.auto_merged is not None
             and owner not in parcel.state.owners
-            and any(o.message == message_hash for o in parcel.origins.values())
+            and any(o.message in keys for o in parcel.origins.values())
         ):
             affected.add(parcel.id)
             affected.update(new.id for new in _undo_guesses(data, parcel, now))
     for parcel in data.parcels.values():
         changed = False
         for origin in parcel.origins.values():
-            if origin.message == message_hash and owner not in origin.owners:
+            if origin.message in keys and owner not in origin.owners:
                 origin.owners = tuple(sorted({*origin.owners, owner}))
                 changed = True
         if changed:
             parcel.touch(now)
             affected.add(parcel.id)
     for entry in data.returns.values():
-        found = entry.origins.get(message_hash)
-        if found is not None and owner not in found.owners:
-            found.owners = tuple(sorted({*found.owners, owner}))
+        changed = False
+        for key, found in entry.origins.items():
+            if key in keys and owner not in found.owners:
+                found.owners = tuple(sorted({*found.owners, owner}))
+                changed = True
+        if changed:
+            entry.updated = now
+    return affected
+
+
+def remove_owner_from(
+    data: ParcelsData, messages: Collection[str], owner: str, now: datetime
+) -> set[str]:
+    """Take a person off what some e-mails added, e.g. a mailbox's former owner.
+
+    They stay an owner of a parcel through its other e-mails and additions.
+    Returns the IDs of the parcels that changed.
+    """
+    keys = set(messages)
+    affected: set[str] = set()
+    for parcel in data.parcels.values():
+        changed = False
+        for origin in parcel.origins.values():
+            if origin.message in keys and owner in origin.owners:
+                origin.owners = tuple(o for o in origin.owners if o != owner)
+                changed = True
+        if changed:
+            parcel.touch(now)
+            affected.add(parcel.id)
+    for entry in data.returns.values():
+        changed = False
+        for key, found in entry.origins.items():
+            if key in keys and owner in found.owners:
+                found.owners = tuple(o for o in found.owners if o != owner)
+                changed = True
+        if changed:
             entry.updated = now
     return affected
 

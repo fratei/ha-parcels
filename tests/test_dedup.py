@@ -19,6 +19,7 @@ from custom_components.parcels.dedup import (
     DedupError,
     accept_suggestion,
     add_owner,
+    add_owner_to,
     amazon_shipment_id_counts,
     apply_contribution,
     archive_parcel,
@@ -32,6 +33,7 @@ from custom_components.parcels.dedup import (
     parcel_order_keys,
     reconcile,
     remove_message,
+    remove_owner_from,
     restore_cancellations,
     split_parcel,
     undo_auto_merge,
@@ -2066,3 +2068,102 @@ def test_new_owner_of_a_private_parcel_doesnt_see_its_guesses() -> None:
     assert add_owner(data, "b", "person.two", at(hours=4)) == {public.parcel_id}
     assert len(data.parcels) == 1
     assert add_owner(data, "a", "person.one", at(hours=4)) == set()
+
+
+def _guessed_and_unowned() -> ParcelsData:
+    """A private parcel holding a guess, and a parcel of nobody's e-mail."""
+    data = ParcelsData()
+    apply_contribution(data, _tracked_shop(private=True), T0)
+    apply_contribution(data, _shop_news(owner="person.one"), at(hours=3))
+    apply_contribution(
+        data,
+        contribution("msg:c#0", carrier="ctt", number="RR123456785PT", owner=None),
+        at(hours=3),
+    )
+    return data
+
+
+def _owner_shape(data: ParcelsData) -> list[tuple[object, ...]]:
+    """Return each parcel's e-mails, owners, privacy and guess, without IDs."""
+    return sorted(
+        (
+            tuple(sorted(parcel.origins)),
+            parcel.state.owners,
+            parcel.private,
+            parcel.auto_merged is not None,
+        )
+        for parcel in data.parcels.values()
+    )
+
+
+def test_owner_added_to_several_emails_at_once() -> None:
+    """A mailbox's new owner reaches all its e-mails at once, as one by one.
+
+    A private parcel's guesses are taken back first, so the new owner gets a
+    suggestion instead.
+    """
+    data = _guessed_and_unowned()
+    one_by_one = _guessed_and_unowned()
+    assert len(data.parcels) == 2
+
+    changed = add_owner_to(data, {"a", "b", "c"}, "person.two", at(hours=4))
+    for message in ("a", "b", "c"):
+        add_owner(one_by_one, message, "person.two", at(hours=4))
+
+    assert (
+        _owner_shape(data)
+        == _owner_shape(one_by_one)
+        == [
+            (("msg:a#0",), ("person.one", "person.two"), True, False),
+            (("msg:b#0",), ("person.one", "person.two"), True, False),
+            (("msg:c#0",), ("person.two",), False, False),
+        ]
+    )
+    assert changed == set(data.parcels)
+    assert all(parcel.updated == at(hours=4) for parcel in data.parcels.values())
+    assert (
+        data.engine["held_guesses"]
+        == one_by_one.engine["held_guesses"]
+        == [[["msg:a#0"], ["msg:b#0"], REASON_SAME_MERCHANT_ETA]]
+    )
+    # The e-mails' owner already: nothing changes.
+    assert add_owner_to(data, {"a", "b", "c"}, "person.two", at(hours=5)) == set()
+    assert add_owner_to(data, set(), "person.three", at(hours=5)) == set()
+    assert all(parcel.updated == at(hours=4) for parcel in data.parcels.values())
+
+
+def test_owner_removed_from_emails() -> None:
+    """A mailbox's former owner leaves its e-mails, and only those."""
+    data = ParcelsData()
+    first = apply_contribution(
+        data, contribution("msg:m#0", carrier="ctt", number="RR123456785PT"), T0
+    )
+    apply_contribution(
+        data,
+        contribution(
+            "msg:n#0",
+            kind=MailKind.IN_TRANSIT,
+            time=at(hours=1),
+            carrier="ctt",
+            number="RR123456785PT",
+        ),
+        at(hours=1),
+    )
+    add_owner(data, "m", "person.two", at(hours=1))
+    parcel = data.parcels[first.parcel_id]
+    assert len(data.parcels) == 1
+    assert parcel.state.owners == ("person.one", "person.two")
+
+    assert remove_owner_from(data, {"m"}, "person.one", at(hours=2)) == {parcel.id}
+
+    assert parcel.origins["msg:m#0"].owners == ("person.two",)
+    assert parcel.origins["msg:n#0"].owners == ("person.one",)
+    assert parcel.state.owners == ("person.one", "person.two")
+    assert parcel.updated == at(hours=2)
+
+    assert remove_owner_from(data, {"m", "n"}, "person.one", at(hours=3)) == {parcel.id}
+    assert parcel.origins["msg:n#0"].owners == ()
+    assert parcel.state.owners == ("person.two",)
+    # Not an owner of these e-mails.
+    assert remove_owner_from(data, {"m", "n"}, "person.one", at(hours=4)) == set()
+    assert parcel.updated == at(hours=3)

@@ -439,7 +439,9 @@ Add **Parcels** again for each mailbox: pick the credentials of its provider
 and sign in. Each mailbox becomes an entry named after its address. Each
 person can sign in to their own mailbox. The first sync
 reads the last 30 days of e-mail; after that Parcels checks every 5 minutes.
-In each mailbox's options, set its **Owner** (see [Options](#options)).
+In each mailbox's options, set its **Owner** (see [Options](#options)). You
+can also set or change it later: the e-mails the mailbox already read move to
+the new owner, with their parcels.
 
 When a sign-in expires or is revoked, Home Assistant asks you to sign in again
 with the same account. An e-mail that can't be downloaded or read doesn't
@@ -508,7 +510,7 @@ entry.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| Owner | none | The person the mailbox belongs to. Their private parcels notify only their devices. |
+| Owner | none | The person the mailbox belongs to. Their private parcels notify only their devices. Changing it moves the e-mails the mailbox already read, with their parcels and returns, private ones included, to the new owner. The former owner keeps those that a mailbox of theirs also has. |
 | Folders to read | Inbox and Junk Email | Outlook.com only. Gmail reads all mail except the trash. |
 | Check for new e-mail every | 5 minutes | |
 | First sync reads back | 30 days | |

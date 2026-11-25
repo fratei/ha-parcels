@@ -22,6 +22,7 @@ from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import dt as dt_util
 import pytest
 
@@ -41,6 +42,7 @@ from custom_components.parcels.const import (
     AI_SHADOW_DAILY_LIMIT,
     CONF_AI_MODE,
     CONF_ENTRY_TYPE,
+    CONF_OWNER,
     DOMAIN,
     ENTRY_TYPE_MAILBOX,
     ISSUE_AI_REFUSED,
@@ -52,6 +54,7 @@ from custom_components.parcels.const import (
     REASON_AI_UNAVAILABLE,
     REASON_UNKNOWN_FORMAT,
     REASON_UNKNOWN_SENDER,
+    SIGNAL_AI_UPDATED,
     MailKind,
 )
 from custom_components.parcels.convert import fill_origin_id, message_origin_id
@@ -77,6 +80,8 @@ from custom_components.parcels.parsers.base import (
 from custom_components.parcels.views import SYSTEM_VIEWER, Viewer, settings_json
 
 from ..common import (
+    OTHER_OWNER,
+    OWNER,
     FakeMailClient,
     add_hub,
     add_mailbox,
@@ -255,6 +260,37 @@ async def test_suggest_mode_offers_the_answer(
     assert engine.ai.today()["calls"] == 1
     assert engine.ai.today()["suggested"] == 1
     assert engine.ai.status == STATUS_IDLE
+
+
+async def test_queued_mail_gets_the_mailbox_owner_chosen_later(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """An e-mail waiting for the AI is the mailbox's new owner's."""
+    message = ctt_message()
+    engine = await async_setup(hass, client, message)
+    (mailbox,) = (
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_MAILBOX
+    )
+    (entry,) = engine.ai.queue
+    assert entry["review"]["owner"] == OWNER
+    updates: list[None] = []
+    async_dispatcher_connect(hass, SIGNAL_AI_UPDATED, lambda: updates.append(None))
+
+    hass.config_entries.async_update_entry(
+        mailbox, options={**mailbox.options, CONF_OWNER: OTHER_OWNER}
+    )
+    assert await hass.config_entries.async_reload(mailbox.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry["review"]["owner"] == OTHER_OWNER
+    assert updates
+    generate.return_value = result(kind="in_transit")
+    await engine.ai._async_step()
+    (item,) = engine.data.review.values()
+    assert item.owner == OTHER_OWNER
+    assert engine.data.messages[message.hash].owners == (OTHER_OWNER,)
 
 
 async def test_auto_mode_applies_a_trusted_answer(

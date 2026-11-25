@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
 
@@ -12,15 +12,20 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_component import DATA_INSTANCES
 from homeassistant.setup import async_setup_component
 import pytest
-from pytest_homeassistant.common import get_scheduled_timer_handles
+from pytest_homeassistant.common import MockConfigEntry, get_scheduled_timer_handles
 
 from custom_components.parcels.const import (
+    CONF_OWNER,
     DOMAIN,
     PERSISTENT_NOTIFICATION_ID,
+    REASON_UNKNOWN_FORMAT,
+    SIGNAL_DATA_UPDATED,
     MailKind,
     ParcelStatus,
 )
@@ -32,12 +37,22 @@ from custom_components.parcels.dedup import (
     archive_parcel,
 )
 from custom_components.parcels.engine import ParcelsEngine, get_engine
-from custom_components.parcels.models import ParcelsData, Source
+from custom_components.parcels.mail.errors import MailServerError
+from custom_components.parcels.models import (
+    MessageRecord,
+    MessageState,
+    ParcelsData,
+    ReviewItem,
+    Source,
+)
 from custom_components.parcels.notifier import Notifier
 from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.store import ParcelsStore
 
 from .common import (
+    OTHER_ADDRESS,
+    OTHER_OWNER,
+    OWNER,
     FakeMailClient,
     add_hub,
     add_mailbox,
@@ -48,6 +63,9 @@ from .common import (
 from .factories import at, contribution
 
 NOW = "2026-11-17 10:00:00+00:00"
+CTT_MAIL = "carriers/ctt_in_transit_pt.eml"
+SHOP_MAIL = "common/small_shop_ctt.eml"
+THIRD_OWNER = "person.kim"
 
 
 @pytest.fixture(autouse=True)
@@ -268,16 +286,412 @@ async def test_remove_mailbox_forgets_its_state(hass: HomeAssistant) -> None:
     with patch_mail_clients(client):
         engine = await async_setup_parcels(hass)
         assert mailbox.entry_id in engine.data.cursors
+        assert engine.data.engine["owners"] == {mailbox.entry_id: OWNER}
 
         assert await hass.config_entries.async_remove(mailbox.entry_id)
         await hass.async_block_till_done()
 
     assert mailbox.entry_id not in engine.data.cursors
+    assert engine.data.engine["owners"] == {}
     assert not engine.is_synced(mailbox.entry_id)
     assert engine.mailboxes == {}
     assert all(not record.refs for record in engine.data.messages.values())
     # The parcel stays.
     assert len(engine.data.parcels) == 1
+
+
+async def test_daily_job_forgets_unknown_mailboxes(hass: HomeAssistant) -> None:
+    """The daily job drops what Parcels kept of mailboxes removed meanwhile."""
+    client = FakeMailClient()
+    add_hub(hass)
+    mailbox = add_mailbox(hass)
+
+    with patch_mail_clients(client):
+        engine = await async_setup_parcels(hass)
+        engine.data.engine["owners"]["removed-mailbox"] = OTHER_OWNER
+        engine._async_daily(datetime.now(UTC))
+
+    assert engine.data.engine["owners"] == {mailbox.entry_id: OWNER}
+
+
+async def _set_owner(
+    hass: HomeAssistant, mailbox: MockConfigEntry, owner: str | None
+) -> None:
+    """Choose a mailbox's owner in its options, which reloads it."""
+    result = await hass.config_entries.options.async_init(mailbox.entry_id)
+    user_input = {k: v for k, v in mailbox.options.items() if k != CONF_OWNER}
+    if owner:
+        user_input[CONF_OWNER] = owner
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await async_wait_for_mail(hass)
+
+
+def _review(
+    item_id: str, message: str, mailbox: str | None, owner: str | None
+) -> ReviewItem:
+    return ReviewItem(
+        id=item_id,
+        created=datetime.now(UTC),
+        message=message,
+        received=None,
+        sender="Loja Exemplo <envios@loja-exemplo.pt>",
+        sender_domain="loja-exemplo.pt",
+        subject="A sua encomenda foi enviada",
+        mailbox=mailbox,
+        owner=owner,
+        reason=REASON_UNKNOWN_FORMAT,
+        authenticated=True,
+        source=Source.PARSER,
+    )
+
+
+async def test_mailbox_owner_chosen_later_gets_mail_read_before(
+    hass: HomeAssistant,
+) -> None:
+    """An owner chosen after the first sync gets the e-mails read before.
+
+    Their parcels are the owner's, and so are the e-mails under Needs review.
+    """
+    client = FakeMailClient()
+    client.add(CTT_MAIL)
+    client.add(SHOP_MAIL)
+    add_hub(hass)
+    mailbox = add_mailbox(hass, owner=None)
+
+    with patch_mail_clients(client):
+        engine = await async_setup_parcels(hass)
+        (parcel,) = engine.data.parcels.values()
+        (item,) = engine.data.review.values()
+        assert parcel.state.owners == ()
+        assert item.owner is None
+        assert engine.data.engine["owners"] == {mailbox.entry_id: ""}
+
+        updates: list[None] = []
+        unsubscribe = async_dispatcher_connect(
+            hass, SIGNAL_DATA_UPDATED, lambda: updates.append(None)
+        )
+        await _set_owner(hass, mailbox, OWNER)
+        unsubscribe()
+
+        # The page, the entities and the notifier hear of it.
+        assert updates
+        assert [record.owners for record in engine.data.messages.values()] == [
+            (OWNER,),
+            (OWNER,),
+        ]
+        assert parcel.state.owners == (OWNER,)
+        assert item.owner == OWNER
+        assert engine.data.engine["owners"] == {mailbox.entry_id: OWNER}
+
+
+@pytest.mark.parametrize(
+    ("owner", "shared", "owners"),
+    [
+        (OTHER_OWNER, False, (OTHER_OWNER,)),
+        (None, False, ()),
+        # Another mailbox with the e-mail is still the former owner's.
+        (OTHER_OWNER, True, (OWNER, OTHER_OWNER)),
+        (None, True, (OWNER,)),
+    ],
+)
+async def test_mailbox_owner_change_replaces_the_former_owner(
+    hass: HomeAssistant, owner: str | None, shared: bool, owners: tuple[str, ...]
+) -> None:
+    """A mailbox's former owner leaves the e-mails it read, and their parcels.
+
+    They stay where another mailbox with the same e-mail is still theirs.
+    """
+    clients = [FakeMailClient()]
+    add_hub(hass)
+    mailbox = add_mailbox(hass)
+    if shared:
+        clients.append(FakeMailClient(address=OTHER_ADDRESS))
+        add_mailbox(hass, address=OTHER_ADDRESS)
+    for client in clients:
+        client.add(CTT_MAIL)
+
+    with patch_mail_clients(*clients):
+        engine = await async_setup_parcels(hass)
+        (record,) = engine.data.messages.values()
+        (parcel,) = engine.data.parcels.values()
+        assert record.owners == (OWNER,)
+        assert parcel.state.owners == (OWNER,)
+
+        await _set_owner(hass, mailbox, owner)
+
+    assert record.owners == owners
+    assert parcel.state.owners == tuple(sorted(owners))
+    assert engine.data.engine["owners"][mailbox.entry_id] == (owner or "")
+
+
+async def test_mailbox_owner_change_keeps_the_owners_order(
+    hass: HomeAssistant,
+) -> None:
+    """A mailbox's new owner takes the former owner's place on its e-mails."""
+    first, second = FakeMailClient(), FakeMailClient(address=OTHER_ADDRESS)
+    for client in (first, second):
+        client.add(CTT_MAIL)
+    add_hub(hass)
+    mailbox = add_mailbox(hass)
+
+    with patch_mail_clients(first, second):
+        engine = await async_setup_parcels(hass)
+        other = add_mailbox(hass, address=OTHER_ADDRESS, owner=OTHER_OWNER)
+        assert await hass.config_entries.async_setup(other.entry_id)
+        await async_wait_for_mail(hass)
+        (record,) = engine.data.messages.values()
+        assert record.owners == (OWNER, OTHER_OWNER)
+
+        await _set_owner(hass, mailbox, THIRD_OWNER)
+        assert record.owners == (THIRD_OWNER, OTHER_OWNER)
+
+        await _set_owner(hass, other, None)
+        assert record.owners == (THIRD_OWNER,)
+
+    (parcel,) = engine.data.parcels.values()
+    assert parcel.state.owners == (THIRD_OWNER,)
+
+
+async def test_mailbox_owners_changed_while_the_hub_was_off(
+    hass: HomeAssistant,
+) -> None:
+    """Owners chosen while the hub was off apply once it's back.
+
+    Two mailboxes had the e-mail and the same owner: the first to apply its
+    new owner takes the former one off, and the second finds it gone.
+    """
+    first, second = FakeMailClient(), FakeMailClient(address=OTHER_ADDRESS)
+    for client in (first, second):
+        client.add(CTT_MAIL)
+    hub = add_hub(hass)
+    mailbox = add_mailbox(hass)
+    other = add_mailbox(hass, address=OTHER_ADDRESS)
+
+    with patch_mail_clients(first, second):
+        engine = await async_setup_parcels(hass)
+        (record,) = engine.data.messages.values()
+        assert record.owners == (OWNER,)
+        with patch("custom_components.parcels.HUB_WAIT", 0):
+            assert await hass.config_entries.async_unload(hub.entry_id)
+            await hass.async_block_till_done()
+            await _set_owner(hass, mailbox, THIRD_OWNER)
+            await _set_owner(hass, other, OTHER_OWNER)
+        assert other.state is ConfigEntryState.SETUP_RETRY
+
+        assert await hass.config_entries.async_setup(hub.entry_id)
+        await async_wait_for_mail(hass)
+        engine = get_engine(hass)
+
+    assert engine is not None
+    assert mailbox.state is ConfigEntryState.LOADED
+    assert other.state is ConfigEntryState.LOADED
+    (record,) = engine.data.messages.values()
+    assert sorted(record.owners) == [THIRD_OWNER, OTHER_OWNER]
+    (parcel,) = engine.data.parcels.values()
+    assert parcel.state.owners == (THIRD_OWNER, OTHER_OWNER)
+
+
+async def test_mailbox_owner_change_reaches_its_reviews(
+    hass: HomeAssistant,
+) -> None:
+    """Reviews of a mailbox and of its e-mails get their owner again.
+
+    As when they were made: the e-mail's first owner, else the owner of the
+    review's mailbox. Reviews of other e-mails stay as they are.
+    """
+    first, second = FakeMailClient(), FakeMailClient(address=OTHER_ADDRESS)
+    add_hub(hass)
+    mailbox = add_mailbox(hass)
+    other = add_mailbox(hass, address=OTHER_ADDRESS, owner=OTHER_OWNER)
+    mine, theirs, removed = mailbox.entry_id, other.entry_id, "removed-mailbox"
+
+    with patch_mail_clients(first, second):
+        engine = await async_setup_parcels(hass)
+        data = engine.data
+        for key, refs, owners in (
+            # Also an owner through a mailbox removed since.
+            ("m-first", (mine,), (OTHER_OWNER, OWNER)),
+            ("m-both", (mine, theirs), (OWNER, OTHER_OWNER)),
+            ("m-mine", (mine,), (OWNER,)),
+            # Read by the other mailbox before it had an owner, and gone from
+            # it since.
+            ("m-gone", (mine,), (OWNER,)),
+        ):
+            data.messages[key] = MessageRecord(
+                hash=key,
+                seen=datetime.now(UTC),
+                state=MessageState.REVIEW,
+                refs=dict.fromkeys(refs, f"id-{key}"),
+                owners=owners,
+            )
+        reviews = {
+            "first": _review("first", "m-first", mine, OTHER_OWNER),
+            "theirs": _review("theirs", "m-both", theirs, OWNER),
+            "unknown": _review("unknown", "m-unknown", mine, OWNER),
+            "removed": _review("removed", "m-mine", removed, OWNER),
+            "gone": _review("gone", "m-gone", theirs, OWNER),
+            "elsewhere": _review("elsewhere", "m-elsewhere", removed, OTHER_OWNER),
+        }
+        data.review.update(reviews)
+
+        await _set_owner(hass, mailbox, THIRD_OWNER)
+        assert {key: item.owner for key, item in reviews.items()} == {
+            "first": OTHER_OWNER,
+            "theirs": THIRD_OWNER,
+            "unknown": THIRD_OWNER,
+            "removed": THIRD_OWNER,
+            "gone": THIRD_OWNER,
+            "elsewhere": OTHER_OWNER,
+        }
+
+        await _set_owner(hass, mailbox, None)
+
+    assert {key: item.owner for key, item in reviews.items()} == {
+        "first": OTHER_OWNER,
+        "theirs": OTHER_OWNER,
+        "unknown": None,
+        "removed": None,
+        "gone": OTHER_OWNER,
+        "elsewhere": OTHER_OWNER,
+    }
+
+
+async def test_mailbox_owner_gets_mail_that_failed_to_download(
+    hass: HomeAssistant,
+) -> None:
+    """An e-mail that failed to download is the new owner's once it's read."""
+    client = FakeMailClient()
+    client.add(CTT_MAIL, provider_id="bad")
+    client.add(SHOP_MAIL)
+    client.fetch_errors["bad"] = MailServerError("HTTP 500")
+    add_hub(hass)
+    mailbox = add_mailbox(hass, owner=None)
+
+    with patch_mail_clients(client):
+        engine = await async_setup_parcels(hass)
+        (record,) = (
+            record
+            for record in engine.data.messages.values()
+            if record.state is MessageState.FAILED
+        )
+        assert not engine.data.parcels
+
+        await _set_owner(hass, mailbox, OWNER)
+        assert record.owners == (OWNER,)
+
+        del client.fetch_errors["bad"]
+        await engine.async_refresh()
+        await hass.async_block_till_done()
+
+    assert record.state is MessageState.APPLIED
+    assert [p.state.owners for p in engine.data.parcels.values()] == [(OWNER,)]
+
+
+async def test_upgrade_gives_mailbox_owner_the_mail_read_before(
+    hass: HomeAssistant,
+) -> None:
+    """After an upgrade, a mailbox's owner gets the e-mails it read before.
+
+    Earlier releases didn't keep which owner a mailbox gave its e-mails, so
+    nobody is removed.
+    """
+    client = FakeMailClient()
+    client.add(CTT_MAIL)
+    add_hub(hass)
+    mailbox = add_mailbox(hass)
+
+    with patch_mail_clients(client):
+        engine = await async_setup_parcels(hass)
+        (record,) = engine.data.messages.values()
+        (parcel,) = engine.data.parcels.values()
+        # As earlier releases left an owner changed after the first sync.
+        del engine.data.engine["owners"]
+        record.owners = (OTHER_OWNER,)
+        for origin in parcel.origins.values():
+            origin.owners = (OTHER_OWNER,)
+        parcel.touch(datetime.now(UTC))
+
+        assert await hass.config_entries.async_reload(mailbox.entry_id)
+        await async_wait_for_mail(hass)
+
+    assert record.owners == (OTHER_OWNER, OWNER)
+    assert parcel.state.owners == (OWNER, OTHER_OWNER)
+    assert engine.data.engine["owners"] == {mailbox.entry_id: OWNER}
+
+
+async def test_reload_without_owner_change_changes_nothing(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Reloading a mailbox or the hub leaves the owners and parcels alone.
+
+    An owner that isn't the mailbox's doing stays too.
+    """
+    client = FakeMailClient()
+    client.add(CTT_MAIL)
+    hub = add_hub(hass)
+    mailbox = add_mailbox(hass)
+
+    with patch_mail_clients(client):
+        engine = await async_setup_parcels(hass)
+        (record,) = engine.data.messages.values()
+        (parcel,) = engine.data.parcels.values()
+        # E.g. from a mailbox removed since.
+        record.owners = (OTHER_OWNER, OWNER)
+        item = _review("kept", record.hash, mailbox.entry_id, OWNER)
+        engine.data.review[item.id] = item
+        updated = parcel.updated
+        freezer.tick(timedelta(hours=1))
+
+        assert await hass.config_entries.async_reload(mailbox.entry_id)
+        await async_wait_for_mail(hass)
+        assert record.owners == (OTHER_OWNER, OWNER)
+        assert parcel.updated == updated
+        assert item.owner == OWNER
+
+        assert await hass.config_entries.async_reload(hub.entry_id)
+        await async_wait_for_mail(hass)
+        engine = get_engine(hass)
+
+    assert engine is not None
+    (record,) = engine.data.messages.values()
+    (parcel,) = engine.data.parcels.values()
+    assert record.owners == (OTHER_OWNER, OWNER)
+    assert parcel.updated == updated
+    assert engine.data.review["kept"].owner == OWNER
+
+
+async def test_upgrade_without_mailbox_owner_changes_nothing(
+    hass: HomeAssistant,
+) -> None:
+    """After an upgrade, a mailbox without owner leaves the owners alone."""
+    client = FakeMailClient()
+    client.add(CTT_MAIL)
+    add_hub(hass)
+    mailbox = add_mailbox(hass, owner=None)
+
+    with patch_mail_clients(client):
+        engine = await async_setup_parcels(hass)
+        (record,) = engine.data.messages.values()
+        (parcel,) = engine.data.parcels.values()
+        item = _review("kept", "m-unknown", mailbox.entry_id, OTHER_OWNER)
+        engine.data.review[item.id] = item
+        # As earlier releases left an owner removed after the first sync.
+        del engine.data.engine["owners"]
+        record.owners = (OTHER_OWNER,)
+        for origin in parcel.origins.values():
+            origin.owners = (OTHER_OWNER,)
+        parcel.touch(datetime.now(UTC))
+
+        assert await hass.config_entries.async_reload(mailbox.entry_id)
+        await async_wait_for_mail(hass)
+
+    assert record.owners == (OTHER_OWNER,)
+    assert parcel.state.owners == (OTHER_OWNER,)
+    assert item.owner == OTHER_OWNER
+    assert engine.data.engine["owners"] == {mailbox.entry_id: ""}
 
 
 async def test_remove_hub_deletes_data(hass: HomeAssistant) -> None:

@@ -100,7 +100,7 @@
           "folders": "Junk Email catches shipping e-mails that were wrongly marked as spam.",
           "interval_minutes": "How often Parcels checks this mailbox.",
           "lookback_days": "How many days of e-mail the first sync reads.",
-          "owner": "The person this mailbox belongs to. Their private parcels notify only their devices."
+          "owner": "The person this mailbox belongs to. Their private parcels notify only their devices. Changing it also moves the parcels of e-mails already read to the new owner."
         }
       }
     },
