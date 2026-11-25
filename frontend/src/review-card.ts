@@ -1049,10 +1049,8 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       name: keyof SuggestionForm,
       label: string,
       type: "text" | "date" | "time" = "text",
-      hintId?: string,
     ): TemplateResult => {
       const invalid = problem?.field === name;
-      const describedBy = [invalid ? "edit-error" : "", hintId ?? ""].filter(Boolean).join(" ");
       return html`<label class="field">
         <span class="field-label">${label}</span>
         <input
@@ -1061,11 +1059,28 @@ export class ParcelsReviewCard extends ParcelsCardBase {
           autocomplete="off"
           .value=${live(form[name])}
           aria-invalid=${invalid ? "true" : "false"}
-          aria-describedby=${describedBy || nothing}
+          aria-describedby=${invalid ? "edit-error" : nothing}
           @input=${this._onEditInput}
         />
       </label>`;
     };
+    // A textarea, as the hint offers new lines: Enter in an input would accept the e-mail.
+    const list = (
+      name: "tracking_numbers" | "order_numbers",
+      label: string,
+      hintId: string,
+    ): TemplateResult => html`<label class="field">
+      <span class="field-label">${label}</span>
+      <textarea
+        name=${name}
+        rows="2"
+        autocomplete="off"
+        spellcheck="false"
+        .value=${live(form[name])}
+        aria-describedby=${hintId}
+        @input=${this._onEditInput}
+      ></textarea>
+    </label>`;
     return html`<form id="edit-form" class="edit-form" novalidate @submit=${this._submitEdit}>
       <div class="form-grid">
         <label class="field">
@@ -1093,11 +1108,11 @@ export class ParcelsReviewCard extends ParcelsCardBase {
           </select>
         </label>
         <div class="field">
-          ${text("tracking_numbers", STRINGS.fieldTrackingNumbers, "text", "edit-hint-tracking")}
+          ${list("tracking_numbers", STRINGS.fieldTrackingNumbers, "edit-hint-tracking")}
           <p class="hint" id="edit-hint-tracking">${STRINGS.hintList}</p>
         </div>
         <div class="field">
-          ${text("order_numbers", STRINGS.fieldOrderNumbers, "text", "edit-hint-orders")}
+          ${list("order_numbers", STRINGS.fieldOrderNumbers, "edit-hint-orders")}
           <p class="hint" id="edit-hint-orders">${STRINGS.hintList}</p>
         </div>
         ${text("reference", STRINGS.fieldReference)}
