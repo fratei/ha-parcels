@@ -18,8 +18,8 @@ import probatio as p
 
 from .const import CARRIER_NAMES, DOMAIN
 from .customer_returns import linked_parcels, order_index
-from .dedup import number_key_text, parcel_numbers
-from .engine import ParcelsEngine, get_engine, validation_error
+from .dedup import JoinKey, join_keys
+from .engine import KeyCheck, ParcelsEngine, get_engine, validation_error
 from .models import Parcel
 from .views import Viewer, async_viewer
 
@@ -159,31 +159,38 @@ def visible_parcel(
     return parcel
 
 
-def _check_number(engine: ParcelsEngine, viewer: Viewer | None, number: str) -> None:
-    """Refuse a number that would join a private parcel the caller can't see."""
+def _key_check(engine: ParcelsEngine, viewer: Viewer | None) -> KeyCheck | None:
+    """Return a check that refuses keys of private parcels the caller can't see.
+
+    Parcels with the same tracking number, shipment reference, order or
+    Amazon shipment join whoever owns them, so a user can't give a parcel one
+    of these. Automations and scripts may.
+    """
     if viewer is None:
-        return
-    key = number_key_text(number)
-    for parcel in engine.data.parcels.values():
-        if (
-            parcel.private
-            and not viewer.can_see(parcel)
-            and any(entry.number == key for entry in parcel_numbers(parcel))
-        ):
-            raise validation_error("not_allowed")
+        return None
+
+    def check(keys: set[JoinKey]) -> None:
+        for parcel in engine.data.parcels.values():
+            if (
+                parcel.private
+                and not viewer.can_see(parcel)
+                and not keys.isdisjoint(join_keys(parcel))
+            ):
+                raise validation_error("not_allowed")
+
+    return check
 
 
 async def _async_add(call: ServiceCall) -> ServiceResponse:
     engine = _engine(call.hass)
     viewer = await _caller(call)
-    number = call.data[ATTR_TRACKING_NUMBER]
-    _check_number(engine, viewer, number)
     parcel_id = engine.add_parcel(
-        number,
+        call.data[ATTR_TRACKING_NUMBER],
         carrier=call.data.get(ATTR_CARRIER),
         merchant=call.data.get(ATTR_MERCHANT),
         private=call.data[ATTR_PRIVATE],
         owners=sorted(viewer.persons) if viewer is not None else (),
+        check=_key_check(engine, viewer),
     )
     return {ATTR_PARCEL_ID: parcel_id}
 
@@ -194,9 +201,7 @@ async def _async_update(call: ServiceCall) -> None:
     parcel_id = call.data[ATTR_PARCEL_ID]
     visible_parcel(engine, viewer, parcel_id)
     changes = {key: value for key, value in call.data.items() if key != ATTR_PARCEL_ID}
-    if number := changes.get(ATTR_TRACKING_NUMBER):
-        _check_number(engine, viewer, number)
-    engine.update(parcel_id, changes)
+    engine.update(parcel_id, changes, check=_key_check(engine, viewer))
 
 
 def _parcel_service(

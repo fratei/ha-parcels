@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
+import copy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, tzinfo
 import logging
@@ -86,6 +87,7 @@ from .dedup import (
     REPAIR_VERSION,
     Contribution,
     DedupError,
+    JoinKey,
     MergeSuggestion,
     accept_suggestion,
     add_owner,
@@ -96,11 +98,13 @@ from .dedup import (
     fill_shop,
     fold_known_orders,
     infer_deliveries,
+    join_keys,
     manual_origin_id,
     mark_delivered,
     merge_parcels,
     message_outputs,
     message_shells,
+    number_key_text,
     reconcile,
     remove_message,
     remove_origins,
@@ -172,6 +176,10 @@ if TYPE_CHECKING:
     from .seventeentrack import SeventeenTrackSync
 
 _LOGGER = logging.getLogger(__name__)
+
+# Called with the keys a parcel the user adds or edits can join others by;
+# raises to refuse them.
+type KeyCheck = Callable[[set[JoinKey]], None]
 
 # Events are only fired for changes that happened recently, so the first
 # sync of a mailbox doesn't replay a month of deliveries.
@@ -2787,8 +2795,13 @@ class ParcelsEngine:
         merchant: str | None = None,
         private: bool = False,
         owners: Sequence[str] = (),
+        check: KeyCheck | None = None,
     ) -> str:
-        """Add a parcel by tracking number; returns its ID."""
+        """Add a parcel by tracking number; returns its ID.
+
+        ``check`` gets the keys the parcel can join others by, and raises to
+        refuse them.
+        """
         carrier = manual_carrier(tracking_number, carrier)
         number = manual_number(tracking_number, carrier)
         carrier = carrier or detect_carrier(number)
@@ -2812,6 +2825,15 @@ class ParcelsEngine:
             status=ParcelStatus.SHIPPED,
             kind=MailKind.SHIPPED,
         )
+        if check is not None:
+            added = Parcel(
+                id=origin.id,
+                created=now,
+                updated=now,
+                origins={origin.id: origin},
+                events=[event],
+            )
+            check(join_keys(added))
         applied = self._run(
             apply_contribution,
             Contribution(origin=origin, events=[event], private=private),
@@ -2819,8 +2841,19 @@ class ParcelsEngine:
         )
         return applied.parcel_id
 
-    def update(self, parcel_id: str, changes: Mapping[str, Any]) -> None:
-        """Edit a parcel."""
+    def update(
+        self,
+        parcel_id: str,
+        changes: Mapping[str, Any],
+        *,
+        check: KeyCheck | None = None,
+    ) -> None:
+        """Edit a parcel.
+
+        ``check`` gets the keys the edit gives the parcel, and raises to refuse
+        them. A tracking number the edit sets counts even if the parcel had it:
+        any parcel with it joins.
+        """
         parcel = self.parcel(parcel_id)
         carrier = changes.get("carrier")
         if carrier and carrier not in CARRIER_NAMES:
@@ -2832,7 +2865,27 @@ class ParcelsEngine:
             changes = {**changes, "tracking_number": manual_number(value, carrier)}
             if carrier and not given:
                 changes["carrier"] = carrier
-        self._run(update_parcel, parcel_id, dict(changes), dt_util.utcnow())
+        now = dt_util.utcnow()
+        if check is not None:
+            check(self._edited_keys(parcel, changes, now))
+        self._run(update_parcel, parcel_id, dict(changes), now)
+
+    @staticmethod
+    def _edited_keys(
+        parcel: Parcel, changes: Mapping[str, Any], now: datetime
+    ) -> set[JoinKey]:
+        """Return the keys an edit gives a parcel, trying it on a copy."""
+        edited = copy.deepcopy(parcel)
+        try:
+            update_parcel(
+                ParcelsData(parcels={edited.id: edited}), edited.id, dict(changes), now
+            )
+        except DedupError as err:
+            raise validation_error(err.reason) from err
+        keys = join_keys(edited) - join_keys(parcel)
+        if number := changes.get("tracking_number"):
+            keys.add(("number", number_key_text(str(number))))
+        return keys
 
     def merge(self, parcel_ids: Sequence[str]) -> str:
         """Merge parcels into the first one; returns its ID."""

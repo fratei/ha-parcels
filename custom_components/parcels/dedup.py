@@ -429,6 +429,22 @@ def parcel_reference_keys(parcel: Parcel) -> set[ReferenceKey]:
     return keys
 
 
+JoinKey = tuple[str, ...]
+
+
+def join_keys(parcel: Parcel) -> set[JoinKey]:
+    """Return the keys the deduplication can join a parcel to others by.
+
+    Its tracking numbers, whatever the carrier, shipment references, orders
+    and Amazon shipments.
+    """
+    keys: set[JoinKey] = {("number", key.number) for key in parcel_numbers(parcel)}
+    keys.update(("reference", *key) for key in parcel_reference_keys(parcel))
+    keys.update(("order", key) for key in parcel_order_keys(parcel))
+    keys.update(("shipment", value) for value in parcel.state.amazon_shipment_ids)
+    return keys
+
+
 def _references_differ(first: set[ReferenceKey], second: set[ReferenceKey]) -> bool:
     """Return True when both sides have references in a scope and none match."""
     for scope in {key[0] for key in first} & {key[0] for key in second}:

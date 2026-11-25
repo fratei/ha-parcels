@@ -1186,6 +1186,100 @@ async def test_private_number_refused(
     assert await add(hass, CTT_NUMBER) == private
 
 
+async def test_private_reference_refused(
+    hass: HomeAssistant, engine: ParcelsEngine, hass_admin_user: MockUser, sam: User
+) -> None:
+    """Nobody reaches a private parcel through the Paack shipment it names."""
+    private = apply_contribution(
+        engine.data,
+        contribution(
+            "msg:alexmail#0",
+            kind=MailKind.OUT_FOR_DELIVERY,
+            carrier="paack",
+            reference=PAACK_ID.split("_")[0],
+            merchant="Loja Exemplo",
+            owner=OWNER,
+            private=True,
+        ),
+        dt_util.utcnow(),
+    ).parcel_id
+    mine = await add(hass, DHL_NUMBER, user=sam, carrier="dhl")
+
+    await refused(hass, "add", {"tracking_number": PAACK_ID}, "not_allowed", user=sam)
+    data = {"parcel_id": mine, "tracking_number": PAACK_ID, "carrier": "paack"}
+    await refused(hass, "update", data, "not_allowed", user=sam)
+
+    assert set(engine.data.parcels) == {private, mine}
+    assert list(engine.data.parcels[private].origins) == ["msg:alexmail#0"]
+    assert engine.data.parcels[mine].state.tracking_number == DHL_NUMBER
+    # Its owner may add the order ID: it goes to the parcel.
+    assert await add(hass, PAACK_ID, user=hass_admin_user) == private
+
+
+async def test_private_order_refused(
+    hass: HomeAssistant, engine: ParcelsEngine, sam: User
+) -> None:
+    """An edit can't give a parcel the order of someone else's private parcel.
+
+    Only what the edit adds counts: a parcel that already shares an order
+    with it can still be edited.
+    """
+    now = dt_util.utcnow()
+    shop = "Loja Exemplo"
+    private = apply_contribution(
+        engine.data,
+        contribution(
+            "msg:alexmail#0",
+            carrier="dhl",
+            number=DHL_NUMBER,
+            merchant=shop,
+            orders=("1001",),
+            owner=OWNER,
+            private=True,
+        ),
+        now,
+    ).parcel_id
+    mine = apply_contribution(
+        engine.data,
+        contribution(
+            "msg:sammail#0",
+            carrier="ctt",
+            number=CTT_NUMBER,
+            orders=("1001",),
+            owner=OTHER_OWNER,
+        ),
+        now,
+    ).parcel_id
+    sharing = apply_contribution(
+        engine.data,
+        contribution(
+            "msg:sammail#1",
+            carrier="ups",
+            number="1Z999AA10123456784",
+            merchant=shop,
+            orders=("1001",),
+            owner=OTHER_OWNER,
+        ),
+        now,
+    ).parcel_id
+    assert len({private, mine, sharing}) == 3
+
+    data = {"parcel_id": mine, "merchant": shop}
+    await refused(hass, "update", data, "not_allowed", user=sam)
+    assert engine.data.parcels[mine].state.merchant is None
+
+    await call(
+        hass, "update", {"parcel_id": sharing, "pickup_point": "Cacifo"}, user=sam
+    )
+    # Another shop's order 1001 is another order.
+    await call(hass, "update", {**data, "merchant": "Example Shop"}, user=sam)
+    assert engine.data.parcels[sharing].state.pickup_point == "Cacifo"
+    assert engine.data.parcels[mine].state.merchant == "Example Shop"
+    # An automation may.
+    await call(hass, "update", data)
+    assert engine.data.parcels[mine].state.merchant == shop
+
+
 async def test_shared_and_own_parcels_allowed(
     hass: HomeAssistant, engine: ParcelsEngine, hass_admin_user: MockUser, sam: User
 ) -> None:

@@ -619,8 +619,11 @@ guesses that someone else's e-mail or parcel goes with a private parcel, by
 its shop and date for example, since they would then see it: it suggests the
 merge instead to those who can see both, and merging shares the parcel. What
 isn't a guess still joins, such as an e-mail with the parcel's tracking
-number, and shares it too. The review card, with **Needs review** and
-**Filtered**, shows only to administrators.
+number, and shares it too. Adding or editing a parcel by hand can't join
+someone else's private parcel: Parcels refuses a tracking number, shipment
+reference (such as a Paack order ID) or order number that it has, saying the
+parcel is private to someone else. Automations and scripts can. The review
+card, with **Needs review** and **Filtered**, shows only to administrators.
 
 ### Trusted and ignored senders
 
