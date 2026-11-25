@@ -160,7 +160,14 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE, CoreState, HomeAssistant, callback
+from homeassistant.const import EVENT_CORE_CONFIG_UPDATE
+from homeassistant.core import (
+    CALLBACK_TYPE,
+    CoreState,
+    Event,
+    HomeAssistant,
+    callback,
+)
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.debounce import Debouncer
@@ -1678,6 +1685,9 @@ class Notifier:
         self._debouncer: Debouncer[Coroutine[Any, Any, None]] | None = None
         self._unsub_timer: CALLBACK_TYPE | None = None
         self._unsub_started: CALLBACK_TYPE | None = None
+        self._unsub_config: CALLBACK_TYPE | None = None
+        # The time zone of the last evaluation, which the timer was set in.
+        self._zone: str | None = None
         self._ready = False
         self._stopped = False
         self._retry_at: datetime | None = None
@@ -1721,6 +1731,9 @@ class Notifier:
             immediate=False,
             function=self._async_evaluate,
         )
+        self._unsub_config = self.hass.bus.async_listen(
+            EVENT_CORE_CONFIG_UPDATE, self._async_core_config_updated
+        )
         if self.hass.state is CoreState.running:
             await self._async_evaluate()
         else:
@@ -1737,6 +1750,9 @@ class Notifier:
         if self._unsub_started is not None:
             self._unsub_started()
             self._unsub_started = None
+        if self._unsub_config is not None:
+            self._unsub_config()
+            self._unsub_config = None
         self._cancel_timer()
         if self._debouncer is not None:
             self._debouncer.async_shutdown()
@@ -1751,6 +1767,15 @@ class Notifier:
         if self._stopped or not self._ready or self._debouncer is None:
             return
         self._debouncer.async_schedule_call()
+
+    @callback
+    def _async_core_config_updated(self, _event: Event) -> None:
+        """Re-evaluate shortly after Home Assistant's time zone changed.
+
+        The timer waits for a moment in UTC, worked out in the old zone.
+        """
+        if self._zone not in (None, str(dt_util.get_default_time_zone())):
+            self.async_parcels_changed()
 
     async def async_set_live_activities(self, enabled: bool) -> None:
         """Turn Live Activities and phone notifications on or off.
@@ -1903,6 +1928,7 @@ class Notifier:
             self._cancel_timer()
             self._retry_at = None
             self._pin_at = None
+            self._zone = str(dt_util.get_default_time_zone())
             ctx = self._context(dt_util.utcnow(), _Options.from_entry(self.entry))
             try:
                 await self._async_evaluate_locked(ctx)

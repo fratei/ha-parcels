@@ -827,6 +827,10 @@ How they behave:
   activity start silently.
 - At the cut-off (22:00) the remaining activities end. Undelivered parcels stay
   in the persistent notification.
+- The start time and the cut-off are in Home Assistant's time zone. Change
+  it under **Settings** → **System** → **General** and the day follows within
+  seconds: moving east past the start or the cut-off starts or ends the
+  activities at once.
 - Apple limits how often activities can start remotely, so a parcel starts
   about once per iPhone and day. Parcels remembers what it sent, so a restart
   of Home Assistant neither ends nor duplicates an activity.

@@ -16,7 +16,7 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.persistent_notification.helpers import (
     _async_get_or_create_notifications,
 )
-from homeassistant.const import MATCH_ALL
+from homeassistant.const import EVENT_CORE_CONFIG_UPDATE, MATCH_ALL
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
@@ -1090,6 +1090,51 @@ async def test_restart_before_apple_ends_it(env: Env) -> None:
     # It wouldn't reach eight hours before the cut-off, which ends it.
     await env.goto(at(22))
     assert phone.take() == [end(tag_of(parcel, 2))]
+
+
+async def test_a_new_time_zone_moves_the_start(env: Env, hass: HomeAssistant) -> None:
+    """The day's start follows a change of Home Assistant's time zone.
+
+    At 07:00 in Lisbon the notifier waits for 08:00. Home Assistant moves to
+    Dubai, where it's 10:00 already: today's parcel starts now, not when
+    08:00 in Lisbon comes.
+    """
+    listeners = hass.bus.async_listeners().get(EVENT_CORE_CONFIG_UPDATE, 0)
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    notifier = await env.start()
+    assert phone.take() == []
+
+    await hass.config.async_update(time_zone="Asia/Dubai")
+    await env.settle()
+    assert summary(phone.take()) == [(tag_of(parcel), f"Expected today{SEP}DPD")]
+
+    await notifier.async_stop()
+    assert hass.bus.async_listeners().get(EVENT_CORE_CONFIG_UPDATE, 0) == listeners
+
+
+async def test_a_new_time_zone_moves_the_cutoff(env: Env, hass: HomeAssistant) -> None:
+    """Moving east past the cut-off ends the day's activities at once."""
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    await env.start()
+    for hour, minute in ((8, 0), (15, 30), (21, 30)):
+        await env.goto(at(hour, minute))
+    assert [tag for tag, _ in summary(phone.take())] == [
+        tag_of(parcel),
+        tag_of(parcel),
+        tag_of(parcel, 2),
+    ]
+
+    # 22:30 in Berlin.
+    await hass.config.async_update(time_zone="Europe/Berlin")
+    await env.settle()
+    assert phone.take() == [end(tag_of(parcel, 2))]
+
+    # A change that keeps the zone changes nothing.
+    await hass.config.async_update(time_zone="Europe/Berlin", location_name="Home")
+    await env.settle()
+    assert phone.take() == []
 
 
 async def test_home_assistant_restart(env: Env) -> None:
