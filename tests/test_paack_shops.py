@@ -311,6 +311,35 @@ async def test_check_counts_emails_it_cant_download(
     assert shops(engine) == {ON_THE_WAY_NUMBER: None, OUT_FOR_DELIVERY_NUMBER: None}
 
 
+async def test_check_goes_on_after_an_email_the_parsers_fail_on(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An e-mail the parsers fail on counts as failed; the next one is read."""
+    first = mail(ON_THE_WAY, "paack-1")
+    second = mail(OUT_FOR_DELIVERY, "paack-2")
+    client = FakeMailClient()
+    client.add(first)
+    client.add(second)
+    add_hub(hass)
+    add_mailbox(hass)
+
+    def fail(message: MailMessage) -> None:
+        if message.provider_id == "paack-2":
+            raise ValueError("Rua Secreta 99")
+
+    with patch_mail_clients(client):
+        with parsed_as({"paack-1": as_stored(first), "paack-2": as_stored(second)}):
+            engine = await async_setup_parcels(hass)
+        with parsed_as({}, during=fail):
+            check = await async_check(hass, engine, freezer)
+
+    assert check["counts"] == {**NO_COUNTS, "read": 1, "filled": 1, "failed": 1}
+    assert shops(engine) == {ON_THE_WAY_NUMBER: SHOP, OUT_FOR_DELIVERY_NUMBER: None}
+    assert "Rua Secreta" not in caplog.text
+
+
 async def test_check_leaves_an_email_removed_meanwhile(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory
 ) -> None:

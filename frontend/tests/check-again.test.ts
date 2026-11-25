@@ -46,7 +46,7 @@ describe("Check again", () => {
     assert.equal(
       checkAgainText({ read: 1, queued: 0, gone: 1, failed: 1 }, OFF),
       "Read 1 e-mail again. 1 e-mail is no longer in the mailbox. " +
-        "1 e-mail couldn't be downloaded; try again later. The local AI is off.",
+        "1 e-mail couldn't be downloaded or read; try again later. The local AI is off.",
     );
     assert.equal(
       checkAgainText({ read: 0, queued: 0, gone: 2, failed: 0 }, AUTO),
@@ -54,7 +54,7 @@ describe("Check again", () => {
     );
     assert.equal(
       checkAgainText({ read: 0, queued: 0, gone: 0, failed: 3 }, AUTO),
-      "3 e-mails couldn't be downloaded; try again later.",
+      "3 e-mails couldn't be downloaded or read; try again later.",
     );
     assert.equal(
       checkAgainText({ read: 0, queued: 0, gone: 0, failed: 0 }, AUTO),

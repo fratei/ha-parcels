@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from datetime import date, time, timedelta
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.auth.models import User
@@ -816,6 +817,28 @@ async def test_reprocess_deleted_mail(hass: HomeAssistant, mail: Mail) -> None:
     assert not isinstance(err.value, ServiceValidationError)
     assert err.value.translation_key == "message_gone"
     assert list(engine.data.parcels) == [parcel.id]
+
+
+async def test_reprocess_mail_the_parsers_fail_on(
+    hass: HomeAssistant, mail: Mail, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When the parsers fail on the e-mail, the error says so and the parcel stays."""
+    engine, _ = mail
+    (parcel,) = engine.data.parcels.values()
+    origins = dict(parcel.origins)
+    fail = AsyncMock(side_effect=ValueError("Rua Secreta 99"))
+
+    with (
+        patch.object(ParcelsEngine, "async_parse", fail),
+        pytest.raises(HomeAssistantError) as err,
+    ):
+        await call(hass, "reprocess", {"parcel_id": parcel.id})
+
+    assert not isinstance(err.value, ServiceValidationError)
+    assert err.value.translation_key == "message_unreadable"
+    assert list(engine.data.parcels) == [parcel.id]
+    assert engine.data.parcels[parcel.id].origins == origins
+    assert "Rua Secreta" not in caplog.text
 
 
 # -- Senders ------------------------------------------------------------------

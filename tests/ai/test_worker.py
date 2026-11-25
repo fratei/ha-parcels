@@ -905,6 +905,30 @@ async def test_download_error_retries_later(
     assert await engine.ai._async_step() == 1800
 
 
+async def test_email_the_parsers_fail_on_retries_later(
+    hass: HomeAssistant,
+    client: FakeMailClient,
+    generate: AsyncMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An e-mail the parsers fail on is tried again later; the queue goes on."""
+    message = ctt_message()
+    engine = await async_setup(hass, client, message)
+
+    with patch.object(
+        ParcelsEngine, "async_parse", AsyncMock(side_effect=ValueError(SECRET))
+    ):
+        assert await engine.ai._async_step() == 0
+
+    generate.assert_not_awaited()
+    (entry,) = engine.ai.queue
+    assert entry["not_before"] == IN_30_MINUTES
+    assert entry["attempts"] == 0
+    assert await engine.ai._async_step() == 1800
+    assert "Couldn't read an e-mail from" in caplog.text
+    assert SECRET not in caplog.text
+
+
 async def test_email_a_parser_now_reads_skips_the_ai(
     hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
 ) -> None:
@@ -1464,28 +1488,38 @@ async def test_check_again_keeps_what_the_user_confirmed(
     assert engine.data.parcels[parcel.id].state.eta is None
 
 
-@pytest.mark.parametrize("deleted", [True, False])
+@pytest.mark.parametrize("failure", ["deleted", "offline", "crash", "unreadable"])
 async def test_check_again_counts_emails_it_cant_download(
-    hass: HomeAssistant, client: FakeMailClient, deleted: bool
+    hass: HomeAssistant,
+    client: FakeMailClient,
+    caplog: pytest.LogCaptureFixture,
+    failure: str,
 ) -> None:
-    """E-mails deleted from the mailbox, or not downloaded, are counted."""
+    """E-mails deleted from the mailbox, or not downloaded or read, are counted."""
     message = ctt_message(NO_DATE)
     engine = await async_setup(hass, client, message)
     (parcel,) = engine.data.parcels.values()
-    if deleted:
+    parse = ParcelsEngine.async_parse
+    if failure == "deleted":
         client.delete(message.provider_id)
-    else:
+    elif failure == "offline":
         client.fetch_errors[message.provider_id] = MailError("offline")
+    elif failure == "crash":
+        client.fetch_errors[message.provider_id] = ValueError(SECRET)
+    else:
+        parse = AsyncMock(side_effect=ValueError(SECRET))
 
-    result = await engine.async_check_again(parcel.id)
+    with patch.object(ParcelsEngine, "async_parse", parse):
+        result = await engine.async_check_again(parcel.id)
 
     assert result == {
         "read": 0,
         "queued": 0,
-        "gone": int(deleted),
-        "failed": int(not deleted),
+        "gone": int(failure == "deleted"),
+        "failed": int(failure != "deleted"),
     }
     assert list(engine.data.parcels) == [parcel.id]
+    assert SECRET not in caplog.text
 
 
 async def test_check_again_unknown_parcel(

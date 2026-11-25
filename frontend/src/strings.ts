@@ -284,8 +284,9 @@ export const STRINGS = {
   checkAgainReadMany: "Read {count} e-mails again.",
   checkAgainGoneOne: "1 e-mail is no longer in the mailbox.",
   checkAgainGoneMany: "{count} e-mails are no longer in the mailbox.",
-  checkAgainFailedOne: "1 e-mail couldn't be downloaded; try again later.",
-  checkAgainFailedMany: "{count} e-mails couldn't be downloaded; try again later.",
+  checkAgainFailedOne: "1 e-mail couldn't be downloaded or read; try again later.",
+  checkAgainFailedMany:
+    "{count} e-mails couldn't be downloaded or read; try again later.",
   checkAgainNoEmails: "This parcel has no e-mails to read again.",
   checkAgainQueuedOne: "The local AI is checking 1 e-mail.",
   checkAgainQueuedMany: "The local AI is checking {count} e-mails.",

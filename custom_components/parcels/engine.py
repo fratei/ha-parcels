@@ -26,7 +26,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
-from .ai_worker import AIWorker
+from .ai_worker import AIWorker, error_location
 from .config_flow import HUB_DEFAULTS
 from .const import (
     AI_FIRST_SYNC_DAYS,
@@ -110,13 +110,7 @@ from .dedup import (
     undo_inferred_delivery,
     update_parcel,
 )
-from .mail.errors import (
-    MailAuthError,
-    MailCursorExpired,
-    MailError,
-    MailNotFound,
-    MailRateLimited,
-)
+from .mail.errors import MAILBOX_ERRORS, MailNotFound
 from .models import (
     FILL_ORIGIN_SUFFIX,
     FilteredItem,
@@ -857,8 +851,9 @@ class ParcelsEngine:
     ) -> None:
         """Process new e-mails of a mailbox.
 
-        Raises the mailbox's auth, rate-limit and cursor errors, and other
-        download errors until an e-mail failed FETCH_ATTEMPTS times.
+        Raises the mailbox's own errors (auth, rate limit, cursor, no
+        mailbox), and whatever else fails while one e-mail is downloaded or
+        parsed, until that e-mail failed FETCH_ATTEMPTS times.
         """
         changed = False
         # Oldest first: an e-mail never undoes what a newer one said, and
@@ -910,32 +905,15 @@ class ParcelsEngine:
             message = await mailbox.client.async_fetch(meta.provider_id)
         except MailNotFound:
             return False
-        except MailAuthError, MailRateLimited, MailCursorExpired:
+        except MAILBOX_ERRORS:
             raise
-        except MailError:
-            failures = self._fetch_failures.get(key, 0) + 1
-            if failures < FETCH_ATTEMPTS:
-                self._fetch_failures[key] = failures
+        except Exception as err:
+            if not self._set_aside_failed(mailbox, meta, key, err, now):
                 raise
-            self._fetch_failures.pop(key, None)
-            _LOGGER.warning(
-                "Skipping an e-mail from %s that failed to download %d times",
-                domain,
-                failures,
-            )
-            data.messages[key] = MessageRecord(
-                hash=key,
-                seen=now,
-                state=MessageState.FAILED,
-                refs={mailbox.entry_id: meta.provider_id},
-                received=_aware(meta.received),
-                sender_domain=domain,
-                owners=_owners(mailbox.owner),
-            )
             return True
-        self._fetch_failures.pop(key, None)
         alias = message.hash
         if alias != key and (existing := data.messages.get(alias)) is not None:
+            self._fetch_failures.pop(key, None)
             return self._add_ref(existing, mailbox, meta.provider_id, now)
         record = MessageRecord(
             hash=key,
@@ -946,8 +924,14 @@ class ParcelsEngine:
             sender_domain=message.sender_domain,
             owners=_owners(mailbox.owner),
         )
-        verdict = self.verify(message)
-        result = await self.async_parse(message, verdict)
+        try:
+            verdict = self.verify(message)
+            result = await self.async_parse(message, verdict)
+        except Exception as err:
+            if not self._set_aside_failed(mailbox, meta, key, err, now):
+                raise
+            return True
+        self._fetch_failures.pop(key, None)
         data.messages[key] = record
         self._decide(
             message,
@@ -958,6 +942,44 @@ class ParcelsEngine:
             owner=mailbox.owner,
             first_sync=first_sync,
             now=now,
+        )
+        return True
+
+    def _set_aside_failed(
+        self,
+        mailbox: MailboxRuntime,
+        meta: MessageMeta,
+        key: str,
+        err: Exception,
+        now: datetime,
+    ) -> bool:
+        """Count a failure to download or parse an e-mail.
+
+        Returns False until the e-mail failed FETCH_ATTEMPTS times: the caller
+        raises, the mailbox's sync fails and lists the e-mail again. Then it
+        is set aside as failed, and True lets the newer e-mails be read.
+        """
+        failures = self._fetch_failures.get(key, 0) + 1
+        if failures < FETCH_ATTEMPTS:
+            self._fetch_failures[key] = failures
+            return False
+        self._fetch_failures.pop(key, None)
+        domain = _domain(meta.sender)
+        # Only where it failed: an error's message could quote the e-mail.
+        _LOGGER.warning(
+            "Skipping an e-mail from %s that failed %d times (%s)",
+            domain,
+            failures,
+            error_location(err),
+        )
+        self.data.messages[key] = MessageRecord(
+            hash=key,
+            seen=now,
+            state=MessageState.FAILED,
+            refs={mailbox.entry_id: meta.provider_id},
+            received=_aware(meta.received),
+            sender_domain=domain,
+            owners=_owners(mailbox.owner),
         )
         return True
 
@@ -997,6 +1019,26 @@ class ParcelsEngine:
         return await self.hass.async_add_executor_job(
             parse_message, message, verdict, self.tz
         )
+
+    async def async_read(
+        self, message: MailMessage
+    ) -> tuple[SenderVerdict, ParseResult] | None:
+        """Check and parse an e-mail read again; None when that fails.
+
+        Where e-mails are read again, one that the parsers fail on counts as
+        not read, and the others are still read.
+        """
+        try:
+            verdict = self.verify(message)
+            return verdict, await self.async_parse(message, verdict)
+        except Exception as err:
+            # Only where it failed: an error's message could quote the e-mail.
+            _LOGGER.warning(
+                "Couldn't read an e-mail from %s again (%s)",
+                message.sender_domain,
+                error_location(err),
+            )
+            return None
 
     @staticmethod
     def message_time(message: MailMessage, now: datetime) -> datetime:
@@ -1418,8 +1460,10 @@ class ParcelsEngine:
                 message = await mailbox.client.async_fetch(provider_id)
             except MailNotFound:
                 del record.refs[entry_id]
-            except MailError as err:
-                _LOGGER.debug("Download failed: %s", type(err).__name__)
+            except Exception as err:
+                # Only where it failed: an error's message could quote the
+                # e-mail.
+                _LOGGER.debug("Download failed (%s)", error_location(err))
                 unavailable = True
             else:
                 return Refetch(message, mailbox)
@@ -1827,10 +1871,13 @@ class ParcelsEngine:
                 else "message_unavailable",
             )
         message, mailbox = fetched.message, fetched.mailbox
+        if (read := await self.async_read(message)) is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="message_unreadable"
+            )
+        verdict, result = read
         now = dt_util.utcnow()
         self._clear_outputs(key, now)
-        verdict = self.verify(message)
-        result = await self.async_parse(message, verdict)
         owner = record.owners[0] if record.owners else mailbox.owner
         # A refund is dropped as it is, and a return decided as it is: the AI
         # isn't asked about either.
@@ -1888,7 +1935,7 @@ class ParcelsEngine:
         Unlike reprocessing, the parcel stays on the page: an e-mail a parser
         reads is added again in place, unless the user confirmed it under
         review. Returns how many e-mails were read, queued for the AI, gone
-        from the mailboxes, or not downloaded.
+        from the mailboxes, or not downloaded or read.
         """
         parcel = self.parcel(parcel_id)
         messages = self.data.messages
@@ -1906,8 +1953,10 @@ class ParcelsEngine:
                 counts["gone" if fetched.gone else "failed"] += 1
                 continue
             message, mailbox = fetched.message, fetched.mailbox
-            verdict = self.verify(message)
-            result = await self.async_parse(message, verdict)
+            if (read := await self.async_read(message)) is None:
+                counts["failed"] += 1
+                continue
+            verdict, result = read
             counts["read"] += 1
             if not (verdict.verified and is_confident(result)):
                 continue
@@ -2111,9 +2160,11 @@ class ParcelsEngine:
             if fetched.message is None or fetched.mailbox is None:
                 counts["gone" if fetched.gone else "failed"] += 1
                 continue
+            if (read := await self.async_read(fetched.message)) is None:
+                counts["failed"] += 1
+                continue
             counts["read"] += 1
-            verdict = self.verify(fetched.message)
-            result = await self.async_parse(fetched.message, verdict)
+            verdict, result = read
             shop = result.merchant
             if (
                 data.messages.get(key) is record
@@ -2222,9 +2273,11 @@ class ParcelsEngine:
             if (message := fetched.message) is None or fetched.mailbox is None:
                 counts["gone" if fetched.gone else "failed"] += 1
                 continue
+            if (read := await self.async_read(message)) is None:
+                counts["failed"] += 1
+                continue
             counts["read"] += 1
-            verdict = self.verify(message)
-            result = await self.async_parse(message, verdict)
+            verdict, result = read
             reading = (
                 self._amazon_ai_reading(record)
                 if data.messages.get(key) is record
@@ -2318,9 +2371,11 @@ class ParcelsEngine:
             if (message := fetched.message) is None or fetched.mailbox is None:
                 counts["gone" if fetched.gone else "failed"] += 1
                 continue
+            if (read := await self.async_read(message)) is None:
+                counts["failed"] += 1
+                continue
             counts["read"] += 1
-            verdict = self.verify(message)
-            result = await self.async_parse(message, verdict)
+            verdict, result = read
             if (
                 data.messages.get(key) is not record
                 or not self._amazon_accepted(record)
@@ -2449,9 +2504,12 @@ class ParcelsEngine:
             if fetched.message is None or fetched.mailbox is None:
                 counts["gone" if fetched.gone else "failed"] += 1
                 continue
+            if (read := await self.async_read(fetched.message)) is None:
+                counts["failed"] += 1
+                continue
             counts["read"] += 1
-            outcome = await self._async_recheck(
-                record, state, fetched.message, fetched.mailbox
+            outcome = self._recheck(
+                record, state, fetched.message, fetched.mailbox, *read
             )
             if outcome is not None:
                 counts[outcome] += 1
@@ -2466,19 +2524,19 @@ class ParcelsEngine:
             counts["returns"],
         )
 
-    async def _async_recheck(
+    def _recheck(
         self,
         record: MessageRecord,
         state: MessageState,
         message: MailMessage,
         mailbox: MailboxRuntime,
+        verdict: SenderVerdict,
+        result: ParseResult,
     ) -> str | None:
         """Decide anew on an e-mail for the returns check; return what changed.
 
         Nothing changes when the e-mail changed state while it was read.
         """
-        verdict = self.verify(message)
-        result = await self.async_parse(message, verdict)
         key = record.hash
         if self.data.messages.get(key) is not record or record.state is not state:
             return None
@@ -2541,8 +2599,10 @@ class ParcelsEngine:
                 counts["gone" if fetched.gone else "failed"] += 1
                 continue
             message, mailbox = fetched.message, fetched.mailbox
-            verdict = self.verify(message)
-            result = await self.async_parse(message, verdict)
+            if (read := await self.async_read(message)) is None:
+                counts["failed"] += 1
+                continue
+            verdict, result = read
             if not is_confident(result):
                 counts["kept"] += 1
                 continue

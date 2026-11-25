@@ -33,7 +33,7 @@ from custom_components.parcels.dedup import (
     REASON_SAME_MERCHANT_ETA,
 )
 from custom_components.parcels.engine import ParcelsEngine
-from custom_components.parcels.mail import SyncResult
+from custom_components.parcels.mail import MessageMeta, SyncResult
 from custom_components.parcels.mail.errors import (
     MailApiDisabled,
     MailAuthError,
@@ -43,7 +43,12 @@ from custom_components.parcels.mail.errors import (
     MailRateLimited,
     MailServerError,
 )
-from custom_components.parcels.parsers.base import MailMessage
+from custom_components.parcels.models import MessageState
+from custom_components.parcels.parsers.base import (
+    MailMessage,
+    ParseResult,
+    SenderVerdict,
+)
 from custom_components.parcels.store import ParcelsStore
 
 from .common import (
@@ -92,6 +97,45 @@ class PagedClient(FakeMailClient):
         result = await super().async_sync(cursor, lookback=lookback, folders=folders)
         result.complete = len(self.syncs) > self.pages
         return result
+
+
+class RelistClient(FakeMailClient):
+    """A mailbox API that lists every e-mail after the saved cursor.
+
+    As with Gmail's history and Graph's delta links, a sync whose round
+    failed lists the same e-mails again.
+    """
+
+    def __init__(self) -> None:
+        """Initialise an empty mailbox."""
+        super().__init__()
+        self.listed: list[MessageMeta] = []
+
+    def add(
+        self, message: MailMessage | str, *, provider_id: str | None = None
+    ) -> MessageMeta:
+        """Deliver an e-mail after the others."""
+        meta = super().add(message, provider_id=provider_id)
+        self.listed.append(meta)
+        return meta
+
+    async def async_sync(
+        self,
+        cursor: dict[str, Any] | None,
+        *,
+        lookback: timedelta,
+        folders: Sequence[str] = (),
+    ) -> SyncResult:
+        """Return the e-mails delivered after the cursor."""
+        self.syncs.append(cursor)
+        if self.sync_error is not None:
+            raise self.sync_error
+        start = int((cursor or {}).get("next", 0))
+        return SyncResult(
+            messages=self.listed[start:],
+            cursor={"next": len(self.listed)},
+            complete=True,
+        )
 
 
 class OneByOneClient(PagedClient):
@@ -462,3 +506,66 @@ async def test_reconcile_waits_for_the_sync(
     assert state.order_numbers == (AMAZON_ORDER,)
     assert parcel.auto_merged is not None
     assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_DAY
+
+
+@pytest.mark.parametrize("stage", ["download", "parse"])
+async def test_an_email_that_cant_be_read_is_skipped(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture, stage: str
+) -> None:
+    """An e-mail that fails to download or parse is skipped after three tries.
+
+    Whatever the error, the mailbox then reads its newer e-mails.
+    """
+    client = RelistClient()
+    client.add(
+        dataclasses.replace(
+            load_message("shopify/shipped_es.eml"),
+            received=datetime(2026, 11, 17, 9, 0, tzinfo=UTC),
+        ),
+        provider_id="bad",
+    )
+    client.add(
+        dataclasses.replace(
+            load_message(CTT), received=datetime(2026, 11, 17, 9, 30, tzinfo=UTC)
+        ),
+        provider_id="good",
+    )
+    secret = "Olá Alex Doe, a sua encomenda"
+    if stage == "download":
+        client.fetch_errors["bad"] = RuntimeError(secret)
+    parse = ParcelsEngine.async_parse
+
+    async def async_parse(
+        engine: ParcelsEngine, message: MailMessage, verdict: SenderVerdict
+    ) -> ParseResult:
+        if stage == "parse" and message.provider_id == "bad":
+            raise RecursionError(secret)
+        return await parse(engine, message, verdict)
+
+    with patch.object(ParcelsEngine, "async_parse", async_parse):
+        mailbox, coordinator, engine = await _setup(hass, client)
+        _failure(coordinator)
+        await coordinator.async_refresh()
+        _failure(coordinator)
+        assert client.fetches == ["bad", "bad"]
+        assert engine.data.parcels == {}
+
+        await coordinator.async_refresh()
+
+        assert coordinator.last_update_success
+        assert client.fetches == ["bad", "bad", "bad", "good"]
+        [parcel] = engine.data.parcels.values()
+        assert parcel.state.tracking_number == "RR482915732PT"
+        [record] = (
+            record
+            for record in engine.data.messages.values()
+            if record.refs.get(mailbox.entry_id) == "bad"
+        )
+        assert record.state is MessageState.FAILED
+
+        await coordinator.async_refresh()
+
+        assert coordinator.last_update_success
+        assert client.fetches == ["bad", "bad", "bad", "good"]
+    assert "failed 3 times" in caplog.text
+    assert "Alex Doe" not in caplog.text

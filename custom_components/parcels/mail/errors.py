@@ -44,6 +44,16 @@ class MailCursorExpired(MailError):
     """The sync cursor expired; the clients restart with a lookback sync."""
 
 
+# Errors about the whole mailbox; any other error is about one e-mail.
+MAILBOX_ERRORS: tuple[type[MailError], ...] = (
+    MailAuthError,
+    MailRateLimited,
+    MailCursorExpired,
+    MailNoMailbox,
+    MailApiDisabled,
+)
+
+
 def parse_retry_after(
     value: str | None, *, now: datetime | None = None
 ) -> float | None:

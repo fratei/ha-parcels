@@ -548,3 +548,38 @@ async def test_fetch_without_raw(
 
     with pytest.raises(MailServerError):
         await gmail_client.async_fetch("m1")
+
+
+def nested_mime(depth: int) -> bytes:
+    """Return a made-up e-mail whose body is ``depth`` nested multiparts."""
+    inner = b"Content-Type: text/plain; charset=utf-8\r\n\r\nEncomenda enviada.\r\n"
+    for level in reversed(range(depth)):
+        boundary = b"b%d" % level
+        inner = (
+            b'Content-Type: multipart/mixed; boundary="%s"\r\n\r\n'
+            b"--%s\r\n%s\r\n--%s--\r\n" % (boundary, boundary, inner, boundary)
+        )
+    return (
+        b"From: Loja Exemplo <envios@shop.example>\r\n"
+        b"To: alex@example.com\r\n"
+        b"Subject: A sua encomenda foi enviada\r\n"
+        b"Message-ID: <nested@shop.example>\r\n"
+        b"Date: Mon, 16 Nov 2026 09:11:30 +0000\r\n"
+        b"MIME-Version: 1.0\r\n" + inner
+    )
+
+
+async def test_fetch_unparseable(
+    gmail_client: GmailClient, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """An e-mail the e-mail parser can't take is a server error."""
+    raw = base64.urlsafe_b64encode(nested_mime(1200)).decode().rstrip("=")
+    aioclient_mock.get(
+        f"{GMAIL}/messages/m1",
+        json={"id": "m1", "raw": raw, "internalDate": INTERNAL_DATE},
+    )
+
+    with pytest.raises(MailError) as exc_info:
+        await gmail_client.async_fetch("m1")
+
+    assert type(exc_info.value) is MailServerError

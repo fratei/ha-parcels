@@ -338,7 +338,8 @@ class GmailClient(ApiClient):
             message = await async_parse(
                 len(raw), _parse_raw, raw, mailbox=mailbox, provider_id=provider_id
             )
-        except ValueError:
+        except Exception:
+            # Malformed e-mails can raise anything, e.g. RecursionError.
             raise MailServerError("message with invalid raw content") from None
         message.received = _from_millis(item.get("internalDate")) or message.received
         return message

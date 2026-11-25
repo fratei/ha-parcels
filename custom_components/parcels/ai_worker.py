@@ -627,11 +627,15 @@ class AIWorker:
                 entry["not_before"] = dt_to_str(now + AI_RETRY_DELAY)
                 engine.async_schedule_save()
             return
-        verdict = engine.verify(message)
-        parsed = await engine.async_parse(message, verdict)
+        read = await engine.async_read(message)
         now = dt_util.utcnow()
         if not self._current(entry):
             return
+        if read is None:
+            entry["not_before"] = dt_to_str(now + AI_RETRY_DELAY)
+            engine.async_schedule_save()
+            return
+        verdict, parsed = read
         org = organizational_domain(message.sender_domain)
         fill = bool(entry.get("fill"))
         gaps: set[str] = set()
@@ -913,10 +917,9 @@ class AIWorker:
         ):
             return
         message, _gone = await self._async_download(record)
-        if message is None:
+        if message is None or (read := await engine.async_read(message)) is None:
             return
-        verdict = engine.verify(message)
-        parsed = await engine.async_parse(message, verdict)
+        verdict, parsed = read
         entity_id = engine.ai_entity
         if entity_id is None or not (verdict.verified and is_confident(parsed)):
             return

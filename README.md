@@ -407,7 +407,9 @@ reads the last 30 days of e-mail; after that Parcels checks every 5 minutes.
 In each mailbox's options, set its **Owner** (see [Options](#options)).
 
 When a sign-in expires or is revoked, Home Assistant asks you to sign in again
-with the same account.
+with the same account. An e-mail that can't be downloaded or read on three
+checks is skipped, so that the newer ones are still read; the log names only
+its sender's domain.
 
 ### 6. Create the Parcels page
 
@@ -1386,8 +1388,8 @@ actions:
   what you typed, merged or split stays, and a parcel can then pair with its
   shop's order. E-mails from ignored senders are skipped. The hub's
   diagnostics count the e-mails read, those whose shop was filled in or
-  kept, those deleted since, those that couldn't be downloaded and those
-  over the limit (`paack_shop_check`).
+  kept, those deleted since, those that couldn't be downloaded or read and
+  those over the limit (`paack_shop_check`).
 - **An Amazon order showed as in transit before it shipped, or its order
   e-mail waited in review.** Before 0.1.16, Parcels couldn't read Amazon's
   Portuguese order e-mails titled "Pedido efetuado", so the local AI read
@@ -1400,7 +1402,7 @@ actions:
   was delivered or archived. What you typed, merged or split stays.
   E-mails from ignored senders are skipped. The hub's diagnostics count the
   e-mails read, those whose reading was replaced or kept, those deleted
-  since, those that couldn't be downloaded and those over the limit
+  since, those that couldn't be downloaded or read and those over the limit
   (`amazon_ai_check`).
 - **An old order showed again as ordered, without items or a date.** Before
   0.1.16, an order e-mail about an order whose parcels were all archived
@@ -1427,8 +1429,8 @@ actions:
   their parcel, where no news says that it shipped (see
   [What it does](#what-it-does)). The hub's diagnostics count the e-mails
   read, those whose reading was replaced or kept, those deleted since, those
-  that couldn't be downloaded, those over the limit and the cancellations
-  applied (`amazon_accepted_check`).
+  that couldn't be downloaded or read, those over the limit and the
+  cancellations applied (`amazon_accepted_check`).
 - **A carrier's package shows apart from its Amazon order.** Amazon's
   e-mails rarely name the carrier's number. With the Parcel app, Parcels
   links a shipment to its package by the times in Amazon's tracking (see

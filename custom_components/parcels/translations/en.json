@@ -273,6 +273,9 @@
     "message_unavailable": {
       "message": "The mailbox of this e-mail isn't loaded."
     },
+    "message_unreadable": {
+      "message": "Parcels couldn't read this e-mail; the log says where it failed."
+    },
     "no_messages": {
       "message": "There's no e-mail to read again."
     },

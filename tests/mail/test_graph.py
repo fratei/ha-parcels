@@ -351,6 +351,26 @@ async def test_request_errors(
     assert SECRET not in str(exc_info.value)
 
 
+async def test_fetch_unparseable(
+    graph_client: GraphClient,
+    aioclient_mock: AiohttpClientMocker,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An e-mail that can't be normalised is a server error."""
+
+    def message_from_graph(item: dict[str, Any], *, mailbox: str) -> MailMessage:
+        raise RecursionError(SECRET)
+
+    monkeypatch.setattr(normalize, "message_from_graph", message_from_graph)
+    aioclient_mock.get(MESSAGE_URL, json=FULL_ITEM)
+
+    with pytest.raises(MailError) as exc_info:
+        await graph_client.async_fetch("AAMkAD1")
+
+    assert type(exc_info.value) is MailServerError
+    assert SECRET not in str(exc_info.value)
+
+
 @pytest.mark.parametrize(("retry_after", "expected"), [("7", 7.0), (None, None)])
 async def test_rate_limited(
     graph_client: GraphClient,

@@ -193,9 +193,13 @@ class GraphClient(ApiClient):
         body = item.get("body")
         content = body.get("content") if isinstance(body, Mapping) else None
         size = len(content) if isinstance(content, str) else 0
-        message = await async_parse(
-            size, normalize.message_from_graph, item, mailbox=mailbox
-        )
+        try:
+            message = await async_parse(
+                size, normalize.message_from_graph, item, mailbox=mailbox
+            )
+        except Exception:
+            # Malformed e-mails can raise anything, e.g. RecursionError.
+            raise MailServerError("message with invalid content") from None
         if message.received is None:
             message.received = _graph_time(item.get("receivedDateTime"))
         return message
