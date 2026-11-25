@@ -442,7 +442,7 @@ entry.
 | People to notify | none | The companion app devices of these people get Live Activities and notifications. |
 | Excluded devices | none | Devices that never get them, such as a shared tablet. |
 | Start time | 08:00 | Live Activities for parcels expected today, and for the day's return pickups, start at this time. A return pickup set before it starts none if Parcels first sees it more than 15 minutes later (see [Return pickups](#return-pickups)). |
-| Cut-off time | 22:00 | Remaining Live Activities end at this time. |
+| Cut-off time | 22:00 | Remaining Live Activities end at this time. 00:00 is midnight, at the end of the day. |
 | Combine Live Activities above | 3 | With more packages than this on one day, they share one Live Activity. Return pickups count; orders that ride along with a package don't. |
 | Show item names on the lock screen | off | When off, the lock screen shows shop, carrier, status and time window only (and the delivery PIN, if that option is on). |
 | Show delivery PINs on the lock screen | off | iPhones' Live Activities also show a parcel's PIN or pickup code while it's out for delivery or ready for pickup. Anyone who can see the iPhone can read it. See [Privacy and safety](#privacy-and-safety). |

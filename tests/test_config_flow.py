@@ -542,6 +542,21 @@ async def test_hub_options_errors(
     assert hub_entry.options == HUB_DEFAULTS
 
 
+@pytest.mark.parametrize("start", ["08:00:00", "00:00:00", "23:30:00"])
+async def test_hub_options_accept_a_midnight_cutoff(
+    hass: HomeAssistant, hub_entry: MockConfigEntry, start: str
+) -> None:
+    """A cut-off at 00:00 is midnight at the end of the day, after any start."""
+    result = await hass.config_entries.options.async_init(hub_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        HUB_INPUT | {"start_time": start, "cutoff_time": "00:00:00"},
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY, result.get("errors")
+    assert hub_entry.options["cutoff_time"] == "00:00:00"
+
+
 @pytest.mark.parametrize(
     ("reason", "error"),
     [

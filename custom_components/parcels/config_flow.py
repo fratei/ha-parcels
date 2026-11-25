@@ -548,9 +548,9 @@ class HubOptionsFlow(OptionsFlow):
         errors: dict[str, str] = {}
         if options[CONF_TEST_MODE] and not options.get(CONF_TEST_DEVICE):
             errors[CONF_TEST_DEVICE] = "test_device_required"
-        if _time_value(options[CONF_CUTOFF_TIME]) <= _time_value(
-            options[CONF_START_TIME]
-        ):
+        # A cut-off at 00:00 is midnight at the end of the day.
+        cutoff = _time_value(options[CONF_CUTOFF_TIME])
+        if cutoff != time(0, 0) and cutoff <= _time_value(options[CONF_START_TIME]):
             errors[CONF_CUTOFF_TIME] = "cutoff_before_start"
         if options[CONF_PURGE_DAYS] <= options[CONF_ARCHIVE_DAYS]:
             errors[CONF_PURGE_DAYS] = "purge_before_archive"
