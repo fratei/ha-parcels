@@ -12,11 +12,19 @@ import logging
 from typing import Any
 from urllib.parse import quote
 
+import aiohttp
+
 from ..const import PROVIDER_GOOGLE
 from ..parsers import normalize
 from ..parsers.base import MailMessage
-from . import ApiClient, MessageMeta, SyncResult, async_parse, text
-from .errors import MailNoMailbox, MailNotFound, MailServerError
+from . import ApiClient, MessageMeta, SyncResult, TokenGetter, async_parse, text
+from .errors import (
+    MAILBOX_ERRORS,
+    MailError,
+    MailNoMailbox,
+    MailNotFound,
+    MailServerError,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,6 +33,8 @@ LIST_PAGE_SIZE = 100
 HISTORY_PAGE_SIZE = 500
 MAX_PAGES = 20
 MAX_METADATA_FETCHES = 200
+# Failed header reads of one e-mail before the sync skips it.
+META_ATTEMPTS = 3
 SKIP_LABELS = frozenset({"TRASH", "SENT", "DRAFT", "CHAT"})
 METADATA_HEADERS = ("From", "Subject", "Message-ID", "Date")
 
@@ -140,6 +150,17 @@ class GmailClient(ApiClient):
         }
     )
 
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        get_token: TokenGetter,
+        *,
+        address: str | None = None,
+    ) -> None:
+        """Initialise the client with no failed header reads."""
+        super().__init__(session, get_token, address=address)
+        self._meta_failures: dict[str, int] = {}
+
     async def _async_profile(self) -> dict[str, Any]:
         """Return the mailbox profile."""
         return await self.async_get_json(f"{GMAIL_URL}/profile")
@@ -206,7 +227,24 @@ class GmailClient(ApiClient):
         rest = pending_ids[MAX_METADATA_FETCHES:]
         messages: list[MessageMeta] = []
         for message_id in batch:
-            if (meta := await self._async_meta(message_id)) is not None:
+            try:
+                meta = await self._async_meta(message_id)
+            except MAILBOX_ERRORS:
+                raise
+            except MailError:
+                # The sync fails and is tried again until one e-mail failed
+                # META_ATTEMPTS times; that e-mail is then skipped.
+                failures = self._meta_failures.pop(message_id, 0) + 1
+                if failures < META_ATTEMPTS:
+                    self._meta_failures[message_id] = failures
+                    raise
+                _LOGGER.warning(
+                    "Skipping an e-mail whose headers failed to download %d times",
+                    failures,
+                )
+                continue
+            self._meta_failures.pop(message_id, None)
+            if meta is not None:
                 messages.append(meta)
 
         new_cursor: dict[str, Any] = {"history_id": history_id, "pending": rest}

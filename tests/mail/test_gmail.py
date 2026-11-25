@@ -583,3 +583,52 @@ async def test_fetch_unparseable(
         await gmail_client.async_fetch("m1")
 
     assert type(exc_info.value) is MailServerError
+
+
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [({"status": 500}, MailServerError)],
+    ids=["500"],
+)
+async def test_metadata_failure_skips_the_email_after_three_tries(
+    gmail_client: GmailClient,
+    aioclient_mock: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+    response: dict[str, Any],
+    error: type[MailError],
+) -> None:
+    """An e-mail whose headers can't be read stops the sync three times.
+
+    The cursor stays, so the next sync tries it again; the third failure
+    skips it and the sync goes on.
+    """
+    aioclient_mock.get(
+        f"{GMAIL}/history",
+        json={
+            "history": [
+                added(
+                    ("m4", ("INBOX",)),
+                    ("m5", ("INBOX",)),
+                    ("m6", ("INBOX",)),
+                    record_id="1005",
+                )
+            ],
+            "historyId": "1012",
+        },
+    )
+    aioclient_mock.get(f"{GMAIL}/messages/m4", json=meta_item("m4"))
+    aioclient_mock.get(f"{GMAIL}/messages/m5", **response)
+    aioclient_mock.get(f"{GMAIL}/messages/m6", json=meta_item("m6"))
+    cursor = {"history_id": "1000", "pending": []}
+
+    for _ in range(2):
+        with pytest.raises(MailError) as exc_info:
+            await gmail_client.async_sync(cursor, lookback=LOOKBACK)
+        assert type(exc_info.value) is error
+    result = await gmail_client.async_sync(cursor, lookback=LOOKBACK)
+
+    assert ids(result.messages) == ["m4", "m6"]
+    assert result.complete
+    assert result.cursor == {"history_id": "1012", "pending": []}
+    assert paths(aioclient_mock).count("messages/m5") == 3
+    assert "m5" not in caplog.text
