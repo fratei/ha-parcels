@@ -47,6 +47,9 @@ from custom_components.parcels.models import (
     MessageState,
     Origin,
     ParcelEvent,
+    PickupRule,
+    ReturnEntry,
+    ReturnOrigin,
     Source,
     Suggestion,
     order_key,
@@ -1613,6 +1616,53 @@ async def test_origin_remove_refused(
     }
     assert not [entry for entry in data.filtered.values() if entry.removed]
     assert no_errors_logged(caplog)
+
+
+@pytest.mark.parametrize("linked", [False, True], ids=["private", "linked"])
+async def test_return_remove_refused(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    sam_ws: MockHAClientWebSocket,
+    linked: bool,
+) -> None:
+    """An administrator may not remove a private return they may not see.
+
+    A return is private when it is, or when a parcel of its order is.
+    """
+    now = dt_util.utcnow()
+    entry = ReturnEntry(id="ret_1", created=now, updated=now, private=not linked)
+    entry.origins["m-sam"] = ReturnOrigin(
+        message="m-sam",
+        time=now,
+        merchant="Loja Exemplo",
+        order_numbers=("LE-1001",),
+        pickup=dt_util.now().date(),
+        pickup_rule=PickupRule.EMAIL,
+        owners=(OTHER_OWNER,),
+    )
+    engine.data.returns[entry.id] = entry
+    if linked:
+        apply_contribution(
+            engine.data,
+            contribution(
+                "msg:sam#0",
+                time=now,
+                merchant="Loja Exemplo",
+                orders=["LE-1001"],
+                number=DHL_NUMBER,
+                carrier="dhl",
+                owner=OTHER_OWNER,
+                private=True,
+            ),
+            now,
+        )
+
+    await refused(ws, "parcels/return/remove", "not_allowed", return_id=entry.id)
+    assert entry.id in engine.data.returns
+
+    err = await error(sam_ws, "parcels/return/remove", return_id=entry.id)
+    assert err["code"] == "unauthorized"
 
 
 async def test_origin_restore(

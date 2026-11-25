@@ -212,19 +212,23 @@ def _parcel_service(
     return handle
 
 
+def check_return(engine: ParcelsEngine, viewer: Viewer | None, return_id: str) -> None:
+    """Raise unless the return exists and the caller may see it."""
+    entry = engine.data.returns.get(return_id)
+    if entry is None:
+        raise validation_error("unknown_return")
+    linked = linked_parcels(entry, order_index(engine.data))
+    if viewer is not None and not viewer.can_see_return(entry, linked):
+        raise validation_error("not_allowed")
+
+
 def _return_picked_up(picked_up: bool) -> Callable[[ServiceCall], Any]:
     """Mark a return picked up, or undo that, for anyone who may see it."""
 
     async def handle(call: ServiceCall) -> None:
         engine = _engine(call.hass)
-        viewer = await _caller(call)
         return_id = call.data[ATTR_RETURN_ID]
-        entry = engine.data.returns.get(return_id)
-        if entry is None:
-            raise validation_error("unknown_return")
-        linked = linked_parcels(entry, order_index(engine.data))
-        if viewer is not None and not viewer.can_see_return(entry, linked):
-            raise validation_error("not_allowed")
+        check_return(engine, await _caller(call), return_id)
         engine.mark_return_picked_up(return_id, picked_up)
 
     return handle

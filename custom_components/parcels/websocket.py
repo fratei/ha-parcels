@@ -16,7 +16,7 @@ import probatio as p
 
 from .const import DOMAIN, SIGNAL_AI_UPDATED, SIGNAL_DATA_UPDATED
 from .engine import ParcelsEngine, get_engine, validation_error
-from .services import TEXT, TEXT_LIST, clearable
+from .services import TEXT, TEXT_LIST, check_return, clearable
 from .views import details, snapshot, viewer_for
 
 # Changes that come in bursts are sent to the page once.
@@ -401,7 +401,9 @@ def ws_return_remove(
     msg: dict[str, Any],
 ) -> None:
     """Remove a customer return; its e-mails aren't read again."""
-    _engine(hass).remove_return(msg["return_id"])
+    engine = _engine(hass)
+    check_return(engine, viewer_for(hass, connection.user), msg["return_id"])
+    engine.remove_return(msg["return_id"])
     connection.send_result(msg["id"])
 
 
