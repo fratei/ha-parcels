@@ -256,6 +256,50 @@ async def test_remove_hub_deletes_data(hass: HomeAssistant) -> None:
     assert stored.parcels == {}
 
 
+def _damaged_notifier_state(day: str) -> dict[str, Any]:
+    """The notifier's stored state with a well-formed but impossible time."""
+    return {
+        "version": 1,
+        "days": {
+            day: {
+                "board": [],
+                "activities": {
+                    "device-1": {
+                        "p_1": {"tag": "parcel-1", "started": f"{day[:5]}13-02T08:00"}
+                    }
+                },
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize("day", ["2026-11-02", "2026-11-17"])
+async def test_hub_starts_with_damaged_stored_data(
+    hass: HomeAssistant, hass_storage: dict[str, Any], day: str
+) -> None:
+    """A damaged entry or time is skipped and counted; the hub still starts."""
+    data = ParcelsData()
+    parcel_id = apply_contribution(
+        data, contribution("msg:a#0", carrier="dpd", number="05212345678901"), at()
+    ).parcel_id
+    stored = data.as_dict()
+    stored["parcels"].append(None)
+    stored["engine"] = {"notifier": _damaged_notifier_state(day)}
+    hass_storage["parcels"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "parcels",
+        "data": stored,
+    }
+    hub = add_hub(hass)
+
+    engine = await async_setup_parcels(hass)
+
+    assert hub.state is ConfigEntryState.LOADED
+    assert list(engine.data.parcels) == [parcel_id]
+    assert engine.diagnostics()["damaged"] == {"engine": 1, "parcels": 1}
+
+
 async def test_start_repairs_stored_parcels_once(
     hass: HomeAssistant, hass_storage: dict[str, Any]
 ) -> None:

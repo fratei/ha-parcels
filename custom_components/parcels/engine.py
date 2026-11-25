@@ -2786,6 +2786,8 @@ class ParcelsEngine:
             "messages": messages,
             "review": len(data.review),
             "filtered": len(data.filtered),
+            # What the last load skipped, or couldn't read, by section.
+            "damaged": dict(sorted(data.damaged.items())),
             "senders": {
                 "trusted": sum(1 for p in data.senders.values() if p.trusted),
                 "ignored": sum(1 for p in data.senders.values() if p.ignored),

@@ -431,10 +431,14 @@ def clip_text(text: Any) -> str | None:
 
 
 def _package_time(package: Mapping[str, Any], now: datetime) -> datetime | None:
+    """Return the time of a package's news; ValueError when it is impossible."""
     raw = package.get("timestamp")
     if not raw:
         return None
-    parsed = dt_util.parse_datetime(str(raw))
+    try:
+        parsed = dt_util.parse_datetime(str(raw))
+    except OverflowError as err:
+        raise ValueError("impossible time") from err
     if parsed is None:
         return None
     if parsed.tzinfo is None:
@@ -447,6 +451,8 @@ class _Stats:
     added: int = 0
     updated: int = 0
     archived: int = 0
+    # News whose time can't be read ("month 13"): read as news without a time.
+    unreadable_times: int = 0
 
 
 class SeventeenTrackSync:
@@ -461,6 +467,7 @@ class SeventeenTrackSync:
         self._running = False
         self.last_refresh: datetime | None = None
         self.last_error: str | None = None
+        self.unreadable_times = 0
 
     # -- State --------------------------------------------------------------
 
@@ -501,6 +508,7 @@ class SeventeenTrackSync:
             "failed": len(self._failed),
             "last_refresh": dt_to_str(self.last_refresh),
             "last_error": self.last_error,
+            "unreadable_times": self.unreadable_times,
             "not_found_by_carrier": self._not_found_by_carrier(),
         }
 
@@ -606,6 +614,7 @@ class SeventeenTrackSync:
         changed |= self._update_statuses(packages, now, stats)
         changed |= await self._async_archive(entry_id, packages, now, stats)
         self.last_refresh = now
+        self.unreadable_times = stats.unreadable_times
         if stats.added or stats.updated or stats.archived:
             _LOGGER.debug(
                 "17TRACK: added %d, updated %d, archived %d packages",
@@ -795,7 +804,11 @@ class SeventeenTrackSync:
             status = map_status(raw_status, info)
             if status is None:
                 continue
-            time = _package_time(package, now)
+            try:
+                time = _package_time(package, now)
+            except ValueError:
+                time = None
+                stats.unreadable_times += 1
             history: list[dict[str, Any]] = record.setdefault("history", [])
             key = (status.value, info, dt_to_str(time))
             if (

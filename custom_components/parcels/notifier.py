@@ -146,7 +146,7 @@ import asyncio
 from collections import Counter
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from enum import StrEnum
 import hashlib
 import hmac
@@ -198,6 +198,7 @@ from .models import (
     ParcelsData,
     ParcelState,
     ReturnEntry,
+    dt_from_str,
     local_date,
     merchant_key,
 )
@@ -503,15 +504,11 @@ def _iso(value: datetime) -> str:
 
 
 def _parse_dt(value: Any) -> datetime | None:
-    """Parse a serialised datetime as UTC, or return None."""
+    """Parse a serialised datetime as UTC, or return None, also when damaged."""
     if not isinstance(value, str):
         return None
-    parsed = dt_util.parse_datetime(value)
-    if parsed is None:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return dt_util.as_utc(parsed)
+    parsed = dt_from_str(value)
+    return dt_util.as_utc(parsed) if parsed is not None else None
 
 
 def _local_at(day: date, value: time) -> datetime:

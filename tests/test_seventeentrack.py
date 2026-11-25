@@ -1400,6 +1400,7 @@ async def test_adds_the_numbers_of_active_parcels(
         "failed": 0,
         "last_refresh": NOW_ISO,
         "last_error": None,
+        "unreadable_times": 0,
         "not_found_by_carrier": {},
     }
     assert CTT not in str(diagnostics)
@@ -1582,6 +1583,31 @@ async def test_package_text_and_time(
     assert records(engine)[CTT]["history"] == [
         {"status": "in_transit", "info": info, "at": at, "time": at or NOW_ISO}
     ]
+
+
+async def test_an_impossible_package_time_is_counted(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """A package whose time can't be read gives news without a time.
+
+    The other packages still update; diagnostics count it.
+    """
+    add_parcel(engine, "ctt", CTT, carrier="ctt")
+    add_parcel(engine, "ups", UPS, carrier="ups")
+    await tracker.async_refresh()
+    track.put(CTT, timestamp="2026-13-02T08:00:00+00:00")
+    track.put(UPS, "Delivered", timestamp="2026-11-17T09:30:00+00:00")
+
+    await tracker.async_refresh()
+
+    assert records(engine)[CTT]["history"] == [
+        {"status": "in_transit", "info": None, "at": None, "time": NOW_ISO}
+    ]
+    assert records(engine)[UPS]["history"][-1]["status"] == "delivered"
+    diagnostics = tracker.diagnostics()
+    assert diagnostics["unreadable_times"] == 1
+    assert diagnostics["last_error"] is None
+    assert "2026-13-02" not in str(diagnostics)
 
 
 async def test_package_text_gives_details(
@@ -2466,6 +2492,7 @@ async def test_nothing_without_the_integration(hass: HomeAssistant) -> None:
         "failed": 0,
         "last_refresh": None,
         "last_error": None,
+        "unreadable_times": 0,
         "not_found_by_carrier": {},
     }
 

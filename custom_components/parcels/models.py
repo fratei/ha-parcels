@@ -130,13 +130,32 @@ def dt_to_str(value: datetime | None) -> str | None:
 
 
 def dt_from_str(value: Any) -> datetime | None:
-    """Parse a serialised datetime; naive values are taken as UTC."""
+    """Parse a serialised datetime; naive values are taken as UTC.
+
+    A damaged value (see ``stored_dt``) gives None, as a missing one does.
+    """
+    try:
+        return stored_dt(value)
+    except ValueError:
+        return None
+
+
+def stored_dt(value: Any) -> datetime | None:
+    """Parse a stored datetime as ``dt_from_str`` does, refusing a damaged one.
+
+    Raises ValueError for a well-formed but impossible time ("month 13"). The
+    stored entries' ``from_dict`` use this, so that an entry holding such a
+    time is skipped rather than read with the time missing.
+    """
     if not value:
         return None
     if isinstance(value, datetime):
         parsed: datetime | None = value
     else:
-        parsed = dt_util.parse_datetime(str(value))
+        try:
+            parsed = dt_util.parse_datetime(str(value))
+        except OverflowError as err:
+            raise ValueError("impossible time") from err
     if parsed is None:
         return None
     if parsed.tzinfo is None:
@@ -579,7 +598,7 @@ class Origin:
         return cls(
             id=str(data["id"]),
             source=_loaded_source(data.get("source"), data["id"]),
-            time=dt_from_str(data.get("time")) or dt_util.utcnow(),
+            time=stored_dt(data.get("time")) or dt_util.utcnow(),
             label=str(data.get("label", "")),
             carrier=data.get("carrier"),
             tracking_number=data.get("tracking_number"),
@@ -678,7 +697,7 @@ class ParcelEvent:
         """Parse a serialised event."""
         return cls(
             id=str(data.get("id") or secrets.token_hex(6)),
-            time=dt_from_str(data.get("time")) or dt_util.utcnow(),
+            time=stored_dt(data.get("time")) or dt_util.utcnow(),
             source=_loaded_source(data.get("source"), data.get("origin")),
             origin=data.get("origin"),
             status=ParcelStatus(data["status"]) if data.get("status") else None,
@@ -690,7 +709,7 @@ class ParcelEvent:
             inferred=bool(data.get("inferred", False)),
             undated=bool(data.get("undated", False)),
             dayless=bool(data.get("dayless", False)),
-            by=dt_from_str(data.get("by")),
+            by=stored_dt(data.get("by")),
             timeless=bool(data.get("timeless", False)),
             collect_by=date_from_str(data.get("collect_by")),
             next_attempt=date_from_str(data.get("next_attempt")),
@@ -741,7 +760,7 @@ class AutoMerge:
         groups = data.get("groups")
         return cls(
             origin=str(data["origin"]),
-            at=dt_from_str(data.get("at")) or dt_util.utcnow(),
+            at=stored_dt(data.get("at")) or dt_util.utcnow(),
             reason=str(data.get("reason", "")),
             origins=_tuple(data.get("origins")),
             groups=tuple(
@@ -896,16 +915,16 @@ class Parcel:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Parcel:
         """Parse a serialised parcel."""
-        created = dt_from_str(data.get("created")) or dt_util.utcnow()
+        created = stored_dt(data.get("created")) or dt_util.utcnow()
         origins = [Origin.from_dict(item) for item in data.get("origins", ())]
         return cls(
             id=str(data["id"]),
             created=created,
-            updated=dt_from_str(data.get("updated")) or created,
+            updated=stored_dt(data.get("updated")) or created,
             origins={origin.id: origin for origin in origins},
             events=[ParcelEvent.from_dict(item) for item in data.get("events", ())],
             private=bool(data.get("private", False)),
-            archived=dt_from_str(data.get("archived")),
+            archived=stored_dt(data.get("archived")),
             auto_merged=AutoMerge.from_dict(data.get("auto_merged")),
             delivery_rejected=bool(data.get("delivery_rejected", False)),
         )
@@ -1395,8 +1414,8 @@ class Order:
             key=str(data["key"]),
             number=str(data.get("number", "")),
             merchant=data.get("merchant"),
-            placed_at=dt_from_str(data.get("placed_at")),
-            created=dt_from_str(data.get("created")) or dt_util.utcnow(),
+            placed_at=stored_dt(data.get("placed_at")),
+            created=stored_dt(data.get("created")) or dt_util.utcnow(),
         )
 
 
@@ -1436,10 +1455,10 @@ class MessageRecord:
         """Parse a serialised record."""
         return cls(
             hash=str(data["hash"]),
-            seen=dt_from_str(data.get("seen")) or dt_util.utcnow(),
+            seen=stored_dt(data.get("seen")) or dt_util.utcnow(),
             state=MessageState(data.get("state", MessageState.APPLIED)),
             refs={str(k): str(v) for k, v in dict(data.get("refs", {})).items()},
-            received=dt_from_str(data.get("received")),
+            received=stored_dt(data.get("received")),
             sender_domain=str(data.get("sender_domain", "")),
             owners=_tuple(data.get("owners")),
         )
@@ -1583,9 +1602,9 @@ class ReviewItem:
         checks = data.get("checks")
         return cls(
             id=str(data["id"]),
-            created=dt_from_str(data.get("created")) or dt_util.utcnow(),
+            created=stored_dt(data.get("created")) or dt_util.utcnow(),
             message=str(data.get("message", "")),
-            received=dt_from_str(data.get("received")),
+            received=stored_dt(data.get("received")),
             sender=str(data.get("sender", "")),
             sender_domain=str(data.get("sender_domain", "")),
             subject=str(data.get("subject", "")),
@@ -1658,9 +1677,9 @@ class FilteredItem:
         """Parse a serialised item."""
         return cls(
             id=str(data["id"]),
-            created=dt_from_str(data.get("created")) or dt_util.utcnow(),
+            created=stored_dt(data.get("created")) or dt_util.utcnow(),
             message=str(data.get("message", "")),
-            received=dt_from_str(data.get("received")),
+            received=stored_dt(data.get("received")),
             sender=str(data.get("sender", "")),
             sender_domain=str(data.get("sender_domain", "")),
             subject=str(data.get("subject", "")),
@@ -1705,7 +1724,7 @@ class SenderPrefs:
             carrier=data.get("carrier"),
             accepted=int(data.get("accepted", 0)),
             corrections=int(data.get("corrections", 0)),
-            updated=dt_from_str(data.get("updated")),
+            updated=stored_dt(data.get("updated")),
         )
 
 
@@ -1788,7 +1807,7 @@ class ReturnOrigin:
             rule = None
         return cls(
             message=str(data["message"]),
-            time=dt_from_str(data.get("time")) or dt_util.utcnow(),
+            time=stored_dt(data.get("time")) or dt_util.utcnow(),
             source=_source(data.get("source")),
             label=str(data.get("label", "")),
             merchant=data.get("merchant") or None,
@@ -1955,17 +1974,17 @@ class ReturnEntry:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ReturnEntry:
         """Parse a serialised return."""
-        created = dt_from_str(data.get("created")) or dt_util.utcnow()
+        created = stored_dt(data.get("created")) or dt_util.utcnow()
         origins = [ReturnOrigin.from_dict(item) for item in data.get("origins", ())]
         return cls(
             id=str(data["id"]),
             created=created,
-            updated=dt_from_str(data.get("updated")) or created,
+            updated=stored_dt(data.get("updated")) or created,
             origins={origin.message: origin for origin in origins},
             private=bool(data.get("private", False)),
-            archived=dt_from_str(data.get("archived")),
-            picked_up=dt_from_str(data.get("picked_up")),
-            reopened=dt_from_str(data.get("reopened")),
+            archived=stored_dt(data.get("archived")),
+            picked_up=stored_dt(data.get("picked_up")),
+            reopened=stored_dt(data.get("reopened")),
         )
 
 
@@ -1988,17 +2007,59 @@ SECTIONS: tuple[str, ...] = (
 
 
 def _load_list[T](
-    raw: Any, parse: Callable[[Mapping[str, Any]], T], what: str
+    data: Mapping[str, Any],
+    key: str,
+    parse: Callable[[Mapping[str, Any]], T],
+    what: str,
+    damaged: dict[str, int],
 ) -> list[T]:
+    """Read a stored list, skipping and counting the entries that can't be read.
+
+    The log names the kind of error only: its text could quote stored data.
+    """
+    raw = data.get(key)
     items: list[T] = []
+    if raw is None:
+        return items
     if not isinstance(raw, Iterable) or isinstance(raw, (str, bytes, Mapping)):
+        _LOGGER.warning("Skipping the unreadable stored %s list", what)
+        damaged[key] = damaged.get(key, 0) + 1
         return items
     for entry in raw:
         try:
+            if not isinstance(entry, Mapping):
+                raise TypeError("not an object")
             items.append(parse(entry))
-        except (KeyError, TypeError, ValueError) as err:
-            _LOGGER.warning("Skipping an unreadable stored %s: %s", what, err)
+        except Exception as err:
+            # One damaged entry never stops the load.
+            _LOGGER.warning(
+                "Skipping an unreadable stored %s (%s)", what, type(err).__name__
+            )
+            damaged[key] = damaged.get(key, 0) + 1
     return items
+
+
+# A time in the ISO form Parcels stores: such a string that can't be read is
+# damaged ("month 13"). Free-form sections keep it; their readers ignore it.
+_STORED_TIME = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?"
+)
+_FREE_FORM_SECTIONS = ("engine", "ai", "seventeentrack", "parcelapp", "cursors")
+
+
+def _unreadable_times(value: Any, depth: int = 0) -> int:
+    """Count the stored times in a free-form section that can't be read."""
+    if isinstance(value, str):
+        return int(
+            _STORED_TIME.fullmatch(value) is not None and dt_from_str(value) is None
+        )
+    if depth >= 32:
+        return 0
+    if isinstance(value, Mapping):
+        return sum(_unreadable_times(item, depth + 1) for item in value.values())
+    if isinstance(value, list):
+        return sum(_unreadable_times(item, depth + 1) for item in value)
+    return 0
 
 
 @dataclass(slots=True)
@@ -2018,6 +2079,9 @@ class ParcelsData:
     seventeentrack: dict[str, Any] = field(default_factory=dict)
     parcelapp: dict[str, Any] = field(default_factory=dict)
     cursors: dict[str, Any] = field(default_factory=dict)
+    # What the last load found damaged, by section: the entries it skipped, or
+    # in a free-form section the times no reader can use. Not stored.
+    damaged: dict[str, int] = field(default_factory=dict, compare=False, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise everything."""
@@ -2038,22 +2102,37 @@ class ParcelsData:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any] | None) -> ParcelsData:
-        """Parse stored data, skipping unreadable entries."""
-        data = data or {}
+        """Parse stored data, skipping and counting unreadable entries."""
+        if not isinstance(data, Mapping):
+            data = {}
+        damaged: dict[str, int] = {}
 
         def section(name: str) -> dict[str, Any]:
             value = data.get(name)
-            return dict(value) if isinstance(value, Mapping) else {}
+            if not isinstance(value, Mapping):
+                return {}
+            value = dict(value)
+            if count := _unreadable_times(value):
+                _LOGGER.warning(
+                    "Ignoring %d unreadable stored times in %s", count, name
+                )
+                damaged[name] = count
+            return value
 
-        parcels = _load_list(data.get("parcels"), Parcel.from_dict, "parcel")
-        returns = _load_list(data.get("returns"), ReturnEntry.from_dict, "return")
-        orders = _load_list(data.get("orders"), Order.from_dict, "order")
-        messages = _load_list(data.get("messages"), MessageRecord.from_dict, "e-mail")
-        review = _load_list(data.get("review"), ReviewItem.from_dict, "review item")
-        filtered = _load_list(
-            data.get("filtered"), FilteredItem.from_dict, "filtered item"
+        parcels = _load_list(data, "parcels", Parcel.from_dict, "parcel", damaged)
+        returns = _load_list(data, "returns", ReturnEntry.from_dict, "return", damaged)
+        orders = _load_list(data, "orders", Order.from_dict, "order", damaged)
+        messages = _load_list(
+            data, "messages", MessageRecord.from_dict, "e-mail", damaged
         )
-        senders = _load_list(data.get("senders"), SenderPrefs.from_dict, "sender")
+        review = _load_list(
+            data, "review", ReviewItem.from_dict, "review item", damaged
+        )
+        filtered = _load_list(
+            data, "filtered", FilteredItem.from_dict, "filtered item", damaged
+        )
+        senders = _load_list(data, "senders", SenderPrefs.from_dict, "sender", damaged)
+        free_form = {name: section(name) for name in _FREE_FORM_SECTIONS}
         return cls(
             parcels={parcel.id: parcel for parcel in parcels},
             returns={entry.id: entry for entry in returns},
@@ -2062,11 +2141,8 @@ class ParcelsData:
             review={item.id: item for item in review},
             filtered={item.id: item for item in filtered},
             senders={prefs.domain: prefs for prefs in senders},
-            engine=section("engine"),
-            ai=section("ai"),
-            seventeentrack=section("seventeentrack"),
-            parcelapp=section("parcelapp"),
-            cursors=section("cursors"),
+            **free_form,
+            damaged=damaged,
         )
 
     def sender(self, domain: str) -> SenderPrefs:

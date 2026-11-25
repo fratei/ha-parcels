@@ -26,6 +26,7 @@ from custom_components.parcels.models import (
     SenderPrefs,
     Source,
     Suggestion,
+    dt_from_str,
     known_merchant_name,
     merchant_display,
     merchant_key,
@@ -821,6 +822,72 @@ def test_unreadable_entries_are_skipped(caplog: pytest.LogCaptureFixture) -> Non
     assert loaded.orders == {}
     assert "unreadable stored parcel" in caplog.text
     assert ParcelsData.from_dict(None) == ParcelsData()
+
+
+@pytest.mark.parametrize("damaged", [None, "garbage", ["a", "list"], 42])
+def test_an_entry_that_is_not_an_object_is_skipped(damaged: object) -> None:
+    """Any damaged entry is skipped, and counted for diagnostics."""
+    stored = _full_data().as_dict()
+    stored["parcels"].append(damaged)
+    stored["orders"] = "garbage"
+
+    loaded = ParcelsData.from_dict(stored)
+
+    assert list(loaded.parcels) == ["p_test"]
+    assert loaded.damaged == {"orders": 1, "parcels": 1}
+    assert ParcelsData.from_dict(_full_data().as_dict()).damaged == {}
+
+
+def test_an_impossible_time_skips_only_its_entry(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A well-formed but impossible stored time ("month 13") skips its entry.
+
+    The log says what kind of entry, never the stored value.
+    """
+    stored = _full_data().as_dict()
+    broken = json.loads(json.dumps(stored["parcels"][0]))
+    broken["id"] = "p_broken"
+    broken["created"] = "2026-13-02T08:00:00+00:00"
+    stored["parcels"].append(broken)
+    stored["messages"][0]["received"] = "2026-11-02T25:00:00+00:00"
+
+    with caplog.at_level(logging.WARNING):
+        loaded = ParcelsData.from_dict(stored)
+
+    assert list(loaded.parcels) == ["p_test"]
+    assert loaded.messages == {}
+    assert loaded.damaged == {"messages": 1, "parcels": 1}
+    assert "unreadable stored parcel" in caplog.text
+    assert "2026-13-02" not in caplog.text
+    assert "05212345678901" not in caplog.text
+
+
+def test_impossible_times_in_free_form_sections_are_counted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Other modules' sections keep their data; their unreadable times count.
+
+    Their readers take such a time as missing.
+    """
+    stored = _full_data().as_dict()
+    stored["engine"] = {
+        "notifier": {"days": {"2026-11-02": {"started": "2026-13-02T08:00:00"}}},
+        "checks": [{"before": "2026-11-02T09:00:00+00:00"}, "2026-11-31 10:00"],
+    }
+    stored["seventeentrack"] = {"packages": {"RR123456785PT": {"added": "never"}}}
+
+    with caplog.at_level(logging.WARNING):
+        loaded = ParcelsData.from_dict(stored)
+
+    assert loaded.engine == stored["engine"]
+    assert loaded.damaged == {"engine": 2}
+    assert dt_from_str("2026-13-02T08:00:00") is None
+    assert dt_from_str("2026-11-02T09:00:00+00:00") == T0
+    assert "2026-13-02" not in caplog.text
+    assert "Ignoring 2 unreadable stored times in engine" in caplog.text
+    assert loaded.as_dict() == ParcelsData.from_dict(loaded.as_dict()).as_dict()
+    assert "damaged" not in loaded.as_dict()
 
 
 # The sources 0.1.5 can read: it skips a whole parcel with any other.
