@@ -9,6 +9,7 @@ or unload of the hub reloads the mailboxes too.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import (
@@ -45,6 +46,8 @@ from .services import async_setup_services
 from .seventeentrack import SeventeenTrackSync
 from .store import ParcelsStore
 from .websocket import async_setup_websocket
+
+_LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -114,22 +117,26 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def _async_setup_hub(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     engine = ParcelsEngine(hass, entry)
     await engine.async_start()
-    notifier = Notifier(hass, entry, engine)
-    tracker = SeventeenTrackSync(engine)
-    parcelapp = ParcelAppSync(engine)
-    engine.notifier = notifier
-    engine.tracker = tracker
-    engine.parcelapp = parcelapp
-    entry.runtime_data = engine
+    forwarded = False
+    # Whatever fails once the engine runs stops it, and what it started.
     try:
+        notifier = engine.notifier = Notifier(hass, entry, engine)
+        tracker = engine.tracker = SeventeenTrackSync(engine)
+        parcelapp = engine.parcelapp = ParcelAppSync(engine)
+        entry.runtime_data = engine
         await hass.config_entries.async_forward_entry_setups(entry, HUB_PLATFORMS)
+        forwarded = True
         await notifier.async_start()
+        tracker.async_start()
+        parcelapp.async_start()
     except BaseException:
-        await notifier.async_stop()
-        await engine.async_stop()
+        if forwarded:
+            try:
+                await hass.config_entries.async_unload_platforms(entry, HUB_PLATFORMS)
+            except Exception:
+                _LOGGER.exception("Couldn't unload the hub's entities")
+        await _async_stop_engine(engine)
         raise
-    tracker.async_start()
-    parcelapp.async_start()
     entry.async_on_unload(entry.add_update_listener(_async_hub_updated))
     # Mailboxes that gave up waiting for the hub don't wait for their retry.
     for other in hass.config_entries.async_entries(DOMAIN):
@@ -155,6 +162,16 @@ async def _async_unload_hub(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     engine: ParcelsEngine = entry.runtime_data
     if not await hass.config_entries.async_unload_platforms(entry, HUB_PLATFORMS):
         return False
+    await _async_stop_engine(engine)
+    # The mailboxes hold this engine: reload them so they find the next one.
+    for other in hass.config_entries.async_loaded_entries(DOMAIN):
+        if _is_mailbox(other):
+            hass.config_entries.async_schedule_reload(other.entry_id)
+    return True
+
+
+async def _async_stop_engine(engine: ParcelsEngine) -> None:
+    """Stop the engine and the parts built around it."""
     if engine.tracker is not None:
         await engine.tracker.async_stop()
     if engine.parcelapp is not None:
@@ -162,11 +179,6 @@ async def _async_unload_hub(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if engine.notifier is not None:
         await engine.notifier.async_stop()
     await engine.async_stop()
-    # The mailboxes hold this engine: reload them so they find the next one.
-    for other in hass.config_entries.async_loaded_entries(DOMAIN):
-        if _is_mailbox(other):
-            hass.config_entries.async_schedule_reload(other.entry_id)
-    return True
 
 
 # -- Mailboxes -------------------------------------------------------------

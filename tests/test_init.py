@@ -13,8 +13,10 @@ from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.entity_component import DATA_INSTANCES
 from homeassistant.setup import async_setup_component
 import pytest
+from pytest_homeassistant.common import get_scheduled_timer_handles
 
 from custom_components.parcels.const import (
     DOMAIN,
@@ -31,6 +33,7 @@ from custom_components.parcels.dedup import (
 )
 from custom_components.parcels.engine import ParcelsEngine, get_engine
 from custom_components.parcels.models import ParcelsData, Source
+from custom_components.parcels.notifier import Notifier
 from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.store import ParcelsStore
 
@@ -157,6 +160,62 @@ async def test_hub_reload_reloads_mailboxes(hass: HomeAssistant) -> None:
         await hass.async_block_till_done()
 
     assert len(new.data.parcels) == 1
+
+
+@pytest.mark.parametrize("fails", ["building", "starting"])
+async def test_a_failed_hub_setup_stops_its_engine(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture, fails: str
+) -> None:
+    """A hub setup that fails once its engine started stops that engine.
+
+    The entities it set up go too, so the next setup runs the only engine and
+    its entities read that engine.
+    """
+    engines: list[ParcelsEngine] = []
+
+    def new_engine(*args: Any) -> ParcelsEngine:
+        engines.append(ParcelsEngine(*args))
+        return engines[-1]
+
+    def new_notifier(*args: Any) -> Notifier:
+        if fails == "building" and len(engines) == 1:
+            raise RuntimeError("made-up failure")
+        return Notifier(*args)
+
+    real_start = Notifier.async_start
+
+    async def start(notifier: Notifier) -> None:
+        if fails == "starting" and len(engines) == 1:
+            raise RuntimeError("made-up failure")
+        await real_start(notifier)
+
+    hub = add_hub(hass)
+    with (
+        patch("custom_components.parcels.ParcelsEngine", side_effect=new_engine),
+        patch("custom_components.parcels.Notifier", side_effect=new_notifier),
+        patch.object(Notifier, "async_start", autospec=True, side_effect=start),
+    ):
+        await async_setup_component(hass, DOMAIN, {})
+        await hass.async_block_till_done()
+        assert hub.state is ConfigEntryState.SETUP_ERROR
+
+        assert await hass.config_entries.async_reload(hub.entry_id)
+        await hass.async_block_till_done()
+
+    assert hub.state is ConfigEntryState.LOADED
+    first, second = engines
+    assert not first.started
+    assert second.started
+    assert get_engine(hass) is second
+    midnight_jobs = [
+        handle
+        for handle in get_scheduled_timer_handles(hass.loop)
+        if not handle.cancelled() and "ParcelsEngine._async_midnight" in repr(handle)
+    ]
+    assert len(midnight_jobs) == 1
+    sensor = hass.data[DATA_INSTANCES]["sensor"].get_entity("sensor.parcels_in_transit")
+    assert sensor.engine is second
+    assert "has already been setup" not in caplog.text
 
 
 async def test_hub_options_apply_without_reload(hass: HomeAssistant) -> None:
