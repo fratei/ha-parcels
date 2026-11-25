@@ -367,6 +367,45 @@ async def test_expired_cursor_resyncs(
     assert len(engine.data.parcels) == 1
 
 
+async def test_an_email_parcels_forgot_isnt_read_again(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """An old e-mail listed again after Parcels forgot it brings nothing back.
+
+    A mailbox lists an e-mail again when it changes: Graph's delta does when
+    it's marked read. Parcels forgets an e-mail 120 days after reading it,
+    so only the e-mail's age tells it from a new one. Newer mail is read.
+    """
+    client = FakeMailClient()
+    meta = client.add(CTT)
+    _mailbox, coordinator, engine = await _setup(hass, client)
+    assert len(engine.data.parcels) == 1
+
+    # Five months on, the nightly retention at 03:15 in Lisbon purged the
+    # parcel and forgot the e-mail.
+    freezer.move_to("2027-04-16 02:15:00+00:00")
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert engine.data.parcels == {}
+    assert engine.data.messages == {}
+
+    client.pending.append(meta)
+    fresh = load_message(CTT_EXPRESSO, mailbox=ADDRESS)
+    client.add(
+        dataclasses.replace(fresh, received=datetime.now(UTC) - timedelta(days=1)),
+        provider_id="fresh",
+    )
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert coordinator.last_update_success
+    assert [p.state.tracking_number for p in engine.data.parcels.values()] == [
+        CTT_EXPRESSO_NUMBER
+    ]
+    assert client.fetches == [meta.provider_id, "fresh"]
+    assert engine.diagnostics()["old_emails_skipped"] == 1
+
+
 async def test_large_sync_continues(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory
 ) -> None:

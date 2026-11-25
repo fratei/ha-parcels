@@ -21,7 +21,12 @@ from custom_components.parcels.models import (
     Source,
 )
 from custom_components.parcels.parsers.base import Eta
-from custom_components.parcels.store import ParcelsStore, apply_retention
+from custom_components.parcels.store import (
+    FORGOTTEN_KEY,
+    ParcelsStore,
+    apply_retention,
+    forgotten_before,
+)
 
 from .factories import T0, at, contribution
 
@@ -224,6 +229,62 @@ def test_record_retention() -> None:
     assert (result.messages, result.review, result.filtered) == (1, 1, 1)
     assert list(data.messages) == list(data.review) == list(data.filtered) == ["new"]
     assert data.parcels[next(iter(data.parcels))].state.status is ParcelStatus.SHIPPED
+
+
+def _record(data: ParcelsData, name: str, seen: float, received: float | None) -> None:
+    data.messages[name] = MessageRecord(
+        name,
+        at(days=seen),
+        MessageState.APPLIED,
+        {"entry": name},
+        None if received is None else at(days=received),
+        "example.com",
+    )
+
+
+def test_forgotten_emails_leave_a_mark() -> None:
+    """The newest forgotten e-mail's time marks what's been read before.
+
+    A mailbox can list an e-mail again after Parcels forgot it; the engine
+    skips e-mails received at or before the mark.
+    """
+    data = ParcelsData()
+    assert forgotten_before(data) is None
+    _record(data, "old", -130, -135)
+    _record(data, "older", -121, -125)
+    _record(data, "kept", -119, -119)
+
+    apply_retention(data, T0)
+
+    assert list(data.messages) == ["kept"]
+    assert forgotten_before(data) == at(days=-125)
+
+    # The mark never moves back.
+    _record(data, "late", -200, -210)
+    apply_retention(data, T0)
+    assert forgotten_before(data) == at(days=-125)
+
+    # Without a received time, or with one later than when it was read, the
+    # e-mail counts from when it was read.
+    _record(data, "unknown", -120.5, None)
+    apply_retention(data, T0)
+    assert forgotten_before(data) == at(days=-120.5)
+    _record(data, "future", -120.25, 5)
+    apply_retention(data, T0)
+    assert forgotten_before(data) == at(days=-120.25)
+    assert list(data.messages) == ["kept"]
+
+
+def test_a_damaged_mark_is_counted_and_replaced() -> None:
+    """A mark that can't be read skips nothing; the next one replaces it."""
+    data = ParcelsData.from_dict({"engine": {FORGOTTEN_KEY: "2026-13-45T00:00:00"}})
+    assert data.damaged == {"engine": 1}
+    assert forgotten_before(data) is None
+
+    _record(data, "old", -130, -135)
+    apply_retention(data, T0)
+
+    assert forgotten_before(data) == at(days=-135)
 
 
 def test_delivery_codes_go_once_the_parcel_is_done() -> None:

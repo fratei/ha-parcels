@@ -197,7 +197,10 @@ api.parcel.app, which Parcels contacts itself with your API key.
   a parcel was left. For each e-mail it keeps a hash of its ID, the ID your
   mailbox gives it, the sender's domain, when it arrived and what Parcels did
   with it, to recognize the e-mails it has read and to download one again
-  when needed. E-mails in **Needs review** and **Filtered** also keep their
+  when needed, for 120 days. A mailbox can list an old e-mail again, for
+  example when it's marked read: one that arrived no later than the newest
+  e-mail Parcels has forgotten is skipped, so a deleted parcel doesn't come
+  back. E-mails in **Needs review** and **Filtered** also keep their
   sender's address and subject until they leave the list; those removed from
   a parcel keep only the sender's domain. E-mail bodies are never stored or
   logged.
@@ -1587,9 +1590,11 @@ actions:
   include the last 14 days' e-mails counted by day, sender and state, with
   senders other than known or trusted ones counted as "other"
   (`recent_emails`), where working days come from (`working_days`), the
-  refunds ignored (`refunds_dropped`), the check after updating to 0.1.5
-  (`returns_check`), the check that named the shops of Paack's parcels after
-  updating to 0.1.11 (`paack_shop_check`), the check that read Amazon's
+  refunds ignored (`refunds_dropped`), when the newest e-mail Parcels
+  forgot arrived (`forgotten_before`) and the older e-mails it skipped since
+  Home Assistant started (`old_emails_skipped`), the check after updating to
+  0.1.5 (`returns_check`), the check that named the shops of Paack's parcels
+  after updating to 0.1.11 (`paack_shop_check`), the check that read Amazon's
   e-mails again after updating to 0.1.16 (`amazon_ai_check`) and the one
   that read again those whose AI answer you accepted after updating to
   0.1.18 (`amazon_accepted_check`), the shapes of

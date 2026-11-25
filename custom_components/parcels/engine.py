@@ -156,7 +156,7 @@ from .seventeentrack import (
     repair_pickups,
     restore_pickup_places,
 )
-from .store import ParcelsStore, apply_retention
+from .store import FORGOTTEN_KEY, ParcelsStore, apply_retention, forgotten_before
 from .workdays import WorkingDays
 
 if TYPE_CHECKING:
@@ -383,6 +383,8 @@ class ParcelsEngine:
         self._statuses: dict[str, ParcelStatus] = {}
         self._inflight: dict[str, asyncio.Event] = {}
         self._fetch_failures: dict[str, int] = {}
+        # Old e-mails listed again after Parcels forgot them, since the start.
+        self._old_skipped = 0
         self._unsubs: list[CALLBACK_TYPE] = []
         self._started = False
         # Mailboxes being read, and mailboxes with more e-mails to read soon.
@@ -895,6 +897,12 @@ class ParcelsEngine:
         now = dt_util.utcnow()
         if (record := data.messages.get(key)) is not None:
             return self._add_ref(record, mailbox, meta.provider_id, now)
+        forgotten = forgotten_before(data)
+        if forgotten is not None and _aware(meta.received) <= forgotten:
+            # Read and forgotten: reading it again would bring back what
+            # retention removed.
+            self._old_skipped += 1
+            return False
         domain = _domain(meta.sender)
         trusted = data.trusted_domains()
         if self.is_ignored(domain) or not is_candidate(
@@ -2869,6 +2877,8 @@ class ParcelsEngine:
                 1 for parcel in data.parcels.values() if parcel.auto_merged
             ),
             "kept_apart": len(data.engine.get("kept_apart") or ()),
+            "forgotten_before": data.engine.get(FORGOTTEN_KEY),
+            "old_emails_skipped": self._old_skipped,
             "refunds_dropped": int(data.engine.get(REFUNDS_KEY) or 0),
             "returns_check": data.engine.get(RETURNS_CHECK_KEY),
             "paack_shop_check": data.engine.get(PAACK_SHOP_CHECK_KEY),

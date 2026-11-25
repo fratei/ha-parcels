@@ -22,11 +22,16 @@ from .const import (
     UNTRACKED_GRACE,
 )
 from .dedup import parcel_order_keys
-from .models import Parcel, ParcelsData, local_date
+from .models import Parcel, ParcelsData, dt_from_str, dt_to_str, local_date
 
 # Changes come in bursts (a mailbox poll applies several e-mails), so saves
 # are batched.
 SAVE_DELAY = 5
+# In the engine section: the received time of the newest e-mail Parcels has
+# forgotten. A mailbox lists an e-mail again when it changes (Graph's delta
+# does when it's marked read), and once its record is gone only its age
+# tells it apart from a new one.
+FORGOTTEN_KEY = "forgotten_before"
 
 
 def migrate(major: int, minor: int, data: dict[str, Any]) -> dict[str, Any]:
@@ -139,6 +144,17 @@ def _overdue_untracked(parcel: Parcel, activity: datetime, today: date) -> bool:
     return today >= quiet_since + UNTRACKED_GRACE
 
 
+def forgotten_before(data: ParcelsData) -> datetime | None:
+    """Return the time up to which e-mails count as read and forgotten.
+
+    The engine skips e-mails received then or earlier. The mark is the
+    received time of the newest e-mail Parcels forgot, or the time Parcels
+    read it when that's earlier or unknown. It's at least 120 days old, while
+    the lookback is at most 90 days, so no first sync reaches it.
+    """
+    return dt_from_str(data.engine.get(FORGOTTEN_KEY))
+
+
 def apply_retention(
     data: ParcelsData,
     now: datetime,
@@ -163,6 +179,7 @@ def apply_retention(
       pickup) and deleted ``purge_days`` after their last e-mail.
     * Orders without parcels, e-mail hashes after 120 days, "Needs review"
       items after 30 days and "Filtered" items after 14 days are deleted.
+      Deleting an e-mail hash moves the mark of ``forgotten_before`` forward.
     """
     result = RetentionResult()
     archive_after = timedelta(days=archive_days)
@@ -205,10 +222,16 @@ def apply_retention(
         del data.orders[key]
         result.orders += 1
 
+    forgotten = previous = forgotten_before(data)
     for message_hash, record in list(data.messages.items()):
         if now - record.seen >= MESSAGE_HASH_RETENTION:
             del data.messages[message_hash]
             result.messages += 1
+            received = min(record.received or record.seen, record.seen)
+            if forgotten is None or received > forgotten:
+                forgotten = received
+    if forgotten is not None and forgotten != previous:
+        data.engine[FORGOTTEN_KEY] = dt_to_str(forgotten)
     for item_id, item in list(data.review.items()):
         if now - item.created >= REVIEW_RETENTION:
             del data.review[item_id]
