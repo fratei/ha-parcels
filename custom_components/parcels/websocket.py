@@ -16,31 +16,28 @@ import probatio as p
 
 from .const import DOMAIN, SIGNAL_AI_UPDATED, SIGNAL_DATA_UPDATED
 from .engine import ParcelsEngine, get_engine, validation_error
-from .services import clearable
+from .services import TEXT, TEXT_LIST, clearable
 from .views import details, snapshot, viewer_for
 
 # Changes that come in bursts are sent to the page once.
 UPDATE_DELAY = 0.5
-MAX_LIST = 50
-_TEXT = p.All(cv.string, p.Length(max=500))
-_LIST = p.All(cv.ensure_list, [_TEXT], p.Length(max=MAX_LIST))
 
 OVERRIDES_SCHEMA = p.Schema(
     {
-        p.Optional("kind"): _TEXT,
-        p.Optional("merchant"): clearable(_TEXT),
-        p.Optional("carrier"): clearable(_TEXT),
-        p.Optional("tracking_numbers"): _LIST,
-        p.Optional("order_numbers"): _LIST,
+        p.Optional("kind"): TEXT,
+        p.Optional("merchant"): clearable(TEXT),
+        p.Optional("carrier"): clearable(TEXT),
+        p.Optional("tracking_numbers"): TEXT_LIST,
+        p.Optional("order_numbers"): TEXT_LIST,
         p.Optional("eta_start"): clearable(cv.date),
         p.Optional("eta_end"): clearable(cv.date),
         p.Optional("window_start"): clearable(cv.time),
         p.Optional("window_end"): clearable(cv.time),
-        p.Optional("pickup_point"): clearable(_TEXT),
-        p.Optional("pickup_code"): clearable(_TEXT),
-        p.Optional("items"): _LIST,
-        p.Optional("amazon_shipment_id"): clearable(_TEXT),
-        p.Optional("reference"): clearable(_TEXT),
+        p.Optional("pickup_point"): clearable(TEXT),
+        p.Optional("pickup_code"): clearable(TEXT),
+        p.Optional("items"): TEXT_LIST,
+        p.Optional("amazon_shipment_id"): clearable(TEXT),
+        p.Optional("reference"): clearable(TEXT),
     }
 )
 

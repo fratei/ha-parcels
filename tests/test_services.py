@@ -40,6 +40,7 @@ from custom_components.parcels.models import (
     ReturnOrigin,
     Source,
 )
+from custom_components.parcels.services import ADD_SCHEMA, UPDATE_SCHEMA
 
 from .common import (
     OTHER_OWNER,
@@ -286,6 +287,35 @@ async def test_add_bad_input(
     with pytest.raises(p.Invalid):
         await call(hass, "add", data)
     assert not engine.data.parcels
+
+
+@pytest.mark.parametrize(
+    ("action", "data"),
+    [
+        ("add", {"tracking_number": "RR123456785PT", "merchant": "A" * 501}),
+        ("add", {"tracking_number": "A" * 501}),
+        ("update", {"merchant": "A" * 501}),
+        ("update", {"tracking_number": "A" * 501}),
+        ("update", {"pickup_point": "A" * 501}),
+        ("update", {"pickup_code": "A" * 501}),
+    ],
+)
+async def test_action_texts_have_the_page_limits(
+    hass: HomeAssistant, engine: ParcelsEngine, action: str, data: dict[str, Any]
+) -> None:
+    """The actions take texts of at most 500 characters, as the page does."""
+    if action == "update":
+        await call(hass, "add", {"tracking_number": "RR123456785PT"})
+        (parcel,) = engine.data.parcels.values()
+        data = {"parcel_id": parcel.id, **data}
+    before = engine.data.as_dict()
+
+    with pytest.raises(p.Invalid):
+        await call(hass, action, data)
+    assert engine.data.as_dict() == before
+
+    schema = ADD_SCHEMA if action == "add" else UPDATE_SCHEMA
+    schema({key: value[:500] for key, value in data.items()})
 
 
 @pytest.mark.parametrize("number", ["1234", "A" * 41, "RR4829#5732PT"])

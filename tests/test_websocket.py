@@ -53,6 +53,7 @@ from custom_components.parcels.models import (
 )
 from custom_components.parcels.parsers.auth import parse_authentication_results
 from custom_components.parcels.parsers.base import Eta, MailMessage
+from custom_components.parcels.services import MAX_LIST
 from custom_components.parcels.views import (
     SYSTEM_VIEWER,
     Viewer,
@@ -60,7 +61,7 @@ from custom_components.parcels.views import (
     mailbox_owner,
     viewer_for,
 )
-from custom_components.parcels.websocket import MAX_LIST, OVERRIDES_SCHEMA, UPDATE_DELAY
+from custom_components.parcels.websocket import OVERRIDES_SCHEMA, UPDATE_DELAY
 
 from .common import (
     ADDRESS,

@@ -66,25 +66,30 @@ def clearable(validator: Callable[[Any], Any]) -> Callable[[Any], Any]:
 
 
 DOMAIN_PATTERN = r"^(?=.{3,253}$)[a-z0-9-]+(\.[a-z0-9-]+)+$"
+# The limits of every text and list a user may send, here and on the page.
+MAX_TEXT = 500
+MAX_LIST = 50
+TEXT = p.All(cv.string, p.Length(max=MAX_TEXT))
+TEXT_LIST = p.All(cv.ensure_list, [TEXT], p.Length(max=MAX_LIST))
 _CARRIER = p.All(cv.string, p.Lower, p.In(list(CARRIER_NAMES)))
 _IDS = p.All(cv.ensure_list, [cv.string])
 
 ADD_SCHEMA = p.Schema(
     {
-        p.Required(ATTR_TRACKING_NUMBER): cv.string,
+        p.Required(ATTR_TRACKING_NUMBER): TEXT,
         p.Optional(ATTR_CARRIER): clearable(_CARRIER),
-        p.Optional(ATTR_MERCHANT): clearable(cv.string),
+        p.Optional(ATTR_MERCHANT): clearable(TEXT),
         p.Optional(ATTR_PRIVATE, default=False): cv.boolean,
     }
 )
 UPDATE_SCHEMA = p.Schema(
     {
         p.Required(ATTR_PARCEL_ID): cv.string,
-        p.Optional(ATTR_MERCHANT): clearable(cv.string),
+        p.Optional(ATTR_MERCHANT): clearable(TEXT),
         p.Optional(ATTR_CARRIER): clearable(_CARRIER),
-        p.Optional(ATTR_TRACKING_NUMBER): clearable(cv.string),
-        p.Optional("pickup_point"): clearable(cv.string),
-        p.Optional("pickup_code"): clearable(cv.string),
+        p.Optional(ATTR_TRACKING_NUMBER): clearable(TEXT),
+        p.Optional("pickup_point"): clearable(TEXT),
+        p.Optional("pickup_code"): clearable(TEXT),
         p.Optional("eta_start"): clearable(cv.date),
         p.Optional("eta_end"): clearable(cv.date),
         p.Optional("window_start"): clearable(cv.time),
