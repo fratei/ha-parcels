@@ -25,6 +25,7 @@ api.parcel.app, which Parcels contacts itself with your API key.
 - [Local AI](#local-ai)
 - [Entities, actions and events](#entities-actions-and-events)
 - [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap)
 - [Development](#development)
 
 ## What it does
@@ -1771,6 +1772,11 @@ actions:
   (`event_dates`): digits as 9, other words as x but for date words, and a
   last word of up to six letters and dots as written, all without tracking
   numbers or event text.
+
+## Roadmap
+
+What is planned after the 0.1 bug-fix releases, by milestone, is in
+[ROADMAP.md](ROADMAP.md), with an issue for each item.
 
 ## Development
 
