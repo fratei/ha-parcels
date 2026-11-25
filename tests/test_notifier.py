@@ -17,7 +17,7 @@ from homeassistant.components.persistent_notification.helpers import (
     _async_get_or_create_notifications,
 )
 from homeassistant.const import EVENT_CORE_CONFIG_UPDATE, MATCH_ALL
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.util import dt as dt_util, slugify
@@ -144,6 +144,11 @@ def tag_of(parcel: Parcel, gen: int = 1) -> str:
     """Return the tag of a parcel's activity."""
     suffix = f"-{gen}" if gen > 1 else ""
     return f"parcel-{parcel.id.removeprefix('p_')}{suffix}"
+
+
+def news_tag(parcel: Parcel) -> str:
+    """Return the tag of an iPhone's notification of a parcel's news."""
+    return f"{tag_of(parcel)}-news"
 
 
 def link_of(parcel: Parcel) -> str:
@@ -304,6 +309,8 @@ class Env:
             hass.states.async_set(entity_id, "home", {"user_id": user_id})
         self.entries: dict[str, MockConfigEntry] = {}
         self.tokens: dict[str, dict[str, dict[str, Any]]] = {}
+        # Whether iPhones report the token of each activity they start at once.
+        self.auto_token = True
         self.push = FakePush(hass)
         hass.data["mobile_app"] = {
             "config_entries": self.entries,
@@ -349,17 +356,40 @@ class Env:
             identifiers={("mobile_app", f"app-{slug}")},
             name=name,
         )
-        calls = (
-            async_mock_service(
-                self.hass, "notify", f"mobile_app_{slug}", raise_exception=error
-            )
-            if service
-            else []
-        )
+        calls: list[ServiceCall] = []
         phone = Phone(device.id, calls, f"mobile_app_{slug}", f"webhook-{slug}", error)
         if service:
+
+            @callback
+            def handle(call: ServiceCall) -> None:
+                calls.append(call)
+                if error is not None:
+                    raise error
+                if kind == "iphone":
+                    self._activity_reported(phone, call)
+
+            self.hass.services.async_register("notify", phone.service, handle)
             self.push.phones[phone.webhook_id] = phone
         return phone
+
+    def _activity_reported(self, phone: Phone, call: ServiceCall) -> None:
+        """Do what the iPhone app does: report a started activity's token.
+
+        mobile_app starts an activity when it holds no valid token for the tag,
+        and forgets the token when it ends one.
+        """
+        data = call.data.get("data") or {}
+        tag = data.get("tag")
+        if not isinstance(tag, str):
+            return
+        if call.data.get("message") == END:
+            self.untoken(phone, tag)
+            return
+        if not data.get("live_update") or not self.auto_token:
+            return
+        stored = self.tokens.get(phone.webhook_id, {}).get(tag)
+        if stored is None or stored["expires_at"] <= dt_util.utcnow().timestamp():
+            self.token(phone, tag)
 
     def token(self, phone: Phone, tag: str, expires: datetime | None = None) -> None:
         """Store the push token an iPhone sent for one of its activities."""
@@ -3421,6 +3451,8 @@ async def test_diagnostics(env: Env) -> None:
         "activity_starts": 1,
         "running": 1,
         "showing_pin": 0,
+        "dismissed": 0,
+        "waiting_for_token": 0,
         "notifications_sent": 0,
         "orders_in_a_box": 0,
         "return_pickups": 0,
@@ -3578,6 +3610,7 @@ async def test_pin_waits_until_the_activity_can_be_updated(env: Env) -> None:
     activity with an alert that shows the PIN. Restarts before Apple's 8
     hours run out are plain too.
     """
+    env.auto_token = False
     phone = env.phone("Alex iPhone", ALEX)
     env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
     parcel = env.parcel(S.OUT_FOR_DELIVERY, eta=on(), pickup_code="4826")
@@ -3630,6 +3663,7 @@ async def test_a_new_pin_wait_starts_the_cadence_again(env: Env, started: bool) 
     minutes after a while. Another delivery's PIN doesn't wait as long,
     whether its activity starts now or turns out for delivery.
     """
+    env.auto_token = False
     alex = env.phone("Alex iPhone", ALEX)
     sam = env.phone("Sam iPhone", SAM)
     env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
@@ -3647,6 +3681,8 @@ async def test_a_new_pin_wait_starts_the_cadence_again(env: Env, started: bool) 
     await env.goto(at(8))
     assert len(alex.take()) == 1
     assert len(sam.take()) == int(started)
+    if started:
+        env.token(sam, tag)
     for seconds in (5, 20, 80, 380, 680):
         await env.goto(at(8) + timedelta(seconds=seconds))
     assert alex.take() == []
@@ -3693,6 +3729,622 @@ async def test_a_failing_alert_is_tried_less_often(
     assert summary(phone.take()) == [(tag, f"Out for delivery{SEP}DPD")]
     await env.goto(dt_util.utcnow() + timedelta(seconds=5))
     assert summary(phone.take()) == [(tag, f"Out for delivery\nPIN 4826{SEP}DPD")]
+
+
+async def test_a_dismissed_activity_stays_ended(env: Env) -> None:
+    """An activity the user dismissed isn't started again that day.
+
+    Its token is gone, so the restart before Apple's 8 hours run out would
+    start it again, with an alert.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    tag = tag_of(parcel)
+    notifier = await env.start()
+    await env.goto(at(8))
+    assert summary(phone.take()) == [(tag, f"Expected today{SEP}DPD")]
+    await env.goto(at(8, 10))
+    env.untoken(phone, tag)
+
+    await env.goto(at(15, 30))
+    assert phone.take() == []
+    await env.goto(at(22))
+    assert phone.take() == []
+    today = notifier.diagnostics()["today"]
+    assert today["dismissed"] == 1
+    assert today["activity_starts"] == 1
+
+
+async def test_updates_wait_for_the_token_of_a_new_activity(env: Env) -> None:
+    """Updates right after a start wait for the iPhone to send its token.
+
+    Sent before it, each would start a second activity with the same tag.
+    They go as one quiet update once the token is there.
+    """
+    env.auto_token = False
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    tag = tag_of(parcel)
+    notifier = await env.start()
+    await env.goto(at(8))
+    assert summary(phone.take()) == [(tag, f"Expected today{SEP}DPD")]
+
+    env.change(parcel, eta=window(13, 14))
+    await env.settle()
+    env.change(parcel, eta=window(14, 15))
+    await env.settle()
+    assert phone.take() == []
+    assert notifier.diagnostics()["today"]["waiting_for_token"] == 1
+
+    env.token(phone, tag)
+    await env.goto(at(8, 10))
+    assert phone.take() == [
+        activity(
+            tag,
+            "Amazon",
+            f"Expected today 14:00{DASH}15:00{SEP}DPD",
+            f"14{DASH}15h",
+            2,
+            TRUCK,
+            0.5,
+            silent=True,
+        )
+    ]
+    assert notifier.diagnostics()["today"]["waiting_for_token"] == 0
+
+
+@pytest.mark.parametrize("threshold", [1, 9])
+async def test_news_after_a_dismissal_comes_as_notifications(
+    env: Env, threshold: int
+) -> None:
+    """After the user dismisses an activity, key news comes as notifications.
+
+    As on an iPad, each key status comes once, and other changes, an
+    inferred delivery included, send nothing. Combined activities too.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: threshold})
+    parcel = env.parcel(eta=on())
+    other = env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    notifier = await env.start()
+    await env.goto(at(8))
+    started = phone.take()
+    assert len(started) == (1 if threshold == 1 else 2)
+    await env.goto(at(8, 10))
+    for payload in started:
+        env.untoken(phone, payload["data"]["tag"])
+
+    env.change(parcel, S.OUT_FOR_DELIVERY)
+    await env.settle()
+    assert phone.take() == [
+        {
+            "title": "Amazon",
+            "message": f"Out for delivery{SEP}DPD",
+            "data": {"tag": news_tag(parcel), "url": link_of(parcel)},
+        }
+    ]
+
+    env.change(other, eta=window(15, 16))
+    env.infer(other)
+    await env.settle()
+    assert phone.take() == []
+
+    await env.goto(at(13, 40))
+    env.change(parcel, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        {
+            "title": "Amazon",
+            "message": f"Delivered {CHECK} 13:40{SEP}DPD",
+            "data": {"tag": news_tag(parcel), "url": link_of(parcel)},
+        }
+    ]
+    env.changed()
+    await env.settle()
+    assert phone.take() == []
+    today = notifier.diagnostics()["today"]
+    assert today["activity_starts"] == len(started)
+    assert today["running"] == 0
+
+
+@pytest.mark.parametrize("how", ["switch", "recipient"])
+async def test_a_dismissed_activity_comes_back_when_turned_on_again(
+    env: Env, hass: HomeAssistant, how: str
+) -> None:
+    """Turning Live Activities back on, or notifying the iPhone again, starts it.
+
+    Until then, updates don't start the activity the user dismissed.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    entry = env.hub()
+    parcel = env.parcel(eta=on())
+    notifier = await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    await env.goto(at(8, 10))
+    env.untoken(phone, tag_of(parcel))
+    env.change(parcel, eta=window(13, 14))
+    await env.settle()
+    assert phone.take() == []
+
+    if how == "switch":
+        await notifier.async_set_live_activities(False)
+        assert phone.take() == []
+        await notifier.async_set_live_activities(True)
+    else:
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, CONF_NOTIFY_PERSONS: [SAM]}
+        )
+        env.changed()
+        await env.settle()
+        assert phone.take() == []
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, CONF_NOTIFY_PERSONS: [ALEX, SAM]}
+        )
+        env.changed()
+        await env.settle()
+    assert phone.take() == [
+        activity(
+            tag_of(parcel, 2),
+            "Amazon",
+            f"Expected today 13:00{DASH}14:00{SEP}DPD",
+            f"13{DASH}14h",
+            2,
+            TRUCK,
+            0.5,
+        )
+    ]
+
+
+async def test_updates_go_on_when_tokens_cant_be_read(
+    env: Env, hass: HomeAssistant
+) -> None:
+    """When what mobile_app keeps can't be read, activities update as before."""
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    hass.data["mobile_app"]["live_activity_tokens"] = []
+
+    env.change(parcel, S.OUT_FOR_DELIVERY)
+    await env.settle()
+    out = f"Out for delivery{SEP}DPD"
+    assert phone.take() == [
+        activity(tag_of(parcel), "Amazon", out, "Today", 3, OUT, 0.9)
+    ]
+    await env.goto(at(15, 30))
+    assert phone.take() == [
+        end(tag_of(parcel)),
+        activity(tag_of(parcel, 2), "Amazon", out, "Today", 3, OUT, 0.9),
+    ]
+
+
+async def test_news_reaches_an_iphone_that_sends_no_token(env: Env) -> None:
+    """Without the activity's token, key news comes as a notification.
+
+    Updates wait for the token; 5 minutes after the start, news an iPad
+    would get comes as a notification. Once the token comes, the activity
+    catches up quietly.
+    """
+    env.auto_token = False
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    tag = tag_of(parcel)
+    await env.start()
+    await env.goto(at(8))
+    assert summary(phone.take()) == [(tag, f"Expected today{SEP}DPD")]
+
+    await env.goto(at(8, 2))
+    env.change(parcel, S.OUT_FOR_DELIVERY)
+    await env.settle()
+    assert phone.take() == []
+    await env.goto(at(8, 4))
+    assert phone.take() == []
+
+    await env.goto(at(8, 6))
+    out = f"Out for delivery{SEP}DPD"
+    assert phone.take() == [
+        {
+            "title": "Amazon",
+            "message": out,
+            "data": {"tag": news_tag(parcel), "url": link_of(parcel)},
+        }
+    ]
+
+    env.token(phone, tag)
+    await env.goto(at(8, 15))
+    assert phone.take() == [
+        activity(tag, "Amazon", out, "Today", 3, OUT, 0.9, silent=True)
+    ]
+
+
+async def test_activity_dismissed_before_an_upgrade(env: Env) -> None:
+    """An activity stored by an older version, since dismissed, stays ended.
+
+    It had shown a PIN, so its token had come: now it is gone. What it
+    showed isn't notified again; later news is.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(S.OUT_FOR_DELIVERY, eta=on())
+    await env.goto(at(9))
+    record = {
+        "tag": tag_of(parcel),
+        "gen": 1,
+        "title": "Amazon",
+        "started": dt_util.as_utc(at(8)).isoformat(),
+        "running": True,
+        "end_reason": None,
+        "end_at": None,
+        "linger": None,
+        "fp": "made-up",
+        "status": "out_for_delivery",
+        "service": phone.service,
+        "pin": True,
+        "plain": "made-up-plain",
+    }
+    env.host.data.engine[STATE_KEY] = {
+        "version": 1,
+        "live_activities": True,
+        "daily_notification": True,
+        "days": {
+            DAY.isoformat(): {
+                "morning": True,
+                "board": [parcel.id],
+                "returns": [],
+                "combined": [],
+                "activities": {phone.device_id: {parcel.id: record}},
+                "notified": {},
+            }
+        },
+    }
+    notifier = await env.start()
+    assert phone.take() == []
+    assert notifier.diagnostics()["today"]["dismissed"] == 1
+
+    await env.goto(at(13, 40))
+    env.change(parcel, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        {
+            "title": "Amazon",
+            "message": f"Delivered {CHECK} 13:40{SEP}DPD",
+            "data": {"tag": news_tag(parcel), "url": link_of(parcel)},
+        }
+    ]
+
+
+async def test_an_activity_dismissed_right_after_its_start_stays_ended(
+    env: Env,
+) -> None:
+    """An activity the user dismissed before any update stays ended.
+
+    Its token came with the start, so its going is the user's doing.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    tag = tag_of(parcel)
+    notifier = await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    env.untoken(phone, tag)
+    assert notifier.diagnostics()["today"]["waiting_for_token"] == 0
+
+    await env.goto(at(15, 30))
+    assert phone.take() == []
+    assert notifier.diagnostics()["today"]["dismissed"] == 1
+
+
+async def test_a_token_that_comes_after_the_start_then_goes_is_a_dismissal(
+    env: Env,
+) -> None:
+    """A token the iPhone sends seconds after the start, then forgets, ends it.
+
+    Parcels looks for the token soon after the start; from then on, its
+    going means the user dismissed the activity.
+    """
+    env.auto_token = False
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    tag = tag_of(parcel)
+    notifier = await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    env.token(phone, tag)
+    await env.goto(at(8) + timedelta(seconds=5))
+    assert phone.take() == []
+
+    env.untoken(phone, tag)
+    assert notifier.diagnostics()["today"]["waiting_for_token"] == 0
+    await env.goto(at(15, 30))
+    assert phone.take() == []
+    today = notifier.diagnostics()["today"]
+    assert today["dismissed"] == 1
+    assert today["activity_starts"] == 1
+
+
+async def test_news_an_update_showed_isnt_notified_after_a_dismissal(
+    env: Env,
+) -> None:
+    """News the activity already showed isn't notified once it is dismissed."""
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    tag = tag_of(parcel)
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    env.change(parcel, S.OUT_FOR_DELIVERY)
+    await env.settle()
+    assert summary(phone.take()) == [(tag, f"Out for delivery{SEP}DPD")]
+
+    env.untoken(phone, tag)
+    env.changed()
+    await env.settle()
+    assert phone.take() == []
+
+
+@pytest.mark.parametrize("threshold", [1, 9])
+async def test_a_guessed_delivery_is_notified_once_confirmed(
+    env: Env, threshold: int
+) -> None:
+    """A delivery the activity showed only as a guess is news after a dismissal.
+
+    Inferred from another package of the shipment, it showed quietly; once
+    the user has dismissed the activity, the carrier's word comes as a
+    notification.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: threshold})
+    parcel = env.parcel(S.OUT_FOR_DELIVERY, eta=on())
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    started = phone.take()
+    assert len(started) == (1 if threshold == 1 else 2)
+
+    await env.goto(at(13))
+    env.infer(parcel)
+    await env.settle()
+    assert [payload["data"].get("silent") for payload in phone.take()] == [True]
+    for payload in started:
+        env.untoken(phone, payload["data"]["tag"])
+
+    await env.goto(at(13, 10))
+    env.change(parcel, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == [
+        {
+            "title": "Amazon",
+            "message": f"Delivered {CHECK} 13:10{SEP}DPD",
+            "data": {"tag": news_tag(parcel), "url": link_of(parcel)},
+        }
+    ]
+
+
+@pytest.mark.parametrize("restart", [False, True])
+async def test_a_combined_activity_remembers_what_it_showed(
+    env: Env, restart: bool
+) -> None:
+    """News the day's activity showed isn't notified once it is dismissed.
+
+    What it showed is kept across a restart of Home Assistant.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    env.parcel(S.OUT_FOR_DELIVERY, eta=on())
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert [payload["data"]["tag"] for payload in phone.take()] == [COMBINED]
+    if restart:
+        await env.restart()
+        assert phone.take() == []
+
+    env.untoken(phone, COMBINED)
+    env.changed()
+    await env.settle()
+    assert phone.take() == []
+
+
+async def test_news_after_a_dismissal_names_what_a_package_may_hold(
+    env: Env,
+) -> None:
+    """News of a package of the day's activity names the orders it may hold.
+
+    Once the user has dismissed the day's activity, as the package's own
+    activity would.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_ITEM_NAMES: True, CONF_COLLAPSE_THRESHOLD: 1})
+    box = env.parcel(eta=on(), carrier="ctt")
+    env.parcel(eta=on(), carrier=None, items=("Desk lamp",))
+    env.parcel(eta=on(), carrier=None, items=("Blue scarf", "Wool hat"))
+    env.parcel(eta=on(), merchant="Zalando", carrier="gls")
+    await env.start()
+    await env.goto(at(8))
+    assert [payload["data"]["tag"] for payload in phone.take()] == [COMBINED]
+    await env.goto(at(8, 10))
+    env.untoken(phone, COMBINED)
+
+    await env.goto(at(10, 42))
+    env.change(box, S.DELIVERED)
+    await env.settle()
+    possibly = f"CTT{SEP}Possibly: Desk lamp (+2){SEP}may hold 2 Amazon orders"
+    assert phone.take() == [
+        {
+            "title": "Amazon",
+            "message": f"Delivered {CHECK} 10:42{SEP}{possibly}",
+            "data": {"tag": news_tag(box), "url": link_of(box)},
+        }
+    ]
+
+
+async def test_an_activity_whose_token_never_came_is_restarted(env: Env) -> None:
+    """An activity the iPhone sent no token for is restarted before 8 hours.
+
+    Nothing says the user dismissed it.
+    """
+    env.auto_token = False
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+
+    await env.goto(at(15, 30))
+    assert phone.take() == [
+        end(tag_of(parcel)),
+        activity(
+            tag_of(parcel, 2),
+            "Amazon",
+            f"Expected today{SEP}DPD",
+            "Today",
+            2,
+            TRUCK,
+            0.5,
+        ),
+    ]
+
+
+async def test_a_token_gone_after_apples_limit_isnt_a_dismissal(env: Env) -> None:
+    """After Apple's 8 hours, a gone token doesn't mean the user dismissed it.
+
+    Apple ended the activity. When Home Assistant was down at its restart
+    time, it starts again once Home Assistant is back.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    tag = tag_of(parcel)
+    notifier = await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    await notifier.async_stop()
+
+    env.freezer.move_to(at(16, 10))
+    env.untoken(phone, tag)
+    env.host.data.engine = json.loads(json.dumps(env.host.data.engine))
+    await env.start()
+    assert phone.take() == [
+        end(tag),
+        activity(
+            tag_of(parcel, 2),
+            "Amazon",
+            f"Expected today{SEP}DPD",
+            "Today",
+            2,
+            TRUCK,
+            0.5,
+        ),
+    ]
+
+
+async def test_turning_live_activities_on_again_revives_only_dismissed_ones(
+    env: Env,
+) -> None:
+    """Turning Live Activities off and on doesn't bring back other ended ones.
+
+    An activity that ended as its parcel moved to another day stays ended
+    when the parcel comes back to today, as it would without the switch.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    notifier = await env.start()
+    await env.goto(at(8))
+    env.change(parcel, eta=on(NEXT_DAY))
+    await env.settle()
+    await env.goto(at(9))
+    assert phone.take()[-1] == end(tag_of(parcel))
+
+    await notifier.async_set_live_activities(False)
+    await notifier.async_set_live_activities(True)
+    assert phone.take() == []
+    env.change(parcel, eta=window(13, 14))
+    await env.settle()
+    assert phone.take() == []
+
+
+async def test_news_as_an_activity_restarts_shows_on_the_new_one(env: Env) -> None:
+    """News that comes as the activity restarts shows on the new activity.
+
+    It isn't notified as well: only a dismissed activity's news is.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+
+    env.freezer.move_to(at(15, 30))
+    env.change(parcel, S.OUT_FOR_DELIVERY)
+    await env.settle()
+    out = f"Out for delivery{SEP}DPD"
+    assert phone.take() == [
+        end(tag_of(parcel)),
+        activity(tag_of(parcel, 2), "Amazon", out, "Today", 3, OUT, 0.9),
+    ]
+
+
+async def test_unreadable_tokens_bring_no_notifications(
+    env: Env, hass: HomeAssistant
+) -> None:
+    """When tokens can't be read, news comes only on the activity.
+
+    Not as a notification too, even when its update fails: it is tried again.
+    """
+    hass.data["mobile_app"]["live_activity_tokens"] = []
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    tag = tag_of(parcel)
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    await env.goto(at(8, 10))
+    assert phone.take() == []
+
+    phone.calls = async_mock_service(
+        hass, "notify", phone.service, raise_exception=HomeAssistantError("down")
+    )
+    env.change(parcel, S.OUT_FOR_DELIVERY)
+    await env.settle()
+    out = f"Out for delivery{SEP}DPD"
+    assert summary(phone.take()) == [(tag, out)]
+
+    phone.calls = async_mock_service(hass, "notify", phone.service)
+    await env.goto(dt_util.utcnow() + timedelta(minutes=5))
+    assert summary(phone.take()) == [(tag, out)]
+
+
+async def test_news_that_cant_be_notified_after_a_dismissal_is_retried(
+    env: Env, hass: HomeAssistant
+) -> None:
+    """News that can't be notified is tried again 5 minutes later."""
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    await env.goto(at(8, 10))
+    env.untoken(phone, tag_of(parcel))
+    env.changed()
+    await env.settle()
+    assert phone.take() == []
+
+    phone.calls = async_mock_service(
+        hass, "notify", phone.service, raise_exception=HomeAssistantError("down")
+    )
+    env.change(parcel, S.OUT_FOR_DELIVERY)
+    await env.settle()
+    assert len(phone.take()) == 1
+
+    phone.calls = async_mock_service(hass, "notify", phone.service)
+    await env.goto(dt_util.utcnow() + timedelta(minutes=5))
+    assert phone.take() == [
+        {
+            "title": "Amazon",
+            "message": f"Out for delivery{SEP}DPD",
+            "data": {"tag": news_tag(parcel), "url": link_of(parcel)},
+        }
+    ]
 
 
 async def test_pin_leaves_no_trace(

@@ -842,7 +842,11 @@ How they behave:
   delivery PIN.
 - Updates are sent only when something changes, and silently unless the
   status changed, as when only the number of orders a package may hold
-  changes.
+  changes. A new activity's updates wait until the iPhone has told Home
+  Assistant that it holds the activity, usually within seconds, and then the
+  latest goes; sent earlier, an update would start a second activity. When
+  that hasn't happened after 5 minutes, the key news comes as notifications
+  meanwhile, as on an iPad.
 - The text says what comes next. A pickup says where and until when, such as
   "Ready at Locker 12 · collect by Wed 24", with the pickup point's name up to
   its first comma. A missed delivery says when and what next: "Missed 11:20 ·
@@ -884,9 +888,18 @@ How they behave:
   the activity still shows, as "Delivered ✓" with its time, and iPads and
   Android phones get their notification.
 - Apple ends activities after 8 hours, so an undelivered parcel's activity,
-  or that of a return pickup still waiting, is restarted after 7.5 hours.
-  The new activity plays the start alert once, because iOS doesn't let a new
-  activity start silently.
+  or that of a return pickup still waiting, is restarted after 7.5 hours,
+  unless you dismissed it. The new activity plays the start alert once,
+  because iOS doesn't let a new activity start silently.
+- An activity you dismiss (swipe away on the lock screen) stays dismissed for
+  the rest of the day: Parcels sends it nothing more and doesn't start it
+  again. Its parcels' key news (out for delivery, ready for pickup, delivered,
+  delivery attempted, problem) then comes to that iPhone as notifications, as
+  on an iPad, except news the activity already showed. A shared activity
+  works the same way for all its packages; a return pickup's activity stays
+  dismissed too, without notifications. Turning the **Live Activities**
+  switch off and on again brings dismissed activities back, as does an iPhone
+  that stops being notified and is notified again.
 - At the cut-off (22:00) the remaining activities end. Undelivered parcels stay
   in the persistent notification.
 - The start time and the cut-off are in Home Assistant's time zone. Change
@@ -949,7 +962,7 @@ devices of the people to notify who may see it:
   later, and the persistent notification says "Return picked up 10:12 ✓".
   To take that back, select **Undo** in its details (until the day is over)
   or call `parcels.undo_return_picked_up`; the activity starts again if it
-  had ended.
+  had ended, unless you had dismissed it.
 - When the shop says that the return arrived, the activity says "Return
   picked up ✓" and ends 30 minutes later. A return whose pickup moves to
   another day, or that's removed, ends at once, and one marked picked up
