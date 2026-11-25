@@ -17,10 +17,12 @@ from custom_components.parcels.dedup import (
     REASON_SAME_REFERENCE,
     Contribution,
     DedupError,
+    accept_suggestion,
     add_owner,
     amazon_shipment_id_counts,
     apply_contribution,
     archive_parcel,
+    dismiss_suggestion,
     find_parcels_by_number,
     fold_known_orders,
     keep_apart,
@@ -28,6 +30,7 @@ from custom_components.parcels.dedup import (
     merge_parcels,
     order_parcels,
     parcel_order_keys,
+    reconcile,
     remove_message,
     restore_cancellations,
     split_parcel,
@@ -1541,3 +1544,228 @@ def test_anchored_contribution() -> None:
     assert shop.parcel_id not in data.parcels
     assert apply_contribution(data, fill, at(hours=3)).parcel_id is None
     assert list(data.parcels) == [other.parcel_id]
+
+
+# --- Guesses and private parcels ------------------------------------------------
+
+
+def _tracked_shop(*, private: bool, owner: str = "person.one") -> Contribution:
+    """The shop's parcel with DPD's number, due on the 5th or 6th."""
+    return contribution(
+        "msg:a#0",
+        carrier="dpd",
+        number=DPD,
+        merchant="Example Shop",
+        eta=_eta(5, 6),
+        owner=owner,
+        private=private,
+    )
+
+
+def _shop_news(
+    origin_id: str = "msg:b#0", *, owner: str = "person.two", private: bool = False
+) -> Contribution:
+    """The shop's news without a number, which only a guess places."""
+    return contribution(
+        origin_id,
+        kind=MailKind.IN_TRANSIT,
+        time=at(hours=3),
+        merchant="example shop",
+        eta=_eta(6),
+        owner=owner,
+        private=private,
+    )
+
+
+@pytest.mark.parametrize("accept", [True, False])
+def test_guess_never_shows_a_private_parcel_to_someone_else(accept: bool) -> None:
+    """Someone else's e-mail isn't guessed into a private parcel: it's suggested.
+
+    Accepting the suggestion shares the parcel, as merging by hand does.
+    """
+    data = ParcelsData()
+    tracked = apply_contribution(data, _tracked_shop(private=True), T0)
+    news = apply_contribution(data, _shop_news(), at(hours=3))
+
+    assert news.created
+    assert news.auto_merged is None
+    assert len(data.parcels) == 2
+    parcel = data.parcels[tracked.parcel_id]
+    assert parcel.private
+    assert parcel.state.owners == ("person.one",)
+    assert parcel.auto_merged is None
+    assert data.engine["held_guesses"] == [
+        [["msg:a#0"], ["msg:b#0"], REASON_SAME_MERCHANT_ETA]
+    ]
+
+    [suggestion] = reconcile(data, at(hours=4)).suggestions
+    assert suggestion.parcel_id == tracked.parcel_id
+    assert suggestion.candidates == (news.parcel_id,)
+    assert suggestion.reason == REASON_SAME_MERCHANT_ETA
+    assert [s.id for s in reconcile(data, at(hours=5)).suggestions] == [suggestion.id]
+
+    if accept:
+        merged = accept_suggestion(
+            data, tracked.parcel_id, str(news.parcel_id), at(hours=6)
+        )
+        assert merged.private
+        assert merged.state.owners == ("person.one", "person.two")
+        assert list(data.parcels) == [tracked.parcel_id]
+    else:
+        dismiss_suggestion(data, tracked.parcel_id, [str(news.parcel_id)])
+        assert len(data.parcels) == 2
+    assert reconcile(data, at(hours=7)).suggestions == []
+    assert "held_guesses" not in data.engine
+
+
+@pytest.mark.parametrize(
+    ("owner", "joins"), [("person.one", True), ("person.two", False)]
+)
+def test_private_mail_is_guessed_only_into_its_owners_parcel(
+    owner: str, joins: bool
+) -> None:
+    """A private e-mail joins a guessed parcel only when it's its owner's."""
+    data = ParcelsData()
+    tracked = apply_contribution(data, _tracked_shop(private=False), T0)
+    news = apply_contribution(data, _shop_news(owner=owner, private=True), at(hours=3))
+
+    assert (news.parcel_id == tracked.parcel_id) is joins
+    assert data.parcels[tracked.parcel_id].private is joins
+    assert ("held_guesses" in data.engine) is not joins
+
+
+def test_guess_into_a_private_parcel_of_its_owner() -> None:
+    """The private parcel's owner's own e-mails are still guessed into it."""
+    data = ParcelsData()
+    tracked = apply_contribution(data, _tracked_shop(private=True), T0)
+    news = apply_contribution(data, _shop_news(owner="person.one"), at(hours=3))
+
+    assert news.parcel_id == tracked.parcel_id
+    assert news.auto_merged == REASON_SAME_MERCHANT_ETA
+    assert "held_guesses" not in data.engine
+
+
+def test_same_number_of_another_carrier_into_a_private_parcel_is_suggested() -> None:
+    """The same number read as another carrier's doesn't join a private parcel."""
+    data = ParcelsData()
+    private = apply_contribution(
+        data, contribution("msg:a#0", carrier="dpd", number=DPD, private=True), T0
+    )
+    other = apply_contribution(
+        data,
+        contribution(
+            "msg:b#0", carrier="gls", number=DPD, owner="person.two", time=at(hours=1)
+        ),
+        at(hours=1),
+    )
+
+    assert other.created
+    assert other.auto_merged is None
+    assert data.engine["held_guesses"] == [
+        [["msg:a#0"], ["msg:b#0"], REASON_SAME_NUMBER]
+    ]
+    [suggestion] = reconcile(data, at(hours=2)).suggestions
+    assert {suggestion.parcel_id, *suggestion.candidates} == {
+        private.parcel_id,
+        other.parcel_id,
+    }
+    assert suggestion.reason == REASON_SAME_NUMBER
+    merged = accept_suggestion(
+        data, suggestion.parcel_id, suggestion.candidates[0], at(hours=3)
+    )
+    assert set(merged.origins) == {"msg:a#0", "msg:b#0"}
+    assert merged.private
+
+
+def test_refused_guess_makes_no_other_guess() -> None:
+    """When the likely parcel is private, the e-mail isn't guessed elsewhere."""
+    data = ParcelsData()
+    private = apply_contribution(data, _tracked_shop(private=True), T0)
+    shop = apply_contribution(data, _shop_news(), at(hours=3))
+    assert shop.created
+    gls = contribution(
+        "msg:c#0",
+        carrier="gls",
+        number=DPD,
+        merchant="Example Shop",
+        eta=_eta(5, 6),
+        owner="person.two",
+        time=at(hours=4),
+    )
+
+    applied = apply_contribution(data, gls, at(hours=4))
+
+    assert applied.created
+    assert applied.parcel_id not in (private.parcel_id, shop.parcel_id)
+    assert data.engine["held_guesses"] == [
+        [["msg:a#0"], ["msg:b#0"], REASON_SAME_MERCHANT_ETA],
+        [["msg:a#0"], ["msg:c#0"], REASON_SAME_NUMBER],
+    ]
+
+    # Without the private parcel, the shop's e-mail is the guess.
+    data = ParcelsData()
+    shop = apply_contribution(data, _shop_news(), at(hours=3))
+    applied = apply_contribution(data, gls, at(hours=4))
+    assert applied.parcel_id == shop.parcel_id
+    assert applied.auto_merged == REASON_SAME_MERCHANT_ETA
+
+
+def test_paack_stem_guesses_no_private_package_of_someone_else() -> None:
+    """The stem's news isn't guessed into the open package when it's private."""
+    data = ParcelsData()
+    done = apply_contribution(
+        data, _paack("msg:p1#0", kind=MailKind.DELIVERED, number=PAACK_ID), T0
+    )
+    package = _paack("msg:p2#0", hours=1, number=f"{SHIPMENT}_2")
+    package.private = True
+    open_ = apply_contribution(data, package, at(hours=1))
+    news = _paack(
+        "msg:p3#0", hours=2, kind=MailKind.OUT_FOR_DELIVERY, reference=SHIPMENT
+    )
+    news.origin.owners = ("person.two",)
+
+    stem = apply_contribution(data, news, at(hours=2))
+
+    assert stem.created
+    assert stem.parcel_id not in (done.parcel_id, open_.parcel_id)
+    assert data.parcels[open_.parcel_id].state.status is S.IN_TRANSIT
+    assert data.engine["held_guesses"] == [
+        [["msg:p2#0"], ["msg:p3#0"], REASON_SAME_REFERENCE]
+    ]
+
+
+def test_new_owner_of_a_private_parcel_doesnt_see_its_guesses() -> None:
+    """An e-mail found in another mailbox takes its parcel's guesses back.
+
+    Its new owner would otherwise see the private e-mails a guess put
+    together with theirs. The guess becomes a suggestion.
+    """
+    data = ParcelsData()
+    private = apply_contribution(data, _tracked_shop(private=True), T0)
+    news = apply_contribution(data, _shop_news(owner="person.one"), at(hours=3))
+    assert news.parcel_id == private.parcel_id
+
+    changed = add_owner(data, "b", "person.two", at(hours=4))
+
+    parcel = data.parcels[private.parcel_id]
+    assert set(parcel.origins) == {"msg:a#0"}
+    assert parcel.state.owners == ("person.one",)
+    assert parcel.auto_merged is None
+    [split] = [p for p in data.parcels.values() if p.id != parcel.id]
+    assert set(split.origins) == {"msg:b#0"}
+    assert split.private
+    assert split.state.owners == ("person.one", "person.two")
+    assert changed == {parcel.id, split.id}
+    assert data.engine["held_guesses"] == [
+        [["msg:a#0"], ["msg:b#0"], REASON_SAME_MERCHANT_ETA]
+    ]
+    [suggestion] = reconcile(data, at(hours=5)).suggestions
+    assert (suggestion.parcel_id, suggestion.candidates) == (parcel.id, (split.id,))
+
+    # A public parcel, or a known owner, keeps its guesses.
+    data = ParcelsData()
+    public = apply_contribution(data, _tracked_shop(private=False), T0)
+    apply_contribution(data, _shop_news(owner="person.one"), at(hours=3))
+    assert add_owner(data, "b", "person.two", at(hours=4)) == {public.parcel_id}
+    assert len(data.parcels) == 1
+    assert add_owner(data, "a", "person.one", at(hours=4)) == set()

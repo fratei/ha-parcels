@@ -66,8 +66,10 @@ api.parcel.app, which Parcels contacts itself with your API key.
   With the [Parcel app](#parcel-app), Parcels undoes a guess about an Amazon
   shipment that Amazon's tracking proves wrong later (see
   [How the day is counted](#how-the-day-is-counted)). When several parcels
-  could match, Parcels asks in **Needs review** instead. Parcels with
-  different tracking numbers are never merged.
+  could match, Parcels asks in **Needs review** instead, and so it does when
+  a guess would show a private parcel to someone else (see
+  [The Parcels page](#the-parcels-page)). Parcels with different tracking
+  numbers are never merged.
 - **Parcels without a tracking number**: when a carrier delivers another
   parcel from the same shop around the expected day, and no e-mail says
   otherwise, the parcel is marked as probably delivered, unless that delivery
@@ -612,8 +614,13 @@ A parcel marked private shows in full only to its owners. Others see
 "Private parcel" on its day, with its status and time window, but not its
 shop, carrier, items, pickup point, the last day to collect it or where it
 was left, and can't open its details. A return of a private parcel
-is private too: others see only "Private return" on its day. The review card,
-with **Needs review** and **Filtered**, shows only to administrators.
+is private too: others see only "Private return" on its day. Parcels never
+guesses that someone else's e-mail or parcel goes with a private parcel, by
+its shop and date for example, since they would then see it: it suggests the
+merge instead to those who can see both, and merging shares the parcel. What
+isn't a guess still joins, such as an e-mail with the parcel's tracking
+number, and shares it too. The review card, with **Needs review** and
+**Filtered**, shows only to administrators.
 
 ### Trusted and ignored senders
 

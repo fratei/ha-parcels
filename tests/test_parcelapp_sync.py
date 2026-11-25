@@ -3107,6 +3107,65 @@ async def test_switch_undo(
         assert back is None
 
 
+@pytest.mark.parametrize(
+    ("options", "owner", "joins"),
+    [
+        (OPTIONS, OWNER, True),
+        (OPTIONS, OTHER_OWNER, False),
+        (NO_IMPORTS, OTHER_OWNER, True),
+    ],
+    ids=["own", "someone_else", "no_import"],
+)
+async def test_switch_keeps_a_private_parcel_apart(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    owner: str,
+    joins: bool,
+) -> None:
+    """A private parcel takes nobody else's delivery: suggested instead.
+
+    Imported deliveries are the Parcel app owner's; others are nobody's.
+    """
+    order = add_parcel(
+        engine,
+        "a",
+        None,
+        carrier=None,
+        kind=MailKind.ORDER,
+        merchant="Amazon",
+        orders=(ORDER,),
+        owner=owner,
+        private=True,
+    )
+
+    await switch(hass, freezer, parcel_app)
+
+    own = holder(engine, CORREOS)
+    assert own is not None
+    assert (own.id == order.id) is joins
+    if joins:
+        assert "held_guesses" not in engine.data.engine
+        return
+    assert engine.data.parcels[order.id].auto_merged is None
+    assert record(engine, CORREOS).get("switch") is None
+    [suggestion] = engine.suggestions
+    assert (suggestion.parcel_id, suggestion.candidates) == (order.id, (own.id,))
+    assert suggestion.reason == "parcel_switch"
+
+    assert engine.accept_suggestion(suggestion.id, own.id) == order.id
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, CORREOS)
+    assert joined is not None
+    assert joined.id == order.id
+    assert joined.private
+    assert set(joined.state.owners) == {OWNER, OTHER_OWNER}
+    assert engine.suggestions == []
+    assert "held_guesses" not in engine.data.engine
+
+
 @pytest.mark.parametrize("options", [OPTIONS, NO_IMPORTS], ids=["import", "no_import"])
 @pytest.mark.parametrize("case", ["one", "two", "listed"])
 async def test_switch_tie_is_final(

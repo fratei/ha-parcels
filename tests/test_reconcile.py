@@ -3560,3 +3560,285 @@ def test_amazon_tracking_keeps_the_named_carrier(
         "contradicted": 0,
         "undone": 0,
     }
+
+
+# --- Guesses and private parcels ------------------------------------------------
+# A guess never puts a private parcel together with someone else's parcel or
+# e-mail: people who can see both get a merge suggestion instead.
+
+SHARING = pytest.mark.parametrize(
+    ("owner", "merged"), [("person.one", True), ("person.two", False)]
+)
+
+
+def _private(contrib: Contribution) -> Contribution:
+    contrib.private = True
+    return contrib
+
+
+def _of(owner: str, contrib: Contribution) -> Contribution:
+    contrib.origin.owners = (owner,)
+    return contrib
+
+
+def _make_private(data: ParcelsData, parcel_id: str, owner: str) -> None:
+    """Make a parcel the private parcel of ``owner``."""
+    parcel = data.parcels[parcel_id]
+    for origin in parcel.origins.values():
+        origin.owners = (owner,)
+    parcel.private = True
+    parcel.touch(parcel.updated)
+
+
+def _offered(
+    data: ParcelsData, now: datetime
+) -> list[tuple[str, tuple[str, ...], str]]:
+    return [
+        (s.parcel_id, s.candidates, s.reason) for s in reconcile(data, now).suggestions
+    ]
+
+
+@SHARING
+def test_order_package_guess_keeps_a_private_package_apart(
+    owner: str, merged: bool
+) -> None:
+    """The package picked by its items isn't someone else's private package."""
+    data = ParcelsData()
+    _apply(data, _amazon("msg:c1#0", ORDER_3, _nov(2, 9), _eta(5), items=[LAMP]))
+    mug = _apply(
+        data,
+        _amazon(
+            "msg:s2#0", ORDER_3, _nov(4, 10, 25), _eta(4), items=[MUG], private=True
+        ),
+        _nov(4, 12),
+    )
+
+    applied = apply_contribution(
+        data,
+        _amazon(
+            "msg:s1#0",
+            ORDER_3,
+            _nov(4, 0, 40),
+            _eta(6),
+            shipment_id="DkSHIP0003",
+            items=[MUG],
+            owner=owner,
+        ),
+        _nov(4, 12),
+    )
+
+    assert (applied.parcel_id == mug) is merged
+    if merged:
+        assert applied.auto_merged == REASON_SAME_ORDER
+        return
+    assert applied.created
+    assert data.engine["held_guesses"] == [
+        [["msg:s2#0"], ["msg:s1#0"], REASON_SAME_ORDER]
+    ]
+    assert _offered(data, _nov(4, 13)) == [
+        (str(applied.parcel_id), (mug,), REASON_SAME_ORDER)
+    ]
+    assert data.parcels[mug].state.amazon_shipment_ids == ()
+
+
+@SHARING
+def test_carrier_mail_of_the_order_keeps_a_private_parcel_apart(
+    owner: str, merged: bool
+) -> None:
+    """A carrier's e-mail naming the order isn't put in someone's private parcel."""
+    data = ParcelsData()
+    shipped = _apply(
+        data,
+        _amazon(
+            "msg:a1#0",
+            ORDER_1,
+            _nov(3, 9),
+            _eta(5),
+            shipment_id="DkSHIP0001",
+            private=True,
+        ),
+    )
+    carrier = contribution(
+        "msg:c1#0",
+        kind=MailKind.IN_TRANSIT,
+        time=_nov(4, 9),
+        carrier="ctt_expresso",
+        number=CTT_1,
+        merchant="Amazon",
+        orders=[ORDER_1],
+        label="cttexpresso.pt",
+        owner=owner,
+    )
+
+    applied = apply_contribution(data, carrier, _nov(4, 9))
+
+    assert (applied.parcel_id == shipped) is merged
+    if merged:
+        assert applied.auto_merged == REASON_SAME_ORDER
+        return
+    assert data.engine["held_guesses"] == [
+        [["msg:a1#0"], ["msg:c1#0"], REASON_SAME_ORDER]
+    ]
+    reconcile(data, _nov(4, 10))
+    assert len(data.parcels) == 2
+    assert data.parcels[shipped].state.tracking_number is None
+
+
+@SHARING
+def test_order_merge_keeps_a_private_parcel_apart(owner: str, merged: bool) -> None:
+    """Two parcels of an order are merged only when the owners may share."""
+    data = ParcelsData()
+    delivered = _apply(
+        data,
+        _amazon(
+            "msg:d1#0",
+            ORDER_1,
+            _nov(5, 15),
+            None,
+            kind=MailKind.DELIVERED,
+            private=True,
+        ),
+        _nov(5, 16),
+    )
+    shipped = _apply(
+        data,
+        _amazon(
+            "msg:s1#0",
+            ORDER_1,
+            _nov(3, 9),
+            _eta(5),
+            shipment_id="DkSHIP0001",
+            items=[POT],
+            owner=owner,
+        ),
+        _nov(5, 16),
+    )
+    assert shipped != delivered
+
+    result = reconcile(data, _nov(5, 16))
+
+    if merged:
+        assert result.removed == {delivered}
+        assert data.parcels[shipped].private
+        return
+    assert not result.removed
+    assert [(s.parcel_id, s.candidates, s.reason) for s in result.suggestions] == [
+        (shipped, (delivered,), REASON_SAME_ORDER)
+    ]
+    assert data.parcels[shipped].state.status is not ParcelStatus.DELIVERED
+
+
+@SHARING
+def test_carrier_delivery_of_the_day_keeps_a_private_parcel_apart(
+    owner: str, merged: bool
+) -> None:
+    """Someone else's order isn't joined to a private delivery of its day."""
+    data = ParcelsData()
+    sync = _nov(4, 13)
+    ctt = _apply(
+        data,
+        _private(_ctt("msg:c1#0", CTT_1, MailKind.OUT_FOR_DELIVERY, _nov(4, 9, 15))),
+        sync,
+    )
+    assert (
+        _apply(
+            data,
+            _private(_ctt("msg:c2#0", CTT_1, MailKind.DELIVERED, _nov(4, 10, 40))),
+            sync,
+        )
+        == ctt
+    )
+    amazon = _apply(
+        data, _amazon("msg:a1#0", ORDER_1, _nov(4, 2, 5), _eta(4), owner=owner), sync
+    )
+    assert amazon != ctt
+
+    result = reconcile(data, sync)
+
+    if merged:
+        assert result.removed == {amazon}
+        return
+    assert not result.removed
+    assert [
+        (s.parcel_id, s.candidates, s.day, s.reason) for s in result.suggestions
+    ] == [(ctt, (amazon,), date(2026, 11, 4), REASON_SAME_MERCHANT_DAY)]
+
+
+@SHARING
+def test_shop_shipment_absorbs_no_private_order_of_someone_else(
+    owner: str, merged: bool
+) -> None:
+    """A shop's tracked shipment doesn't absorb someone else's private order."""
+    data = ParcelsData()
+    order = _apply(data, _private(_shop_order("msg:o1#0", _nov(3, 20, 30))))
+    shipment = _apply(data, _of(owner, _shop_gls("msg:g1#0", GLS[0], _nov(4, 17, 40))))
+    assert shipment != order
+
+    result = reconcile(data, _nov(4, 19))
+
+    if merged:
+        assert result.removed == {order}
+        assert data.parcels[shipment].private
+        return
+    assert not result.removed
+    assert [
+        (s.parcel_id, s.candidates, s.day, s.reason) for s in result.suggestions
+    ] == [(shipment, (order,), None, REASON_SAME_MERCHANT_DOMAIN)]
+
+
+@SHARING
+def test_paack_stem_left_to_a_private_package_is_suggested(
+    owner: str, merged: bool
+) -> None:
+    """The stem joins the one package left only when the owners may share."""
+    data = ParcelsData()
+    one = _apply(
+        data, _private(_paack("msg:p1#0", _nov(3, 8), number=f"{PAACK_STEM}_1"))
+    )
+    _apply(data, _paack("msg:p2#0", _nov(3, 9), number=f"{PAACK_STEM}_2"))
+    stem = _apply(
+        data,
+        _of(
+            owner,
+            _paack(
+                "msg:p3#0",
+                _nov(3, 10),
+                reference=PAACK_STEM,
+                kind=MailKind.OUT_FOR_DELIVERY,
+            ),
+        ),
+    )
+    remove_message(data, "p2", _nov(3, 13))
+
+    result = reconcile(data, _nov(3, 13))
+
+    if merged:
+        assert result.removed == {stem}
+        return
+    assert not result.removed
+    assert [(s.parcel_id, s.candidates, s.reason) for s in result.suggestions] == [
+        (one, (stem,), REASON_SAME_REFERENCE)
+    ]
+
+
+@SHARING
+def test_amazon_tracking_carries_no_private_shipment_of_someone_else(
+    owner: str, merged: bool
+) -> None:
+    """A carrier's package doesn't take someone else's private shipment."""
+    data = ParcelsData()
+    one, two, first, second = _two_paack_boxes(data)
+    _make_private(data, first, owner)
+
+    result = reconcile(data, _jun(10, 22))
+
+    if merged:
+        assert result.removed == {first, second}
+        assert data.parcels[one].private
+        return
+    assert result.removed == {second}
+    assert [(s.parcel_id, s.candidates, s.reason) for s in result.suggestions] == [
+        (one, (first,), REASON_AMAZON_TRACKING)
+    ]
+    assert data.parcels[one].state.amazon_shipment_ids == ()
+    assert data.parcels[two].state.amazon_shipment_ids == (SHIPMENT_2,)

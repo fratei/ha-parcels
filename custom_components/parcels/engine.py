@@ -80,6 +80,7 @@ from .customer_returns import (
 from .dedup import (
     AMAZON_LINKS_KEY,
     AMAZON_REPAIR_KEY,
+    HELD_GUESSES,
     ORDER_FOLD_KEY,
     REPAIR_KEY,
     REPAIR_VERSION,
@@ -1310,6 +1311,11 @@ class ParcelsEngine:
             owner=owners[0] if owners else None,
             confirmed=confirmed,
         ):
+            # Every mailbox's owner at once: a guess must not show a private
+            # parcel to any of them (see dedup.hold_guess()).
+            contribution.origin.owners = tuple(
+                sorted({*contribution.origin.owners, *owners})
+            )
             if (shell := by_origin.get(contribution.origin.id)) is not None:
                 if shell.lost:
                     pid, back = revive_shell(self.data, shell, now)
@@ -1434,6 +1440,9 @@ class ParcelsEngine:
         )
         if contribution is None:
             return None
+        contribution.origin.owners = tuple(
+            sorted({*contribution.origin.owners, *owners})
+        )
         return apply_contribution(self.data, contribution, now).parcel_id
 
     def prefill(self, suggestion: Suggestion | None, domain: str) -> Suggestion | None:
@@ -2977,6 +2986,7 @@ class ParcelsEngine:
                 1 for parcel in data.parcels.values() if parcel.auto_merged
             ),
             "kept_apart": len(data.engine.get("kept_apart") or ()),
+            "held_guesses": len(data.engine.get(HELD_GUESSES) or ()),
             "forgotten_before": data.engine.get(FORGOTTEN_KEY),
             "old_emails_skipped": self._old_skipped,
             "refunds_dropped": int(data.engine.get(REFUNDS_KEY) or 0),

@@ -65,13 +65,16 @@ from ..const import (
     ParcelStatus,
 )
 from ..dedup import (
+    REASON_PARCEL_SWITCH,
     Contribution,
     apply_contribution,
     carrier_family,
     find_parcels_by_number,
     flag_switch,
+    hold_guess,
     join_switched,
     kept_apart_from,
+    may_guess_into,
     number_key_text,
     order_parcels,
     origin_order_keys,
@@ -1352,7 +1355,8 @@ class ParcelAppSync:
           has more than the Parcel app's deliveries;
         - its Amazon delivery left the list before this one appeared, at
           most ``SWITCH_WINDOW`` before;
-        - the user doesn't keep them apart.
+        - the user doesn't keep them apart;
+        - a private parcel is the delivery's owner's: else it's suggested.
         """
         if entry.order is not None:
             return None
@@ -1414,6 +1418,14 @@ class ParcelAppSync:
         if is_generic_title(title, names) or kept_apart_from(
             data, {PARCELAPP_PREFIX + key}, target
         ):
+            return None
+        if not may_guess_into(
+            target, (self.owner,) if self.importing and self.owner else ()
+        ):
+            # A private parcel takes nobody else's delivery: suggested instead.
+            hold_guess(
+                data, target.origins, {PARCELAPP_PREFIX + key}, REASON_PARCEL_SWITCH
+            )
             return None
         return target, min(left)
 

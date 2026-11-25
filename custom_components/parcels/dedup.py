@@ -58,6 +58,13 @@ When the Parcel app switches an Amazon delivery to the carrier's number, its
 sync joins the carrier's delivery to the order's parcel, flagged (see
 :func:`join_switched` and :func:`flag_switch`).
 
+A guess never puts a private parcel together with an e-mail or a parcel of
+someone who isn't one of its owners, who would then see it. The flagged joins
+above, the order's package picked by its items and the Parcel app's switch
+hold such a pair back instead, and the people who may see both parcels get a
+merge suggestion (see :func:`hold_guess`). Keys, and the links that leave no
+choice, still join, and the other side's owners then share the parcel.
+
 :func:`infer_deliveries` then closes parcels without a tracking number whose
 date has passed when the same merchant delivered another parcel then. Shops
 pack several orders in one carrier parcel, so these are marked as inferred,
@@ -184,10 +191,12 @@ _PROBLEMS = frozenset({ParcelStatus.ATTEMPTED, ParcelStatus.EXCEPTION})
 
 # Engine-state keys: pairs of origins the user keeps apart, the version of
 # the one-time repair of stored parcels, what its fourth step changed, how
-# Amazon shipments were linked to carriers' packages (counts only), and how
+# Amazon shipments were linked to carriers' packages (counts only), how
 # many parcels of orders' late e-mails were folded into their order's parcel
-# once (see fold_known_orders()).
+# once (see fold_known_orders()), and the guesses not made because a parcel
+# was private (see hold_guess()).
 KEPT_APART = "kept_apart"
+HELD_GUESSES = "held_guesses"
 REPAIR_KEY = "repair"
 REPAIR_VERSION = 4
 AMAZON_REPAIR_KEY = "amazon_carrier_repaired"
@@ -687,15 +696,15 @@ def _different_items(
 
 def _absorbable(
     data: ParcelsData, origin: Origin, exclude: set[str]
-) -> tuple[set[str], str | None]:
+) -> tuple[set[str], set[str]]:
     """Return, per order of a shipment, the parcel without a number it absorbs.
 
     That's the order's only such parcel, unless it lists other items. Of
-    several, it's the only one with the shipment's items, and the merge is
-    flagged so the user can undo it.
+    several, it's the only one with the shipment's items: a guess, returned
+    apart from the sure ones, which the user can undo.
     """
-    found: set[str] = set()
-    reason: str | None = None
+    sure: set[str] = set()
+    guessed: set[str] = set()
     items = _item_keys(origin.items)
     noise: frozenset[str] = frozenset()
     if items:
@@ -723,10 +732,8 @@ def _absorbable(
             continue
         if len(candidates) != 1 or candidates[0].id in exclude:
             continue
-        found.add(candidates[0].id)
-        if several:
-            reason = REASON_SAME_ORDER
-    return found, reason
+        (guessed if several else sure).add(candidates[0].id)
+    return sure, guessed
 
 
 def _same_order_target(
@@ -1096,6 +1103,18 @@ def apply_contribution(
     targets = set(strong)
     reason: str | None = None
     ambiguous = False
+    # Guesses not made because they would put a private parcel together with
+    # someone else's: the user gets a suggestion instead (see hold_guess()).
+    held: list[tuple[str, str]] = []
+    refused: set[str] = set()
+
+    def allowed(pid: str, why: str) -> bool:
+        if _may_join(data, contribution, targets, pid):
+            return True
+        held.append((pid, why))
+        refused.add(pid)
+        return False
+
     if not targets and weak:
         targets = {_most_recent(data, weak)}
     if (
@@ -1104,19 +1123,40 @@ def apply_contribution(
         and number is not None
         and len(number.number) >= LOOSE_MIN_LENGTH
     ):
-        targets = {_most_recent(data, loose)}
-        reason = REASON_SAME_NUMBER
+        if allowed(pick := _most_recent(data, loose), REASON_SAME_NUMBER):
+            targets = {pick}
+            reason = REASON_SAME_NUMBER
+        else:
+            ambiguous = True
     placed = contribution.anchor is not None and origin.source is Source.PARCELAPP
     if (number or origin.amazon_shipment_id) and not placed:
-        absorbed, absorb_reason = _absorbable(data, origin, targets)
+        absorbed, guessed = _absorbable(data, origin, targets)
         targets |= absorbed
-        targets |= _reference_absorbable(data, origin, targets)
-        if not targets and (same := _same_order_target(data, origin, events)):
-            targets = {same}
+        absorb_reason: str | None = None
+        for pid in sorted(guessed - absorbed):
+            if allowed(pid, REASON_SAME_ORDER):
+                targets.add(pid)
+                absorb_reason = REASON_SAME_ORDER
+            else:
+                ambiguous = True
+        if guessed & absorbed:
             absorb_reason = REASON_SAME_ORDER
+        targets |= _reference_absorbable(data, origin, targets | refused)
+        if (
+            not targets
+            and not ambiguous
+            and (same := _same_order_target(data, origin, events))
+        ):
+            if allowed(same, REASON_SAME_ORDER):
+                targets = {same}
+                absorb_reason = REASON_SAME_ORDER
+            else:
+                ambiguous = True
         reason = reason or absorb_reason
     elif not targets:
         target, reason, ambiguous = _reference_target(data, origin)
+        if target is not None and reason is not None and not allowed(target, reason):
+            target, reason, ambiguous = None, None, True
         if target is None and not ambiguous:
             target = _order_only_target(data, origin, events)
             if target is None and contribution.order_placed is not None:
@@ -1132,6 +1172,7 @@ def apply_contribution(
         and not ambiguous
         and not contribution.attach_only
         and (heuristic := _heuristic_target(data, contribution))
+        and allowed(heuristic, REASON_SAME_MERCHANT_ETA)
     ):
         targets = {heuristic}
         reason = REASON_SAME_MERCHANT_ETA
@@ -1183,9 +1224,62 @@ def apply_contribution(
         # News about an archived parcel that isn't finished brings it back.
         parcel.archived = None
     _record_orders(data, parcel, now, origin.id, contribution.order_placed)
+    for pid, why in held:
+        if pid != parcel.id and (other := data.parcels.get(pid)) is not None:
+            hold_guess(data, other.origins, (origin.id,), why)
     return Applied(
         parcel_id=parcel.id, created=created, merged=merged, auto_merged=reason
     )
+
+
+def _may_share(
+    private: bool,
+    owners: Collection[str],
+    other_private: bool,
+    other_owners: Collection[str],
+) -> bool:
+    """Return True when a guess may put two sides in one parcel.
+
+    A private side takes nothing of someone who isn't one of its owners:
+    their e-mails and parcels would show it to them. What has no owner,
+    such as a parcel added by hand, belongs to nobody else.
+    """
+    mine, theirs = set(owners), set(other_owners)
+    if private and theirs - mine:
+        return False
+    return not (other_private and mine - theirs)
+
+
+def _may_share_parcels(first: Parcel, second: Parcel) -> bool:
+    """Return True when a guess may merge two parcels (see :func:`_may_share`)."""
+    return _may_share(
+        first.private, first.state.owners, second.private, second.state.owners
+    )
+
+
+def may_guess_into(parcel: Parcel, owners: Collection[str]) -> bool:
+    """Return True when a guess may add a public delivery of owners to a parcel.
+
+    See :func:`_may_share`: a private parcel takes nobody else's.
+    """
+    return _may_share(False, owners, parcel.private, parcel.state.owners)
+
+
+def _may_join(
+    data: ParcelsData, contribution: Contribution, targets: Collection[str], pid: str
+) -> bool:
+    """Return True when a guess may add an e-mail to a parcel.
+
+    The e-mail brings the parcels it surely belongs to, ``targets``, along.
+    """
+    private = contribution.private
+    owners = set(contribution.origin.owners)
+    for other_id in targets:
+        if other_id != pid and (other := data.parcels.get(other_id)) is not None:
+            private = private or other.private
+            owners.update(other.state.owners)
+    parcel = data.parcels[pid]
+    return _may_share(private, owners, parcel.private, parcel.state.owners)
 
 
 def _place_undated(
@@ -1306,20 +1400,27 @@ def split_parcel(
     moving = set(origin_ids)
     if (problem := split_problem(parcel, moving)) is not None:
         raise DedupError(problem)
+    new = _split(data, parcel, moving, now)
+    keep_apart(data, parcel, new)
+    return new
 
+
+def _split(
+    data: ParcelsData, parcel: Parcel, moving: Collection[str], now: datetime
+) -> Parcel:
+    """Move origins and their events out of a parcel into a new one."""
     new = Parcel(id=new_id("p"), created=now, updated=now, private=parcel.private)
     for oid in sorted(moving):
         new.origins[oid] = parcel.origins.pop(oid)
     new.events = [event for event in parcel.events if event.origin in moving]
     parcel.events = [event for event in parcel.events if event.origin not in moving]
-    if parcel.auto_merged and parcel.auto_merged.all_origins & moving:
+    if parcel.auto_merged and parcel.auto_merged.all_origins & set(moving):
         parcel.auto_merged = None
     data.parcels[new.id] = new
     parcel.touch(now)
     new.touch(now)
     _record_orders(data, parcel, now)
     _record_orders(data, new, now)
-    keep_apart(data, parcel, new)
     return new
 
 
@@ -1373,6 +1474,28 @@ def _undo_parts(flag: AutoMerge, parcel: Parcel) -> list[set[str]]:
                     taken.add(oid)
                     pending.append(other)
     return parts
+
+
+def _undo_guesses(data: ParcelsData, parcel: Parcel, now: datetime) -> list[Parcel]:
+    """Take a parcel's guesses back, offering them as suggestions instead.
+
+    Like :func:`undo_auto_merge`, but the parts aren't kept apart: each is
+    held as a guess (see :func:`hold_guess`), so the user can still merge it.
+    Returns the parcels split off.
+    """
+    flag = parcel.auto_merged
+    parcel.auto_merged = None
+    parcel.touch(now)
+    if flag is None:
+        return []
+    split: list[Parcel] = []
+    for part in _undo_parts(flag, parcel):
+        if split_problem(parcel, part) is not None:
+            continue
+        new = _split(data, parcel, part, now)
+        hold_guess(data, parcel.origins, new.origins, flag.reason)
+        split.append(new)
+    return split
 
 
 def remove_message(data: ParcelsData, message_hash: str, now: datetime) -> set[str]:
@@ -1566,9 +1689,21 @@ def add_owner(
 ) -> set[str]:
     """Record that an e-mail was also found in another person's mailbox.
 
-    Returns the IDs of the parcels that changed.
+    The e-mail makes them an owner of its parcel. A private parcel's guesses
+    are taken back first, so they don't see what only a guess put there: the
+    owners get a suggestion instead. Returns the IDs of the parcels that
+    changed.
     """
     affected: set[str] = set()
+    for parcel in list(data.parcels.values()):
+        if (
+            parcel.private
+            and parcel.auto_merged is not None
+            and owner not in parcel.state.owners
+            and any(o.message == message_hash for o in parcel.origins.values())
+        ):
+            affected.add(parcel.id)
+            affected.update(new.id for new in _undo_guesses(data, parcel, now))
     for parcel in data.parcels.values():
         changed = False
         for origin in parcel.origins.values():
@@ -1841,6 +1976,150 @@ def kept_apart_from(
     )
 
 
+# --- Guesses held back for privacy ----------------------------------------------
+
+_HELD_REASONS = frozenset(
+    {
+        REASON_SAME_MERCHANT_ETA,
+        REASON_SAME_NUMBER,
+        REASON_SAME_MERCHANT_DAY,
+        REASON_SAME_MERCHANT_DOMAIN,
+        REASON_SAME_ORDER,
+        REASON_SAME_REFERENCE,
+        REASON_AMAZON_TRACKING,
+        REASON_PARCEL_SWITCH,
+    }
+)
+
+
+# A guess held back: the origins of its two sides and the reason.
+type _Held = tuple[frozenset[str], frozenset[str], str]
+
+
+def _held_guesses(data: ParcelsData) -> list[_Held]:
+    """Return the guesses held back."""
+    raw = data.engine.get(HELD_GUESSES)
+    held: list[_Held] = []
+    if not isinstance(raw, list):
+        return held
+    for entry in raw:
+        if not isinstance(entry, list | tuple) or len(entry) != 3:
+            continue
+        first, second, reason = entry
+        if reason not in _HELD_REASONS or not all(
+            isinstance(side, list | tuple) for side in (first, second)
+        ):
+            continue
+        left = frozenset(str(item) for item in first if item)
+        right = frozenset(str(item) for item in second if item)
+        if left and right and not left & right:
+            held.append((left, right, reason))
+    return held
+
+
+def _store_held(data: ParcelsData, held: list[_Held]) -> None:
+    if held:
+        data.engine[HELD_GUESSES] = [
+            [sorted(left), sorted(right), reason] for left, right, reason in held
+        ]
+    else:
+        data.engine.pop(HELD_GUESSES, None)
+
+
+def hold_guess(
+    data: ParcelsData,
+    first_ids: Collection[str],
+    second_ids: Collection[str],
+    reason: str,
+) -> None:
+    """Remember a guess not made because it would join a private parcel.
+
+    A guess never puts a private parcel together with someone else's e-mail
+    or parcel: they would see it. The two sides, stored by origin IDs, are
+    offered as a merge suggestion instead, which only people who may see
+    both get (see :func:`reconcile`).
+    """
+    left, right = frozenset(first_ids), frozenset(second_ids)
+    if not left or not right or left & right:
+        return
+    held: list[_Held] = []
+    for one, two, why in _held_guesses(data):
+        if {one, two} == {left, right}:
+            return
+        if (one & left and two & right) or (one & right and two & left):
+            continue
+        held.append((one, two, why))
+    held.append((left, right, reason))
+    _store_held(data, held)
+
+
+def prune_held_guesses(data: ParcelsData) -> None:
+    """Forget guesses that were merged, kept apart, or can no longer be.
+
+    Each side must still be one parcel, both open and not the same one.
+    """
+    if HELD_GUESSES not in data.engine:
+        return
+    owner = {
+        origin_id: parcel.id
+        for parcel in data.parcels.values()
+        for origin_id in parcel.origins
+    }
+    apart = _apart_checker(data)
+    kept: list[_Held] = []
+    pairs: set[frozenset[str]] = set()
+    for left, right, reason in _held_guesses(data):
+        ones = {owner[oid] for oid in left if oid in owner}
+        twos = {owner[oid] for oid in right if oid in owner}
+        if len(ones) != 1 or len(twos) != 1 or ones == twos:
+            continue
+        first, second = data.parcels[ones.pop()], data.parcels[twos.pop()]
+        pair = frozenset((first.id, second.id))
+        if (
+            pair in pairs
+            or first.archived is not None
+            or second.archived is not None
+            or apart(first, second)
+            or _parcels_conflict(first, second, carried=True, numbers=True)
+        ):
+            continue
+        pairs.add(pair)
+        kept.append(
+            (
+                frozenset(oid for oid in left if oid in owner),
+                frozenset(oid for oid in right if oid in owner),
+                reason,
+            )
+        )
+    _store_held(data, kept)
+
+
+def _suggest_held(data: ParcelsData, result: Reconciled) -> None:
+    """Suggest the guesses held back, unless another suggestion has the pair.
+
+    The parcel with a tracking number is the one the other joins.
+    """
+    owner = {
+        origin_id: parcel.id
+        for parcel in data.parcels.values()
+        for origin_id in parcel.origins
+    }
+    seen = {
+        frozenset((suggestion.parcel_id, candidate))
+        for suggestion in result.suggestions
+        for candidate in suggestion.candidates
+    }
+    for left, right, reason in _held_guesses(data):
+        first = data.parcels[owner[next(iter(left))]]
+        second = data.parcels[owner[next(iter(right))]]
+        if (pair := frozenset((first.id, second.id))) in seen:
+            continue
+        seen.add(pair)
+        if _tracked(second) and not _tracked(first):
+            first, second = second, first
+        result.suggestions.append(_suggestion(first, [second], None, reason))
+
+
 # --- Shops, carriers and their names -------------------------------------------
 
 
@@ -2099,14 +2378,26 @@ def _reported_delivery(parcel: Parcel) -> datetime | None:
     return None
 
 
-def _parcels_conflict(first: Parcel, second: Parcel, *, carried: bool = False) -> bool:
+def _parcels_conflict(
+    first: Parcel, second: Parcel, *, carried: bool = False, numbers: bool = False
+) -> bool:
     """Return True when two parcels can't be the same parcel.
 
     With ``carried``, a carrier's package that carries Amazon shipments may
-    take one more, of another order, or hold another order of the day.
+    take one more, of another order, or hold another order of the day. With
+    ``numbers``, two parcels with the same tracking number, read as two
+    carriers' numbers, may be one.
     """
     one, two = first.state, second.state
-    if one.tracking_number and two.tracking_number:
+    if (
+        one.tracking_number
+        and two.tracking_number
+        and not (
+            numbers
+            and number_key_text(one.tracking_number)
+            == number_key_text(two.tracking_number)
+        )
+    ):
         return True
     holds = carried and (
         (_is_box(first) and _carries(first)) or (_is_box(second) and _carries(second))
@@ -2254,8 +2545,9 @@ def join_switched(
     and the carrier's delivery became a parcel of its own. The merge is
     flagged, so the user can undo it. Not when the user keeps them apart,
     the order's parcel may not take the number (:func:`switch_target_open`),
-    or they can't be one parcel: another order, shipment or shop. Returns
-    True when merged.
+    or they can't be one parcel: another order, shipment or shop. A private
+    parcel and someone else's are only suggested (see :func:`hold_guess`).
+    Returns True when merged.
     """
     target, other = data.parcels.get(target_id), data.parcels.get(other_id)
     if (
@@ -2270,6 +2562,9 @@ def join_switched(
         return False
     shops = {key for key in _shop_keys(other) if not is_carrier_name(key)}
     if shops and shops.isdisjoint(_shop_keys(target)):
+        return False
+    if not _may_share_parcels(target, other):
+        hold_guess(data, target.origins, other.origins, REASON_PARCEL_SWITCH)
         return False
     _auto_merge(data, target, other, REASON_PARCEL_SWITCH, now, Reconciled())
     return True
@@ -2374,6 +2669,9 @@ def _merge_one_by_order(
             and recent(parcel, other)
             and mergeable(parcel, other)
         ):
+            if not _may_share_parcels(other, parcel):
+                hold_guess(data, other.origins, parcel.origins, REASON_SAME_ORDER)
+                continue
             _auto_merge(data, other, parcel, REASON_SAME_ORDER, now, result)
             return True
 
@@ -2407,6 +2705,9 @@ def _merge_one_by_order(
                 parcel.id,
             ),
         )
+        if not _may_share_parcels(target, other):
+            hold_guess(data, target.origins, other.origins, REASON_SAME_ORDER)
+            continue
         _auto_merge(data, target, other, REASON_SAME_ORDER, now, result)
         return True
     return False
@@ -2484,7 +2785,11 @@ def _absorb_by_domain(
         sources = sorted(pid for pid in component if pid not in first_mail)
         target = data.parcels[targets[0]]
         parcels = [data.parcels[pid] for pid in sources]
-        if len(parcels) == 1 and _may_auto_merge(target, parcels[0]):
+        if (
+            len(parcels) == 1
+            and _may_auto_merge(target, parcels[0])
+            and _may_share_parcels(target, parcels[0])
+        ):
             _auto_merge(
                 data, target, parcels[0], REASON_SAME_MERCHANT_DOMAIN, now, result
             )
@@ -3110,7 +3415,9 @@ def _link_amazon_shipments(
         handled.add(shipment.id)
         if len(found) == 1:
             [box] = found
-            if _carry(data, box, shipment, now, result):
+            if _may_share_parcels(box, shipment) and _carry(
+                data, box, shipment, now, result
+            ):
                 made += 1
             elif box.archived is None and shipment.archived is None:
                 result.suggestions.append(
@@ -3235,7 +3542,7 @@ def _pair_by_day(
         ):
             target = data.parcels[targets[0]]
             other = data.parcels[sources[0]]
-            if _may_auto_merge(target, other):
+            if _may_auto_merge(target, other) and _may_share_parcels(target, other):
                 _auto_merge(data, target, other, REASON_SAME_MERCHANT_DAY, now, result)
                 continue
         for target_id in targets:
@@ -3589,7 +3896,7 @@ def _pair_by_reference(
                     found[other.id] = other
         if len(found) == 1:
             [target] = found.values()
-            if _may_auto_merge(target, parcel):
+            if _may_auto_merge(target, parcel) and _may_share_parcels(target, parcel):
                 _auto_merge(data, target, parcel, REASON_SAME_REFERENCE, now, result)
                 continue
         result.suggestions.extend(
@@ -3636,6 +3943,8 @@ def reconcile(
         data, _reconcile_pool(data, start), apart, now, result, undone=undone
     )
     _pair_by_day(data, _reconcile_pool(data, start), apart, now, result, skip=handled)
+    prune_held_guesses(data)
+    _suggest_held(data, result)
     result.changed -= result.removed
     return result
 
@@ -3649,7 +3958,7 @@ def accept_suggestion(
     target, candidate = data.parcels.get(parcel_id), data.parcels.get(candidate_id)
     if target is None or candidate is None:
         raise DedupError("unknown_parcel")
-    if _parcels_conflict(target, candidate, carried=True):
+    if _parcels_conflict(target, candidate, carried=True, numbers=True):
         raise DedupError("cannot_merge")
     return merge_parcels(data, parcel_id, (candidate_id,), now, keep_archived=True)
 
