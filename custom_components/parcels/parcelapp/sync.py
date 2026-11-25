@@ -316,10 +316,12 @@ def _own_shipments(parcel: Parcel) -> set[str]:
 def removable(parcel: Parcel) -> bool:
     """Return True for a parcel made only of Parcel app deliveries.
 
-    The user's own edits of it don't count: they go with it.
+    The user's own edits of it don't count: they go with it. A parcel he
+    added himself is his, as one with e-mails or 17TRACK news is.
     """
     return any(oid.startswith(PARCELAPP_PREFIX) for oid in parcel.origins) and all(
-        oid.startswith(PARCELAPP_PREFIX) or origin.source is Source.MANUAL
+        oid.startswith(PARCELAPP_PREFIX)
+        or (origin.source is Source.MANUAL and not origin.added_by_hand)
         for oid, origin in parcel.origins.items()
     )
 
@@ -1747,8 +1749,9 @@ class ParcelAppSync:
         """Take a delivery out of its parcel; return True when it was.
 
         Only an open parcel made of deliveries loses it: a delivered or
-        archived one keeps its news, as does one with e-mails. The parcel
-        goes with its last delivery, and the user's edits go with it.
+        archived one keeps its news, as does one with e-mails, 17TRACK news
+        or that the user added. The parcel goes with its last delivery, and
+        the user's edits go with it.
         """
         oid = PARCELAPP_PREFIX + key
         holder = self._holder(oid)

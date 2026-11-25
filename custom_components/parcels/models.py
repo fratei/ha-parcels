@@ -561,6 +561,14 @@ class Origin:
     # The marketplace seller that a shop's e-mail names, besides the shop.
     seller: str | None = None
 
+    @property
+    def added_by_hand(self) -> bool:
+        """Return True for the origin of a parcel the user added himself.
+
+        His edits are manual origins too, but never confirmed.
+        """
+        return self.source is Source.MANUAL and self.confirmed
+
     def as_dict(self) -> dict[str, Any]:
         """Serialise the origin."""
         return _compact(

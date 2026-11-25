@@ -2066,6 +2066,87 @@ async def test_email_about_an_import_keeps_it(
     assert set(kept.origins) == {PARCELAPP_PREFIX + NUMBER, "msg:a#0"}
 
 
+@pytest.mark.parametrize("case", ["missing", "import_off", "key_cleared"])
+async def test_parcel_added_by_hand_stays(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    case: str,
+) -> None:
+    """A parcel the user added isn't only in Parcel: it stays, with its news.
+
+    When its delivery leaves the list, imports are turned off or the key is
+    cleared, it's kept as a parcel from e-mails is, with the user's edits.
+    """
+    parcel_id = engine.add_parcel(NUMBER, carrier="ups", owners=(OWNER,))
+    engine.update(parcel_id, {"merchant": "Loja Exemplo", "eta_start": "2026-11-18"})
+    parcel_app.deliveries = [delivery()]
+    await read(hass, freezer, parcel_app)
+    parcel = holder(engine)
+    assert parcel is not None
+    assert parcel.id == parcel_id
+    assert counts(engine) == (1, 1, 0, 0)
+    origins = set(parcel.origins)
+    assert len(origins) == 3
+
+    if case == "missing":
+        parcel_app.deliveries = []
+        await read(hass, freezer, parcel_app)
+        await read(hass, freezer, parcel_app)
+        assert record(engine)["missing"] == 2
+        assert record(engine)["held"] is True
+    elif case == "import_off":
+        await set_options(hass, engine, **{CONF_PARCEL_APP_IMPORT: False})
+        await read(hass, freezer, parcel_app)
+        assert counts(engine) == (1, 1, 0, 0)
+    else:
+        await set_options(hass, engine, **{CONF_PARCEL_APP_KEY: ""})
+        assert engine.data.parcelapp == {}
+
+    kept = engine.data.parcels.get(parcel_id)
+    assert kept is not None
+    assert set(kept.origins) == origins
+    assert kept.state.merchant == "Loja Exemplo"
+    assert kept.state.eta == Eta(
+        start=TODAY + timedelta(days=1), end=TODAY + timedelta(days=1)
+    )
+    assert own_events(kept)
+
+
+@pytest.mark.parametrize("merged", [False, True])
+async def test_edited_import_goes_with_the_edits(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+    merged: bool,
+) -> None:
+    """The user's edits don't make an import his own: they go with it.
+
+    Also when he merged two imports, each with its edits.
+    """
+    parcel_app.deliveries = [delivery()]
+    if merged:
+        parcel_app.deliveries.append(delivery(GLS, code="gls"))
+    await read(hass, freezer, parcel_app)
+    ids = sorted(engine.data.parcels)
+    assert len(ids) == (2 if merged else 1)
+    for parcel_id in ids:
+        engine.update(
+            parcel_id, {"merchant": "Loja Exemplo", "eta_start": "2026-11-18"}
+        )
+    if merged:
+        engine.merge(ids)
+        assert len(engine.data.parcels) == 1
+
+    parcel_app.deliveries = []
+    await read(hass, freezer, parcel_app)
+    await read(hass, freezer, parcel_app)
+
+    assert engine.data.parcels == {}
+
+
 async def test_forgotten_delivery_takes_its_import(
     hass: HomeAssistant,
     freezer: FrozenDateTimeFactory,

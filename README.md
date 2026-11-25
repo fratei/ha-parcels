@@ -456,7 +456,7 @@ entry.
 | Live status from 17TRACK | on | Has effect only when the 17TRACK integration is set up. See [17TRACK](#17track). |
 | Parcel app API key | none | Turns on the [Parcel app](#parcel-app) source; needs Parcel Premium. The Parcel app options below show once a key is entered. Clear it to stop using Parcel. |
 | Parcel app user | none | Whose Parcel account the key belongs to. Deliveries only in Parcel become their parcels. Required when your mailboxes have owners. |
-| Show deliveries only in Parcel | on | Deliveries in Parcel that no e-mail mentions show in Parcels too. When off, Parcel only updates parcels found in e-mails. |
+| Show deliveries only in Parcel | on | Deliveries in Parcel that no e-mail mentions show in Parcels too. When off, Parcel only updates parcels Parcels has from elsewhere, such as e-mails or those you added. |
 | Add new parcels to Parcel | on | Adds the tracking numbers of new parcels to your Parcel list. |
 | Add everyone's parcels | off | Also adds the parcels of other people's mailboxes. Shown while adding is on. |
 | Parcels added per day | 10 | 1 to 20. Parcel accepts 20 new deliveries a day, refused ones included. Shown while adding is on. |
@@ -1047,7 +1047,9 @@ guesses described in [What it does](#what-it-does): marked, with **Undo**,
 or asked in **Needs review** when several parcels could match. If a delivery
 leaves your Parcel list before it's delivered, its parcel goes after two
 reads without it, with any changes you made to it. Turn off **Show
-deliveries only in Parcel** and these parcels go at the next read.
+deliveries only in Parcel** and these parcels go at the next read. A parcel
+you added yourself, or one with e-mails or 17TRACK news, never goes this way:
+it stays, with the news Parcel brought.
 
 **When Parcel switches to the carrier's number.** Parcel may stop following
 an Amazon delivery under the order number and follow the carrier's number
@@ -1148,8 +1150,9 @@ newest news wins. 17TRACK also gets the numbers of the parcels that came
 from Parcel, like those of other parcels.
 
 **Turning it off.** Clear the API key in the Parcels options. The parcels
-made only of deliveries from Parcel go, and the news Parcel brought to
-parcels from e-mails stays. The deliveries Parcels added stay in your Parcel
+made only of deliveries from Parcel go. The news Parcel brought to other
+parcels stays: those from e-mails or 17TRACK, and those you added yourself.
+The deliveries Parcels added stay in your Parcel
 list. To read without adding, turn off **Add new parcels to Parcel**.
 
 ## Local AI

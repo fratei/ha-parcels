@@ -75,7 +75,7 @@
           "parcel_app_add": "Sends the tracking number, the carrier, the shop's name and Home Assistant's language, never item names or e-mails. Private parcels are never sent.",
           "parcel_app_daily": "Parcel accepts at most 20 new deliveries a day, refused ones included.",
           "parcel_app_everyone": "Also add the parcels from other people's mailboxes. When off, only the Parcel app user's parcels are added.",
-          "parcel_app_import": "Deliveries in Parcel that no e-mail mentions show here too. When off, Parcel only updates parcels found in e-mails.",
+          "parcel_app_import": "Deliveries in Parcel that no e-mail mentions show here too. When off, Parcel only updates parcels Parcels has from elsewhere, such as e-mails or those you added.",
           "parcel_app_key": "Reads your deliveries from the Parcel app and adds new tracking numbers to it. Needs Parcel Premium; make the key at web.parcelapp.net. Leave empty to stop using Parcel.",
           "parcel_app_owner": "The person whose Parcel account the key belongs to. Deliveries from Parcel become their parcels.",
           "parcel_app_postcode": "Sent only for carriers that Parcel can't follow without it, such as Paack. In Portugal, NNNN-NNN.",
