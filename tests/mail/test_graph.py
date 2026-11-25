@@ -321,10 +321,7 @@ async def test_delta_without_delta_link(
     ("response", "error"),
     [
         ({"status": 401}, MailAuthError),
-        (
-            {"status": 403, "json": {"error": {"code": "ErrorAccessDenied"}}},
-            MailAuthError,
-        ),
+        ({"status": 403, "json": {"error": {"code": "ErrorAccessDenied"}}}, MailError),
         ({"status": 404}, MailNotFound),
         ({"status": 500, "json": {"error": {"message": SECRET}}}, MailServerError),
         ({"status": 503, "text": f"<p>{SECRET}</p>"}, MailServerError),
@@ -349,6 +346,23 @@ async def test_request_errors(
 
     assert type(exc_info.value) is error
     assert SECRET not in str(exc_info.value)
+
+
+async def test_list_refused(
+    graph_client: GraphClient, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A refusal to list the mailbox asks to sign in again.
+
+    A refusal to download one e-mail concerns only that e-mail.
+    """
+    aioclient_mock.get(
+        INBOX_DELTA, status=403, json={"error": {"code": "ErrorAccessDenied"}}
+    )
+
+    with pytest.raises(MailError) as exc_info:
+        await graph_client.async_sync(None, lookback=LOOKBACK, folders=["inbox"])
+
+    assert type(exc_info.value) is MailAuthError
 
 
 async def test_fetch_unparseable(
@@ -397,7 +411,7 @@ async def test_token_errors_propagate(
 ) -> None:
     """A refused token refresh surfaces before any request is made."""
 
-    async def async_refused_token() -> str:
+    async def async_refused_token(rejected: str | None = None) -> str:
         raise MailAuthError("refused")
 
     client = GraphClient(

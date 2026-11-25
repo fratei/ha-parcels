@@ -32,7 +32,9 @@ REQUEST_TIMEOUT = 30.0
 # Bodies above this size are parsed in an executor thread.
 OFFLOAD_PARSE_BYTES = 256 * 1024
 
-type TokenGetter = Callable[[], Awaitable[str]]
+# Returns the access token. Called with a token the API rejected, it returns
+# a refreshed one.
+type TokenGetter = Callable[[str | None], Awaitable[str]]
 type QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
 
 
@@ -151,10 +153,39 @@ class ApiClient:
         *,
         params: QueryParams | None = None,
         headers: Mapping[str, str] | None = None,
+        per_message: bool = False,
     ) -> dict[str, Any]:
-        """GET a JSON object and map failures to mail errors."""
+        """GET a JSON object and map failures to mail errors.
+
+        A token the API rejects before it expires (revoked, or a clock out of
+        step) is refreshed once and the request made again. ``per_message``
+        marks a request for one e-mail, whose refusal concerns that e-mail.
+        """
         request_url = url if isinstance(url, URL) else build_url(url, params)
-        token = await self._get_token()
+        token = await self._get_token(None)
+        try:
+            return await self._async_request(
+                request_url, token, headers, per_message=per_message
+            )
+        except _TokenRejected:
+            pass
+        token = await self._get_token(token)
+        try:
+            return await self._async_request(
+                request_url, token, headers, per_message=per_message
+            )
+        except _TokenRejected as err:
+            raise MailAuthError(str(err)) from None
+
+    async def _async_request(
+        self,
+        request_url: URL,
+        token: str,
+        headers: Mapping[str, str] | None,
+        *,
+        per_message: bool,
+    ) -> dict[str, Any]:
+        """GET a JSON object with ``token``."""
         request_headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
@@ -166,11 +197,18 @@ class ApiClient:
                 self._session.get(request_url, headers=request_headers) as response,
             ):
                 if response.status >= HTTPStatus.BAD_REQUEST:
-                    raise self._status_error(
+                    error = self._status_error(
                         response.status,
                         await _async_error_codes(response),
                         response.headers,
+                        per_message=per_message,
                     )
+                    if (
+                        response.status == HTTPStatus.UNAUTHORIZED
+                        and type(error) is MailAuthError
+                    ):
+                        raise _TokenRejected(str(error))
+                    raise error
                 body = await response.read()
         except MailError:
             raise
@@ -187,7 +225,12 @@ class ApiClient:
         return data
 
     def _status_error(
-        self, status: int, codes: frozenset[str], headers: Mapping[str, str]
+        self,
+        status: int,
+        codes: frozenset[str],
+        headers: Mapping[str, str],
+        *,
+        per_message: bool = False,
     ) -> MailError:
         """Return the mail error for an HTTP error status."""
         lowered = {code.lower() for code in codes}
@@ -200,6 +243,8 @@ class ApiClient:
             status == HTTPStatus.FORBIDDEN and lowered & self.rate_limit_codes
         ):
             return MailRateLimited(parse_retry_after(headers.get("Retry-After")))
+        if status == HTTPStatus.FORBIDDEN and per_message:
+            return MailError(detail)
         if status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
             return MailAuthError(detail)
         if status == HTTPStatus.NOT_FOUND:
@@ -209,6 +254,10 @@ class ApiClient:
         if status >= HTTPStatus.INTERNAL_SERVER_ERROR:
             return MailServerError(detail)
         return MailError(detail)
+
+
+class _TokenRejected(MailAuthError):
+    """The API rejected the access token (HTTP 401)."""
 
 
 _CODE_CHARS = frozenset(

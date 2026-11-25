@@ -329,6 +329,7 @@ class GmailClient(ApiClient):
                     ("format", "metadata"),
                     *(("metadataHeaders", name) for name in METADATA_HEADERS),
                 ],
+                per_message=True,
             )
         except MailNotFound:
             return None
@@ -368,6 +369,7 @@ class GmailClient(ApiClient):
         item = await self.async_get_json(
             f"{GMAIL_URL}/messages/{quote(provider_id, safe='')}",
             params={"format": "raw"},
+            per_message=True,
         )
         raw = item.get("raw")
         if not isinstance(raw, str) or not raw:

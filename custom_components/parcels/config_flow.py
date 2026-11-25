@@ -397,7 +397,9 @@ class ParcelsFlowHandler(
             provider = provider_from_client_id(getattr(self.flow_impl, "client_id", ""))
         access_token = str(data["token"]["access_token"])
 
-        async def async_get_token() -> str:
+        async def async_get_token(rejected: str | None = None) -> str:
+            if rejected is not None:
+                raise MailAuthError("the new token was rejected")
             return access_token
 
         client = create_client(

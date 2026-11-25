@@ -23,7 +23,7 @@ NOW = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
 LOOKBACK_START = NOW - LOOKBACK
 
 
-async def async_get_token() -> str:
+async def async_get_token(rejected: str | None = None) -> str:
     """Return a fixed access token."""
     return ACCESS_TOKEN
 

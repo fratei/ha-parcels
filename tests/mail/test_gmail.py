@@ -587,8 +587,17 @@ async def test_fetch_unparseable(
 
 @pytest.mark.parametrize(
     ("response", "error"),
-    [({"status": 500}, MailServerError)],
-    ids=["500"],
+    [
+        ({"status": 500}, MailServerError),
+        (
+            {
+                "status": 403,
+                "json": {"error": {"errors": [{"reason": "forbidden"}]}},
+            },
+            MailError,
+        ),
+    ],
+    ids=["500", "403"],
 )
 async def test_metadata_failure_skips_the_email_after_three_tries(
     gmail_client: GmailClient,
@@ -600,7 +609,8 @@ async def test_metadata_failure_skips_the_email_after_three_tries(
     """An e-mail whose headers can't be read stops the sync three times.
 
     The cursor stays, so the next sync tries it again; the third failure
-    skips it and the sync goes on.
+    skips it and the sync goes on. A refusal for one e-mail isn't the
+    mailbox's: it doesn't ask to sign in again.
     """
     aioclient_mock.get(
         f"{GMAIL}/history",
@@ -632,3 +642,19 @@ async def test_metadata_failure_skips_the_email_after_three_tries(
     assert result.cursor == {"history_id": "1012", "pending": []}
     assert paths(aioclient_mock).count("messages/m5") == 3
     assert "m5" not in caplog.text
+
+
+async def test_fetch_refused(
+    gmail_client: GmailClient, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A refusal to download one e-mail concerns that e-mail, not the mailbox."""
+    aioclient_mock.get(
+        f"{GMAIL}/messages/m1",
+        status=403,
+        json={"error": {"errors": [{"reason": "forbidden"}]}},
+    )
+
+    with pytest.raises(MailError) as exc_info:
+        await gmail_client.async_fetch("m1")
+
+    assert type(exc_info.value) is MailError

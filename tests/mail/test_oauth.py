@@ -7,6 +7,7 @@ endpoints and the mail APIs are mocked.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
 
@@ -19,21 +20,30 @@ from homeassistant.components.application_credentials import (
 from homeassistant.config_entries import SOURCE_REAUTH
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.setup import async_setup_component
 import pytest
 from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
-from pytest_homeassistant.test_util.aiohttp import AiohttpClientMocker
+from pytest_homeassistant.test_util.aiohttp import (
+    AiohttpClientMocker,
+    AiohttpClientMockResponse,
+)
 from yarl import URL
 
 from custom_components.parcels.const import DOMAIN
 from custom_components.parcels.mail import MailClient
-from custom_components.parcels.mail.errors import MailAuthError, MailServerError
+from custom_components.parcels.mail.errors import (
+    MailAuthError,
+    MailError,
+    MailServerError,
+)
 from custom_components.parcels.mail.gmail import GmailClient
 from custom_components.parcels.mail.graph import GraphClient
 from custom_components.parcels.mail.oauth import (
     async_create_entry_client,
     create_client,
+    token_getter,
 )
 
 from ..common import add_mailbox
@@ -57,6 +67,11 @@ GRAPH_ME = "https://graph.microsoft.com/v1.0/me"
 GRAPH_INBOX = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox"
 GMAIL_PROFILE = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 API_URLS = {"microsoft": [GRAPH_ME, GRAPH_INBOX], "google": [GMAIL_PROFILE]}
+API_ANSWERS = {
+    GRAPH_ME: {"mail": ADDRESS},
+    GRAPH_INBOX: {"id": "synthetic-inbox-id"},
+    GMAIL_PROFILE: {"emailAddress": ADDRESS},
+}
 
 
 @pytest.fixture
@@ -82,11 +97,24 @@ def add_expired_mailbox(hass: HomeAssistant, provider: str) -> MockConfigEntry:
 
 def mock_mail_api(aioclient_mock: AiohttpClientMocker, provider: str) -> None:
     """Answer the requests that read the mailbox address."""
-    if provider == "microsoft":
-        aioclient_mock.get(GRAPH_ME, json={"mail": ADDRESS})
-        aioclient_mock.get(GRAPH_INBOX, json={"id": "synthetic-inbox-id"})
-    else:
-        aioclient_mock.get(GMAIL_PROFILE, json={"emailAddress": ADDRESS})
+    for url in API_URLS[provider]:
+        aioclient_mock.get(url, json=API_ANSWERS[url])
+
+
+def refused_once(
+    answer: dict[str, Any],
+) -> Callable[[str, URL, Any], Awaitable[AiohttpClientMockResponse]]:
+    """Return a mock answer that rejects the token of the first request."""
+    calls = 0
+
+    async def respond(method: str, url: URL, data: Any) -> AiohttpClientMockResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return AiohttpClientMockResponse(method, url, status=401)
+        return AiohttpClientMockResponse(method, url, json=answer)
+
+    return respond
 
 
 def requests(aioclient_mock: AiohttpClientMocker) -> list[tuple[str, str]]:
@@ -283,3 +311,85 @@ async def test_entry_client_without_credential(hass: HomeAssistant) -> None:
 
     with pytest.raises(ConfigEntryAuthFailed):
         await async_create_entry_client(hass, entry)
+
+
+@pytest.mark.usefixtures("credentials")
+@pytest.mark.parametrize("provider", ["microsoft", "google"])
+async def test_token_rejected(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, provider: str
+) -> None:
+    """A token the mail API rejects before it expires is refreshed once.
+
+    The request is made again with the new token, and nobody is asked to
+    sign in again.
+    """
+    entry = add_mailbox(hass, provider=provider)
+    aioclient_mock.post(TOKEN_URLS[provider], json=NEW_TOKEN)
+    first, *others = API_URLS[provider]
+    aioclient_mock.get(first, side_effect=refused_once(API_ANSWERS[first]))
+    for url in others:
+        aioclient_mock.get(url, json=API_ANSWERS[url])
+    client = await async_create_entry_client(hass, entry)
+
+    assert await client.async_get_address() == ADDRESS
+    await hass.async_block_till_done()
+
+    assert requests(aioclient_mock) == [
+        ("GET", first),
+        ("POST", TOKEN_URLS[provider]),
+        ("GET", first),
+        *(("GET", url) for url in others),
+    ]
+    assert bearer_tokens(aioclient_mock) == [ACCESS_TOKEN] + [NEW_ACCESS_TOKEN] * len(
+        API_URLS[provider]
+    )
+    assert entry.data["token"]["access_token"] == NEW_ACCESS_TOKEN
+    assert not hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+
+
+@pytest.mark.usefixtures("credentials")
+async def test_new_token_rejected(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A refreshed token the mail API rejects too is an auth error."""
+    entry = add_mailbox(hass, provider="google")
+    aioclient_mock.post(TOKEN_URLS["google"], json=NEW_TOKEN)
+    aioclient_mock.get(GMAIL_PROFILE, status=401)
+    client = await async_create_entry_client(hass, entry)
+
+    with pytest.raises(MailError) as exc_info:
+        await client.async_get_address()
+
+    assert type(exc_info.value) is MailAuthError
+    assert requests(aioclient_mock) == [
+        ("GET", GMAIL_PROFILE),
+        ("POST", TOKEN_URLS["google"]),
+        ("GET", GMAIL_PROFILE),
+    ]
+
+
+@pytest.mark.usefixtures("credentials")
+async def test_rejected_token_already_replaced(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """Only a rejection of the current token refreshes it.
+
+    Requests that were rejected together refresh the token once.
+    """
+    entry = add_mailbox(hass, provider="google")
+    aioclient_mock.post(TOKEN_URLS["google"], json=NEW_TOKEN)
+    implementation = (
+        await config_entry_oauth2_flow.async_get_config_entry_implementation(
+            hass, entry
+        )
+    )
+    get_token = token_getter(
+        config_entry_oauth2_flow.OAuth2Session(hass, entry, implementation)
+    )
+
+    assert await get_token(None) == ACCESS_TOKEN
+    assert await get_token("synthetic-older-access-token") == ACCESS_TOKEN
+    assert aioclient_mock.call_count == 0
+    assert await get_token(ACCESS_TOKEN) == NEW_ACCESS_TOKEN
+    assert await get_token(ACCESS_TOKEN) == NEW_ACCESS_TOKEN
+    assert requests(aioclient_mock) == [("POST", TOKEN_URLS["google"])]

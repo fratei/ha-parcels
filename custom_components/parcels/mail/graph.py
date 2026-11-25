@@ -189,6 +189,7 @@ class GraphClient(ApiClient):
             f"{GRAPH_URL}/me/messages/{quote(provider_id, safe='')}",
             params={"$select": FETCH_SELECT},
             headers=_FETCH_HEADERS,
+            per_message=True,
         )
         body = item.get("body")
         content = body.get("content") if isinstance(body, Mapping) else None

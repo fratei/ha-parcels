@@ -42,12 +42,21 @@ def create_client(
 def token_getter(oauth_session: config_entry_oauth2_flow.OAuth2Session) -> TokenGetter:
     """Return a token source that refreshes the entry's token when needed.
 
-    A refused refresh raises MailAuthError (Home Assistant has then already
-    started reauthentication); other failures, and a refresh that takes
-    longer than a mail request may, raise MailServerError.
+    The token is refreshed when it expires, or when the API rejected it and
+    it hasn't been replaced since. A refused refresh raises MailAuthError
+    (Home Assistant has then already started reauthentication); other
+    failures, and a refresh that takes longer than a mail request may, raise
+    MailServerError.
     """
 
-    async def async_get_token() -> str:
+    async def async_get_token(rejected: str | None = None) -> str:
+        token = oauth_session.token
+        if rejected is not None and token.get("access_token") == rejected:
+            # Home Assistant refreshes only expired tokens: mark it expired.
+            entry = oauth_session.config_entry
+            oauth_session.hass.config_entries.async_update_entry(
+                entry, data={**entry.data, "token": {**token, "expires_at": 0}}
+            )
         try:
             # Home Assistant leaves the refresh's timeout to the caller.
             async with asyncio.timeout(REQUEST_TIMEOUT):
