@@ -21,6 +21,7 @@ import pytest
 from pytest_homeassistant.common import (
     CLIENT_ID,
     MockUser,
+    async_capture_events,
     async_fire_time_changed,
     async_fire_time_changed_exact,
 )
@@ -28,6 +29,9 @@ from pytest_homeassistant.typing import MockHAClientWebSocket, WebSocketGenerato
 
 from custom_components.parcels.const import (
     DOMAIN,
+    EVENT_DELIVERED,
+    EVENT_PARCEL_ADDED,
+    EVENT_STATUS_CHANGED,
     REASON_AI_FILL,
     SIGNAL_AI_UPDATED,
     LeftAt,
@@ -44,6 +48,7 @@ from custom_components.parcels.engine import ParcelsEngine
 from custom_components.parcels.mail.errors import MailError
 from custom_components.parcels.models import (
     PARCELAPP_PREFIX,
+    AutoMerge,
     MessageState,
     Origin,
     ParcelEvent,
@@ -1726,6 +1731,59 @@ async def test_origin_restore(
     assert filtered_id not in data.filtered
     assert not data.parcels
     assert no_errors_logged(caplog)
+
+
+async def test_origin_restore_brings_the_parcel_back(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    sam_ws: MockHAClientWebSocket,
+) -> None:
+    """A removed e-mail, restored, brings its parcel back as it was.
+
+    The same parcel, still private, with the user's edits, the merge to check
+    and the refused delivery; automations don't hear of it as a new parcel.
+    """
+    data = engine.data
+    ((parcel_id, parcel),) = data.parcels.items()
+    (origin_id,) = parcel.origins
+    await call(
+        hass,
+        "update",
+        {"parcel_id": parcel_id, "pickup_point": "Locker 12", "private": True},
+    )
+    parcel.delivery_rejected = True
+    flag = AutoMerge(origin_id, dt_util.utcnow(), REASON_SAME_MERCHANT_DAY)
+    parcel.auto_merged = flag
+    removed = await result(
+        ws, "parcels/origin/remove", parcel_id=parcel_id, origin_id=origin_id
+    )
+    assert not data.parcels
+    events = [
+        async_capture_events(hass, name)
+        for name in (EVENT_PARCEL_ADDED, EVENT_STATUS_CHANGED, EVENT_DELIVERED)
+    ]
+
+    restored = await result(
+        ws, "parcels/review/restore", filtered_id=removed["filtered_id"]
+    )
+    await hass.async_block_till_done()
+
+    assert restored == {"review_id": None, "parcel_ids": [parcel_id]}
+    parcel = data.parcels[parcel_id]
+    assert set(parcel.origins) == {origin_id, f"man:{parcel_id}"}
+    assert (parcel.state.tracking_number, parcel.state.pickup_point) == (
+        CTT_NUMBER,
+        "Locker 12",
+    )
+    assert (parcel.private, parcel.delivery_rejected) == (True, True)
+    assert parcel.auto_merged == flag
+    assert events == [[], [], []]
+    seen = {p["id"]: p for p in (await result(sam_ws, "parcels/list"))["parcels"]}
+    assert seen[parcel_id]["restricted"]
+    key = parcel.origins[origin_id].message
+    assert key is not None
+    assert not data.messages[key].shells
 
 
 async def test_review_senders(

@@ -98,6 +98,8 @@ from .dedup import (
     manual_origin_id,
     mark_delivered,
     merge_parcels,
+    message_outputs,
+    message_shells,
     reconcile,
     remove_message,
     remove_origins,
@@ -105,6 +107,8 @@ from .dedup import (
     remove_return_origins,
     repair_store,
     restore_cancellations,
+    restore_flag,
+    revive_shell,
     split_parcel,
     undo_auto_merge,
     undo_inferred_delivery,
@@ -1064,10 +1068,20 @@ class ParcelsEngine:
         owner: str | None,
         first_sync: bool,
         now: datetime,
+        reread: bool = False,
     ) -> None:
-        """Apply, queue, review, filter or ignore a parsed e-mail."""
+        """Apply, queue, review, filter or ignore a parsed e-mail.
+
+        An e-mail read again (``reread``) keeps its parcels until a new
+        reading replaces them: under review, or while the local AI reads it,
+        they stay as they were.
+        """
         org = organizational_domain(message.sender_domain)
+        if reread:
+            self._clear_lists(record.hash)
         if result.kind is MailKind.NOT_PARCEL and result.confidence >= CONFIDENCE_APPLY:
+            if reread:
+                self.clear_outputs(record.hash, now)
             if is_refund(result):
                 self.drop_refund(record)
             else:
@@ -1075,12 +1089,21 @@ class ParcelsEngine:
             return
         if result.kind is MailKind.CUSTOMER_RETURN:
             self.decide_return(
-                message, verdict, result, record, mailbox=mailbox, owner=owner, now=now
+                message,
+                verdict,
+                result,
+                record,
+                mailbox=mailbox,
+                owner=owner,
+                now=now,
+                reread=reread,
             )
             return
         raw = suggestion_from_result(result)
         if is_confident(result):
             if verdict.verified:
+                if reread:
+                    self.clear_outputs(record.hash, now)
                 self.apply_result(
                     result,
                     record,
@@ -1147,9 +1170,14 @@ class ParcelsEngine:
             )
             record.state = MessageState.QUEUED
             return
-        if raw is None and not result.is_parcel:
+        if (
+            raw is None
+            and not result.is_parcel
+            and not (reread and message_outputs(self.data, record.hash))
+        ):
             # Junk guard: e-mails that matched a keyword but hold nothing
-            # parcel-like stay out of the review list.
+            # parcel-like stay out of the review list. One that is part of a
+            # parcel goes there: the parcel stays until the user decides.
             if not verdict.authenticated:
                 record.state = MessageState.IGNORED
                 return
@@ -1168,14 +1196,18 @@ class ParcelsEngine:
         mailbox: str | None,
         owner: str | None,
         now: datetime,
+        reread: bool = False,
     ) -> None:
         """Add a customer return, or send it to "Needs review".
 
         The local AI doesn't read returns, and a return has nothing for it
-        to fill in. Under review, the pickup day stays in the suggestion.
+        to fill in. Under review, the pickup day stays in the suggestion, and
+        an e-mail read again (``reread``) stays part of its parcels.
         """
         org = organizational_domain(message.sender_domain)
         if verdict.verified and is_confident(result):
+            if reread:
+                self.clear_outputs(record.hash, now)
             self.apply_result(
                 result,
                 record,
@@ -1243,9 +1275,12 @@ class ParcelsEngine:
         A customer return goes to the returns instead. Whatever the e-mail
         said before (as a parcel or as a return) gives way to the result.
         With ``keep_closed``, a parcel put away or closed stays so: the
-        e-mail was read before, so it isn't news.
+        e-mail was read before, so it isn't news. An e-mail read again goes
+        back to the parcels it was part of (its record's shells), which keep
+        their IDs, privacy and flags and stay closed.
         """
         owners = record.owners
+        shells, record.shells = record.shells, ()
         if result.kind is MailKind.CUSTOMER_RETURN:
             moved = remove_parcel_origins(self.data, record.hash, now)
             apply_return(
@@ -1264,6 +1299,7 @@ class ParcelsEngine:
             record.state = MessageState.APPLIED
             return moved
         remove_return_origins(self.data, record.hash, now)
+        by_origin = {oid: shell for shell in shells for oid in shell.origins}
         touched: set[str] = set()
         for contribution in result_contributions(
             result,
@@ -1274,13 +1310,38 @@ class ParcelsEngine:
             owner=owners[0] if owners else None,
             confirmed=confirmed,
         ):
+            if (shell := by_origin.get(contribution.origin.id)) is not None:
+                if shell.lost:
+                    pid, back = revive_shell(self.data, shell, now)
+                    if back and shell.status is not None:
+                        # The same parcel, back: not a new one.
+                        self._statuses.setdefault(pid, shell.status)
+                    contribution.parcel = pid
+                else:
+                    contribution.home = shell.id
+                contribution.private = contribution.private or shell.private
             applied = apply_contribution(
-                self.data, contribution, now, keep_closed=keep_closed
+                self.data,
+                contribution,
+                now,
+                keep_closed=keep_closed or shell is not None,
             )
             if applied.parcel_id is not None:
                 touched.add(applied.parcel_id)
         for owner in owners[1:]:
             touched |= add_owner(self.data, record.hash, owner, now)
+        for shell in shells:
+            if (flag := shell.auto_merged) is not None:
+                holder = next(
+                    (
+                        parcel
+                        for parcel in self.data.parcels.values()
+                        if flag.origin in parcel.origins
+                    ),
+                    None,
+                )
+                if holder is not None:
+                    restore_flag(holder, flag)
         record.state = MessageState.APPLIED
         return touched
 
@@ -1559,7 +1620,6 @@ class ParcelsEngine:
         if suggestion.carrier and suggestion.carrier not in CARRIER_NAMES:
             raise validation_error("unknown_carrier")
         now = dt_util.utcnow()
-        remove_message(data, item.message, now)
         record = data.messages.get(item.message)
         if record is None:
             record = data.messages[item.message] = MessageRecord(
@@ -1570,6 +1630,8 @@ class ParcelsEngine:
                 sender_domain=item.sender_domain,
                 owners=_owners(item.owner),
             )
+        self._keep_shells(item.message)
+        remove_message(data, item.message, now)
         org = organizational_domain(item.sender_domain)
         touched = self.apply_result(
             suggestion_result(suggestion, item.source),
@@ -1625,14 +1687,22 @@ class ParcelsEngine:
         return [parcel_id]
 
     def review_dismiss(self, review_id: str) -> None:
-        """Drop an e-mail from the review list."""
+        """Drop an e-mail from the review list.
+
+        An e-mail read again that is still part of a parcel stays so.
+        """
         item = self._review(review_id)
         del self.data.review[review_id]
         if (
             not item.fill
             and (record := self.data.messages.get(item.message)) is not None
         ):
-            record.state = MessageState.DISMISSED
+            record.state = (
+                MessageState.APPLIED
+                if message_outputs(self.data, item.message)
+                else MessageState.DISMISSED
+            )
+            record.shells = ()
         self.async_changed()
 
     def review_trust_sender(self, review_id: str) -> dict[str, Any]:
@@ -1727,7 +1797,14 @@ class ParcelsEngine:
         hashes.update(self.ai.drop_domain(org))
         for key in hashes:
             if (record := data.messages.get(key)) is not None:
-                record.state = MessageState.IGNORED
+                # One read again that is still part of a parcel stays so, like
+                # the sender's other e-mails already added.
+                record.state = (
+                    MessageState.APPLIED
+                    if message_outputs(data, key)
+                    else MessageState.IGNORED
+                )
+                record.shells = ()
         self.async_changed()
         return org
 
@@ -1795,7 +1872,7 @@ class ParcelsEngine:
             record = data.messages[key] = MessageRecord(
                 hash=key, seen=now, state=MessageState.FILTERED
             )
-        for affected in self._clear_outputs(key, now):
+        for affected in self.clear_outputs(key, now):
             if (left := data.parcels.get(affected)) is not None and set(
                 left.origins
             ) <= {manual_origin_id(left.id)}:
@@ -1840,6 +1917,7 @@ class ParcelsEngine:
     def _dismiss_message(self, key: str) -> None:
         if (record := self.data.messages.get(key)) is not None:
             record.state = MessageState.DISMISSED
+            record.shells = ()
 
     def message_hashes(
         self,
@@ -1863,7 +1941,11 @@ class ParcelsEngine:
         return []
 
     async def async_reprocess(self, key: str, *, use_ai: bool = False) -> None:
-        """Download an e-mail again and decide anew, or send it to the AI."""
+        """Download an e-mail again and decide anew, or send it to the AI.
+
+        Its parcels stay until a new reading replaces them, and then keep
+        their IDs: see ``apply_result``.
+        """
         if use_ai and not self.ai_entity:
             raise validation_error("ai_not_configured")
         data = self.data
@@ -1885,7 +1967,6 @@ class ParcelsEngine:
             )
         verdict, result = read
         now = dt_util.utcnow()
-        self._clear_outputs(key, now)
         owner = record.owners[0] if record.owners else mailbox.owner
         # A refund is dropped as it is, and a return decided as it is: the AI
         # isn't asked about either.
@@ -1907,6 +1988,7 @@ class ParcelsEngine:
                 owner=owner,
                 now=now,
             )
+            self._clear_lists(key)
             self.ai.enqueue(
                 key,
                 received=record.received or now,
@@ -1925,6 +2007,7 @@ class ParcelsEngine:
                 owner=owner,
                 first_sync=False,
                 now=now,
+                reread=True,
             )
         self.async_changed()
 
@@ -2297,7 +2380,7 @@ class ParcelsEngine:
             now = dt_util.utcnow()
             org = organizational_domain(message.sender_domain)
             if reading != "applied":
-                self._clear_outputs(key, now)
+                self.clear_outputs(key, now)
             self.apply_result(
                 result,
                 record,
@@ -2567,7 +2650,7 @@ class ParcelsEngine:
         if is_refund(result) and result.confidence >= CONFIDENCE_APPLY:
             if state is MessageState.NOT_PARCEL:
                 return None
-            self._clear_outputs(key, now)
+            self.clear_outputs(key, now)
             self.drop_refund(record)
             return "refunds"
         if (
@@ -2575,7 +2658,7 @@ class ParcelsEngine:
             and verdict.verified
             and is_confident(result)
         ):
-            self._clear_outputs(key, now)
+            self.clear_outputs(key, now)
             self.apply_result(
                 result,
                 record,
@@ -2618,7 +2701,6 @@ class ParcelsEngine:
                 # The user settled it meanwhile.
                 continue
             now = dt_util.utcnow()
-            self._clear_outputs(record.hash, now)
             self._decide(
                 message,
                 verdict,
@@ -2628,6 +2710,7 @@ class ParcelsEngine:
                 owner=record.owners[0] if record.owners else mailbox.owner,
                 first_sync=False,
                 now=now,
+                reread=True,
             )
             # What the parsers read isn't filled in or shadow-checked by the AI.
             self.ai.drop(record.hash)
@@ -2638,19 +2721,36 @@ class ParcelsEngine:
             self.async_schedule_save()
         _LOGGER.debug("%s's rejected e-mails read again: %s", sender, counts)
 
-    def _clear_outputs(self, key: str, now: datetime) -> set[str]:
+    def clear_outputs(self, key: str, now: datetime) -> set[str]:
         """Undo everything an e-mail added: parcels, review and queue.
 
-        Returns the IDs of the parcels that changed.
+        What its parcels were stays on its record (see ParcelShell), so that
+        a new reading goes back to them. Returns the IDs of the parcels that
+        changed.
         """
+        self._keep_shells(key)
+        affected = remove_message(self.data, key, now)
+        self._clear_lists(key)
+        return affected
+
+    def _keep_shells(self, key: str) -> None:
+        """Note what an e-mail's parcels are, before its news leaves them.
+
+        When it's part of none, the shells noted before stay: they still say
+        where it was, e.g. for a removed e-mail that is restored.
+        """
+        record = self.data.messages.get(key)
+        if record is not None and (shells := message_shells(self.data, key)):
+            record.shells = shells
+
+    def _clear_lists(self, key: str) -> None:
+        """Take an e-mail out of "Needs review", Filtered and the AI queue."""
         data = self.data
-        affected = remove_message(data, key, now)
         for review_id in [k for k, r in data.review.items() if r.message == key]:
             del data.review[review_id]
         for filtered_id in [k for k, f in data.filtered.items() if f.message == key]:
             del data.filtered[filtered_id]
         self.ai.drop(key)
-        return affected
 
     # -- Parcel services --------------------------------------------------
 

@@ -524,7 +524,8 @@ add a resource.
   administrators can select **Remove from Parcels**: what it added goes, the
   parcel is worked out again without it, or deleted if nothing else made it,
   and Parcels doesn't read the e-mail again. It's then listed under
-  **Filtered**, where **Restore** reads it again. Both can be undone.
+  **Filtered**, where **Restore** reads it again and brings the parcel back
+  as it was: the same parcel, private if it was. Both can be undone.
   **Split…** shows the same details for each row.
   **Merge** lists the likely matches first (same order or shop, still open,
   close dates), each with its items, order number, carrier, tracking number,
@@ -1295,7 +1296,7 @@ carrier, status and dates. Each mailbox has a **Last sync** sensor and a
 | `parcels.mark_return_picked_up` | Marks a return picked up now (see [Return pickups](#return-pickups)). Its `return_id` is in the return's details on the Parcels page. |
 | `parcels.undo_return_picked_up` | Takes back marking a return picked up. |
 | `parcels.refresh` | Checks all mailboxes, and 17TRACK and the Parcel app when they're on, now. The Parcel app is read at most every 10 minutes. |
-| `parcels.reprocess` | Reads a parcel's or review item's e-mails again with the current parsers, optionally with the AI. Administrators only. |
+| `parcels.reprocess` | Reads a parcel's or review item's e-mails again with the current parsers, optionally with the AI. The parcel stays the same one: its ID, privacy, merges and kept-apart parcels stay, and it isn't announced again. While a new reading waits under **Needs review** or for the AI, the parcel stays as it was; dismissing it there keeps the parcel. Administrators only. |
 | `parcels.trust_sender` | Trusts a sender's domain, so its e-mails are read as shipping e-mails. Administrators only. |
 | `parcels.ignore_sender` | Stops reading a sender's e-mails. Administrators only. |
 | `parcels.test_live_activity` | Sends a one-minute demo Live Activity to an iPhone, or a two-minute one that shows the made-up PIN 4826 when delivery PINs show on the lock screen. Administrators only. |

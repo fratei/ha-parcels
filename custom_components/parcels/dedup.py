@@ -95,6 +95,7 @@ from .models import (
     Parcel,
     ParcelEvent,
     ParcelsData,
+    ParcelShell,
     ParcelState,
     Source,
     carrier_like,
@@ -250,6 +251,11 @@ class Contribution:
     # what the AI filled in for an e-mail goes with the e-mail's parser origin.
     # A Parcel app delivery joins the parcel its sync chose, and no other.
     anchor: str | None = None
+    # An e-mail read again goes back to its parcel: ``parcel`` joins that
+    # parcel, as if it held the origin; ``home`` is where it goes when no
+    # number, shipment, order or reference tells otherwise.
+    parcel: str | None = None
+    home: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1055,6 +1061,8 @@ def apply_contribution(
     strong = {
         pid for pid, parcel in data.parcels.items() if origin.id in parcel.origins
     }
+    if contribution.parcel in data.parcels:
+        strong.add(contribution.parcel)
     if contribution.anchor is not None and not strong:
         strong = {
             pid
@@ -1117,6 +1125,8 @@ def apply_contribution(
                 target = _order_only_target(data, origin, events, include_archived=True)
         if target is not None:
             targets = {target}
+    if not targets and contribution.home in data.parcels:
+        targets = {contribution.home}
     if (
         not targets
         and not ambiguous
@@ -1375,6 +1385,118 @@ def remove_message(data: ParcelsData, message_hash: str, now: datetime) -> set[s
     return remove_parcel_origins(data, message_hash, now)
 
 
+def _message_origins(parcel: Parcel, message_hash: str) -> set[str]:
+    """Return the IDs of the origins that an e-mail added to a parcel."""
+    prefix = f"msg:{message_hash}#"
+    return {
+        oid
+        for oid, origin in parcel.origins.items()
+        if origin.message == message_hash or oid.startswith(prefix)
+    }
+
+
+def message_outputs(data: ParcelsData, message_hash: str) -> bool:
+    """Return True when an e-mail is part of a parcel or a return."""
+    return any(
+        _message_origins(parcel, message_hash) for parcel in data.parcels.values()
+    ) or any(message_hash in entry.origins for entry in data.returns.values())
+
+
+def message_shells(data: ParcelsData, message_hash: str) -> tuple[ParcelShell, ...]:
+    """Return what the parcels of an e-mail are, before it's read again.
+
+    One shell per parcel holding the e-mail's origins: see ParcelShell.
+    """
+    shells: list[ParcelShell] = []
+    for parcel in data.parcels.values():
+        if not (own := _message_origins(parcel, message_hash)):
+            continue
+        rest = [origin for oid, origin in parcel.origins.items() if oid not in own]
+        lost = all(origin.source is Source.MANUAL for origin in rest)
+        flag = parcel.auto_merged
+        shells.append(
+            ParcelShell(
+                id=parcel.id,
+                created=parcel.created,
+                origins=tuple(sorted(own)),
+                status=parcel.state.status,
+                private=parcel.private,
+                archived=parcel.archived,
+                delivery_rejected=parcel.delivery_rejected,
+                auto_merged=replace(flag) if flag is not None else None,
+                lost=lost,
+                kept_origins=tuple(
+                    Origin.from_dict(origin.as_dict()) for origin in rest
+                )
+                if lost
+                else (),
+                kept_events=tuple(
+                    ParcelEvent.from_dict(event.as_dict())
+                    for event in parcel.events
+                    if event.origin not in own
+                )
+                if lost
+                else (),
+            )
+        )
+    return tuple(shells)
+
+
+def revive_shell(
+    data: ParcelsData, shell: ParcelShell, now: datetime
+) -> tuple[str, bool]:
+    """Return the parcel a lost shell stands for, bringing it back when gone.
+
+    It comes back with its ID, the user's edits and what Parcels inferred,
+    but none of the e-mail's news: reading the e-mail again adds that.
+    Returns its ID and whether it came back.
+    """
+    if shell.id in data.parcels:
+        return shell.id, False
+    manual = manual_origin_id(shell.id)
+    for parcel in data.parcels.values():
+        if manual in parcel.origins:
+            # Merged meanwhile, with the user's edits.
+            return parcel.id, False
+    parcel = Parcel(
+        id=shell.id,
+        created=shell.created,
+        updated=now,
+        origins={
+            origin.id: Origin.from_dict(origin.as_dict())
+            for origin in shell.kept_origins
+        },
+        events=[ParcelEvent.from_dict(event.as_dict()) for event in shell.kept_events],
+        private=shell.private,
+        archived=shell.archived,
+        delivery_rejected=shell.delivery_rejected,
+    )
+    data.parcels[parcel.id] = parcel
+    return parcel.id, True
+
+
+def restore_flag(parcel: Parcel, flag: AutoMerge | None) -> None:
+    """Put back the merge to check that an e-mail read again took away.
+
+    Only when the parcel holds the merged origin again, and only with the
+    origins it still holds.
+    """
+    if flag is None or parcel.auto_merged is not None:
+        return
+    if flag.origin not in parcel.origins:
+        return
+    held = set(parcel.origins)
+    parcel.auto_merged = replace(
+        flag,
+        origins=tuple(oid for oid in flag.origins if oid in held),
+        groups=tuple(
+            kept
+            for group in flag.groups
+            if (kept := tuple(oid for oid in group if oid in held))
+        ),
+    )
+
+
 def remove_return_origins(data: ParcelsData, message_hash: str, now: datetime) -> bool:
     """Remove what an e-mail said about customer returns.
 
@@ -1401,15 +1523,9 @@ def remove_parcel_origins(
     Returns the IDs of the parcels that changed; parcels left without origins
     are deleted.
     """
-    prefix = f"msg:{message_hash}#"
     affected: set[str] = set()
     for parcel in list(data.parcels.values()):
-        removed = {
-            oid
-            for oid, origin in parcel.origins.items()
-            if origin.message == message_hash or oid.startswith(prefix)
-        }
-        if removed:
+        if removed := _message_origins(parcel, message_hash):
             affected.add(parcel.id)
             remove_origins(data, parcel, removed, now)
     return affected

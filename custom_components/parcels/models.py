@@ -1419,13 +1419,96 @@ class Order:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ParcelShell:
+    """What a parcel was while one of its e-mails is read again.
+
+    Reading an e-mail again takes its origins out of their parcels, then adds
+    the new reading. The shell takes the new reading back to the same parcel,
+    with its ID, privacy and flags, instead of a new one. ``origins`` are the
+    e-mail's origins that the parcel held.
+
+    ``lost`` is set when nothing else, or only the user's edits, held the
+    parcel: it went with the e-mail's origins, and comes back with the edits
+    (``kept_origins``) and its inferred events (``kept_events``).
+    """
+
+    id: str
+    created: datetime
+    origins: tuple[str, ...]
+    status: ParcelStatus | None = None
+    private: bool = False
+    archived: datetime | None = None
+    delivery_rejected: bool = False
+    auto_merged: AutoMerge | None = None
+    lost: bool = False
+    kept_origins: tuple[Origin, ...] = ()
+    kept_events: tuple[ParcelEvent, ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialise the shell."""
+        return _compact(
+            {
+                "id": self.id,
+                "created": dt_to_str(self.created),
+                "origins": list(self.origins),
+                "status": self.status.value if self.status else None,
+                "private": self.private,
+                "archived": dt_to_str(self.archived),
+                "delivery_rejected": self.delivery_rejected,
+                "auto_merged": self.auto_merged.as_dict() if self.auto_merged else None,
+                "lost": self.lost,
+                "kept_origins": [origin.as_dict() for origin in self.kept_origins],
+                "kept_events": [event.as_dict() for event in self.kept_events],
+            }
+        )
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ParcelShell:
+        """Parse a serialised shell; raises ValueError for a damaged one."""
+        created = stored_dt(data.get("created"))
+        if not data.get("id") or created is None:
+            raise ValueError("incomplete shell")
+        return cls(
+            id=str(data["id"]),
+            created=created,
+            origins=_tuple(data.get("origins")),
+            status=ParcelStatus(data["status"]) if data.get("status") else None,
+            private=bool(data.get("private", False)),
+            archived=stored_dt(data.get("archived")),
+            delivery_rejected=bool(data.get("delivery_rejected", False)),
+            auto_merged=AutoMerge.from_dict(data.get("auto_merged")),
+            lost=bool(data.get("lost", False)),
+            kept_origins=tuple(
+                Origin.from_dict(item) for item in data.get("kept_origins", ())
+            ),
+            kept_events=tuple(
+                ParcelEvent.from_dict(item) for item in data.get("kept_events", ())
+            ),
+        )
+
+
+def _shells(value: Any) -> tuple[ParcelShell, ...]:
+    """Read a record's shells, skipping damaged ones: they only help."""
+    shells: list[ParcelShell] = []
+    for item in value if isinstance(value, list) else ():
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            shells.append(ParcelShell.from_dict(item))
+        except AttributeError, KeyError, TypeError, ValueError:
+            continue
+    return tuple(shells)
+
+
 @dataclass(slots=True)
 class MessageRecord:
     """A processed e-mail, identified by a hash of its Message-ID.
 
     ``refs`` maps a mailbox config entry to the provider's message ID, so the
     e-mail can be fetched again (for the AI queue or reprocessing). No content
-    is kept.
+    is kept. ``shells`` hold what the e-mail's parcels were while it is read
+    again.
     """
 
     hash: str
@@ -1435,6 +1518,7 @@ class MessageRecord:
     received: datetime | None = None
     sender_domain: str = ""
     owners: tuple[str, ...] = ()
+    shells: tuple[ParcelShell, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the record."""
@@ -1447,6 +1531,7 @@ class MessageRecord:
                 "received": dt_to_str(self.received),
                 "sender_domain": self.sender_domain,
                 "owners": list(self.owners),
+                "shells": [shell.as_dict() for shell in self.shells],
             }
         )
 
@@ -1461,6 +1546,7 @@ class MessageRecord:
             received=stored_dt(data.get("received")),
             sender_domain=str(data.get("sender_domain", "")),
             owners=_tuple(data.get("owners")),
+            shells=_shells(data.get("shells")),
         )
 
 

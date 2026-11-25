@@ -62,6 +62,7 @@ from .convert import (
     merge_fills,
     results_agree,
 )
+from .dedup import message_outputs
 from .models import (
     MessageRecord,
     MessageState,
@@ -412,10 +413,26 @@ class AIWorker:
         async_dispatcher_send(self.hass, SIGNAL_AI_UPDATED)
 
     def _drop_refund(self, entry: dict[str, Any], record: MessageRecord) -> None:
-        """Drop a refund e-mail silently: not in review, nor filtered."""
+        """Drop a refund e-mail silently: not in review, nor filtered.
+
+        One read again leaves the parcels it was part of.
+        """
         self._remove(entry)
+        self.engine.clear_outputs(record.hash, dt_util.utcnow())
         self.engine.drop_refund(record)
         self.engine.async_changed()
+
+    def _settle(self, record: MessageRecord) -> None:
+        """Leave an e-mail the AI won't read as it was.
+
+        One read again that is still part of a parcel stays so; any other is
+        ignored.
+        """
+        if message_outputs(self.engine.data, record.hash):
+            record.state = MessageState.APPLIED
+            record.shells = ()
+        else:
+            record.state = MessageState.IGNORED
 
     def _set_busy(self, key: str | None) -> None:
         if self._busy != key:
@@ -508,7 +525,7 @@ class AIWorker:
                 # Every mailbox that had it was removed.
                 self._remove(entry)
                 if not fill:
-                    record.state = MessageState.IGNORED
+                    self._settle(record)
                 changed = True
                 continue
             if fill and fills_full and not entry.get("forced"):
@@ -621,7 +638,7 @@ class AIWorker:
                 self._drop(entry)
             elif gone:
                 self._remove(entry)
-                record.state = MessageState.IGNORED
+                self._settle(record)
                 engine.async_changed()
             else:
                 entry["not_before"] = dt_to_str(now + AI_RETRY_DELAY)
@@ -663,12 +680,14 @@ class AIWorker:
                 mailbox=item.mailbox,
                 owner=item.owner,
                 now=now,
+                reread=True,
             )
             engine.async_changed()
             return
         elif not entry.get("forced") and verdict.verified and is_confident(parsed):
             # A trusted sender or a newer parser can read it now.
             self._remove(entry)
+            engine.clear_outputs(record.hash, now)
             engine.apply_result(
                 parsed,
                 record,
@@ -811,6 +830,7 @@ class AIWorker:
         if result.kind is MailKind.NOT_PARCEL:
             if result.confidence >= CONFIDENCE_APPLY:
                 self._remove(entry)
+                engine.clear_outputs(record.hash, now)
                 item = ReviewItem.from_dict(entry["review"])
                 engine.add_filtered(replace(item, created=now), record)
                 self._count("filtered")
@@ -828,6 +848,7 @@ class AIWorker:
             return
         if engine.ai_mode is AIMode.AUTO and trusted and is_confident(result):
             self._remove(entry)
+            engine.clear_outputs(record.hash, now)
             engine.apply_result(
                 result,
                 record,

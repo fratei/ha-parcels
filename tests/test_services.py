@@ -25,14 +25,27 @@ import pytest
 from pytest_homeassistant.common import (
     MockConfigEntry,
     MockUser,
+    async_capture_events,
     async_fire_time_changed,
     async_mock_service,
 )
 
-from custom_components.parcels.const import DOMAIN, MailKind, ParcelStatus
-from custom_components.parcels.dedup import apply_contribution
+from custom_components.parcels.const import (
+    DOMAIN,
+    EVENT_DELIVERED,
+    EVENT_PARCEL_ADDED,
+    EVENT_STATUS_CHANGED,
+    MailKind,
+    ParcelStatus,
+)
+from custom_components.parcels.dedup import (
+    REASON_SAME_MERCHANT_ETA,
+    apply_contribution,
+    merge_parcels,
+)
 from custom_components.parcels.engine import ParcelsEngine
 from custom_components.parcels.models import (
+    AutoMerge,
     Eta,
     MessageState,
     Parcel,
@@ -42,6 +55,7 @@ from custom_components.parcels.models import (
     Source,
 )
 from custom_components.parcels.services import ADD_SCHEMA, UPDATE_SCHEMA
+from custom_components.parcels.views import viewer_for
 
 from .common import (
     OTHER_OWNER,
@@ -839,6 +853,170 @@ async def test_reprocess_mail_the_parsers_fail_on(
     assert list(engine.data.parcels) == [parcel.id]
     assert engine.data.parcels[parcel.id].origins == origins
     assert "Rua Secreta" not in caplog.text
+
+
+async def test_reprocess_reads_the_email_into_its_parcel(
+    hass: HomeAssistant, mail: Mail, hass_admin_user: MockUser, sam: User
+) -> None:
+    """Reading an e-mail again keeps its parcel: the ID, privacy and flags."""
+    engine, _ = mail
+    (parcel,) = engine.data.parcels.values()
+    (origin_id,) = parcel.origins
+    await call(
+        hass, "update", {"parcel_id": parcel.id, "private": True}, user=hass_admin_user
+    )
+    await call(hass, "archive", {"parcel_id": parcel.id}, user=hass_admin_user)
+    parcel.delivery_rejected = True
+    flag = AutoMerge(origin_id, dt_util.utcnow(), REASON_SAME_MERCHANT_ETA)
+    parcel.auto_merged = flag
+    archived = parcel.archived
+    assert archived is not None
+    events = [
+        async_capture_events(hass, event)
+        for event in (EVENT_PARCEL_ADDED, EVENT_STATUS_CHANGED, EVENT_DELIVERED)
+    ]
+
+    await call(hass, "reprocess", {"parcel_id": parcel.id}, user=hass_admin_user)
+    await hass.async_block_till_done()
+
+    (again,) = engine.data.parcels.values()
+    assert again.id == parcel.id
+    assert list(again.origins) == [origin_id]
+    assert (again.private, again.archived, again.delivery_rejected) == (
+        True,
+        archived,
+        True,
+    )
+    assert again.auto_merged == flag
+    assert not viewer_for(hass, sam).can_see(again)
+    assert events == [[], [], []]
+    assert not engine.data.messages[again.origins[origin_id].message].shells
+
+
+async def test_reprocess_keeps_the_rest_of_the_parcel(
+    hass: HomeAssistant, mail: Mail, hass_admin_user: MockUser, sam: User
+) -> None:
+    """An e-mail read again goes back to the parcel it shares with others."""
+    engine, _ = mail
+    (parcel,) = engine.data.parcels.values()
+    (origin_id,) = parcel.origins
+    now = dt_util.utcnow()
+    linked = apply_contribution(
+        engine.data,
+        contribution(
+            "msg:order#0",
+            kind=MailKind.ORDER,
+            time=now - timedelta(days=1),
+            merchant="Loja Exemplo",
+            orders=("#1001",),
+            owner=OWNER,
+        ),
+        now,
+    )
+    assert linked.parcel_id is not None
+    merge_parcels(engine.data, parcel.id, [linked.parcel_id], now)
+    flag = AutoMerge("msg:order#0", now, REASON_SAME_MERCHANT_ETA)
+    parcel.auto_merged = flag
+    await call(
+        hass, "update", {"parcel_id": parcel.id, "private": True}, user=hass_admin_user
+    )
+
+    await call(hass, "reprocess", {"parcel_id": parcel.id}, user=hass_admin_user)
+
+    (again,) = engine.data.parcels.values()
+    assert again.id == parcel.id
+    assert set(again.origins) == {origin_id, "msg:order#0"}
+    assert again.state.tracking_number == CTT_NUMBER
+    assert again.private
+    assert again.auto_merged == flag
+    assert not viewer_for(hass, sam).can_see(again)
+
+
+async def test_reprocess_keeps_the_edits(
+    hass: HomeAssistant, mail: Mail, hass_admin_user: MockUser
+) -> None:
+    """A parcel the user edited is read again with the edits, not beside them."""
+    engine, _ = mail
+    (parcel,) = engine.data.parcels.values()
+    await call(
+        hass,
+        "update",
+        {"parcel_id": parcel.id, "pickup_point": "Locker 12"},
+        user=hass_admin_user,
+    )
+
+    await call(hass, "reprocess", {"parcel_id": parcel.id}, user=hass_admin_user)
+
+    (again,) = engine.data.parcels.values()
+    assert again.id == parcel.id
+    assert (again.state.tracking_number, again.state.pickup_point) == (
+        CTT_NUMBER,
+        "Locker 12",
+    )
+
+
+async def test_reprocess_of_a_delivered_parcel_tells_nobody_again(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, mail: Mail
+) -> None:
+    """Automations hear of the delivery once, not again when it is read again."""
+    engine, client = mail
+    freezer.move_to("2026-11-17 12:00:00+00:00")
+    client.add("carriers/ctt_delivered_pt.eml")
+    delivered = async_capture_events(hass, EVENT_DELIVERED)
+    await call(hass, "refresh")
+    await hass.async_block_till_done()
+    (parcel,) = (
+        parcel
+        for parcel in engine.data.parcels.values()
+        if parcel.state.status is ParcelStatus.DELIVERED
+    )
+    assert len(delivered) == 1
+    events = [
+        async_capture_events(hass, event)
+        for event in (EVENT_PARCEL_ADDED, EVENT_STATUS_CHANGED, EVENT_DELIVERED)
+    ]
+
+    await call(hass, "reprocess", {"parcel_id": parcel.id})
+    await hass.async_block_till_done()
+
+    assert engine.data.parcels[parcel.id].state.status is ParcelStatus.DELIVERED
+    assert events == [[], [], []]
+
+
+async def test_reprocess_of_an_unverified_email_keeps_its_parcel(
+    hass: HomeAssistant, mail: Mail, hass_admin_user: MockUser, sam: User
+) -> None:
+    """An accepted e-mail from an unknown shop, read again, waits under review.
+
+    Its parcel stays meanwhile; accepting the e-mail again updates that
+    parcel, still private.
+    """
+    engine, _ = mail
+    (review,) = engine.data.review.values()
+    record = engine.data.messages[review.message]
+    (parcel_id,) = (
+        touched
+        for touched in engine.review_accept(review.id)
+        if engine.data.parcels[touched].state.tracking_number == "RR123456785PT"
+    )
+    await call(
+        hass, "update", {"parcel_id": parcel_id, "private": True}, user=hass_admin_user
+    )
+
+    await call(hass, "reprocess", {"parcel_id": parcel_id}, user=hass_admin_user)
+
+    assert record.state is MessageState.REVIEW
+    (again,) = engine.data.review.values()
+    assert parcel_id in engine.data.parcels
+    assert not viewer_for(hass, sam).can_see(engine.data.parcels[parcel_id])
+
+    assert engine.review_accept(again.id) == [parcel_id]
+
+    parcel = engine.data.parcels[parcel_id]
+    assert parcel.state.tracking_number == "RR123456785PT"
+    assert parcel.private
+    assert record.state is MessageState.APPLIED
+    assert not record.shells
 
 
 # -- Senders ------------------------------------------------------------------

@@ -21,6 +21,7 @@ from custom_components.parcels.models import (
     Parcel,
     ParcelEvent,
     ParcelsData,
+    ParcelShell,
     ParcelState,
     ReviewItem,
     SenderPrefs,
@@ -741,6 +742,78 @@ def test_round_trip() -> None:
     assert loaded.review["r1"].errors == ("tracking_invalid", "eta_not_in_text")
     assert loaded.review["r1"].notes == ("carrier_unproven", "eta_from_text")
     assert loaded.trusted_domains() == ("example.com",)
+
+
+def _shells() -> tuple[ParcelShell, ...]:
+    """Return what an e-mail's two parcels were while it's read again."""
+    lost = ParcelShell(
+        id="p_lost",
+        created=at(),
+        origins=("msg:abc#0",),
+        status=S.DELIVERED,
+        private=True,
+        archived=at(days=1),
+        delivery_rejected=True,
+        auto_merged=AutoMerge(origin="msg:abc#0", at=at(), reason="same_merchant_eta"),
+        lost=True,
+        kept_origins=(
+            _origin(
+                "man:p_lost", source=Source.MANUAL, time=at(), pickup_point="Locker 12"
+            ),
+        ),
+        kept_events=(
+            _event(S.DELIVERED, at(hours=2), origin=None, inferred=True, id="e_1"),
+        ),
+    )
+    kept = ParcelShell(
+        id="p_kept", created=at(), origins=("msg:abc#1",), status=S.SHIPPED
+    )
+    return lost, kept
+
+
+def test_message_shells_round_trip() -> None:
+    """What an e-mail's parcels were, while it's read again, survives a restart."""
+    data = _full_data()
+    data.messages["abc"].shells = _shells()
+
+    loaded = ParcelsData.from_dict(json.loads(json.dumps(data.as_dict())))
+
+    assert loaded.messages["abc"].shells == _shells()
+    assert loaded.as_dict() == data.as_dict()
+    assert loaded.damaged == {}
+    assert "shells" not in _full_data().messages["abc"].as_dict()
+    assert ParcelsData.from_dict(_full_data().as_dict()).messages["abc"].shells == ()
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("id", None),
+        ("id", ""),
+        ("created", None),
+        ("created", "2026-13-02T08:00:00+00:00"),
+        ("status", "lost_in_space"),
+        ("kept_origins", [{"source": "manual"}]),
+        (None, "garbage"),
+    ],
+)
+def test_a_damaged_shell_is_skipped(key: str | None, value: object) -> None:
+    """A damaged shell is skipped alone: the e-mail and its other shells stay."""
+    data = _full_data()
+    data.messages["abc"].shells = _shells()
+    stored = json.loads(json.dumps(data.as_dict()))
+    shells = stored["messages"][0]["shells"]
+    if key is None:
+        shells[0] = value
+    elif value is None:
+        del shells[0][key]
+    else:
+        shells[0][key] = value
+
+    loaded = ParcelsData.from_dict(stored)
+
+    assert loaded.messages["abc"].shells == _shells()[1:]
+    assert loaded.damaged == {}
 
 
 def test_auto_merge_groups() -> None:

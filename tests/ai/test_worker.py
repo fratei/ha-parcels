@@ -971,6 +971,100 @@ async def test_reprocess_with_the_ai_reads_a_parsed_email(
     assert item.suggestion.kind is MailKind.IN_TRANSIT
 
 
+async def test_a_parcel_stays_while_the_ai_reads_its_email_again(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """Asking the AI to read an e-mail again keeps its parcel meanwhile.
+
+    In auto mode, the AI's reading updates the same parcel: it stays private.
+    """
+    message = ctt_message(text=None)
+    engine = await async_setup(hass, client, message, mode="auto")
+    ((parcel_id, parcel),) = engine.data.parcels.items()
+    parcel.private = True
+
+    await engine.async_reprocess(message.hash, use_ai=True)
+
+    record = engine.data.messages[message.hash]
+    assert record.state is MessageState.QUEUED
+    assert list(engine.data.parcels) == [parcel_id]
+    assert engine.data.parcels[parcel_id].state.tracking_number == TRACKING
+    generate.return_value = result(kind="in_transit", tracking_numbers=[TRACKING])
+
+    await engine.ai._async_step()
+
+    generate.assert_awaited_once()
+    assert record.state is MessageState.APPLIED
+    (parcel,) = engine.data.parcels.values()
+    assert parcel.id == parcel_id
+    assert [o.source for o in parcel.origins.values()] == [Source.AI]
+    assert parcel.private
+    assert not record.shells
+
+
+async def test_a_parcel_stays_when_the_ai_gives_up_on_its_email(
+    hass: HomeAssistant,
+    client: FakeMailClient,
+    generate: AsyncMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A parcel stays when the AI can't read its e-mail again.
+
+    The e-mail waits under review; dismissing it keeps the parcel as well.
+    """
+    message = ctt_message(text=None)
+    engine = await async_setup(hass, client, message)
+    (parcel_id,) = engine.data.parcels
+    await engine.async_reprocess(message.hash, use_ai=True)
+    generate.side_effect = RuntimeError(SECRET)
+
+    await engine.ai._async_step()
+    freezer.tick(timedelta(minutes=30))
+    await engine.ai._async_step()
+
+    record = engine.data.messages[message.hash]
+    assert record.state is MessageState.REVIEW
+    (item,) = engine.data.review.values()
+    assert item.reason == REASON_AI_UNAVAILABLE
+    assert list(engine.data.parcels) == [parcel_id]
+
+    engine.review_dismiss(item.id)
+
+    assert record.state is MessageState.APPLIED
+    assert list(engine.data.parcels) == [parcel_id]
+    assert not record.shells
+
+
+async def test_a_parcel_stays_while_its_email_read_again_waits_for_the_ai(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """An e-mail read again that the parsers no longer read keeps its parcel.
+
+    It waits for the AI; accepting the AI's suggestion updates that parcel.
+    """
+    message = ctt_message(text=None)
+    engine = await async_setup(hass, client, message)
+    (parcel_id,) = engine.data.parcels
+    # The download now returns a body no parser reads.
+    client.add(ctt_message())
+
+    await engine.async_reprocess(message.hash)
+
+    record = engine.data.messages[message.hash]
+    assert record.state is MessageState.QUEUED
+    assert list(engine.data.parcels) == [parcel_id]
+    generate.return_value = result(kind="in_transit", tracking_numbers=[TRACKING])
+
+    await engine.ai._async_step()
+
+    (item,) = engine.data.review.values()
+    assert item.reason == REASON_AI_SUGGESTION
+    assert list(engine.data.parcels) == [parcel_id]
+    assert engine.review_accept(item.id) == [parcel_id]
+    assert list(engine.data.parcels) == [parcel_id]
+    assert record.state is MessageState.APPLIED
+
+
 async def test_ignoring_a_sender_drops_its_emails(
     hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
 ) -> None:
@@ -1653,8 +1747,9 @@ async def async_rejected(
     """
     await hass.async_block_till_done(wait_background_tasks=True)
     now = dt_util.utcnow()
-    engine._clear_outputs(message.hash, now)
+    engine.clear_outputs(message.hash, now)
     record = engine.data.messages[message.hash]
+    record.shells = ()
     (mailbox,) = engine.mailboxes.values()
     item = engine.review_item(
         message,
