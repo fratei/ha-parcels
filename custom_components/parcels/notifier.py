@@ -51,9 +51,10 @@ Live Activities
     parcel's activity is ended and restarted with a ``-2`` (``-3`` ...) tag
     after 7.5 hours. To respect Apple's push-to-start budget a parcel starts at
     most once per device and day, except for that restart, the switch being
-    turned back on, a device becoming a recipient again and a moved parcel that
-    goes out for delivery after all. The state is persisted, so a restart of
-    Home Assistant neither ends nor duplicates an activity.
+    turned back on, a device becoming a recipient again, a delivery taken back
+    and a moved parcel that goes out for delivery after all. The state is
+    persisted, so a restart of Home Assistant neither ends nor duplicates an
+    activity.
 
     mobile_app starts an activity whenever it holds no update token for the
     tag, so nothing but a start goes to an activity without one. A new

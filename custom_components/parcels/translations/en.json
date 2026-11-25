@@ -303,8 +303,8 @@
     "unknown_suggestion": {
       "message": "This suggestion isn't in the list anymore."
     },
-    "no_inferred_delivery": {
-      "message": "This parcel has no inferred delivery to undo."
+    "no_delivery_to_undo": {
+      "message": "This parcel has no delivery to undo. Only a delivery marked by hand or one Parcels inferred can be taken back, not one a carrier, a shop, 17TRACK or the Parcel app reported."
     },
     "mailbox_auth_failed": {
       "message": "Sign in to {address} again."
@@ -445,7 +445,7 @@
     },
     "mark_delivered": {
       "name": "Mark delivered",
-      "description": "Marks a parcel as delivered now.",
+      "description": "Marks a parcel as delivered now. Undo delivery takes that back.",
       "fields": {
         "parcel_id": {
           "name": "Parcel ID",
@@ -464,8 +464,8 @@
       }
     },
     "undo_delivery": {
-      "name": "Undo inferred delivery",
-      "description": "Takes back a delivery that Parcels inferred, from another parcel of the same shop, from a return of its items or from three weeks without news, and doesn't infer it again.",
+      "name": "Undo delivery",
+      "description": "Takes back a delivery marked by hand or kept, and the parcel's earlier status comes back. Or takes back a delivery that Parcels inferred, from another parcel of the same shop, from another package of the same shipment, from a return of its items or from three weeks without news, and doesn't infer it again. A delivery that a carrier, a shop, 17TRACK or the Parcel app reported can't be taken back.",
       "fields": {
         "parcel_id": {
           "name": "Parcel ID",

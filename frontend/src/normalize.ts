@@ -169,6 +169,7 @@ export function normalizeParcel(raw: unknown): Parcel | null {
     left_at: leftAt(raw.left_at),
     inferred: raw.inferred === true,
     inferred_reason: inferredReason(raw.inferred_reason),
+    delivered_by_hand: raw.delivered_by_hand === true,
     pickup_point: str(raw.pickup_point),
     pickup_code: str(raw.pickup_code),
     has_code: raw.has_code === true,

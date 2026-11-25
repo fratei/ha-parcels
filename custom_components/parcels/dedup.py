@@ -109,6 +109,7 @@ from .models import (
     check_codes,
     date_from_str,
     day_known,
+    derive_state,
     dt_from_str,
     is_carrier_mail,
     is_carrier_name,
@@ -4224,13 +4225,64 @@ def infer_deliveries(data: ParcelsData, now: datetime) -> set[str]:
     return changed
 
 
-def undo_inferred_delivery(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel:
-    """Take back an inferred delivery; it won't be inferred again."""
+def hand_delivery_events(parcel: Parcel) -> list[ParcelEvent]:
+    """Return the user's events that alone make the parcel delivered.
+
+    Marking a parcel delivered adds one, and so does keeping a delivery
+    Parcels inferred; after a merge, the parcel merged in brings its own.
+    When the carrier, the shop or another source reported the delivery too,
+    before or after, the parcel was delivered without them: the list is
+    empty, as it is for a parcel that isn't delivered.
+    """
+    state = parcel.state
+    if state.status is not ParcelStatus.DELIVERED or state.inferred:
+        return []
+    own = [
+        event
+        for event in parcel.events
+        if event.source is Source.MANUAL and event.status is ParcelStatus.DELIVERED
+    ]
+    if not own:
+        return []
+    ids = {event.id for event in own}
+    without = derive_state(
+        replace(
+            parcel,
+            events=[event for event in parcel.events if event.id not in ids],
+            _state=None,
+        )
+    )
+    if without.status is ParcelStatus.DELIVERED and not without.inferred:
+        return []
+    return own
+
+
+def undo_delivery(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel:
+    """Take back a delivery the user marked or kept, or one Parcels inferred.
+
+    Taking back the user's own brings back the news before it, which can be
+    a delivery Parcels inferred: nothing stops a delivery from being marked,
+    inferred or reported again. An inferred one taken back isn't inferred
+    again. A delivery that was reported can't be taken back.
+    """
     parcel = data.parcels[parcel_id]
-    if not any(event.inferred for event in parcel.events):
-        raise DedupError("no_inferred_delivery")
-    parcel.events = [event for event in parcel.events if not event.inferred]
-    parcel.delivery_rejected = True
+    if own := hand_delivery_events(parcel):
+        ids = {event.id for event in own}
+        parcel.events = [event for event in parcel.events if event.id not in ids]
+        # Marking it made the row of the user's edits when there was none.
+        edits = manual_origin_id(parcel.id)
+        origin = parcel.origins.get(edits)
+        if (
+            origin is not None
+            and all(getattr(origin, key) is None for key in UPDATABLE_FIELDS)
+            and not any(event.origin == edits for event in parcel.events)
+        ):
+            del parcel.origins[edits]
+    elif any(event.inferred for event in parcel.events):
+        parcel.events = [event for event in parcel.events if not event.inferred]
+        parcel.delivery_rejected = True
+    else:
+        raise DedupError("no_delivery_to_undo")
     parcel.touch(now)
     if parcel.archived is not None and not parcel.state.terminal:
         parcel.archived = None

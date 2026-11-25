@@ -14,7 +14,7 @@ from custom_components.parcels.const import DOMAIN, MailKind, ParcelStatus
 from custom_components.parcels.dedup import (
     apply_contribution,
     infer_deliveries,
-    undo_inferred_delivery,
+    undo_delivery,
     update_parcel,
 )
 from custom_components.parcels.engine import ParcelsEngine
@@ -176,7 +176,7 @@ def test_archived_at_once_and_undone_for_good() -> None:
 
     assert apply_retention(data, now).archived == [parcel_id]
 
-    undo_inferred_delivery(data, parcel_id, now)
+    undo_delivery(data, parcel_id, now)
     parcel = data.parcels[parcel_id]
     assert parcel.state.status is ParcelStatus.IN_TRANSIT
     assert parcel.archived is None

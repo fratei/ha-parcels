@@ -44,6 +44,7 @@ from custom_components.parcels.dedup import (
     boxes_of_day,
     dismiss_suggestion,
     fill_shop,
+    hand_delivery_events,
     infer_deliveries,
     keep_apart,
     manual_origin_id,
@@ -54,7 +55,7 @@ from custom_components.parcels.dedup import (
     remove_message,
     repair_store,
     undo_auto_merge,
-    undo_inferred_delivery,
+    undo_delivery,
     update_parcel,
 )
 from custom_components.parcels.models import (
@@ -942,22 +943,22 @@ def test_tracked_parcels_arent_inferred() -> None:
 
 
 def test_undo_and_confirm_inferred_delivery() -> None:
-    """The user can take an inferred delivery back, or keep it."""
+    """The user can take an inferred delivery back, or keep it.
+
+    Undoing a kept delivery brings the inference back, until it's undone.
+    """
     data = ParcelsData()
     undone = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(6, 8), _eta(8)))
     kept = _apply(data, _amazon("msg:a2#0", ORDER_2, _nov(6, 9), _eta(8)))
     _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)))
     assert infer_deliveries(data, _nov(10, 8)) == {undone, kept}
 
-    parcel = undo_inferred_delivery(data, undone, _nov(10, 9))
+    parcel = undo_delivery(data, undone, _nov(10, 9))
     assert parcel.delivery_rejected
     assert parcel.state.status is ParcelStatus.SHIPPED
     assert not parcel.state.inferred
     assert infer_deliveries(data, _nov(11, 8)) == set()
-    assert (
-        _error(undo_inferred_delivery, data, undone, _nov(11, 9))
-        == "no_inferred_delivery"
-    )
+    assert _error(undo_delivery, data, undone, _nov(11, 9)) == "no_delivery_to_undo"
 
     parcel = update_parcel(data, kept, {"confirm_delivery": True}, _nov(10, 9))
     state = parcel.state
@@ -968,9 +969,36 @@ def test_undo_and_confirm_inferred_delivery() -> None:
         Source.PARSER,
         Source.MANUAL,
     ]
-    assert _error(undo_inferred_delivery, data, kept, _nov(10, 9)) == (
-        "no_inferred_delivery"
-    )
+
+    parcel = undo_delivery(data, kept, _nov(10, 10))
+    assert parcel.state.status is ParcelStatus.SHIPPED
+    assert not parcel.delivery_rejected
+    assert infer_deliveries(data, _nov(10, 10)) == {kept}
+    assert parcel.state.inferred
+    parcel = undo_delivery(data, kept, _nov(10, 11))
+    assert parcel.delivery_rejected
+    assert parcel.state.status is ParcelStatus.SHIPPED
+
+
+def test_undo_a_mark_on_an_inferred_delivery() -> None:
+    """Marking it delivered keeps it; Undo goes back to the inferred one."""
+    data = ParcelsData()
+    order = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(6, 8), _eta(8)))
+    _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)))
+    assert infer_deliveries(data, _nov(10, 8)) == {order}
+
+    parcel = mark_delivered(data, order, _nov(10, 9))
+    assert not parcel.state.inferred
+    assert hand_delivery_events(parcel)
+
+    parcel = undo_delivery(data, order, _nov(10, 10))
+    assert parcel.state.status is ParcelStatus.DELIVERED
+    assert parcel.state.inferred
+    assert not hand_delivery_events(parcel)
+    assert not parcel.delivery_rejected
+    parcel = undo_delivery(data, order, _nov(10, 11))
+    assert parcel.state.status is ParcelStatus.SHIPPED
+    assert parcel.delivery_rejected
 
 
 def test_repair_store() -> None:

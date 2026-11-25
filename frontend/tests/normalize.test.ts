@@ -186,6 +186,7 @@ describe("normalizeParcel", () => {
       left_at: "locker",
       inferred: true,
       inferred_reason: "return",
+      delivered_by_hand: true,
       pickup_point: "Example Locker 12",
       pickup_code: "123456",
       has_code: true,
@@ -258,6 +259,7 @@ describe("normalizeParcel", () => {
       has_code: "yes",
       shipment_group: 7,
       inferred_reason: "pigeon",
+      delivered_by_hand: "yes",
       name: 7,
       eta_source: "pigeon",
       status_undated: "yes",
@@ -282,6 +284,7 @@ describe("normalizeParcel", () => {
     assert.equal(parcel.has_code, false);
     assert.equal(parcel.shipment_group, null);
     assert.equal(parcel.inferred_reason, null);
+    assert.equal(parcel.delivered_by_hand, false);
     assert.equal(parcel.name, null);
     assert.equal(parcel.eta_source, "parser");
     assert.equal(parcel.status_undated, false);

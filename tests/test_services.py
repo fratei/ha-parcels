@@ -55,7 +55,7 @@ from custom_components.parcels.models import (
     Source,
 )
 from custom_components.parcels.services import ADD_SCHEMA, UPDATE_SCHEMA
-from custom_components.parcels.views import viewer_for
+from custom_components.parcels.views import SYSTEM_VIEWER, parcel_json, viewer_for
 
 from .common import (
     OTHER_OWNER,
@@ -540,6 +540,109 @@ async def test_mark_delivered_and_archive(
     await refused(hass, "mark_delivered", {"parcel_id": "p_missing"}, "unknown_parcel")
 
 
+async def test_undo_a_delivery_marked_by_hand(
+    hass: HomeAssistant, engine: ParcelsEngine, freezer: FrozenDateTimeFactory
+) -> None:
+    """Undo takes a mark back; automations told of the delivery hear it.
+
+    However old the news it goes back to: here the parcel was added two days
+    before it was marked delivered.
+    """
+    parcel_id = await add(hass, CTT_NUMBER)
+    freezer.tick(timedelta(days=2))
+    await call(hass, "mark_delivered", {"parcel_id": parcel_id})
+    parcel = engine.data.parcels[parcel_id]
+    assert parcel_json(parcel, SYSTEM_VIEWER)["delivered_by_hand"]
+    added, changed, delivered = (
+        async_capture_events(hass, event)
+        for event in (EVENT_PARCEL_ADDED, EVENT_STATUS_CHANGED, EVENT_DELIVERED)
+    )
+
+    await call(hass, "undo_delivery", {"parcel_id": parcel_id})
+    await hass.async_block_till_done()
+
+    assert parcel.state.status is ParcelStatus.SHIPPED
+    assert parcel.state.tracking_number == CTT_NUMBER
+    assert not parcel_json(parcel, SYSTEM_VIEWER)["delivered_by_hand"]
+    assert added == delivered == []
+    assert [
+        (event.data["parcel_id"], event.data["status"], event.data["previous_status"])
+        for event in changed
+    ] == [(parcel_id, "shipped", "delivered")]
+    await refused(
+        hass, "undo_delivery", {"parcel_id": parcel_id}, "no_delivery_to_undo"
+    )
+
+
+async def test_a_reported_delivery_isnt_by_hand(
+    hass: HomeAssistant, engine: ParcelsEngine, sam: User
+) -> None:
+    """Only a mark alone shows Undo, and only to who may see the parcel."""
+    parcel_id = await add(hass, CTT_NUMBER, private=True)
+    await call(hass, "mark_delivered", {"parcel_id": parcel_id})
+    parcel = engine.data.parcels[parcel_id]
+    assert parcel_json(parcel, SYSTEM_VIEWER)["delivered_by_hand"]
+    assert not parcel_json(parcel, viewer_for(hass, sam))["delivered_by_hand"]
+
+    apply_contribution(
+        engine.data,
+        contribution(
+            "msg:carrier#0",
+            kind=MailKind.DELIVERED,
+            time=dt_util.utcnow(),
+            carrier="ctt",
+            number=CTT_NUMBER,
+            owner=None,
+        ),
+        dt_util.utcnow(),
+    )
+    parcel.touch(dt_util.utcnow())
+
+    view = parcel_json(parcel, SYSTEM_VIEWER)
+    assert (view["status"], view["restricted"]) == ("delivered", False)
+    assert not view["delivered_by_hand"]
+
+
+async def test_after_an_undo_old_news_is_old_again(
+    hass: HomeAssistant, engine: ParcelsEngine, freezer: FrozenDateTimeFactory
+) -> None:
+    """Only the undo itself makes old news worth telling.
+
+    E-mails read days late after it, saying the parcel was delivered and then
+    returned, tell nobody.
+    """
+    added = dt_util.utcnow()
+    parcel_id = await add(hass, CTT_NUMBER)
+    freezer.tick(timedelta(days=3))
+    await call(hass, "mark_delivered", {"parcel_id": parcel_id})
+    await call(hass, "undo_delivery", {"parcel_id": parcel_id})
+    events = [
+        async_capture_events(hass, event)
+        for event in (EVENT_PARCEL_ADDED, EVENT_STATUS_CHANGED, EVENT_DELIVERED)
+    ]
+
+    for origin_id, kind, hours in (
+        ("msg:delivered#0", MailKind.DELIVERED, 24),
+        ("msg:returned#0", MailKind.RETURN, 30),
+    ):
+        apply_contribution(
+            engine.data,
+            contribution(
+                origin_id,
+                kind=kind,
+                time=added + timedelta(hours=hours),
+                carrier="ctt",
+                number=CTT_NUMBER,
+            ),
+            dt_util.utcnow(),
+        )
+        engine.async_changed()
+    await hass.async_block_till_done()
+
+    assert engine.data.parcels[parcel_id].state.status is ParcelStatus.RETURNED
+    assert events == [[], [], []]
+
+
 # -- Customer returns ---------------------------------------------------------
 
 
@@ -737,6 +840,8 @@ async def test_inferred_delivery(hass: HomeAssistant, engine: ParcelsEngine) -> 
 
     Two Amazon orders were due on 12 November and the carrier delivered an
     Amazon parcel on the 13th, so both count as delivered, without merging.
+    Undoing a kept delivery brings back the inferred one. Taking an inferred
+    one back tells nobody: nobody was told of it.
     """
     data = engine.data
     now = dt_util.utcnow()
@@ -784,15 +889,24 @@ async def test_inferred_delivery(hass: HomeAssistant, engine: ParcelsEngine) -> 
     state = data.parcels[kept].state
     assert state.status is ParcelStatus.DELIVERED
     assert not state.inferred
-    await refused(hass, "undo_delivery", {"parcel_id": kept}, "no_inferred_delivery")
+    await call(hass, "undo_delivery", {"parcel_id": kept})
+    state = data.parcels[kept].state
+    assert state.status is ParcelStatus.DELIVERED
+    assert state.inferred
 
+    events = [
+        async_capture_events(hass, event)
+        for event in (EVENT_PARCEL_ADDED, EVENT_STATUS_CHANGED, EVENT_DELIVERED)
+    ]
     await call(hass, "undo_delivery", {"parcel_id": undone})
+    await hass.async_block_till_done()
     parcel = data.parcels[undone]
     assert parcel.state.status is ParcelStatus.SHIPPED
     assert parcel.delivery_rejected
+    assert events == [[], [], []]
     engine.async_changed()
     assert parcel.state.status is ParcelStatus.SHIPPED
-    await refused(hass, "undo_delivery", {"parcel_id": undone}, "no_inferred_delivery")
+    await refused(hass, "undo_delivery", {"parcel_id": undone}, "no_delivery_to_undo")
 
 
 # -- E-mails ------------------------------------------------------------------

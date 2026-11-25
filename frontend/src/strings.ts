@@ -117,6 +117,8 @@ export const STRINGS = {
   undoInferredFailed: "Couldn't undo the delivery: {message}",
   keepInferredLabel: "Keep the inferred delivery of {title}",
   keepInferredFailed: "Couldn't keep the delivery: {message}",
+  handDeliveredNotice: "Marked delivered by hand. Undo if it hasn't arrived.",
+  undoHandDeliveredLabel: "Undo marking {title} delivered",
   continuesBefore: "started before this week",
   continuesAfter: "continues after this week",
   deliveredOn: "delivered {date}",

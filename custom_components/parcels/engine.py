@@ -127,7 +127,7 @@ from .dedup import (
     revive_shell,
     split_parcel,
     undo_auto_merge,
-    undo_inferred_delivery,
+    undo_delivery,
     update_parcel,
 )
 from .mail.errors import MAILBOX_ERRORS, MailNotFound
@@ -459,6 +459,8 @@ class ParcelsEngine:
         self._more: set[str] = set()
         self._reconciling = False
         self._suggestions: dict[str, MergeSuggestion] = {}
+        # Parcels whose delivery the user is taking back.
+        self._taken_back: set[str] = set()
 
     # -- Properties -------------------------------------------------------
 
@@ -818,13 +820,19 @@ class ParcelsEngine:
             statuses[parcel.id] = state.status
             if previous == state.status or parcel.archived is not None:
                 continue
+            # A delivery taken back was news: so is what it goes back to.
+            taken_back = (
+                parcel.id in self._taken_back and previous is ParcelStatus.DELIVERED
+            )
             happened = state.status_time
             if happened is not None and state.status_timeless:
                 # Only its day is known: it can have happened until that day ended.
                 happened = dt_util.start_of_local_day(
                     dt_util.as_local(happened).date() + timedelta(days=1)
                 )
-            old = happened is None or now - happened > EVENT_MAX_AGE
+            old = not taken_back and (
+                happened is None or now - happened > EVENT_MAX_AGE
+            )
             if state.status_undated and old:
                 # When it happened isn't known: a dated report may tell later,
                 # and then it's news.
@@ -3346,9 +3354,17 @@ class ParcelsEngine:
         self._run(mark_delivered, parcel_id, dt_util.utcnow())
 
     def undo_delivery(self, parcel_id: str) -> None:
-        """Take back an inferred delivery; it isn't inferred again."""
+        """Take back a delivery marked by hand, kept, or inferred.
+
+        An inferred one isn't inferred again. Automations told of the
+        delivery hear of the status it goes back to, however old its news.
+        """
         self.parcel(parcel_id)
-        self._run(undo_inferred_delivery, parcel_id, dt_util.utcnow())
+        self._taken_back.add(parcel_id)
+        try:
+            self._run(undo_delivery, parcel_id, dt_util.utcnow())
+        finally:
+            self._taken_back.discard(parcel_id)
 
     # -- Merge suggestions ------------------------------------------------
 

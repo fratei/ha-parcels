@@ -121,6 +121,12 @@ export interface Parcel {
    * "quiet" when it had no news for three weeks; null when not inferred.
    */
   inferred_reason: InferredReason | null;
+  /**
+   * Delivered only because someone marked it delivered, or kept an inferred
+   * delivery, in Parcels: Undo takes that back. False once a carrier, the
+   * shop, 17TRACK or the Parcel app reports the delivery.
+   */
+  delivered_by_hand: boolean;
   pickup_point: string | null;
   /**
    * The PIN or pickup code. The list has it while the parcel is on its way;

@@ -551,7 +551,10 @@ add a resource.
   Its expected date ends in "· Parcel app" when it comes from the Parcel app.
   When the e-mail about a missed attempt doesn't say when it happened, its
   status gives the e-mail's time as "reported …". Merges and deliveries
-  that Parcels guessed are marked there, to keep or undo.
+  that Parcels guessed are marked there, to keep or undo. A delivery marked
+  by hand, or kept, has **Undo** there too, which brings back the parcel's
+  earlier status, until a carrier, the shop, 17TRACK or the Parcel app
+  reports the delivery.
   **E-mails**, closed until you open it, lists the parcel's e-mails and
   other sources, oldest first: where each came from (the sender, 17TRACK,
   the Parcel app or your edits) and when, what it said, such as a status
@@ -878,7 +881,9 @@ How they behave:
 - A delivered parcel shows "Delivered ✓" with the time when it's known, and
   its activity ends 30 minutes later. So does a shared activity once every
   package is delivered ("3 of 3 delivered ✓") and its return pickups are
-  done.
+  done. Undoing a delivery marked by hand brings the activity back with the
+  parcel's earlier status, also once it ended, and alerts, as the delivery
+  did. iPads and Android phones keep their "Delivered" notification.
 - A delivery that Parcels only inferred, such as from another package of the
   same shipment (see [What it does](#what-it-does)), shows "Probably
   delivered", without a time, and alerts no one: the activity changes
@@ -1376,12 +1381,12 @@ downloaded or read doesn't turn it on.
 | --- | --- |
 | `parcels.add` | Adds a parcel by tracking number and returns its ID. |
 | `parcels.update` | Corrects a parcel's details, confirms what the AI found, or keeps an automatic merge or inferred delivery. |
-| `parcels.mark_delivered` | Marks a parcel delivered now. |
+| `parcels.mark_delivered` | Marks a parcel delivered now. `parcels.undo_delivery` takes that back. |
 | `parcels.archive` | Archives a parcel. |
 | `parcels.merge` | Merges parcels that are the same delivery. |
 | `parcels.split` | Moves e-mails or entries of a parcel to a new parcel. |
 | `parcels.undo_merge` | Splits a parcel that Parcels merged automatically. |
-| `parcels.undo_delivery` | Takes back a delivery that Parcels inferred, from another parcel of the same shop, from another package of the same shipment, from a return of its items or from three weeks without news, and doesn't infer it again. |
+| `parcels.undo_delivery` | Takes back a delivery marked by hand or kept, and the parcel's earlier status comes back. Or takes back a delivery that Parcels inferred, from another parcel of the same shop, from another package of the same shipment, from a return of its items or from three weeks without news, and doesn't infer it again. A delivery that a carrier, a shop, 17TRACK or the Parcel app reported can't be taken back. |
 | `parcels.mark_return_picked_up` | Marks a return picked up now (see [Return pickups](#return-pickups)). Its `return_id` is in the return's details on the Parcels page. |
 | `parcels.undo_return_picked_up` | Takes back marking a return picked up. |
 | `parcels.refresh` | Checks all mailboxes, and 17TRACK and the Parcel app when they're on, now. The Parcel app is read at most every 10 minutes. |
@@ -1402,6 +1407,9 @@ first sync. When the carrier reports an inferred delivery later, or you mark
 it delivered or keep it, `parcels_status_changed`, with the status the news
 gave before as `previous_status`, and `parcels_delivered` fire. News read
 together with an inferred delivery fires if that delivery is taken back.
+Taking back a delivery marked by hand or kept fires
+`parcels_status_changed`, with `delivered` as `previous_status`, however old
+the status it goes back to, unless that's a delivery Parcels inferred.
 News without a date that Parcels can read, such as some events from the
 Parcel app, goes on the parcel's last known day (see
 [Parcel app](#parcel-app)). When that day is more than a day back, or isn't
@@ -1442,11 +1450,12 @@ actions:
   **Parcel ID** from the details, and run `parcels.reprocess` with that
   `parcel_id`.
 - **A parcel shows as delivered but hasn't arrived.** If its details say the
-  delivery was inferred, select **Undo**. A parcel without news for three
-  weeks shows as delivered in a past week, on its last expected day or the
-  day of its last news, whichever is later. So does a parcel whose items you
-  send back, never later than the day the return started, and a package
-  whose shipment's other package was delivered, on that one's day.
+  delivery was inferred or marked by hand, select **Undo**. A parcel without
+  news for three weeks shows as delivered in a past week, on its last
+  expected day or the day of its last news, whichever is later. So does a
+  parcel whose items you send back, never later than the day the return
+  started, and a package whose shipment's other package was delivered, on
+  that one's day.
 - **A parcel has no date yet.** Shops and carriers often give the day only in
   a later e-mail. With the [local AI](#local-ai), Parcels asks it for a date
   a parser missed, and administrators can select **Check again** in the

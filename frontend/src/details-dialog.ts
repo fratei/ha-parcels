@@ -756,6 +756,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
         : nothing}
       ${!restricted && parcel.auto_merged ? this._renderMergeNotice(parcel) : nothing}
       ${!restricted && parcel.inferred ? this._renderInferredNotice(parcel) : nothing}
+      ${!restricted && parcel.delivered_by_hand ? this._renderHandNotice(parcel) : nothing}
       ${!restricted && parcel.provisional
         ? html`<p class="hint">${STRINGS.provisionalHint}</p>`
         : nothing}
@@ -1020,7 +1021,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
         class="btn"
         aria-label=${fmt(STRINGS.undoInferredLabel, { title })}
         aria-disabled=${busy}
-        @click=${this._undoInferred}
+        @click=${this._undoDelivery}
       >
         ${STRINGS.undo}
       </button>
@@ -1032,6 +1033,23 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
         @click=${this._keepInferred}
       >
         ${STRINGS.keep}
+      </button>
+    </div>`;
+  }
+
+  private _renderHandNotice(parcel: Parcel): TemplateResult {
+    return html`<div class="alert">
+      <ha-icon icon="mdi:package-variant-closed-check" aria-hidden="true"></ha-icon>
+      <span class="grow">${STRINGS.handDeliveredNotice}</span>
+      <button
+        type="button"
+        class="btn"
+        data-undo-delivered
+        aria-label=${fmt(STRINGS.undoHandDeliveredLabel, { title: parcelTitle(parcel) })}
+        aria-disabled=${this._busy ? "true" : "false"}
+        @click=${this._undoDelivery}
+      >
+        ${STRINGS.undo}
       </button>
     </div>`;
   }
@@ -1506,7 +1524,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
             ? html`<span class="spacer"></span>
                 <button
                   type="button"
-                  class="btn primary"
+                  class="btn"
                   aria-disabled=${busy}
                   @click=${this._markDelivered}
                 >
@@ -1585,7 +1603,8 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     this._parcelService("update", { confirm_merge: true });
   }
 
-  private _undoInferred(): void {
+  /** Takes back a delivery marked by hand, kept or inferred. */
+  private _undoDelivery(): void {
     this._parcelService("undo_delivery", {});
   }
 

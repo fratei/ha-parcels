@@ -45,7 +45,11 @@ from custom_components.parcels.const import (
     ParcelStatus,
 )
 from custom_components.parcels.customer_returns import mark_return_picked_up
-from custom_components.parcels.dedup import repair_store
+from custom_components.parcels.dedup import (
+    mark_delivered,
+    repair_store,
+    undo_delivery,
+)
 from custom_components.parcels.models import (
     Origin,
     Parcel,
@@ -1178,6 +1182,52 @@ async def test_probably_delivered_taken_back_once_ended(env: Env) -> None:
             0.5,
         )
     ]
+
+
+async def test_a_delivery_marked_by_hand_taken_back(env: Env) -> None:
+    """Undoing a mark brings the activity back, with an alert, also once ended.
+
+    Marking it delivered by mistake told everyone; so does taking it back.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    await env.goto(at(9))
+    env.change(parcel, S.OUT_FOR_DELIVERY)
+    await env.settle()
+    assert len(phone.take()) == 1
+
+    def hand(action: Any) -> None:
+        action(env.host.data, parcel.id, dt_util.utcnow())
+        env.changed()
+
+    def shown() -> list[tuple[str, str, bool | None]]:
+        return [
+            (payload["data"]["tag"], payload["message"], payload["data"].get("silent"))
+            for payload in phone.take()
+        ]
+
+    await env.goto(at(10, 42))
+    hand(mark_delivered)
+    await env.settle()
+    assert shown() == [(tag_of(parcel), f"Delivered {CHECK} 10:42{SEP}DPD", None)]
+    await env.goto(at(10, 50))
+    hand(undo_delivery)
+    await env.settle()
+    assert shown() == [(tag_of(parcel), f"Out for delivery{SEP}DPD", None)]
+
+    await env.goto(at(11))
+    hand(mark_delivered)
+    await env.settle()
+    assert len(phone.take()) == 1
+    await env.goto(at(11, 31))
+    assert phone.take() == [end(tag_of(parcel))]
+    await env.goto(at(14))
+    hand(undo_delivery)
+    await env.settle()
+    assert shown() == [(tag_of(parcel, 2), f"Out for delivery{SEP}DPD", None)]
 
 
 async def test_probably_delivered_in_the_combined_activity(env: Env) -> None:

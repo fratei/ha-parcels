@@ -27,6 +27,7 @@ from custom_components.parcels.dedup import (
     find_parcels_by_number,
     fold_known_orders,
     keep_apart,
+    manual_origin_id,
     mark_delivered,
     merge_parcels,
     order_parcels,
@@ -37,6 +38,7 @@ from custom_components.parcels.dedup import (
     restore_cancellations,
     split_parcel,
     undo_auto_merge,
+    undo_delivery,
     update_parcel,
 )
 from custom_components.parcels.models import (
@@ -1808,6 +1810,150 @@ def test_mark_delivered_from_any_status() -> None:
     assert parcel.state.status is S.DELIVERED
     assert parcel.state.delivered_at == at(hours=5)
     assert archive_parcel(data, parcel.id, at(days=1)).archived == at(days=1)
+
+
+def test_undo_a_delivery_marked_by_hand() -> None:
+    """Undoing it brings back the news before it, out of the archive.
+
+    The empty row of the user's edits that marking it made goes too, and
+    nothing stops a delivery from being marked or reported again.
+    """
+    data = ParcelsData()
+    pid = apply_contribution(
+        data, contribution("msg:a#0", carrier="dpd", number=DPD), T0
+    ).parcel_id
+    apply_contribution(
+        data,
+        contribution(
+            "msg:b#0",
+            kind=MailKind.OUT_FOR_DELIVERY,
+            time=at(hours=2),
+            carrier="dpd",
+            number=DPD,
+        ),
+        at(hours=2),
+    )
+    mark_delivered(data, pid, at(hours=3))
+    archive_parcel(data, pid, at(days=1))
+
+    parcel = undo_delivery(data, pid, at(days=2))
+
+    assert parcel.state.status is S.OUT_FOR_DELIVERY
+    assert parcel.state.delivered_at is None
+    assert parcel.archived is None
+    assert not parcel.delivery_rejected
+    assert set(parcel.origins) == {"msg:a#0", "msg:b#0"}
+    with pytest.raises(DedupError, match="no_delivery_to_undo"):
+        undo_delivery(data, pid, at(days=2))
+    assert mark_delivered(data, pid, at(days=3)).state.status is S.DELIVERED
+
+
+@pytest.mark.parametrize(
+    ("changes", "field", "value"),
+    [
+        ({"merchant": "Loja"}, "merchant", "Loja"),
+        (
+            {"eta_start": "2026-11-06"},
+            "eta",
+            Eta(start=date(2026, 11, 6), end=date(2026, 11, 6)),
+        ),
+    ],
+    ids=["shop", "date"],
+)
+def test_undoing_a_marked_delivery_keeps_the_users_edits(
+    changes: dict[str, str], field: str, value: object
+) -> None:
+    """Only the delivery goes: the shop or the day the user typed in stays."""
+    data = ParcelsData()
+    pid = apply_contribution(
+        data, contribution("msg:a#0", carrier="dpd", number=DPD), T0
+    ).parcel_id
+    update_parcel(data, pid, changes, at(hours=1))
+    mark_delivered(data, pid, at(hours=2))
+
+    parcel = undo_delivery(data, pid, at(hours=3))
+
+    assert parcel.state.status is S.SHIPPED
+    assert getattr(parcel.state, field) == value
+    assert manual_origin_id(pid) in parcel.origins
+
+
+def test_undoing_a_mark_keeps_a_cancelled_order_archived() -> None:
+    """It goes back to cancelled: a parcel that isn't coming stays archived."""
+    data = ParcelsData()
+    pid = apply_contribution(
+        data,
+        contribution("msg:a#0", kind=MailKind.ORDER, merchant="Shop", orders=["#9"]),
+        T0,
+    ).parcel_id
+    apply_contribution(
+        data,
+        contribution(
+            "msg:b#0",
+            kind=MailKind.CANCELLED,
+            time=at(hours=1),
+            merchant="Shop",
+            orders=["#9"],
+        ),
+        at(hours=1),
+    )
+    mark_delivered(data, pid, at(hours=2))
+    archive_parcel(data, pid, at(days=1))
+
+    parcel = undo_delivery(data, pid, at(days=2))
+
+    assert parcel.state.status is S.CANCELLED
+    assert parcel.archived == at(days=1)
+
+
+@pytest.mark.parametrize("hours", [1, 3], ids=["before", "after"])
+def test_a_reported_delivery_cant_be_undone(hours: int) -> None:
+    """When the carrier reported it delivered, before or after the mark, it was."""
+    data = ParcelsData()
+    pid = apply_contribution(
+        data, contribution("msg:a#0", carrier="dpd", number=DPD), T0
+    ).parcel_id
+    mark_delivered(data, pid, at(hours=2))
+    apply_contribution(
+        data,
+        contribution(
+            "msg:b#0",
+            kind=MailKind.DELIVERED,
+            time=at(hours=hours),
+            carrier="dpd",
+            number=DPD,
+        ),
+        at(hours=4),
+    )
+
+    with pytest.raises(DedupError, match="no_delivery_to_undo"):
+        undo_delivery(data, pid, at(hours=5))
+    assert data.parcels[pid].state.status is S.DELIVERED
+
+
+def test_undo_a_delivery_marked_before_a_merge() -> None:
+    """The mark moves with its parcel's e-mails into the parcel it joins.
+
+    Its row stays: it tells that the merged parcel is part of this one.
+    """
+    data = ParcelsData()
+    first = apply_contribution(
+        data, contribution("msg:a#0", carrier="dpd", number=DPD), T0
+    ).parcel_id
+    second = apply_contribution(
+        data,
+        contribution("msg:b#0", kind=MailKind.ORDER, merchant="Loja", orders=["#7"]),
+        T0,
+    ).parcel_id
+    mark_delivered(data, second, at(hours=2))
+    assert merge_parcels(data, first, [second], at(hours=3)).state.status is (
+        S.DELIVERED
+    )
+
+    parcel = undo_delivery(data, first, at(hours=4))
+
+    assert parcel.state.status is S.SHIPPED
+    assert manual_origin_id(second) in parcel.origins
 
 
 def test_anchored_contribution() -> None:
