@@ -13,6 +13,7 @@ import {
   itemsSummary,
   possiblyLine,
   sellerLine,
+  sellerName,
 } from "../src/describe.ts";
 import { formatDate, formatDateRange, type LocaleOptions } from "../src/format.ts";
 import type { Placement } from "../src/placement.ts";
@@ -161,6 +162,26 @@ describe("sellerLine", () => {
       describeParcel(makeParcel({ carrier: "dhl" }), { locale: GB }),
       "Unknown seller, carrier DHL, In transit",
     );
+  });
+
+  test("falls back to the parcel's name in the Parcel app", () => {
+    const named = makeParcel({ name: "  Oak   shelf ", carrier: "ups", tracking_number: "TEST0002" });
+    assert.equal(sellerLine(named), "Oak shelf");
+    assert.equal(sellerLine({ ...named, merchant: "Example Shop" }), "Example Shop");
+    assert.equal(sellerLine({ ...named, merchant: "  " }), "Oak shelf");
+    assert.equal(sellerLine({ ...named, name: " " }), "Unknown seller");
+    assert.equal(sellerLine({ ...named, restricted: true }), "Private parcel");
+    assert.equal(describeParcel(named, { locale: GB }), "Oak shelf, carrier UPS, In transit");
+    assert.equal(candidateLines(named, GB).title, "Oak shelf");
+    assert.equal(couldAlsoBe([named]), "Could also be: Oak shelf");
+  });
+
+  test("sellerName is null only when the chip says the seller isn't known", () => {
+    const named = makeParcel({ name: "Oak shelf" });
+    assert.equal(sellerName(named), "Oak shelf");
+    assert.equal(sellerName({ ...named, merchant: " Example  Shop " }), "Example Shop");
+    assert.equal(sellerName(makeParcel({ carrier: "dhl", tracking_number: "TEST0001" })), null);
+    assert.equal(sellerName({ ...named, merchant: "Example Shop", restricted: true }), null);
   });
 });
 

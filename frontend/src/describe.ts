@@ -58,12 +58,26 @@ function packagesText(count: number | undefined): string | null {
   return count !== undefined && count > 1 ? fmt(STRINGS.packages, { count: String(count) }) : null;
 }
 
-/** The first line of a chip: the shop, never the carrier or a tracking number. */
+/**
+ * The shop, else the parcel's name in the Parcel app; null when neither is
+ * known, or for another user's private parcel.
+ */
+export function sellerName(parcel: Parcel): string | null {
+  if (parcel.restricted) {
+    return null;
+  }
+  return clean(parcel.merchant) ?? clean(parcel.name);
+}
+
+/**
+ * The first line of a chip: the shop, or the parcel's name in the Parcel app;
+ * never the carrier or a tracking number.
+ */
 export function sellerLine(parcel: Parcel): string {
   if (parcel.restricted) {
     return STRINGS.privateParcel;
   }
-  return clean(parcel.merchant) ?? STRINGS.unknownSeller;
+  return sellerName(parcel) ?? STRINGS.unknownSeller;
 }
 
 /** "PIN 4711" while the list has the parcel's delivery PIN or pickup code. */
