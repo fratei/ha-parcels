@@ -3731,10 +3731,50 @@ async def test_learned_code_by_carrier(engine: ParcelsEngine) -> None:
 
 
 @pytest.mark.parametrize(
-    ("when", "status"),
+    ("tracked", "code", "text", "when", "status"),
     [
-        ("2026-11-17 08:00:00", ParcelStatus.OUT_FOR_DELIVERY),
-        ("2026-11-17 09:30:00", ParcelStatus.ATTEMPTED),
+        (
+            ParcelStatus.OUT_FOR_DELIVERY,
+            6,
+            "Delivery attempted",
+            "2026-11-17 08:00:00",
+            ParcelStatus.OUT_FOR_DELIVERY,
+        ),
+        (
+            ParcelStatus.OUT_FOR_DELIVERY,
+            6,
+            "Delivery attempted",
+            "2026-11-17 09:30:00",
+            ParcelStatus.ATTEMPTED,
+        ),
+        (
+            ParcelStatus.READY_FOR_PICKUP,
+            6,
+            "Delivery attempted",
+            "2026-11-17 08:00:00",
+            ParcelStatus.READY_FOR_PICKUP,
+        ),
+        (
+            ParcelStatus.READY_FOR_PICKUP,
+            6,
+            "Delivery attempted",
+            "2026-11-17 09:30:00",
+            ParcelStatus.ATTEMPTED,
+        ),
+        (
+            ParcelStatus.OUT_FOR_DELIVERY,
+            2,
+            "In transit",
+            "2026-11-17 09:30:00",
+            ParcelStatus.IN_TRANSIT,
+        ),
+        (
+            ParcelStatus.READY_FOR_PICKUP,
+            2,
+            "In transit",
+            "2026-11-17 09:30:00",
+            ParcelStatus.IN_TRANSIT,
+        ),
     ],
 )
 async def test_newest_news_wins_against_17track(
@@ -3742,13 +3782,20 @@ async def test_newest_news_wins_against_17track(
     freezer: FrozenDateTimeFactory,
     engine: ParcelsEngine,
     parcel_app: FakeParcelApp,
+    tracked: ParcelStatus,
+    code: int,
+    text: str,
     when: str,
     status: ParcelStatus,
 ) -> None:
-    """When Parcel and 17TRACK both have news, the newest decides."""
+    """When Parcel and 17TRACK both have news, the newest decides.
+
+    Out for delivery and waiting at a pickup point too: the carrier can take
+    the parcel back, or try again.
+    """
     add_parcel(engine, "a")
-    tracked_news(engine, ParcelStatus.OUT_FOR_DELIVERY, at(17, 9))
-    parcel_app.deliveries = [delivery(status=6, events=(("Delivery attempted", when),))]
+    tracked_news(engine, tracked, at(17, 9))
+    parcel_app.deliveries = [delivery(status=code, events=((text, when),))]
 
     await read(hass, freezer, parcel_app)
 

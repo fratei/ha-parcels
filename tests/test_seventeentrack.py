@@ -940,6 +940,54 @@ async def test_pickup_status_needs_the_carriers_word(
     )
 
 
+async def test_newer_news_takes_a_parcel_back_from_the_locker(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """Out for delivery or at a locker, a parcel follows the carrier's newer news.
+
+    Its delivery today can be called off, or it can go on to another locker.
+    """
+    out = add_parcel(engine, "out", CTT, carrier="ctt")
+    ready = add_parcel(engine, "ready", OTHER, carrier="ctt")
+    await tracker.async_refresh()
+    track.put(
+        CTT,
+        "Ready to be picked up",
+        info="Será entregue hoje no cacifo Exemplo",
+        timestamp="2026-11-17T09:10:00+00:00",
+    )
+    track.put(
+        OTHER,
+        "Ready to be picked up",
+        info="Disponível para levantamento no cacifo Exemplo",
+        timestamp="2026-11-17T09:10:00+00:00",
+    )
+    await tracker.async_refresh()
+    assert status(engine, out.id) is ParcelStatus.OUT_FOR_DELIVERY
+    assert status(engine, ready.id) is ParcelStatus.READY_FOR_PICKUP
+
+    track.put(
+        CTT,
+        "Ready to be picked up",
+        info="Não será entregue hoje no cacifo; nova entrega amanhã",
+        timestamp="2026-11-17T09:50:00+00:00",
+    )
+    track.put(
+        OTHER,
+        "In Transit",
+        info="Em trânsito para outro ponto de recolha",
+        timestamp="2026-11-17T09:50:00+00:00",
+    )
+    await tracker.async_refresh()
+
+    changed = datetime(2026, 11, 17, 9, 50, tzinfo=UTC)
+    for parcel in (out, ready):
+        state = engine.data.parcels[parcel.id].state
+        assert (state.status, state.status_time) == (ParcelStatus.IN_TRANSIT, changed)
+        assert state.timeline[-1].accepted
+    assert engine.data.parcels[ready.id].state.collect_by is None
+
+
 async def test_update_takes_back_pickups_17track_alone_gave(
     hass: HomeAssistant, hass_storage: dict[str, Any], track: FakeSeventeenTrack
 ) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import date, time
+from datetime import date, time, timedelta
 import json
 import logging
 
@@ -105,9 +105,204 @@ def test_delay_takes_out_for_delivery_back_to_transit() -> None:
     assert parcel.state.status is S.IN_TRANSIT
     assert parcel.state.eta == new_eta
 
-    # Without the delay kind, the same status is a step back.
+    # Any newer news does, without the delay kind too.
     plain = _parcel(_event(S.OUT_FOR_DELIVERY, at()), _event(S.IN_TRANSIT, at(hours=6)))
-    assert plain.state.status is S.OUT_FOR_DELIVERY
+    assert plain.state.status is S.IN_TRANSIT
+
+
+# Out for delivery, or waiting at a pickup point, can end in more news: the
+# carrier takes the parcel back, tries again, or delivers it after all.
+NEWS_AFTER = [
+    (S.OUT_FOR_DELIVERY, S.IN_TRANSIT),
+    (S.READY_FOR_PICKUP, S.IN_TRANSIT),
+    (S.READY_FOR_PICKUP, S.OUT_FOR_DELIVERY),
+    (S.READY_FOR_PICKUP, S.ATTEMPTED),
+]
+
+
+@pytest.mark.parametrize(("current", "news"), NEWS_AFTER)
+def test_newer_news_wins(current: ParcelStatus, news: ParcelStatus) -> None:
+    """The newest news decides the status, whichever source gave it."""
+    parcel = _parcel(
+        _event(S.SHIPPED, at(days=-1)),
+        _event(current, at()),
+        _event(news, at(hours=2), source=Source.SEVENTEENTRACK, origin="o2"),
+        origins=(_origin(), _origin("o2", source=Source.SEVENTEENTRACK)),
+    )
+    state = parcel.state
+    assert (state.status, state.status_time) == (news, at(hours=2))
+    assert [entry.accepted for entry in state.timeline] == [True, True, True]
+
+
+@pytest.mark.parametrize(("current", "news"), NEWS_AFTER)
+def test_late_news_still_never_moves_a_parcel_back(
+    current: ParcelStatus, news: ParcelStatus
+) -> None:
+    """News older than the status, read after it, changes nothing."""
+    parcel = _parcel(
+        _event(S.SHIPPED, at(days=-1)),
+        _event(current, at()),
+        _event(news, at(hours=-2), origin="o2"),
+        origins=(_origin(), _origin("o2")),
+    )
+    state = parcel.state
+    assert (state.status, state.status_time) == (current, at())
+    assert [entry.status for entry in state.timeline] == [S.SHIPPED, news, current]
+
+
+@pytest.mark.parametrize(
+    "current",
+    [S.IN_TRANSIT, S.OUT_FOR_DELIVERY, S.ATTEMPTED, S.READY_FOR_PICKUP, S.EXCEPTION],
+)
+@pytest.mark.parametrize("news", [S.ORDERED, S.SHIPPED])
+def test_order_and_shipping_news_never_moves_a_parcel_back(
+    current: ParcelStatus, news: ParcelStatus
+) -> None:
+    """Order and shipping e-mails repeat themselves: they never step back."""
+    parcel = _parcel(_event(current, at()), _event(news, at(hours=2)))
+    assert parcel.state.status is current
+    assert [entry.accepted for entry in parcel.state.timeline] == [True, False]
+    shipped = _parcel(_event(S.SHIPPED, at()), _event(S.ORDERED, at(hours=2)))
+    assert shipped.state.status is S.SHIPPED
+
+
+@pytest.mark.parametrize(
+    "news",
+    [
+        S.SHIPPED,
+        S.IN_TRANSIT,
+        S.OUT_FOR_DELIVERY,
+        S.ATTEMPTED,
+        S.READY_FOR_PICKUP,
+        S.EXCEPTION,
+        S.CANCELLED,
+    ],
+)
+def test_only_a_return_follows_a_delivery(news: ParcelStatus) -> None:
+    """Newer news about a delivered parcel doesn't undo the delivery."""
+    parcel = _parcel(_event(S.DELIVERED, at()), _event(news, at(hours=2)))
+    assert parcel.state.status is S.DELIVERED
+    returned = _parcel(_event(S.DELIVERED, at()), _event(S.RETURNED, at(hours=2)))
+    assert returned.state.status is S.RETURNED
+
+
+@pytest.mark.parametrize(
+    "current", [S.OUT_FOR_DELIVERY, S.ATTEMPTED, S.READY_FOR_PICKUP]
+)
+def test_cancelling_doesnt_stop_a_parcel_on_its_way(current: ParcelStatus) -> None:
+    """An order cancelled after its parcel left can't cancel the parcel."""
+    parcel = _parcel(_event(current, at()), _event(S.CANCELLED, at(hours=2)))
+    assert parcel.state.status is current
+    in_transit = _parcel(_event(S.IN_TRANSIT, at()), _event(S.CANCELLED, at(hours=2)))
+    assert in_transit.state.status is S.CANCELLED
+
+
+def _guessed(news: ParcelStatus, when, by, origin: str = "o2", **kwargs):
+    """Return news that gave no time, placed by a guess."""
+    return _event(
+        news,
+        when,
+        undated=True,
+        by=by,
+        origin=origin,
+        source=Source.PARCELAPP,
+        **kwargs,
+    )
+
+
+@pytest.mark.usefixtures("lisbon")
+@pytest.mark.parametrize(("current", "news"), NEWS_AFTER)
+def test_a_guessed_time_takes_a_parcel_back_only_on_a_later_day(
+    current: ParcelStatus, news: ParcelStatus
+) -> None:
+    """News without a time steps back only when it's surely newer.
+
+    Its time is a guess: just after what's known to come before it. Another
+    source's news of the status's day, or of no known day, may be older.
+    """
+    origins = (_origin(), _origin("o2", source=Source.PARCELAPP))
+    for guessed in (
+        # Only the day: the status's own.
+        _guessed(news, at(hours=1), at(hours=14), timeless=True),
+        # No date, placed between times of the status's day.
+        _guessed(news, at(hours=1), at(hours=3)),
+        # No date, placed after the status, but seen days later.
+        _guessed(news, at(hours=1), at(days=2)),
+        # No date, placed on a later day, but seen days after that.
+        _guessed(news, at(days=1), at(days=3)),
+        # No date, nothing to place it by.
+        _guessed(news, at(hours=3), at(hours=3), dayless=True),
+        _guessed(news, at(days=1), at(days=1), dayless=True),
+    ):
+        state = _parcel(_event(current, at()), guessed, origins=origins).state
+        assert (state.status, state.status_time) == (current, at())
+        assert [entry.accepted for entry in state.timeline] == [True, False]
+
+    # Only the day, a later one.
+    later = _guessed(news, at(days=1, hours=-9), at(days=1, hours=14), timeless=True)
+    state = _parcel(_event(current, at()), later, origins=origins).state
+    assert (state.status, state.status_time) == (news, at(days=1, hours=-9))
+    # No date, between times of a later day.
+    later = _guessed(news, at(days=1), at(days=1, hours=3))
+    assert _parcel(_event(current, at()), later, origins=origins).state.status is news
+
+
+@pytest.mark.usefixtures("lisbon")
+@pytest.mark.parametrize(("current", "news"), NEWS_AFTER)
+def test_a_status_of_no_known_time_ends_on_its_last_possible_day(
+    current: ParcelStatus, news: ParcelStatus
+) -> None:
+    """A status that gave no time may have happened as late as it was seen by."""
+    origins = (_origin(), _origin("o2", source=Source.PARCELAPP))
+    for status in (
+        _guessed(current, at(hours=-2), at(days=1, hours=-1), origin="o1"),
+        _guessed(
+            current, at(hours=-2), at(days=1, hours=-1), origin="o1", dayless=True
+        ),
+    ):
+        same_day = _guessed(
+            news, at(days=1, hours=-8), at(days=1, hours=14), timeless=True
+        )
+        assert _parcel(status, same_day, origins=origins).state.status is current
+        next_day = _guessed(
+            news, at(days=2, hours=-8), at(days=2, hours=14), timeless=True
+        )
+        assert _parcel(status, next_day, origins=origins).state.status is news
+
+    # A status with no time, and no time it was seen by: nothing is later.
+    unknown = _event(current, at(), undated=True, dayless=True)
+    days_later = _guessed(news, at(days=5), at(days=5, hours=2), timeless=True)
+    assert _parcel(unknown, days_later, origins=origins).state.status is current
+
+
+@pytest.mark.usefixtures("lisbon")
+@pytest.mark.parametrize(("current", "news"), NEWS_AFTER)
+def test_a_sources_own_list_orders_its_news(
+    current: ParcelStatus, news: ParcelStatus
+) -> None:
+    """A source's newer entry follows its older one, though neither has a time.
+
+    Its entry after a dated status counts once it was seen after that time;
+    one placed just after it, though seen by it, is the list's older entry.
+    """
+    origins = (_origin(), _origin("o2", source=Source.PARCELAPP))
+    status = _guessed(current, at(hours=1), at(hours=14), timeless=True)
+    newer = _guessed(news, at(hours=2), at(hours=14), timeless=True)
+    assert _parcel(status, newer, origins=origins).state.status is news
+    dated = _event(current, at(), origin="o2", source=Source.PARCELAPP)
+    assert (
+        _parcel(
+            dated, _guessed(news, at(hours=1), at(hours=2)), origins=origins
+        ).state.status
+        is news
+    )
+    older = _guessed(news, at() + timedelta(microseconds=5), at())
+    assert _parcel(dated, older, origins=origins).state.status is current
+
+    # Another source's news is placed by the guess alone.
+    other = _guessed(news, at(hours=2), at(hours=14), timeless=True, origin="o3")
+    origins = (*origins, _origin("o3", source=Source.PARCELAPP))
+    assert _parcel(status, other, origins=origins).state.status is current
 
 
 def test_forced_manual_event_wins() -> None:

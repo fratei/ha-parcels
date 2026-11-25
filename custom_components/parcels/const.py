@@ -166,8 +166,17 @@ ALLOWED_TRANSITIONS: Final[dict[ParcelStatus, frozenset[ParcelStatus]]] = {
             S.CANCELLED,
         }
     ),
+    # Out for delivery and at a pickup point a parcel can still go back to
+    # transit, or on to a new attempt: models.py lets only newer news do it.
     S.OUT_FOR_DELIVERY: frozenset(
-        {S.DELIVERED, S.ATTEMPTED, S.EXCEPTION, S.READY_FOR_PICKUP, S.RETURNED}
+        {
+            S.DELIVERED,
+            S.ATTEMPTED,
+            S.EXCEPTION,
+            S.READY_FOR_PICKUP,
+            S.RETURNED,
+            S.IN_TRANSIT,
+        }
     ),
     S.ATTEMPTED: frozenset(
         {
@@ -190,7 +199,16 @@ ALLOWED_TRANSITIONS: Final[dict[ParcelStatus, frozenset[ParcelStatus]]] = {
             S.CANCELLED,
         }
     ),
-    S.READY_FOR_PICKUP: frozenset({S.DELIVERED, S.RETURNED, S.EXCEPTION}),
+    S.READY_FOR_PICKUP: frozenset(
+        {
+            S.DELIVERED,
+            S.RETURNED,
+            S.EXCEPTION,
+            S.IN_TRANSIT,
+            S.OUT_FOR_DELIVERY,
+            S.ATTEMPTED,
+        }
+    ),
     S.DELIVERED: frozenset({S.RETURNED}),
     S.RETURNED: frozenset(),
     S.CANCELLED: frozenset(),

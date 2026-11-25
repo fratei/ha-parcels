@@ -1058,15 +1058,48 @@ def _accepts(
         return True, new
     if new is current:
         return True, current
-    # A delay notice can take a parcel that was out for delivery back to
-    # transit, with a new date.
-    if (
-        event.kind is MailKind.DELAYED
-        and current is ParcelStatus.OUT_FOR_DELIVERY
-        and new is ParcelStatus.IN_TRANSIT
-    ):
-        return True, new
     return False, current
+
+
+# The steps back that only news surely newer than the status takes: a parcel
+# out for delivery or at a pickup point can go back to transit, out again or
+# to a new attempt.
+_NEWS_ONLY_STEPS = frozenset(
+    {
+        (ParcelStatus.OUT_FOR_DELIVERY, ParcelStatus.IN_TRANSIT),
+        (ParcelStatus.READY_FOR_PICKUP, ParcelStatus.IN_TRANSIT),
+        (ParcelStatus.READY_FOR_PICKUP, ParcelStatus.OUT_FOR_DELIVERY),
+        (ParcelStatus.READY_FOR_PICKUP, ParcelStatus.ATTEMPTED),
+    }
+)
+
+
+def _after_status(
+    event: ParcelEvent,
+    status_time: datetime | None,
+    status_undated: bool,
+    status_by: datetime | None,
+    status_origin: str | None,
+) -> bool:
+    """Return whether an event surely happened after the current status began.
+
+    A dated one did: events fold in time order. A guessed time did when the
+    same source listed the event after the status, or when it falls on a later
+    day than the last the status can have begun on.
+    """
+    if not event.undated:
+        return True
+    if event.origin is not None and event.origin == status_origin:
+        if status_undated:
+            return True
+        if event.by is not None and status_time is not None and event.by > status_time:
+            return True
+    latest = status_by if status_undated and status_by is not None else status_time
+    return (
+        latest is not None
+        and day_known(event)
+        and local_date(event.time) > local_date(latest)
+    )
 
 
 def derive_state(parcel: Parcel) -> ParcelState:
@@ -1175,6 +1208,8 @@ def derive_state(parcel: Parcel) -> ParcelState:
     status_time: datetime | None = None
     # When an undated status had happened by.
     status_by: datetime | None = None
+    # The source whose news set the status.
+    status_origin: str | None = None
     status_undated = False
     status_timeless = False
     status_inferred = False
@@ -1193,12 +1228,21 @@ def derive_state(parcel: Parcel) -> ParcelState:
     timeline: list[TimelineEntry] = []
     for event in sorted(parcel.events, key=_event_sort_key):
         accepted, new_status = _accepts(status, event)
+        if (
+            accepted
+            and (status, new_status) in _NEWS_ONLY_STEPS
+            and not _after_status(
+                event, status_time, status_undated, status_by, status_origin
+            )
+        ):
+            accepted, new_status = False, status
         if accepted and new_status is not status:
             status = new_status
             status_time = None if event.dayless else event.time
             status_undated = event.undated
             status_timeless = event.undated and event.timeless
             status_by = event.by if event.undated else None
+            status_origin = event.origin
             status_reported = _reported(parcel, event)
             # Each status has its own details: a new attempt, pickup or
             # delivery starts afresh.

@@ -70,6 +70,23 @@ api.parcel.app, which Parcels contacts itself with your API key.
   a guess would show a private parcel to someone else (see
   [The Parcels page](#the-parcels-page)). Parcels with different tracking
   numbers are never merged.
+- **Statuses**: a parcel shows the status of its newest news, by the time of
+  the event, whether an e-mail, 17TRACK or the Parcel app brought it. News
+  that arrives late never moves a parcel back; newer news can. A parcel out
+  for delivery or waiting at a pickup point goes back to in transit, out
+  for delivery or a failed attempt when the carrier's newer news says so,
+  such as "não será entregue hoje no cacifo; nova entrega amanhã". These
+  steps back never happen:
+  - to ordered or shipped, such as on a shop's late order or shipping
+    e-mail;
+  - from delivered, except to returned to the sender, and from returned or
+    cancelled;
+  - from out for delivery or a pickup point on news without a date Parcels
+    can read (see [Parcel app](#parcel-app)), unless the same delivery
+    lists it after the news that set the status, or it's from a later day.
+
+  An e-mail's news counts from when the e-mail was sent, unless it gives an
+  earlier time, and 17TRACK's news without a time from when Parcels read it.
 - **Parcels without a tracking number**: when a carrier delivers another
   parcel from the same shop around the expected day, and no e-mail says
   otherwise, the parcel is marked as probably delivered, unless that delivery
@@ -936,7 +953,9 @@ own tracking in between.
   transit. Wording that denies a delivery today, such as "não será entregue
   hoje no cacifo" or "not out for delivery yet", isn't out for delivery:
   the parcel keeps 17TRACK's status, or is in transit when that status is
-  "ready to be picked up".
+  "ready to be picked up". Such news, when it's newer, also takes a parcel
+  back from out for delivery or the locker (see
+  [What it does](#what-it-does)).
 - **What it doesn't add**: delivery dates. Home Assistant's 17TRACK integration
   gives no expected date, so a parcel without one stays under **No date yet**.
 - **What it leaves out**, so they don't take up places in your account:
@@ -1003,7 +1022,8 @@ enter an API key, Parcels itself contacts api.parcel.app.
   expected date or time window, which fills in what the e-mails didn't give.
   When an event's text says so clearly, also the last day to collect, the
   next attempt and where a delivered parcel was left.
-  When an e-mail and Parcel disagree, the newer news wins. In a parcel's
+  When an e-mail and Parcel disagree, the newer news wins (see **Statuses**
+  in [What it does](#what-it-does)). In a parcel's
   details, a date from Parcel ends in "· Parcel app", and the delivery's name
   in Parcel is shown.
 - **What it reads**: the deliveries in your Parcel list. Parcels keeps their
@@ -1146,8 +1166,12 @@ key again every 6 hours. It never logs or keeps Parcel's error messages,
 only the kind of error.
 
 **With 17TRACK.** Both can be on. They update the same parcels, and the
-newest news wins. 17TRACK also gets the numbers of the parcels that came
-from Parcel, like those of other parcels.
+newest news wins. When they read the same carrier event differently, such
+as ready for pickup and in transit, the reading with the later time wins.
+For carriers whose clock is ahead of Home Assistant's, Parcel's times can
+read later than 17TRACK's for the same event (see **Dates** above).
+17TRACK also gets the numbers of the parcels that came from Parcel, like
+those of other parcels.
 
 **Turning it off.** Clear the API key in the Parcels options. The parcels
 made only of deliveries from Parcel go. The news Parcel brought to other
@@ -1595,6 +1619,12 @@ actions:
   today, such as "não será entregue hoje no cacifo", read as out for
   delivery. Parcels doesn't read that news again: the carrier's next news
   replaces it.
+- **A parcel stayed out for delivery or at a pickup point after newer
+  news.** Before 0.1.21, a parcel out for delivery didn't go back to in
+  transit, nor one ready for pickup to in transit, out for delivery or a
+  failed attempt, whatever the news, such as "nova entrega amanhã" or the
+  Parcel app's later failed attempt. After the update, those parcels take
+  the status of their newest news.
 - **Amazon shows as the carrier, but didn't deliver.** Before 0.1.8, Amazon
   became the carrier whenever the local AI, the Parcel app or 17TRACK named
   it, which kept Amazon's orders apart from their carrier's deliveries. After
