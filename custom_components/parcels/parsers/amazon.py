@@ -52,7 +52,16 @@ from ._amazon_shopify_common import (
     url_path,
     words_regex,
 )
-from .base import Eta, Link, MailMessage, ParsedShipment, ParseResult, SenderVerdict
+from .base import (
+    Eta,
+    Link,
+    MailMessage,
+    ParsedShipment,
+    ParseResult,
+    SenderVerdict,
+    shipment_base,
+    shipment_key,
+)
 from .codes import find_code, has_code_label, mask_codes
 from .eta import find_eta, parse_eta, parse_time_window
 from .items import recommendations_start, unique_items
@@ -65,6 +74,8 @@ ORDER_NUMBER_RE = re.compile(r"(?<![\dA-Za-z-])\d{3}-\d{7}-\d{7}(?![\d-])")
 # Digital orders (Kindle, apps, video) never ship a parcel.
 _DIGITAL_ORDER_RE = re.compile(r"(?<![\dA-Za-z-])D\d{2}-\d{7}-\d{7}(?![\d-])")
 _SHIPMENT_ID_RE = re.compile(r"[A-Za-z0-9]{6,20}")
+# A package's place in its shipment, from 0.
+_PACKAGE_INDEX_RE = re.compile(r"[0-9]{1,3}")
 _ASIN_PATH_RE = re.compile(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})(?=[/?#]|$)")
 # A quoted product title in a folded subject; truncated titles lose the
 # closing quote.
@@ -565,13 +576,40 @@ def _order_numbers(subject: str, text: str, urls: tuple[str, ...]) -> tuple[str,
     return tuple(orders)
 
 
+def _link_shipments(url: str) -> list[tuple[str, int | None]]:
+    """Return the shipments a link names, with its package's index if it gives one.
+
+    The index counts when every one the link gives is the same small number.
+    """
+    params = query_params(url)
+    indexes = [value for key, value in params if key.lower() == "packageindex"]
+    index: int | None = None
+    if (
+        indexes
+        and all(_PACKAGE_INDEX_RE.fullmatch(value) for value in indexes)
+        and len({int(value) for value in indexes}) == 1
+    ):
+        index = int(indexes[0])
+    return [
+        (value, index)
+        for key, value in params
+        if key.lower() == "shipmentid" and _SHIPMENT_ID_RE.fullmatch(value)
+    ]
+
+
 def _shipment_ids(urls: tuple[str, ...]) -> list[str]:
-    """Return the shipment IDs of the "Track package" links."""
+    """Return the shipments of the "Track package" links, one per package.
+
+    A package after its shipment's first adds its index (see shipment_key).
+    A link without an index is about a package another link gives one of.
+    """
+    found = [pair for url in urls for pair in _link_shipments(url)]
+    indexed = {shipment for shipment, index in found if index is not None}
     ids: list[str] = []
-    for url in urls:
-        for key, value in query_params(url):
-            if key.lower() == "shipmentid" and _SHIPMENT_ID_RE.fullmatch(value):
-                _add_unique(ids, value)
+    for shipment, index in found:
+        if index is None and shipment in indexed:
+            continue
+        _add_unique(ids, shipment_key(shipment, index))
     return ids
 
 
@@ -733,22 +771,25 @@ def _pickup_point(ctx: _Context) -> str | None:
     return point
 
 
-def _track_url(ctx: _Context, shipment_id: str | None) -> str | None:
-    """Return the cleaned "Track package" link for a shipment, if it's safe."""
-    if shipment_id is None:
+def _track_url(ctx: _Context, shipment: str | None) -> str | None:
+    """Return the cleaned "Track package" link for a package, if it's safe.
+
+    ``shipment`` is the package's key: its shipment ID, and its index after
+    the first.
+    """
+    if shipment is None:
         return None
     for url in ctx.urls:
-        params = query_params(url)
-        if not any(
-            key.lower() == "shipmentid" and value == shipment_id
-            for key, value in params
-        ) or not own_https_url(url, ctx.message, ctx.verdict):
+        if shipment not in {
+            shipment_key(found, index) for found, index in _link_shipments(url)
+        } or not own_https_url(url, ctx.message, ctx.verdict):
             continue
         try:
             path = urlsplit(url).path
         except ValueError:
             continue
         path = "/".join(part for part in path.split("/") if not part.startswith("ref="))
+        params = query_params(url)
         kept = [(key, value) for key, value in params if key.lower() in _KEPT_PARAMS]
         return urlunsplit(("https", url_host(url), path or "/", urlencode(kept), ""))
     return None
@@ -975,13 +1016,15 @@ def parse_amazon(
     locker = kind in _LOCKER_KINDS
     items, asins = _items(message, text, folded)
     shipment_ids: list[str] = []
+    bases: list[str] = []
     numbers: list[FoundNumber] = []
     if kind not in _ORDER_KINDS:
         shipment_ids = _shipment_ids(urls)
+        bases = [shipment_base(sid) for sid in shipment_ids]
         exclude = frozenset(
             {
                 *asins,
-                *(sid.upper() for sid in shipment_ids),
+                *(base.upper() for base in bases),
                 *(order.replace("-", "") for order in orders),
             }
         )
@@ -999,7 +1042,7 @@ def parse_amazon(
             return None
     code: str | None = None
     if kind not in _NO_CODE_KINDS:
-        known = [*orders, *shipment_ids, *(found.number for found in numbers)]
+        known = [*orders, *bases, *(found.number for found in numbers)]
         code = _code(message, known, locker)
     if kind is MailKind.CODE and code is None:
         return None

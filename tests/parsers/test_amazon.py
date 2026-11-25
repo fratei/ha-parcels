@@ -19,6 +19,7 @@ from custom_components.parcels.parsers.base import (
     MailMessage,
     ParseResult,
     SenderVerdict,
+    shipment_base,
 )
 
 type Parse = Callable[..., ParseResult]
@@ -123,7 +124,7 @@ def test_kind_language_and_order(
         (
             "shipped_two_packages_en_us",
             "com",
-            [("Mx8RbQ2zL", _day(19)), ("Nz3TcW6yH", _day(21))],
+            [("Mx8RbQ2zL", _day(19)), ("Nz3TcW6yH#1", _day(21))],
         ),
         ("out_for_delivery_fr", "fr", [("Wm6KcY2pD", _day(19))]),
         ("delayed_en_us", "com", [("Ks5RtW2nY", _day(20))]),
@@ -136,8 +137,9 @@ def test_amazon_shipments(
 ) -> None:
     """Shipment IDs come from the "Track package" links, one per package.
 
-    Amazon hands parcels to other carriers too, so the carrier stays unknown
-    when the e-mail doesn't name one, and the Amazon link is kept.
+    A package after a shipment's first adds its index to the ID. Amazon
+    hands parcels to other carriers too, so the carrier stays unknown when
+    the e-mail doesn't name one, and the Amazon link is kept.
     """
     result = parse(name)
     order = result.order_numbers[0]
@@ -149,10 +151,120 @@ def test_amazon_shipments(
         assert shipment.carrier is None
         assert shipment.tracking_number is None
         assert shipment.event_time is None
+        assert shipment.amazon_shipment_id is not None
         assert shipment.tracking_url == (
             f"https://www.amazon.{tld}/progress-tracker/package?orderId={order}"
-            f"&shipmentId={shipment.amazon_shipment_id}&packageIndex={index}"
+            f"&shipmentId={shipment_base(shipment.amazon_shipment_id)}"
+            f"&packageIndex={index}"
         )
+
+
+def _package(message: MailMessage, index: str) -> MailMessage:
+    """Return the message with its links about another package of the shipment."""
+    return _moved_links(message, "&packageIndex=0", f"&packageIndex={index}")
+
+
+@pytest.mark.parametrize(
+    ("name", "shipment", "number", "url"),
+    [
+        (
+            "shipped_de",
+            "DqWzN8xKb",
+            None,
+            "https://www.amazon.de/progress-tracker/package"
+            "?orderId=303-5928471-2039485&shipmentId=DqWzN8xKb&packageIndex=1",
+        ),
+        (
+            "shipped_ctt_pt",
+            "Fk7tQ2LmZ",
+            "RR473124829PT",
+            tracking.tracking_url("ctt", "RR473124829PT"),
+        ),
+    ],
+)
+def test_boxes_of_a_shipment_are_apart(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    name: str,
+    shipment: str,
+    number: str | None,
+    url: str,
+) -> None:
+    """A shipment's second box is told apart from its first by its index.
+
+    The first box keeps the bare shipment ID, as before; the others add
+    their index, and their links keep it.
+    """
+    message = load_eml(f"amazon/{name}.eml")
+    verdict = verdict_for(message)
+    first = parse_amazon(message, verdict, tz)
+    second = parse_amazon(_package(message, "1"), verdict, tz)
+    assert first is not None
+    assert second is not None
+    [one] = first.shipments
+    [two] = second.shipments
+    assert one.amazon_shipment_id == shipment
+    assert two.amazon_shipment_id == f"{shipment}#1"
+    assert one.tracking_number == two.tracking_number == number
+    assert two.tracking_url == url
+
+
+def test_boxes_of_a_shipment_in_one_email(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """An e-mail about two boxes of one shipment gives two packages."""
+    message = load_eml("amazon/shipped_two_packages_en_us.eml")
+    verdict = verdict_for(message)
+    message = _moved_links(message, "shipmentId=Nz3TcW6yH", "shipmentId=Mx8RbQ2zL")
+    result = parse_amazon(message, verdict, tz)
+    assert result is not None
+    assert [s.amazon_shipment_id for s in result.shipments] == [
+        "Mx8RbQ2zL",
+        "Mx8RbQ2zL#1",
+    ]
+    assert [s.tracking_url for s in result.shipments] == [
+        "https://www.amazon.com/progress-tracker/package"
+        f"?orderId=114-5938201-7362514&shipmentId=Mx8RbQ2zL&packageIndex={index}"
+        for index in range(2)
+    ]
+
+
+def test_box_link_without_index_is_the_same_box(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """A link to the shipment without an index is about the box the e-mail is."""
+    message = load_eml("amazon/shipped_de.eml")
+    verdict = verdict_for(message)
+    message = _package(message, "1")
+    plain = Link(
+        "https://www.amazon.de/progress-tracker/package"
+        "?orderId=303-5928471-2039485&shipmentId=DqWzN8xKb",
+        "Lieferung verfolgen",
+    )
+    message = dataclasses.replace(message, links=(*message.links, plain))
+    result = parse_amazon(message, verdict, tz)
+    assert result is not None
+    assert [s.amazon_shipment_id for s in result.shipments] == ["DqWzN8xKb#1"]
+
+
+@pytest.mark.parametrize("index", ["x", "1234", "-1", "1&packageIndex=2"])
+def test_unreadable_box_index_is_ignored(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    index: str,
+) -> None:
+    """An index that isn't a small number, or two different indexes, leave the
+    shipment ID as it is."""
+    message = load_eml("amazon/shipped_de.eml")
+    result = parse_amazon(_package(message, index), verdict_for(message), tz)
+    assert result is not None
+    assert [s.amazon_shipment_id for s in result.shipments] == ["DqWzN8xKb"]
 
 
 @pytest.mark.parametrize(
@@ -429,10 +541,12 @@ def _replaced(edits: dict[str, str]) -> Edit:
 
 def _amazon_url(tld: str, result: ParseResult, index: int) -> str:
     """Return the cleaned Amazon tracking page of a package."""
+    shipment = result.shipments[index].amazon_shipment_id
+    assert shipment is not None
     return (
         f"https://www.amazon.{tld}/progress-tracker/package"
         f"?orderId={result.order_numbers[0]}"
-        f"&shipmentId={result.shipments[index].amazon_shipment_id}"
+        f"&shipmentId={shipment_base(shipment)}"
         f"&packageIndex={index}"
     )
 
@@ -775,6 +889,53 @@ def test_delivery_code_is_no_tracking_number(
     [shipment] = result.shipments
     assert shipment.pickup_code == "7391520486"
     assert shipment.tracking_number == number
+
+
+@pytest.mark.parametrize("index", ["0", "1"])
+def test_shipment_id_is_no_tracking_number(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    index: str,
+) -> None:
+    """A shipment ID written in the e-mail isn't a tracking number, even when
+    it's shaped like one, whatever box of the shipment the e-mail is about."""
+    message = load_eml("amazon/shipped_de.eml")
+    message = _moved_links(message, "shipmentId=DqWzN8xKb", "shipmentId=RR482915732PT")
+    message = _package(message, index)
+    text = f"{message.text}\nSendung: RR482915732PT\n"
+    message = dataclasses.replace(message, text=text)
+    result = parse_amazon(message, verdict_for(message), tz)
+    assert result is not None
+    [shipment] = result.shipments
+    assert shipment.amazon_shipment_id == (
+        "RR482915732PT" if index == "0" else "RR482915732PT#1"
+    )
+    assert shipment.tracking_number is None
+
+
+@pytest.mark.parametrize("index", ["0", "1"])
+def test_shipment_id_is_no_delivery_code(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    index: str,
+) -> None:
+    """A shipment ID after a code label isn't the delivery code, whatever box
+    of the shipment the e-mail is about."""
+    message = load_eml("amazon/out_for_delivery_code_pt.eml")
+    message = _package(message, index)
+    text = message.text.replace(
+        "Código de entrega: 4821", "Código de entrega: Wm5RbQ7tL"
+    )
+    message = dataclasses.replace(message, text=text)
+    result = parse_amazon(message, verdict_for(message), tz)
+    assert result is not None
+    [shipment] = result.shipments
+    assert shipment.amazon_shipment_id == (
+        "Wm5RbQ7tL" if index == "0" else "Wm5RbQ7tL#1"
+    )
+    assert shipment.pickup_code is None
 
 
 @pytest.mark.parametrize(

@@ -294,6 +294,9 @@
     "shared_number": {
       "message": "A chosen source has the same tracking number as a source that stays, so they would merge again."
     },
+    "shared_shipment": {
+      "message": "A chosen source has the same Amazon shipment as a source that stays, and no tracking number tells them apart, so they would merge again."
+    },
     "cannot_merge": {
       "message": "These parcels can't be the same parcel: they have different tracking or order numbers."
     },

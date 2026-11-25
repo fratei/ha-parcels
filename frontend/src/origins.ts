@@ -271,6 +271,7 @@ export function splitBlockedReason(code: string | null): string | null {
     case "nothing_left":
       return STRINGS.splitBlockedNothingLeft;
     case "shared_number":
+    case "shared_shipment":
       return STRINGS.splitBlockedShared;
     default:
       return STRINGS.splitBlockedOther;

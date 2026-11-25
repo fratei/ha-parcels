@@ -118,7 +118,7 @@ from .models import (
     order_key,
     time_from_str,
 )
-from .parsers.base import Eta
+from .parsers.base import Eta, shipment_base
 from .parsers.carriers import brand_carriers
 from .parsers.carriers._common import fold_text, phrase_regex
 from .parsers.carriers._phrases import KIND_PHRASES
@@ -373,6 +373,17 @@ def shipment_parcels(data: ParcelsData, shipment: str) -> list[Parcel]:
     ]
 
 
+def box_parcels(data: ParcelsData, shipment: str) -> list[Parcel]:
+    """Return the parcels of any box of an Amazon shipment (see shipment_key)."""
+    return [
+        parcel
+        for parcel in data.parcels.values()
+        if any(
+            shipment_base(key) == shipment for key in parcel.state.amazon_shipment_ids
+        )
+    ]
+
+
 def find_parcels_by_number(data: ParcelsData, number: str) -> list[Parcel]:
     """Return the parcels known by a tracking number, whatever the carrier."""
     wanted = number_key_text(number)
@@ -455,20 +466,23 @@ def _references_differ(first: set[ReferenceKey], second: set[ReferenceKey]) -> b
 
 
 def _same_shipment(first: Origin, second: Origin) -> bool:
-    """Return True when two origins give the same Amazon shipment ID.
+    """Return True when two origins are about the same box of an Amazon shipment.
 
-    Case counts: the IDs are case-sensitive.
+    They give the same shipment key (case counts: the IDs are case-sensitive;
+    see shipment_key), and not two tracking numbers: when e-mails don't tell
+    a shipment's boxes apart, their numbers do.
     """
-    return bool(
+    if not (
         first.amazon_shipment_id
         and first.amazon_shipment_id == second.amazon_shipment_id
-    )
+    ):
+        return False
+    key_a, key_b = origin_number(first), origin_number(second)
+    return key_a is None or key_b is None or key_a.number == key_b.number
 
 
-def _origins_linked(first: Origin, second: Origin) -> bool:
-    """Return True when two origins certainly describe the same parcel."""
-    if _same_shipment(first, second):
-        return True
+def _numbers_linked(first: Origin, second: Origin) -> bool:
+    """Return True when two origins give the same tracking number, for one carrier."""
     key_a, key_b = origin_number(first), origin_number(second)
     if not key_a or not key_b or key_a.number != key_b.number:
         return False
@@ -478,6 +492,60 @@ def _origins_linked(first: Origin, second: Origin) -> bool:
         or key_b.family is None
         or key_a.family == key_b.family
     )
+
+
+def _origins_linked(first: Origin, second: Origin) -> bool:
+    """Return True when two origins certainly describe the same parcel."""
+    return _numbers_linked(first, second) or _same_shipment(first, second)
+
+
+def _origins_numbers(origins: Iterable[Origin]) -> set[str]:
+    return {key.number for origin in origins if (key := origin_number(origin))}
+
+
+def _shipment_shared(moving: list[Origin], staying: list[Origin]) -> bool:
+    """Return True when an e-mail about an Amazon shipment would join two sides.
+
+    They share a shipment key, and their tracking numbers don't tell them
+    apart: one side has none, or both have the same.
+    """
+    keys = {origin.amazon_shipment_id for origin in moving}
+    if not any(
+        origin.amazon_shipment_id and origin.amazon_shipment_id in keys
+        for origin in staying
+    ):
+        return False
+    mine, theirs = _origins_numbers(moving), _origins_numbers(staying)
+    return not mine or not theirs or bool(mine & theirs)
+
+
+def _shipment_targets(data: ParcelsData, origin: Origin, strong: set[str]) -> set[str]:
+    """Return the parcels an origin joins by its Amazon shipment.
+
+    Those with an origin about the same box (see _same_shipment). When the
+    origin, or a parcel it joins anyway, gives a number, only the parcels
+    with that number or none; otherwise all of them while they have at most
+    one number between them, else only those without one: news about a
+    shipment never makes two boxes one.
+    """
+    found = {
+        pid: {key.number for key in parcel_numbers(parcel)}
+        for pid, parcel in data.parcels.items()
+        if any(_same_shipment(origin, other) for other in parcel.origins.values())
+    }
+    known = {
+        key.number
+        for pid in strong
+        if pid in data.parcels
+        for key in parcel_numbers(data.parcels[pid])
+    }
+    if own := origin_number(origin):
+        known.add(own.number)
+    if known:
+        return {pid for pid, numbers in found.items() if not numbers or numbers & known}
+    if len(set().union(*found.values())) <= 1:
+        return set(found)
+    return {pid for pid, numbers in found.items() if not numbers}
 
 
 def _id_shape(value: str) -> str:
@@ -519,7 +587,7 @@ def amazon_shipment_id_counts(
         )
         if shipment := origin.amazon_shipment_id:
             site["with_id"] += 1
-            shape = _id_shape(shipment)
+            shape = _id_shape(shipment_base(shipment))
             site["shapes"][shape] = site["shapes"].get(shape, 0) + 1
         elif kinds[origin.id] and kinds[origin.id] <= _ORDER_STAGE:
             site["orders"] += 1
@@ -1094,12 +1162,6 @@ def apply_contribution(
         }
         if not strong:
             return Applied(parcel_id=None)
-    if origin.amazon_shipment_id:
-        strong |= {
-            pid
-            for pid, parcel in data.parcels.items()
-            if any(_same_shipment(origin, o) for o in parcel.origins.values())
-        }
     weak: set[str] = set()
     loose: set[str] = set()
     if number := origin_number(origin):
@@ -1115,6 +1177,8 @@ def apply_contribution(
                     weak.add(pid)
                 else:
                     loose.add(pid)
+    if origin.amazon_shipment_id:
+        strong |= _shipment_targets(data, origin, strong)
 
     targets = set(strong)
     reason: str | None = None
@@ -1384,7 +1448,8 @@ def split_problem(parcel: Parcel, moving: Collection[str]) -> str | None:
 
     Nothing to move, an origin that isn't the parcel's (or is the user's
     edits), nothing left behind, or the two sides share a tracking number
-    or shipment (the next e-mail would merge them again).
+    or an Amazon shipment their numbers don't tell apart (the next e-mail
+    would merge them again).
     """
     edit_id = manual_origin_id(parcel.id)
     if not moving:
@@ -1394,12 +1459,11 @@ def split_problem(parcel: Parcel, moving: Collection[str]) -> str | None:
     staying = [o for oid, o in parcel.origins.items() if oid not in moving]
     if not [o for o in staying if o.id != edit_id]:
         return "nothing_left"
-    if any(
-        _origins_linked(parcel.origins[oid], other)
-        for oid in moving
-        for other in staying
-    ):
+    leaving = [parcel.origins[oid] for oid in moving]
+    if any(_numbers_linked(origin, other) for origin in leaving for other in staying):
         return "shared_number"
+    if _shipment_shared(leaving, staying):
+        return "shared_shipment"
     return None
 
 

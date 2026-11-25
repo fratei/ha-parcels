@@ -102,16 +102,20 @@ api.parcel.app, which Parcels contacts itself with your API key.
 - **Shipments of several packages**: packages sent together that arrive on the
   same day share one box, which says how many packages it holds. The details
   list every package with its tracking number. Packages that arrive on
-  different days get a box each. Parcels takes packages as sent together when
-  they have the same carrier, tracking numbers close together, and first
-  e-mails within two days of each other about the same order or from the same
-  shop. Carriers often e-mail about only one package of a shipment, and some
-  packages, such as GLS's in Portugal, can't be followed on 17TRACK without a
-  postcode. So once one package is delivered, the others of its shipment that
-  were expected that day or earlier, still show as on their way and have had
-  no news since are marked as probably delivered, at the same time. Only a
-  delivery that everyone who can see a package can also see counts. You can
-  undo that, and later news about a package takes it back.
+  different days get a box each. Each package of an Amazon shipment is a
+  parcel of its own: Amazon's e-mails tell them apart by their tracking
+  numbers, or by the package's number in their **Track package** link, and
+  the delivery of one doesn't deliver the others, except by the rule below.
+  Parcels takes packages as sent together when they have the same carrier,
+  tracking numbers close together, and first e-mails within two days of each
+  other about the same order or from the same shop. Carriers often e-mail
+  about only one package of a shipment, and some packages, such as GLS's in
+  Portugal, can't be followed on 17TRACK without a postcode. So once one
+  package is delivered, the others of its shipment that were expected that
+  day or earlier, still show as on their way and have had no news since are
+  marked as probably delivered, at the same time. Only a delivery that
+  everyone who can see a package can also see counts. You can undo that, and
+  later news about a package takes it back.
 - **Shop and carrier apart**: shops such as Amazon often hand their parcels to
   a local carrier. A carrier's e-mail joins the shop's parcel when they share a
   tracking number or an order number, and the details then show the shop and
@@ -551,10 +555,12 @@ add a resource.
   the Parcel app or your edits) and when, what it said, such as a status
   with its date or time window, and what it added: items, order numbers,
   carrier and tracking number, shop, seller, pickup point, and Amazon's
-  shipments as "Shipment 1/2". E-mails from one sender that add nothing new
-  share a line, such as "3 more from FedEx". It shows only what Parcels
-  keeps, never subjects or bodies. **Move to a new parcel** splits one row
-  off, or says why it can't, for example when it shares the tracking number.
+  shipments, or the packages of one, as "Shipment 1/2". E-mails from one
+  sender that add nothing new share a line, such as "3 more from FedEx". It
+  shows only what Parcels keeps, never subjects or bodies. **Move to a new
+  parcel** splits one row off, or says why it can't, for example when it
+  shares the tracking number, or the Amazon shipment and package of a row
+  that stays with no tracking number to tell them apart.
   For an e-mail that isn't about the parcel, such as a survey or an ad,
   administrators can select **Remove from Parcels**: what it added goes, the
   parcel is worked out again without it, or deleted if nothing else made it,
@@ -1080,13 +1086,15 @@ with the same tracking number arrives, it joins that parcel. Parcel lists
 each shipment of an Amazon order as a delivery of its own, under the order
 number, with Amazon's shipment ID as its extra information. Such a delivery
 joins the parcel whose Amazon e-mails give that shipment ID in their **Track
-package** link, and otherwise the order's parcel when it can only be that
-one: the order's parcels of other shipments don't count, and Parcels leaves
-the delivery out when the order has several parcels, or when another of the
-order's shipments waits for its parcel too. A delivery without a shipment
-ID joins the order's parcel only when it's the order's one delivery in your
-list. Amazon's tracking also tells which carrier's package carried a
-shipment, and before that which of the day's packages it may be in (see
+package** link (for a shipment of several packages, Parcel lists one
+delivery: it joins the first package, or the only one Parcels knows), and
+otherwise the order's parcel when it can only be that one: the order's
+parcels of other shipments don't count, and Parcels leaves the delivery out
+when the order has several parcels, or when another of the order's shipments
+waits for its parcel too. A delivery without a shipment ID joins the order's
+parcel only when it's the order's one delivery in your list. Amazon's
+tracking also tells which carrier's package carried a shipment, and before
+that which of the day's packages it may be in (see
 [How the day is counted](#how-the-day-is-counted)). Like
 e-mails, a delivery from a shop that Parcels can tell, such as Amazon,
 can also join a parcel of that shop without a tracking number, by the
@@ -1521,9 +1529,10 @@ actions:
   [How the day is counted](#how-the-day-is-counted)); otherwise, or when
   several packages fit, select one and merge them. The hub's diagnostics
   count the last 30 days' Amazon e-mails by site and by whether they gave a
-  shipment ID, with each ID's length and kinds of characters only
-  (`amazon_shipment_ids`, such as `len9:Aa0` for nine capitals, small
-  letters and digits), and the links Amazon's tracking made (`amazon_links`).
+  shipment ID, with each ID's length and kinds of characters only, without
+  the package's number (`amazon_shipment_ids`, such as `len9:Aa0` for nine
+  capitals, small letters and digits), and the links Amazon's tracking made
+  (`amazon_links`).
 - **A parcel was merged into the wrong package.** Select **Undo** on a merge
   Parcels made, or **Split…** on one you made. With the Parcel app, Parcels
   undoes by itself a guess about an Amazon shipment that Amazon's tracking

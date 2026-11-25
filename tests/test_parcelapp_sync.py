@@ -53,6 +53,7 @@ from custom_components.parcels.dedup import (
     REPAIR_VERSION,
     Contribution,
     apply_contribution,
+    merge_parcels,
     split_parcel,
 )
 from custom_components.parcels.engine import ParcelsEngine, get_engine
@@ -2803,6 +2804,306 @@ async def test_diagnostics_count_amazon_deliveries(
         "other": 0,
         "unmatched": 2,
     }
+
+
+# An Amazon shipment's boxes have their own numbers, and are parcels of their
+# own: the first box's e-mails name the shipment, the others add their index.
+# Parcel lists the shipment once.
+BOX_ONE = "RR102030405PT"
+BOX_TWO = "RR102030419PT"
+BOX_THREE = "RR102030422PT"
+
+
+def amazon_box(
+    engine: ParcelsEngine, name: str, shipment: str, number: str | None
+) -> Parcel:
+    """Add the parcel of a box of an Amazon shipment, from its shipping e-mail."""
+    return add_parcel(
+        engine,
+        name,
+        number,
+        carrier="ctt" if number else None,
+        merchant="Amazon",
+        orders=(ORDER,),
+        shipment=shipment,
+    )
+
+
+async def test_shipment_joins_its_first_box(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A shipment's delivery joins its first box; the other box stays apart."""
+    first = amazon_box(engine, "a", SHIPMENT, BOX_ONE)
+    second = amazon_box(engine, "b", f"{SHIPMENT}#1", BOX_TWO)
+    assert first.id != second.id
+    parcel_app.deliveries = [amazon(extra_information=SHIPMENT)]
+
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, ORDER_KEY)
+    assert joined is not None
+    assert joined.id == first.id
+    assert parcel_app_origins(engine.data.parcels[second.id]) == []
+    assert len(engine.data.parcels) == 2
+    assert counts(engine) == (1, 1, 0, 0)
+
+
+async def test_shipment_joins_its_only_box(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A shipment's delivery joins the only box known, and stays with it.
+
+    The first box's e-mail without a number, read later, is a parcel apart.
+    """
+    box = amazon_box(engine, "b", f"{SHIPMENT}#1", BOX_TWO)
+    parcel_app.deliveries = [amazon(extra_information=SHIPMENT)]
+
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, ORDER_KEY)
+    assert joined is not None
+    assert joined.id == box.id
+    origin = joined.origins[PARCELAPP_PREFIX + ORDER_KEY]
+    assert origin.amazon_shipment_id == f"{SHIPMENT}#1"
+    assert record(engine, ORDER_KEY)["shipment"] == SHIPMENT
+    assert len(engine.data.parcels) == 1
+    assert counts(engine) == (1, 1, 0, 0)
+    amazon_counts = sync_of(engine).diagnostics()["deliveries"]["amazon"]
+    assert amazon_counts["by_shipment_id"] == 1
+
+    first = amazon_box(engine, "a", SHIPMENT, None)
+
+    assert first.id != box.id
+    assert parcel_app_origins(engine.data.parcels[box.id]) == [
+        PARCELAPP_PREFIX + ORDER_KEY
+    ]
+
+
+async def test_shipment_with_two_later_boxes_is_left(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """With two boxes known but not the first, which one Parcel follows is unclear."""
+    amazon_box(engine, "b", f"{SHIPMENT}#1", BOX_TWO)
+    amazon_box(engine, "c", f"{SHIPMENT}#2", BOX_THREE)
+    parcel_app.deliveries = [amazon(extra_information=SHIPMENT)]
+
+    await read(hass, freezer, parcel_app)
+
+    assert holder(engine, ORDER_KEY) is None
+    assert len(engine.data.parcels) == 2
+    assert counts(engine) == (1, 0, 0, 1)
+
+
+async def test_followed_order_stays_with_its_box(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery followed by its order stays when its shipment is the box's.
+
+    Its news isn't added twice.
+    """
+    box = amazon_box(engine, "b", f"{SHIPMENT}#1", BOX_TWO)
+    parcel_app.deliveries = [amazon()]
+    await read(hass, freezer, parcel_app)
+    followed = holder(engine, ORDER_KEY)
+    assert followed is not None
+    assert followed.id == box.id
+
+    parcel_app.deliveries = [amazon(extra_information=SHIPMENT)]
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, ORDER_KEY)
+    assert joined is not None
+    assert joined.id == box.id
+    assert len(own_events(joined, ORDER_KEY)) == 1
+    assert len(engine.data.parcels) == 1
+    assert counts(engine) == (1, 1, 0, 0)
+
+
+async def test_shipment_of_a_known_box_is_placed(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A shipment whose box is known leaves the order's parcel to the other one.
+
+    Here the user had split the box's e-mail from the order's parcel.
+    """
+    parcel = amazon_order(engine, "a")
+    amazon_box(engine, "b", f"{SHIPMENT}#1", BOX_TWO)
+    assert list(parcel.origins) == ["msg:a#0", "msg:b#0"]
+    box = split_parcel(engine.data, parcel.id, ["msg:b#0"], dt_util.utcnow())
+    parcel_app.deliveries = [
+        amazon(extra_information=SHIPMENT),
+        amazon(extra_information=OTHER_SHIPMENT),
+    ]
+
+    await read(hass, freezer, parcel_app)
+
+    assert parcel_app_origins(engine.data.parcels[box.id]) == [
+        f"{PARCELAPP_PREFIX}{ORDER_KEY}#{SHIPMENT}"
+    ]
+    assert parcel_app_origins(engine.data.parcels[parcel.id]) == [
+        f"{PARCELAPP_PREFIX}{ORDER_KEY}#{OTHER_SHIPMENT}"
+    ]
+    assert counts(engine) == (2, 2, 0, 0)
+
+
+async def test_followed_order_keeps_its_box_among_shipments(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery followed into a shipment's later box stays there when Parcel
+    then lists the order's shipments: the box's e-mail names that shipment."""
+    box = amazon_box(engine, "b", f"{SHIPMENT}#1", BOX_TWO)
+    parcel_app.deliveries = [amazon()]
+    await read(hass, freezer, parcel_app)
+    followed = holder(engine, ORDER_KEY)
+    assert followed is not None
+    assert followed.id == box.id
+
+    parcel_app.deliveries = [
+        amazon(extra_information=SHIPMENT),
+        amazon(extra_information=OTHER_SHIPMENT),
+    ]
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, ORDER_KEY)
+    assert joined is not None
+    assert joined.id == box.id
+    assert record(engine, ORDER_KEY)["shipment"] == SHIPMENT
+    assert len(own_events(joined, ORDER_KEY)) == 1
+
+
+async def test_followed_order_stays_with_its_box_beside_another(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery followed into a shipment's box stays with it when Parcel names
+    the shipment, though another of the shipment's boxes is known by then."""
+    box = amazon_box(engine, "b", f"{SHIPMENT}#1", BOX_TWO)
+    parcel_app.deliveries = [amazon()]
+    await read(hass, freezer, parcel_app)
+    followed = holder(engine, ORDER_KEY)
+    assert followed is not None
+    assert followed.id == box.id
+    other = amazon_box(engine, "c", f"{SHIPMENT}#2", BOX_THREE)
+    assert other.id != box.id
+
+    parcel_app.deliveries = [amazon(extra_information=SHIPMENT)]
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, ORDER_KEY)
+    assert joined is not None
+    assert joined.id == box.id
+    assert parcel_app_origins(engine.data.parcels[other.id]) == []
+
+
+async def test_order_delivery_moves_to_its_shipments_box(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A delivery followed by its order moves to a box of its shipment once
+    Parcel names the shipment: the order's parcel names none.
+
+    Here the user had split the box's e-mail from the order's parcel.
+    """
+    parcel = amazon_order(engine, "a")
+    parcel_app.deliveries = [amazon()]
+    await read(hass, freezer, parcel_app)
+    followed = holder(engine, ORDER_KEY)
+    assert followed is not None
+    assert followed.id == parcel.id
+    amazon_box(engine, "b", f"{SHIPMENT}#1", BOX_TWO)
+    assert "msg:b#0" in engine.data.parcels[parcel.id].origins
+    box = split_parcel(engine.data, parcel.id, ["msg:b#0"], dt_util.utcnow())
+    assert holder(engine, ORDER_KEY) is engine.data.parcels[parcel.id]
+
+    parcel_app.deliveries = [amazon(extra_information=SHIPMENT)]
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, ORDER_KEY)
+    assert joined is not None
+    assert joined.id == box.id
+    origin = joined.origins[PARCELAPP_PREFIX + ORDER_KEY]
+    assert origin.amazon_shipment_id == f"{SHIPMENT}#1"
+    assert parcel_app_origins(engine.data.parcels[parcel.id]) == []
+
+
+async def test_shipment_joins_its_merged_boxes(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A shipment's delivery joins a parcel the user merged two of its boxes
+    into, as the shipment: which box Parcel follows is unknown."""
+    first = amazon_box(engine, "b", f"{SHIPMENT}#1", BOX_TWO)
+    second = amazon_box(engine, "c", f"{SHIPMENT}#2", BOX_THREE)
+    merged = merge_parcels(engine.data, first.id, [second.id], dt_util.utcnow())
+    parcel_app.deliveries = [amazon(extra_information=SHIPMENT)]
+
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, ORDER_KEY)
+    assert joined is not None
+    assert joined.id == merged.id
+    origin = joined.origins[PARCELAPP_PREFIX + ORDER_KEY]
+    assert origin.amazon_shipment_id == SHIPMENT
+    amazon_counts = sync_of(engine).diagnostics()["deliveries"]["amazon"]
+    assert amazon_counts["by_shipment_id"] == 1
+    assert amazon_counts["by_order"] == 0
+
+
+async def test_shipment_read_again_keeps_its_box(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    engine: ParcelsEngine,
+    parcel_app: FakeParcelApp,
+) -> None:
+    """A shipment's delivery that joined a later box keeps that box when its
+    news is read again."""
+    box = amazon_box(engine, "b", f"{SHIPMENT}#1", BOX_TWO)
+    sent = ("In transit", "2026-11-15 18:30:00")
+    parcel_app.deliveries = [amazon(extra_information=SHIPMENT, events=[sent])]
+    await read(hass, freezer, parcel_app)
+    oid = PARCELAPP_PREFIX + ORDER_KEY
+    assert engine.data.parcels[box.id].origins[oid].amazon_shipment_id == (
+        f"{SHIPMENT}#1"
+    )
+
+    parcel_app.deliveries = [
+        amazon(
+            extra_information=SHIPMENT,
+            status=4,
+            events=[sent, ("Out for delivery", "2026-11-17 08:15:00")],
+        )
+    ]
+    await read(hass, freezer, parcel_app)
+
+    joined = holder(engine, ORDER_KEY)
+    assert joined is not None
+    assert joined.id == box.id
+    assert len(own_events(joined, ORDER_KEY)) == 2
+    assert joined.origins[oid].amazon_shipment_id == f"{SHIPMENT}#1"
 
 
 @pytest.mark.parametrize(

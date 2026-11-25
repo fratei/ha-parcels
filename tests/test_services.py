@@ -664,6 +664,43 @@ async def test_split_shared_number(hass: HomeAssistant, engine: ParcelsEngine) -
     )
 
 
+async def test_split_shared_shipment(
+    hass: HomeAssistant, engine: ParcelsEngine
+) -> None:
+    """Amazon's e-mail without a number stays with its shipment's package."""
+    now = dt_util.utcnow()
+    shipment = {
+        "label": "amazon.es",
+        "merchant": "Amazon.es",
+        "orders": ["406-7654321-7654321"],
+        "shipment_id": "Hq4Wn7Pz2",
+    }
+    applied = [
+        apply_contribution(
+            engine.data,
+            contribution(
+                origin_id, time=now - timedelta(hours=hours), **shipment, **number
+            ),
+            now,
+        )
+        for origin_id, hours, number in (
+            ("msg:box#0", 2, {}),
+            ("msg:numbered#0", 1, {"carrier": "ctt", "number": "RR102030405PT"}),
+        )
+    ]
+    parcel_id = applied[0].parcel_id
+    assert parcel_id is not None
+    assert applied[1].parcel_id == parcel_id
+    engine.async_changed()
+
+    await refused(
+        hass,
+        "split",
+        {"parcel_id": parcel_id, "origins": ["msg:box#0"]},
+        "shared_shipment",
+    )
+
+
 async def test_undo_merge(hass: HomeAssistant, engine: ParcelsEngine) -> None:
     """An automatic merge can be undone once."""
     parcel_id = await add(hass, LOOSE_NUMBER, carrier="dhl")

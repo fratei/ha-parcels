@@ -150,6 +150,8 @@ class ParsedShipment:
     event_time: datetime | None = None
     pickup_point: str | None = None
     pickup_code: str | None = None
+    # Amazon's shipment ID, with the package's index when not the first:
+    # see shipment_key.
     amazon_shipment_id: str | None = None
     # A shipment number other than the tracking number, see Origin.reference.
     reference: str | None = None
@@ -167,6 +169,21 @@ class ParsedShipment:
     collect_by: date | None = None
     next_attempt: date | None = None
     left_at: LeftAt | None = None
+
+
+def shipment_key(shipment_id: str, package_index: int | None = None) -> str:
+    """Return the key of one package of an Amazon shipment, e.g. "Ab12Cd34E#1".
+
+    A shipment sent in several boxes gives each its index, from 0. The
+    first package keeps the shipment ID alone, so the keys read before
+    packages were told apart stay the same.
+    """
+    return f"{shipment_id}#{package_index}" if package_index else shipment_id
+
+
+def shipment_base(key: str) -> str:
+    """Return the Amazon shipment ID of a package's key (see shipment_key)."""
+    return key.partition("#")[0]
 
 
 @dataclass(slots=True)

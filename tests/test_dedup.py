@@ -320,6 +320,301 @@ def test_amazon_shipment_id_links() -> None:
     assert data.parcels[first.parcel_id].state.amazon_shipment_ids == ("DkXyz1234",)
 
 
+# Made up: an Amazon order sent in boxes of one shipment, with CTT numbers.
+BOXES_ORDER = "406-7654321-7654321"
+BOXES = "Hq4Wn7Pz2"
+BOX_ONE, BOX_TWO, BOX_THREE = "RR102030405PT", "RR102030419PT", "RR102030422PT"
+
+
+def _box(
+    origin_id: str,
+    shipment: str | None,
+    number: str | None = None,
+    *,
+    hours: float = 0,
+    kind: MailKind = MailKind.SHIPPED,
+) -> Contribution:
+    """Build Amazon's e-mail about a box of the order BOXES_ORDER."""
+    return contribution(
+        origin_id,
+        kind=kind,
+        time=at(hours=hours),
+        label="amazon.es",
+        merchant="Amazon.es",
+        orders=[BOXES_ORDER],
+        shipment_id=shipment,
+        carrier="ctt" if number else None,
+        number=number,
+    )
+
+
+def _ctt(
+    origin_id: str, number: str, *, hours: float = 0, kind: MailKind
+) -> Contribution:
+    """Build CTT's e-mail about a package."""
+    return contribution(
+        origin_id, kind=kind, time=at(hours=hours), carrier="ctt", number=number
+    )
+
+
+def _apply(data: ParcelsData, *items: Contribution) -> list[str]:
+    """Apply e-mails in order, then reconcile as a check does."""
+    ids = []
+    for item in items:
+        applied = apply_contribution(data, item, item.origin.time)
+        assert applied.parcel_id is not None
+        ids.append(applied.parcel_id)
+    reconcile(data, max(item.origin.time for item in items))
+    return ids
+
+
+def _holder(data: ParcelsData, number: str) -> str:
+    """Return the only parcel with a number."""
+    [parcel] = find_parcels_by_number(data, number)
+    return parcel.id
+
+
+@pytest.mark.parametrize("second", [BOXES, f"{BOXES}#1"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_boxes_of_a_shipment_stay_apart(second: str, reverse: bool) -> None:
+    """Boxes of one Amazon shipment with their own numbers are two parcels.
+
+    Whether or not the e-mails tell the boxes apart, and in any order:
+    different tracking numbers are never one parcel, and delivering one box
+    delivers only that one.
+    """
+    data = ParcelsData()
+    boxes = [
+        _box("msg:b1#0", BOXES, BOX_ONE, hours=1),
+        _box("msg:b2#0", second, BOX_TWO, hours=2),
+    ]
+    _apply(
+        data,
+        _box("msg:o#0", None, kind=MailKind.ORDER),
+        *(reversed(boxes) if reverse else boxes),
+    )
+    assert len(data.parcels) == 2
+    one, two = _holder(data, BOX_ONE), _holder(data, BOX_TWO)
+    assert one != two
+
+    _apply(data, _ctt("msg:c#0", BOX_ONE, hours=24, kind=MailKind.DELIVERED))
+
+    assert len(data.parcels) == 2
+    assert data.parcels[one].state.status is S.DELIVERED
+    assert data.parcels[two].state.status is S.SHIPPED
+
+
+def test_boxes_without_numbers_stay_apart() -> None:
+    """Boxes told apart by their index are two parcels before their numbers."""
+    data = ParcelsData()
+    first, second = _apply(
+        data, _box("msg:b1#0", BOXES), _box("msg:b2#0", f"{BOXES}#1", hours=1)
+    )
+    assert first != second
+    assert data.parcels[first].state.amazon_shipment_ids == (BOXES,)
+    assert data.parcels[second].state.amazon_shipment_ids == (f"{BOXES}#1",)
+
+
+def test_box_news_without_number_joins_its_box() -> None:
+    """News about a box without its number joins the box with the number.
+
+    The shipment ID links them while only one number is known for it.
+    """
+    data = ParcelsData()
+    first, numbered, again = _apply(
+        data,
+        _box("msg:b1#0", BOXES),
+        _box("msg:b2#0", BOXES, BOX_ONE, hours=1),
+        _box("msg:b3#0", BOXES, hours=2, kind=MailKind.OUT_FOR_DELIVERY),
+    )
+    assert first == numbered == again
+    assert len(data.parcels) == 1
+
+
+def test_box_with_another_number_is_another_parcel() -> None:
+    """A box with another number never joins a box with its number.
+
+    Even when news without a number linked the shipment to the first box.
+    """
+    data = ParcelsData()
+    first, _, other = _apply(
+        data,
+        _box("msg:b1#0", BOXES),
+        _box("msg:b2#0", BOXES, BOX_ONE, hours=1),
+        _box("msg:b3#0", BOXES, BOX_TWO, hours=2),
+    )
+    assert first != other
+    assert _holder(data, BOX_ONE) == first
+    assert _holder(data, BOX_TWO) == other
+
+
+def test_box_number_joins_carrier_and_shipment() -> None:
+    """Amazon's e-mail with the box's number joins the carrier's package and
+    the shipment's news without a number."""
+    data = ParcelsData()
+    carrier, shipment, joined = _apply(
+        data,
+        _ctt("msg:c#0", BOX_ONE, kind=MailKind.IN_TRANSIT),
+        _box("msg:b1#0", BOXES, hours=1),
+        _box("msg:b2#0", BOXES, BOX_ONE, hours=2),
+    )
+    assert carrier != shipment
+    assert len(data.parcels) == 1
+    assert joined in (carrier, shipment)
+
+
+def test_box_number_never_joins_another_box() -> None:
+    """Amazon's e-mail with a box's number joins that box's package only,
+    never a box of the shipment with another number."""
+    data = ParcelsData()
+    carrier, other, _ = _apply(
+        data,
+        _ctt("msg:c#0", BOX_ONE, kind=MailKind.IN_TRANSIT),
+        _box("msg:b1#0", BOXES, hours=1),
+        _box("msg:b2#0", BOXES, BOX_TWO, hours=2),
+    )
+    joined = apply_contribution(
+        data, _box("msg:b3#0", BOXES, BOX_ONE, hours=3), at(hours=3)
+    )
+    assert joined.parcel_id == carrier
+    assert _holder(data, BOX_TWO) == other
+    assert len(data.parcels) == 2
+
+
+def test_shipment_news_never_joins_two_boxes() -> None:
+    """News about a shipment without a number joins none of two boxes with
+    their own numbers, so it never makes them one."""
+    data = ParcelsData()
+    _apply(
+        data,
+        _box("msg:b1#0", BOXES, BOX_ONE),
+        _box("msg:b2#0", BOXES, BOX_TWO, hours=1),
+        _box("msg:b3#0", BOXES, hours=2, kind=MailKind.OUT_FOR_DELIVERY),
+    )
+    assert _holder(data, BOX_ONE) != _holder(data, BOX_TWO)
+
+
+def test_boxes_merged_before_can_be_split() -> None:
+    """Boxes of one shipment merged by an older version can be split, and
+    stay apart; a shipment's news without a number can't leave its box."""
+    data = ParcelsData()
+    first = apply_contribution(data, _box("msg:b1#0", BOXES, BOX_ONE), T0)
+    second = apply_contribution(
+        data, _box("msg:b2#0", BOXES, BOX_TWO, hours=1), at(hours=1)
+    )
+    news = apply_contribution(data, _box("msg:b3#0", BOXES, hours=2), at(hours=2))
+    assert first.parcel_id is not None
+    assert second.parcel_id is not None
+    if first.parcel_id != second.parcel_id:
+        merge_parcels(data, first.parcel_id, [second.parcel_id], at(hours=3))
+    if news.parcel_id not in (None, first.parcel_id):
+        merge_parcels(data, first.parcel_id, [news.parcel_id], at(hours=3))
+    assert list(data.parcels) == [first.parcel_id]
+
+    with pytest.raises(DedupError, match="shared_shipment"):
+        split_parcel(data, first.parcel_id, ["msg:b3#0"], at(hours=4))
+    new = split_parcel(data, first.parcel_id, ["msg:b2#0"], at(hours=4))
+
+    assert set(new.origins) == {"msg:b2#0"}
+    _apply(data, _box("msg:b4#0", BOXES, BOX_TWO, hours=5, kind=MailKind.IN_TRANSIT))
+    assert _holder(data, BOX_TWO) == new.id
+    assert _holder(data, BOX_ONE) == first.parcel_id
+
+
+def test_split_shared_shipment() -> None:
+    """News about a shipment without a number stays with its box."""
+    data = ParcelsData()
+    [parcel_id, _] = _apply(
+        data,
+        _box("msg:b1#0", BOXES),
+        _box("msg:b2#0", BOXES, BOX_ONE, hours=1),
+    )
+    with pytest.raises(DedupError, match="shared_shipment"):
+        split_parcel(data, parcel_id, ["msg:b1#0"], at(hours=2))
+
+
+def test_box_with_its_number_joins_whatever_carrier() -> None:
+    """Amazon's e-mails about a box with the same number are one parcel,
+    whatever carriers they name: not a guess, and not to be split apart."""
+    data = ParcelsData()
+    box = {
+        "label": "amazon.es",
+        "merchant": "Amazon.es",
+        "orders": [BOXES_ORDER],
+        "shipment_id": BOXES,
+        "number": DPD,
+    }
+    first = apply_contribution(data, contribution("msg:b1#0", carrier="dpd", **box), T0)
+    second = apply_contribution(
+        data,
+        contribution("msg:b2#0", time=at(hours=1), carrier="gls", **box),
+        at(hours=1),
+    )
+    assert second.parcel_id == first.parcel_id
+    assert second.auto_merged is None
+    assert first.parcel_id is not None
+    with pytest.raises(DedupError, match="shared_shipment"):
+        split_parcel(data, first.parcel_id, ["msg:b2#0"], at(hours=2))
+
+
+def test_undoing_a_guess_takes_its_box_news() -> None:
+    """Undoing a guess on a box's number takes Amazon's news about that box
+    along, though the news has no number."""
+    data = ParcelsData()
+    carrier = apply_contribution(
+        data, contribution("msg:d#0", carrier="dpd", number=DPD), T0
+    )
+    guessed = apply_contribution(
+        data,
+        contribution(
+            "msg:b1#0",
+            time=at(hours=1),
+            label="amazon.es",
+            merchant="Amazon.es",
+            orders=[BOXES_ORDER],
+            shipment_id=BOXES,
+            carrier="gls",
+            number=DPD,
+        ),
+        at(hours=1),
+    )
+    news = apply_contribution(
+        data, _box("msg:b2#0", BOXES, hours=2, kind=MailKind.IN_TRANSIT), at(hours=2)
+    )
+    assert carrier.parcel_id is not None
+    assert guessed.parcel_id == news.parcel_id == carrier.parcel_id
+    assert guessed.auto_merged == REASON_SAME_NUMBER
+
+    split_off = undo_auto_merge(data, carrier.parcel_id, at(hours=3))
+
+    assert split_off is not None
+    assert set(split_off.origins) == {"msg:b1#0", "msg:b2#0"}
+    assert set(data.parcels[carrier.parcel_id].origins) == {"msg:d#0"}
+
+
+def test_box_news_read_again_joins_no_other_box() -> None:
+    """News about a shipment without a number, read again, goes back to its
+    parcel and joins no box with a number that parcel doesn't have."""
+    data = ParcelsData()
+    carrier, box = _apply(
+        data,
+        _ctt("msg:c#0", BOX_ONE, kind=MailKind.IN_TRANSIT),
+        _box("msg:b2#0", BOXES, BOX_TWO, hours=1),
+    )
+    assert carrier != box
+    news = dataclasses.replace(
+        _box("msg:b3#0", BOXES, hours=2, kind=MailKind.OUT_FOR_DELIVERY),
+        parcel=carrier,
+    )
+
+    applied = apply_contribution(data, news, at(hours=2))
+
+    assert applied.parcel_id == carrier
+    assert set(data.parcels) == {carrier, box}
+    assert "msg:b3#0" in data.parcels[carrier].origins
+    assert _holder(data, BOX_TWO) == box
+
+
 # Made up: an Amazon shipment ID, and the Paack order ID of its first package.
 SHIPMENT = "Rb5Lq2Vm7"
 PAACK_ID = f"{SHIPMENT}_1"
@@ -416,6 +711,8 @@ def test_amazon_shipment_id_counts() -> None:
         ),
         # Older than 30 days.
         contribution("msg:a6#0", time=at(days=-31), shipment_id="old0shape", **amazon),
+        # A shipment's second box: the shape is the shipment ID's.
+        contribution("msg:a7#0", shipment_id="Tg3Hs8Jq5#1", **amazon),
         # Paack's e-mail about an Amazon parcel isn't Amazon's.
         contribution(
             "msg:p1#0",
@@ -445,9 +742,9 @@ def test_amazon_shipment_id_counts() -> None:
         },
         "amazon.es": {
             "orders": 1,
-            "with_id": 2,
+            "with_id": 3,
             "without_id": 1,
-            "shapes": {"len9:Aa0": 2},
+            "shapes": {"len9:Aa0": 3},
         },
     }
     assert SHIPMENT not in json.dumps(counts)

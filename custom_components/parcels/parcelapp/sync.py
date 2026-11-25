@@ -68,6 +68,7 @@ from ..dedup import (
     REASON_PARCEL_SWITCH,
     Contribution,
     apply_contribution,
+    box_parcels,
     carrier_family,
     find_parcels_by_number,
     flag_switch,
@@ -98,7 +99,7 @@ from ..models import (
     known_merchant_name,
     order_key,
 )
-from ..parsers.base import Eta
+from ..parsers.base import Eta, shipment_base
 from ..parsers.details import tracker_details
 from ..parsers.tracking import normalize_tracking_number, validate_tracking_number
 from ..quiet import is_quiet
@@ -304,13 +305,34 @@ def _record_shipment(record: Mapping[str, Any]) -> str | None:
 def _own_shipments(parcel: Parcel) -> set[str]:
     """Return the Amazon shipments a parcel's own news names.
 
-    Its e-mails, mostly: Parcel's deliveries don't count.
+    Its e-mails, mostly: Parcel's deliveries don't count. A box after a
+    shipment's first gives its index too (see shipment_key).
     """
     return {
         origin.amazon_shipment_id
         for oid, origin in parcel.origins.items()
         if not oid.startswith(PARCELAPP_PREFIX) and origin.amazon_shipment_id
     }
+
+
+def _own_bases(parcel: Parcel) -> set[str]:
+    """Return the Amazon shipments a parcel's own news names, as Parcel lists them.
+
+    Parcel lists a shipment once, for all of its boxes.
+    """
+    return {shipment_base(shipment) for shipment in _own_shipments(parcel)}
+
+
+def _box_shipment(parcel: Parcel | None, shipment: str) -> str:
+    """Return the box of an Amazon shipment a parcel holds, for Parcel's delivery.
+
+    The shipment itself when the parcel's e-mails name it or no single box
+    of it.
+    """
+    if parcel is None or shipment in (own := _own_shipments(parcel)):
+        return shipment
+    boxes = [key for key in own if shipment_base(key) == shipment]
+    return boxes[0] if len(boxes) == 1 else shipment
 
 
 def removable(parcel: Parcel) -> bool:
@@ -1152,7 +1174,7 @@ class ParcelAppSync:
                 continue
             if holder is None or holder.archived is not None:
                 continue
-            named = _own_shipments(holder) & given
+            named = _own_bases(holder) & given
             if len(named) == 1:
                 record["shipment"] = next(iter(named))
                 continue
@@ -1165,13 +1187,13 @@ class ParcelAppSync:
         """Return True when a shipment's delivery doesn't belong in a parcel.
 
         The parcel's e-mails name other shipments; or they name none, and
-        another parcel has it.
+        another parcel has one of its boxes.
         """
-        if own := _own_shipments(holder):
+        if own := _own_bases(holder):
             return shipment not in own
         return any(
             parcel is not holder and parcel.archived is None
-            for parcel in shipment_parcels(self.engine.data, shipment)
+            for parcel in box_parcels(self.engine.data, shipment)
         )
 
     def _unplaced(self, found: dict[str, _Entry]) -> Counter[str]:
@@ -1183,7 +1205,7 @@ class ParcelAppSync:
         data = self.engine.data
         held = {oid for parcel in data.parcels.values() for oid in parcel.origins}
         shipments = {
-            shipment
+            shipment_base(shipment)
             for parcel in data.parcels.values()
             for shipment in parcel.state.amazon_shipment_ids
         }
@@ -1226,7 +1248,9 @@ class ParcelAppSync:
                 if not other.startswith(PARCELAPP_PREFIX)
             ]
             if shipment and any(
-                origin.amazon_shipment_id == shipment for origin in others
+                origin.amazon_shipment_id
+                and shipment_base(origin.amazon_shipment_id) == shipment_base(shipment)
+                for origin in others
             ):
                 amazon["by_shipment_id"] += 1
             elif any(
@@ -1278,7 +1302,11 @@ class ParcelAppSync:
             return False, _UNMATCHED
         if order is not None:
             if shipment is not None:
-                parcels = shipment_parcels(data, shipment)
+                # Parcel lists a shipment once: it's the first box, or the
+                # only one known.
+                parcels = shipment_parcels(data, shipment) or box_parcels(
+                    data, shipment
+                )
                 active = [parcel for parcel in parcels if parcel.archived is None]
                 if len(active) > 1:
                     return False, _UNMATCHED
@@ -1541,6 +1569,9 @@ class ParcelAppSync:
         since = dt_from_str(record.get("since")) or now
         carrier = parcels_carrier(code, number)
         base_carrier = base_state.carrier if base_state else None
+        shipment = _record_shipment(record) if order is not None else None
+        if shipment is not None:
+            shipment = _box_shipment(holder or anchor, shipment)
         origin = Origin(
             id=oid,
             source=Source.PARCELAPP,
@@ -1554,9 +1585,7 @@ class ParcelAppSync:
             tracking_number=None if order is not None else number,
             merchant=merchant,
             order_numbers=(order,) if order is not None else (),
-            amazon_shipment_id=(
-                _record_shipment(record) if order is not None else None
-            ),
+            amazon_shipment_id=shipment,
             owners=(self.owner,) if imported and self.owner else (),
             name=(
                 None

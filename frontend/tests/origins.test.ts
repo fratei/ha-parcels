@@ -210,6 +210,7 @@ describe("the e-mails of a parcel", () => {
   test("a row says why it can't move to a new parcel", () => {
     assert.equal(one(email({ split_blocked: "shared_number" })).splitBlocked, "shared_number");
     assert.match(splitBlockedReason("shared_number") ?? "", /tracking number or shipment/);
+    assert.match(splitBlockedReason("shared_shipment") ?? "", /tracking number or shipment/);
     assert.match(splitBlockedReason("nothing_left") ?? "", /nothing else/i);
     assert.ok(splitBlockedReason("something_new"));
     assert.equal(splitBlockedReason(null), null);
