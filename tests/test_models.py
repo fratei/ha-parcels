@@ -939,6 +939,56 @@ def test_round_trip() -> None:
     assert loaded.trusted_domains() == ("example.com",)
 
 
+def test_failed_emails_keep_their_tries() -> None:
+    """An e-mail that failed keeps its count of tries and its next try."""
+    record = MessageRecord(
+        "failing",
+        at(),
+        MessageState.FAILED,
+        {"entry": "id2"},
+        at(),
+        "example.com",
+        attempts=3,
+        retry_at=at(hours=1),
+    )
+
+    loaded = MessageRecord.from_dict(json.loads(json.dumps(record.as_dict())))
+
+    assert loaded == record
+    assert "attempts" not in MessageRecord("abc", at(), MessageState.APPLIED).as_dict()
+
+
+def test_failed_emails_of_an_earlier_release_are_tried_again() -> None:
+    """An e-mail an earlier release gave up on is due for another try.
+
+    One this release gave up on, after all its tries, stays given up.
+    """
+    stored = json.loads(json.dumps(_full_data().as_dict()))
+    stored["messages"] += [
+        {
+            "hash": "earlier",
+            "seen": "2026-11-02T10:00:00+00:00",
+            "state": "failed",
+            "refs": {"entry": "id3"},
+        },
+        {
+            "hash": "given_up",
+            "seen": "2026-11-02T10:00:00+00:00",
+            "state": "failed",
+            "refs": {"entry": "id4"},
+            "attempts": 8,
+        },
+    ]
+
+    loaded = ParcelsData.from_dict(stored)
+
+    earlier = loaded.messages["earlier"]
+    assert (earlier.attempts, earlier.retry_at) == (0, at(hours=1))
+    given_up = loaded.messages["given_up"]
+    assert (given_up.attempts, given_up.retry_at) == (8, None)
+    assert loaded.messages["abc"].retry_at is None
+
+
 def _shells() -> tuple[ParcelShell, ...]:
     """Return what an e-mail's two parcels were while it's read again."""
     lost = ParcelShell(

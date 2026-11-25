@@ -217,6 +217,23 @@ export interface TrustResult {
   kept: number;
 }
 
+/** E-mails Parcels gave up reading after trying for days (administrators only). */
+export interface UnreadEmails {
+  count: number;
+  /** Their senders' domains, newest first; at most five. */
+  senders: string[];
+  /** When the newest arrived. */
+  newest: string | null;
+}
+
+/** What "Try again" on the e-mails Parcels couldn't read did. */
+export interface RetryResult {
+  read: number;
+  failed: number;
+  /** No longer in any mailbox. */
+  gone: number;
+}
+
 export interface FilteredItem {
   id: string;
   created: string;
@@ -262,6 +279,7 @@ export interface Snapshot {
   review: ReviewItem[];
   merge_suggestions: MergeSuggestion[];
   filtered: FilteredItem[];
+  unread_emails: UnreadEmails;
   settings: Settings;
 }
 

@@ -429,9 +429,16 @@ reads the last 30 days of e-mail; after that Parcels checks every 5 minutes.
 In each mailbox's options, set its **Owner** (see [Options](#options)).
 
 When a sign-in expires or is revoked, Home Assistant asks you to sign in again
-with the same account. An e-mail that can't be downloaded or read on three
-checks is skipped, so that the newer ones are still read; the log names only
-its sender's domain.
+with the same account. An e-mail that can't be downloaded or read doesn't
+hold up the newer ones. Parcels tries it again after 5 and 15 minutes, 1, 4
+and 12 hours, 1 day and 2 days; the `parcels.refresh` action tries it at once,
+and that try doesn't count. After 8 tries, almost four days, Parcels gives up
+on it, and **Needs review** says so (see
+[Troubleshooting](#troubleshooting)). The log names only the sender's domain.
+When most downloads of a check fail, and e-mails read before can't be
+downloaded either, the mail server has the problem: no try counts against
+the e-mails, and the mailbox's **Problem** sensor is on until downloads work
+again.
 
 ### 6. Create the Parcels page
 
@@ -569,7 +576,9 @@ add a resource.
   edit, dismiss, or trust or ignore the sender. It also lists parcels that may
   be the same one, to merge or keep apart. While e-mails wait for the local AI,
   it says how many and, after the AI's first answer, about how long they'll
-  take. **Filtered** lists e-mails that looked like shipping e-mails but
+  take. When Parcels gave up on e-mails it couldn't download or read, it says
+  how many and from which senders, with **Try again** and **Dismiss**.
+  **Filtered** lists e-mails that looked like shipping e-mails but
   turned out not to be about a parcel, and those removed from a parcel in its
   details; you can restore them, or clear one or all of them. A filtered
   e-mail goes back to **Needs review**; a removed one is read again, or waits
@@ -1316,7 +1325,9 @@ with made-up e-mails before you rely on it.
 
 The count sensors have a `parcels` attribute with each parcel's ID, shop,
 carrier, status and dates. Each mailbox has a **Last sync** sensor and a
-**Problem** sensor.
+**Problem** sensor, which is on while the mailbox can't be checked, such as
+when its sign-in or its mail server fails. One e-mail that can't be
+downloaded or read doesn't turn it on.
 
 ### Actions
 
@@ -1367,7 +1378,12 @@ actions:
 
 - **A shipping e-mail is missing.** Check **Needs review** and **Filtered** on
   the Parcels page. If the sender isn't known, trust it there, or run
-  `parcels.reprocess`.
+  `parcels.reprocess`. An e-mail that couldn't be downloaded or read is tried
+  again for almost four days (see [Add your mailboxes](#5-add-your-mailboxes)).
+  Then **Needs review** says "Couldn't read 1 e-mail" or how many, with their
+  senders' domains: **Try again** downloads and reads them now, and
+  **Dismiss** leaves them unread. The hub's diagnostics count the e-mails
+  still tried and those given up on (`failed_emails`).
 - **A parcel shows twice.** Check **Needs review** for a merge suggestion, or
   select the parcel and merge it. Packages of one shipment that arrive on
   different days have a box each.
@@ -1625,6 +1641,12 @@ actions:
   failed attempt, whatever the news, such as "nova entrega amanhã" or the
   Parcel app's later failed attempt. After the update, those parcels take
   the status of their newest news.
+- **An e-mail that failed to download was never read.** Before 0.1.21, an
+  e-mail that failed to download on three checks in a row, minutes apart, was
+  skipped for good, also when the mail server failed for every e-mail. After
+  the update, Parcels tries such e-mails again, as it now does with every
+  e-mail it can't download or read (see
+  [Add your mailboxes](#5-add-your-mailboxes)).
 - **Amazon shows as the carrier, but didn't deliver.** Before 0.1.8, Amazon
   became the carrier whenever the local AI, the Parcel app or 17TRACK named
   it, which kept Amazon's orders apart from their carrier's deliveries. After
@@ -1640,7 +1662,9 @@ actions:
   (`recent_emails`), where working days come from (`working_days`), the
   refunds ignored (`refunds_dropped`), when the newest e-mail Parcels
   forgot arrived (`forgotten_before`) and the older e-mails it skipped since
-  Home Assistant started (`old_emails_skipped`), the check after updating to
+  Home Assistant started (`old_emails_skipped`), the e-mails that couldn't be
+  downloaded or read that Parcels still tries, when it tries next and those it
+  gave up on (`failed_emails`), the check after updating to
   0.1.5 (`returns_check`), the check that named the shops of Paack's parcels
   after updating to 0.1.11 (`paack_shop_check`), the check that read Amazon's
   e-mails again after updating to 0.1.16 (`amazon_ai_check`) and the one

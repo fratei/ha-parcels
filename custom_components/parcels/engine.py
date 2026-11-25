@@ -12,9 +12,17 @@ keeps a hash of each e-mail and the provider IDs needed to download it again.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Callable,
+    Coroutine,
+    Iterable,
+    Mapping,
+    Sequence,
+)
+from contextlib import asynccontextmanager
 import copy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, tzinfo
 import logging
 from typing import TYPE_CHECKING, Any
@@ -122,6 +130,7 @@ from .dedup import (
 from .mail.errors import MAILBOX_ERRORS, MailNotFound
 from .models import (
     FILL_ORIGIN_SUFFIX,
+    FINAL_ATTEMPTS,
     FilteredItem,
     MessageRecord,
     MessageState,
@@ -184,8 +193,31 @@ type KeyCheck = Callable[[set[JoinKey]], None]
 # Events are only fired for changes that happened recently, so the first
 # sync of a mailbox doesn't replay a month of deliveries.
 EVENT_MAX_AGE = timedelta(days=1)
-# A download that fails this often is recorded as failed and skipped.
-FETCH_ATTEMPTS = 3
+# An e-mail that fails to download or parse is tried again after these
+# delays, one per failed try. After FINAL_ATTEMPTS tries, almost four days,
+# Parcels gives up on it: Needs review shows it until the user retries or
+# dismisses it.
+RETRY_DELAYS = (
+    timedelta(minutes=5),
+    timedelta(minutes=15),
+    timedelta(hours=1),
+    timedelta(hours=4),
+    timedelta(hours=12),
+    timedelta(days=1),
+    timedelta(days=2),
+)
+# A try due this soon is made by the check at hand: checks run a little early.
+RETRY_SLACK = timedelta(minutes=1)
+# Each check tries at most this many failed e-mails, oldest first, and stops
+# after this many failures when no download of the check worked.
+RETRY_MAX = 20
+RETRY_STOP = 3
+# When most downloads of a check fail, Parcels downloads again up to
+# PROBE_FETCHES e-mails it read before, newest first. When PROBE_FAILURES of
+# them fail too, or all that were tried, the mail server has a problem: the
+# check fails, and no e-mail's tries count.
+PROBE_FETCHES = 6
+PROBE_FAILURES = 3
 # A known sender whose e-mails the parser can't read this often within the
 # window raises a repair issue; failures are remembered for UNPARSED_KEEP.
 UNPARSED_THRESHOLD = 2
@@ -359,6 +391,24 @@ class MailboxRuntime:
 
 
 @dataclass(slots=True)
+class MailCheck:
+    """What one check of a mailbox downloaded, to tell outages apart.
+
+    With ``retry_all``, as for a refresh the user asked for, failed e-mails
+    are tried before their time; those tries (``early``) don't count.
+    """
+
+    retry_all: bool = False
+    # The e-mails whose download failed in this check, with the error.
+    failed: dict[str, Exception] = field(default_factory=dict)
+    early: set[str] = field(default_factory=set)
+    # The e-mails this check downloaded or tried.
+    tried: set[str] = field(default_factory=set)
+    # How many downloads worked.
+    ok: int = 0
+
+
+@dataclass(slots=True)
 class Refetch:
     """The result of downloading a stored e-mail again."""
 
@@ -395,7 +445,6 @@ class ParcelsEngine:
         self.mailboxes: dict[str, MailboxRuntime] = {}
         self._statuses: dict[str, ParcelStatus] = {}
         self._inflight: dict[str, asyncio.Event] = {}
-        self._fetch_failures: dict[str, int] = {}
         # Old e-mails listed again after Parcels forgot them, since the start.
         self._old_skipped = 0
         self._unsubs: list[CALLBACK_TYPE] = []
@@ -813,8 +862,11 @@ class ParcelsEngine:
         data = self.data
         data.cursors.pop(entry_id, None)
         data.engine.get("synced", {}).pop(entry_id, None)
-        for record in data.messages.values():
+        for key, record in list(data.messages.items()):
             record.refs.pop(entry_id, None)
+            if record.state is MessageState.FAILED and not record.refs:
+                # Never read, and no mailbox left to read it from.
+                del data.messages[key]
         self.async_schedule_save()
 
     @callback
@@ -845,11 +897,14 @@ class ParcelsEngine:
     async def async_refresh(self) -> None:
         """Check every mailbox, 17TRACK and the Parcel app now.
 
-        The Parcel app is read only when its last read is ten minutes old.
+        The mailboxes try the e-mails that failed at once, without counting
+        the tries. The Parcel app is read only when its last read is ten
+        minutes old.
         """
         for mailbox in list(self.mailboxes.values()):
-            if mailbox.coordinator is not None:
-                await mailbox.coordinator.async_request_refresh()
+            if (coordinator := mailbox.coordinator) is not None:
+                coordinator.retry_now = True
+                await coordinator.async_request_refresh()
         if self.tracker is not None:
             await self.tracker.async_refresh()
         if self.parcelapp is not None:
@@ -863,13 +918,16 @@ class ParcelsEngine:
         metas: Sequence[MessageMeta],
         *,
         first_sync: bool,
+        check: MailCheck | None = None,
     ) -> None:
         """Process new e-mails of a mailbox.
 
         Raises the mailbox's own errors (auth, rate limit, cursor, no
-        mailbox), and whatever else fails while one e-mail is downloaded or
-        parsed, until that e-mail failed FETCH_ATTEMPTS times.
+        mailbox). An e-mail that fails to download or parse is stored as
+        failed and tried again later; ``check`` collects the downloads for
+        async_finish_check.
         """
+        check = MailCheck() if check is None else check
         changed = False
         # Oldest first: an e-mail never undoes what a newer one said, and
         # mail APIs list changes in any order.
@@ -878,22 +936,27 @@ class ParcelsEngine:
         )
         try:
             for meta in ordered:
-                if await self._async_process_meta(mailbox, meta, first_sync=first_sync):
-                    changed = True
+                key = message_hash(
+                    meta.message_id, meta.sender, meta.subject, meta.sent
+                )
+                # The same e-mail can arrive from two mailboxes at once.
+                async with self._hold(key):
+                    if await self._async_intake(
+                        mailbox, meta, key, check, first_sync=first_sync
+                    ):
+                        changed = True
         finally:
             if changed:
                 self.async_changed()
 
-    async def _async_process_meta(
-        self, mailbox: MailboxRuntime, meta: MessageMeta, *, first_sync: bool
-    ) -> bool:
-        key = message_hash(meta.message_id, meta.sender, meta.subject, meta.sent)
-        # The same e-mail can arrive from two mailboxes at once.
+    @asynccontextmanager
+    async def _hold(self, key: str) -> AsyncIterator[None]:
+        """Read an e-mail only once at a time."""
         while (pending := self._inflight.get(key)) is not None:
             await pending.wait()
         done = self._inflight[key] = asyncio.Event()
         try:
-            return await self._async_intake(mailbox, meta, key, first_sync=first_sync)
+            yield
         finally:
             del self._inflight[key]
             done.set()
@@ -903,6 +966,7 @@ class ParcelsEngine:
         mailbox: MailboxRuntime,
         meta: MessageMeta,
         key: str,
+        check: MailCheck,
         *,
         first_sync: bool,
     ) -> bool:
@@ -922,6 +986,7 @@ class ParcelsEngine:
             meta.sender, meta.subject, meta.preview, trusted=trusted
         ):
             return False
+        check.tried.add(key)
         try:
             message = await mailbox.client.async_fetch(meta.provider_id)
         except MailNotFound:
@@ -929,12 +994,22 @@ class ParcelsEngine:
         except MAILBOX_ERRORS:
             raise
         except Exception as err:
-            if not self._set_aside_failed(mailbox, meta, key, err, now):
-                raise
+            # Counted once the check knows whether the mail server failed.
+            check.failed[key] = err
+            data.messages[key] = MessageRecord(
+                hash=key,
+                seen=now,
+                state=MessageState.FAILED,
+                refs={mailbox.entry_id: meta.provider_id},
+                received=_aware(meta.received),
+                sender_domain=domain,
+                owners=_owners(mailbox.owner),
+                retry_at=now + RETRY_DELAYS[0],
+            )
             return True
+        check.ok += 1
         alias = message.hash
         if alias != key and (existing := data.messages.get(alias)) is not None:
-            self._fetch_failures.pop(key, None)
             return self._add_ref(existing, mailbox, meta.provider_id, now)
         record = MessageRecord(
             hash=key,
@@ -945,15 +1020,14 @@ class ParcelsEngine:
             sender_domain=message.sender_domain,
             owners=_owners(mailbox.owner),
         )
+        data.messages[key] = record
         try:
             verdict = self.verify(message)
             result = await self.async_parse(message, verdict)
         except Exception as err:
-            if not self._set_aside_failed(mailbox, meta, key, err, now):
-                raise
+            record.state = MessageState.FAILED
+            self._count_failure(record, err, now)
             return True
-        self._fetch_failures.pop(key, None)
-        data.messages[key] = record
         self._decide(
             message,
             verdict,
@@ -966,43 +1040,298 @@ class ParcelsEngine:
         )
         return True
 
-    def _set_aside_failed(
-        self,
-        mailbox: MailboxRuntime,
-        meta: MessageMeta,
-        key: str,
-        err: Exception,
-        now: datetime,
-    ) -> bool:
-        """Count a failure to download or parse an e-mail.
+    # -- E-mails that failed ----------------------------------------------
 
-        Returns False until the e-mail failed FETCH_ATTEMPTS times: the caller
-        raises, the mailbox's sync fails and lists the e-mail again. Then it
-        is set aside as failed, and True lets the newer e-mails be read.
-        """
-        failures = self._fetch_failures.get(key, 0) + 1
-        if failures < FETCH_ATTEMPTS:
-            self._fetch_failures[key] = failures
-            return False
-        self._fetch_failures.pop(key, None)
-        domain = _domain(meta.sender)
-        # Only where it failed: an error's message could quote the e-mail.
-        _LOGGER.warning(
-            "Skipping an e-mail from %s that failed %d times (%s)",
-            domain,
-            failures,
-            error_location(err),
+    def _retrying(self, record: MessageRecord) -> bool:
+        """Return True for a failed e-mail Parcels still tries."""
+        return (
+            record.state is MessageState.FAILED
+            and record.retry_at is not None
+            and not self.is_ignored(record.sender_domain)
         )
-        self.data.messages[key] = MessageRecord(
-            hash=key,
-            seen=now,
-            state=MessageState.FAILED,
-            refs={mailbox.entry_id: meta.provider_id},
-            received=_aware(meta.received),
-            sender_domain=domain,
-            owners=_owners(mailbox.owner),
+
+    def gave_up(self, record: MessageRecord) -> bool:
+        """Return True for a failed e-mail Parcels no longer tries."""
+        return (
+            record.state is MessageState.FAILED
+            and record.retry_at is None
+            and not self.is_ignored(record.sender_domain)
+        )
+
+    def gave_up_emails(self) -> list[MessageRecord]:
+        """Return the e-mails Parcels gave up on, newest first."""
+        return sorted(
+            (record for record in self.data.messages.values() if self.gave_up(record)),
+            key=lambda record: (record.received or record.seen, record.hash),
+            reverse=True,
+        )
+
+    def _count_failure(
+        self, record: MessageRecord, err: Exception, now: datetime
+    ) -> bool:
+        """Count a failed try of an e-mail; True when Parcels gives up on it."""
+        record.attempts += 1
+        # Only where it failed: an error's message could quote the e-mail.
+        location = error_location(err)
+        if record.attempts >= FINAL_ATTEMPTS:
+            record.retry_at = None
+            _LOGGER.warning(
+                "Couldn't read an e-mail from %s after %d tries (%s)",
+                record.sender_domain,
+                record.attempts,
+                location,
+            )
+            return True
+        record.retry_at = now + RETRY_DELAYS[record.attempts - 1]
+        _LOGGER.debug(
+            "Couldn't read an e-mail from %s, try %d (%s)",
+            record.sender_domain,
+            record.attempts,
+            location,
+        )
+        return False
+
+    async def async_finish_check(
+        self, mailbox: MailboxRuntime, check: MailCheck
+    ) -> Exception | None:
+        """Try the mailbox's failed e-mails that are due, then count failures.
+
+        When most downloads of the check failed, e-mails read before are
+        downloaded again. When those fail too, the mail server has a
+        problem: its error is returned, and no failure counts against an
+        e-mail. Each is tried again with the next check.
+        """
+        changed = await self._async_retry_failed(mailbox, check)
+        outage = None
+        if len(check.failed) > check.ok:
+            outage = await self._async_probe(mailbox, check)
+        now = dt_util.utcnow()
+        counted = False
+        for key, err in check.failed.items():
+            record = self.data.messages.get(key)
+            if record is None or not self._retrying(record) or key in check.early:
+                continue
+            counted = True
+            if outage is not None:
+                record.retry_at = now + RETRY_DELAYS[0]
+            elif self._count_failure(record, err, now):
+                changed = True
+        if changed:
+            self.async_changed()
+        elif counted:
+            self.async_schedule_save()
+        return outage
+
+    async def _async_retry_failed(
+        self, mailbox: MailboxRuntime, check: MailCheck
+    ) -> bool:
+        """Try the failed e-mails of a mailbox that are due; True on changes.
+
+        Oldest first, at most RETRY_MAX. The tries stop after RETRY_STOP
+        failures while no download of the check worked.
+        """
+        data = self.data
+        entry_id = mailbox.entry_id
+        now = dt_util.utcnow()
+        due = now + RETRY_SLACK
+
+        def wanted(record: MessageRecord) -> bool:
+            return (
+                self._retrying(record)
+                and record.hash not in check.tried
+                and entry_id in record.refs
+                and (check.retry_all or record.retry_at <= due)  # type: ignore[operator]
+            )
+
+        candidates = sorted(
+            (record for record in data.messages.values() if wanted(record)),
+            key=lambda record: (record.received or record.seen, record.hash),
+        )
+        changed = False
+        failures = 0
+        for record in candidates[:RETRY_MAX]:
+            if failures >= RETRY_STOP and not check.ok:
+                break
+            key = record.hash
+            async with self._hold(key):
+                if data.messages.get(key) is not record or not wanted(record):
+                    continue
+                check.tried.add(key)
+                early = record.retry_at > due  # type: ignore[operator]
+                if early:
+                    check.early.add(key)
+                try:
+                    message = await mailbox.client.async_fetch(record.refs[entry_id])
+                except MailNotFound:
+                    self._drop_ref(record, entry_id)
+                    changed = True
+                    continue
+                except MAILBOX_ERRORS:
+                    raise
+                except Exception as err:
+                    check.failed[key] = err
+                    failures += 1
+                    if not early:
+                        # Not again before the check counts it.
+                        record.retry_at = now + RETRY_DELAYS[0]
+                    continue
+                check.ok += 1
+                await self._async_read_failed(
+                    record, message, mailbox, now, early=early
+                )
+                changed = True
+        return changed
+
+    def _drop_ref(self, record: MessageRecord, entry_id: str) -> None:
+        """Forget a deleted copy of a failed e-mail, and the e-mail with the last."""
+        record.refs.pop(entry_id, None)
+        if not record.refs and self.data.messages.get(record.hash) is record:
+            del self.data.messages[record.hash]
+
+    async def _async_read_failed(
+        self,
+        record: MessageRecord,
+        message: MailMessage,
+        mailbox: MailboxRuntime,
+        now: datetime,
+        *,
+        early: bool,
+    ) -> bool:
+        """Read a failed e-mail that downloaded at last; True when it was.
+
+        It's decided as on a first sync. Failing to parse it counts as a try,
+        unless the try was early.
+        """
+        data = self.data
+        key = record.hash
+        alias = message.hash
+        if alias != key and (existing := data.messages.get(alias)) is not None:
+            # Read before under its other key.
+            del data.messages[key]
+            for entry_id, provider_id in record.refs.items():
+                existing.refs.setdefault(entry_id, provider_id)
+            for owner in record.owners:
+                if owner not in existing.owners:
+                    existing.owners = (*existing.owners, owner)
+                    add_owner(data, alias, owner, now)
+            return True
+        record.received = _aware(message.received or record.received or now)
+        record.sender_domain = message.sender_domain or record.sender_domain
+        try:
+            verdict = self.verify(message)
+            result = await self.async_parse(message, verdict)
+        except Exception as err:
+            if not early and self._retrying(record):
+                self._count_failure(record, err, now)
+            return False
+        if data.messages.get(key) is not record or record.state is not (
+            MessageState.FAILED
+        ):
+            return False
+        record.state = MessageState.IGNORED
+        record.attempts = 0
+        record.retry_at = None
+        self._decide(
+            message,
+            verdict,
+            result,
+            record,
+            mailbox=mailbox.entry_id,
+            owner=record.owners[0] if record.owners else mailbox.owner,
+            first_sync=True,
+            now=now,
         )
         return True
+
+    async def _async_probe(
+        self, mailbox: MailboxRuntime, check: MailCheck
+    ) -> Exception | None:
+        """Download e-mails read before; return the error when they fail too.
+
+        Newest first, until one downloads or PROBE_FAILURES fail. Without
+        such e-mails, the failures count against the e-mails.
+        """
+        entry_id = mailbox.entry_id
+        candidates = sorted(
+            (
+                record
+                for record in self.data.messages.values()
+                if record.state is not MessageState.FAILED
+                and record.attempts == 0
+                and entry_id in record.refs
+                and record.hash not in check.tried
+            ),
+            key=lambda record: (record.received or record.seen, record.hash),
+            reverse=True,
+        )
+        failure: Exception | None = None
+        failures = 0
+        for record in candidates[:PROBE_FETCHES]:
+            if (provider_id := record.refs.get(entry_id)) is None:
+                continue
+            try:
+                await mailbox.client.async_fetch(provider_id)
+            except MailNotFound:
+                continue
+            except MAILBOX_ERRORS:
+                raise
+            except Exception as err:
+                failure = err
+                failures += 1
+                if failures >= PROBE_FAILURES:
+                    break
+            else:
+                return None
+        return failure
+
+    async def async_retry_gave_up(self) -> dict[str, int]:
+        """Try once more the e-mails Parcels gave up on, oldest first.
+
+        From any mailbox that has them; one that fails stays given up.
+        """
+        data = self.data
+        counts = dict.fromkeys(("read", "failed", "gone"), 0)
+        changed = False
+        for record in reversed(self.gave_up_emails()):
+            key = record.hash
+            async with self._hold(key):
+                if data.messages.get(key) is not record or not self.gave_up(record):
+                    continue
+                fetched = await self.async_refetch(record)
+                if data.messages.get(key) is not record or not self.gave_up(record):
+                    continue
+                if fetched.message is None or fetched.mailbox is None:
+                    if fetched.gone:
+                        del data.messages[key]
+                        counts["gone"] += 1
+                        changed = True
+                    else:
+                        counts["failed"] += 1
+                    continue
+                if await self._async_read_failed(
+                    record,
+                    fetched.message,
+                    fetched.mailbox,
+                    dt_util.utcnow(),
+                    early=True,
+                ):
+                    counts["read"] += 1
+                    changed = True
+                else:
+                    counts["failed"] += 1
+        if changed:
+            self.async_changed()
+        return counts
+
+    @callback
+    def dismiss_gave_up(self) -> int:
+        """Leave the e-mails Parcels gave up on unread; return how many."""
+        records = self.gave_up_emails()
+        for record in records:
+            record.state = MessageState.DISMISSED
+        if records:
+            self.async_changed()
+        return len(records)
 
     def _add_ref(
         self,
@@ -2653,6 +2982,8 @@ class ParcelsEngine:
             # Never read: decided as a new e-mail, for everyone who has it,
             # with the AI only for recent ones, as on a first sync.
             record.state = MessageState.IGNORED
+            record.attempts = 0
+            record.retry_at = None
             self._decide(
                 message,
                 verdict,
@@ -3042,6 +3373,7 @@ class ParcelsEngine:
             "held_guesses": len(data.engine.get(HELD_GUESSES) or ()),
             "forgotten_before": data.engine.get(FORGOTTEN_KEY),
             "old_emails_skipped": self._old_skipped,
+            "failed_emails": self._failed_emails(),
             "refunds_dropped": int(data.engine.get(REFUNDS_KEY) or 0),
             "returns_check": data.engine.get(RETURNS_CHECK_KEY),
             "paack_shop_check": data.engine.get(PAACK_SHOP_CHECK_KEY),
@@ -3073,6 +3405,19 @@ class ParcelsEngine:
                 if item.checks is not None
             ][:MAX_SENDER_CHECKS],
             "ai": self.ai.diagnostics(),
+        }
+
+    def _failed_emails(self) -> dict[str, Any]:
+        """Count the e-mails that failed: still tried, and given up on."""
+        retrying = [
+            record.retry_at
+            for record in self.data.messages.values()
+            if self._retrying(record) and record.retry_at is not None
+        ]
+        return {
+            "retrying": len(retrying),
+            "gave_up": len(self.gave_up_emails()),
+            "next_retry": min(retrying).isoformat() if retrying else None,
         }
 
     def _recent_emails(self, now: datetime) -> dict[str, dict[str, dict[str, int]]]:

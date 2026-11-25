@@ -1553,6 +1553,11 @@ def _shells(value: Any) -> tuple[ParcelShell, ...]:
     return tuple(shells)
 
 
+# Parcels gives up on an e-mail that failed to download or parse this many
+# times: it waits under Needs review for the user to retry or dismiss it.
+FINAL_ATTEMPTS = 8
+
+
 @dataclass(slots=True)
 class MessageRecord:
     """A processed e-mail, identified by a hash of its Message-ID.
@@ -1561,6 +1566,9 @@ class MessageRecord:
     e-mail can be fetched again (for the AI queue or reprocessing). No content
     is kept. ``shells`` hold what the e-mail's parcels were while it is read
     again.
+
+    An e-mail that failed to download or parse counts its failed ``attempts``
+    and is tried again at ``retry_at``; without one, Parcels gave up on it.
     """
 
     hash: str
@@ -1571,6 +1579,8 @@ class MessageRecord:
     sender_domain: str = ""
     owners: tuple[str, ...] = ()
     shells: tuple[ParcelShell, ...] = ()
+    attempts: int = 0
+    retry_at: datetime | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the record."""
@@ -1584,21 +1594,37 @@ class MessageRecord:
                 "sender_domain": self.sender_domain,
                 "owners": list(self.owners),
                 "shells": [shell.as_dict() for shell in self.shells],
+                "attempts": self.attempts or None,
+                "retry_at": dt_to_str(self.retry_at),
             }
         )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> MessageRecord:
         """Parse a serialised record."""
+        seen = stored_dt(data.get("seen")) or dt_util.utcnow()
+        state = MessageState(data.get("state", MessageState.APPLIED))
+        attempts = int(data.get("attempts") or 0)
+        retry_at = stored_dt(data.get("retry_at"))
+        if (
+            state is MessageState.FAILED
+            and retry_at is None
+            and attempts < FINAL_ATTEMPTS
+        ):
+            # Earlier releases gave up after three failures in a row, within
+            # minutes: such an e-mail is tried again.
+            retry_at = seen
         return cls(
             hash=str(data["hash"]),
-            seen=stored_dt(data.get("seen")) or dt_util.utcnow(),
-            state=MessageState(data.get("state", MessageState.APPLIED)),
+            seen=seen,
+            state=state,
             refs={str(k): str(v) for k, v in dict(data.get("refs", {})).items()},
             received=stored_dt(data.get("received")),
             sender_domain=str(data.get("sender_domain", "")),
             owners=_tuple(data.get("owners")),
             shells=_shells(data.get("shells")),
+            attempts=attempts,
+            retry_at=retry_at,
         )
 
 

@@ -26,6 +26,7 @@ import {
   type SuggestionForm,
 } from "./forms.ts";
 import { carrierLabel, checkMeaning, kindLabel, mergeReasonLabel, noteMeaning, reasonLabel } from "./labels.ts";
+import { normalizeRetryResult } from "./normalize.ts";
 import { compareLikelihood, etaRange } from "./parcels.ts";
 import { defineElement, registerCard } from "./register.ts";
 import {
@@ -33,10 +34,13 @@ import {
   filteredTitle,
   hideHandled,
   hidePending,
+  isHidden,
   senderCheckRows,
   settleHidden,
   trustResultText,
   unhide,
+  unreadEmailsText,
+  unreadRetryText,
   withoutHidden,
   type HiddenItems,
 } from "./review-state.ts";
@@ -51,9 +55,19 @@ import type {
   Snapshot,
   Suggestion,
   TrustResult,
+  UnreadEmails,
 } from "./types.ts";
 
 type Tab = "review" | "filtered";
+
+/** The row of the e-mails Parcels couldn't read; item IDs are hex, so this can't clash. */
+const UNREAD_ID = "unread-emails";
+
+/** What the last "Trust this sender" or "Try again" did. */
+interface ActionStatus {
+  icon: string;
+  text: string;
+}
 
 const TABS: readonly Tab[] = ["review", "filtered"];
 
@@ -113,7 +127,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     _hidden: { state: true },
     _confirmClearAll: { state: true },
     _confirmTrust: { state: true },
-    _trustStatus: { state: true },
+    _status: { state: true },
   };
 
   static override styles: CSSResultGroup = [
@@ -243,7 +257,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       .item .confirm {
         margin: 12px 0 0;
       }
-      .trust-status .alert {
+      .action-status .alert {
         margin: 0 0 12px;
       }
       .checks {
@@ -311,8 +325,8 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   declare private _confirmClearAll: boolean;
   /** The review item whose "Trust this sender" waits for its confirmation. */
   declare private _confirmTrust: string | null;
-  /** What the last "Trust this sender" did. */
-  declare private _trustStatus: string | null;
+  /** What the last "Trust this sender" or "Try again" did. */
+  declare private _status: ActionStatus | null;
 
   /** The focused item before the current render, to move focus on when it's gone. */
   private _focusedItem: { id: string; index: number } | null = null;
@@ -333,7 +347,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     this._hidden = new Map();
     this._confirmClearAll = false;
     this._confirmTrust = null;
-    this._trustStatus = null;
+    this._status = null;
   }
 
   static getStubConfig(): Record<string, unknown> {
@@ -354,7 +368,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     }
     const items =
       this._tab === "review"
-        ? lists.review.length + lists.suggestions.length
+        ? lists.review.length + lists.suggestions.length + (this._unreadEmails() ? 1 : 0)
         : lists.filtered.length;
     return 2 + 2 * Math.max(1, items);
   }
@@ -426,8 +440,21 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     return this._visibleCache.visible;
   }
 
+  /** The e-mails Parcels couldn't read, unless their command runs or just succeeded. */
+  private _unreadEmails(): UnreadEmails | null {
+    const snapshot = this.snapshot;
+    return snapshot &&
+      snapshot.unread_emails.count > 0 &&
+      !isHidden(this._hidden, UNREAD_ID, snapshot)
+      ? snapshot.unread_emails
+      : null;
+  }
+
   /** True while the item (a review item, suggestion or filtered e-mail) is listed. */
   private _listed(itemId: string): boolean {
+    if (itemId === UNREAD_ID) {
+      return (this.snapshot?.unread_emails.count ?? 0) > 0;
+    }
     const lists = this._lists();
     return lists
       ? [...lists.review, ...lists.suggestions, ...lists.filtered].some(
@@ -462,6 +489,9 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       const ids = new Set(
         [...lists.review, ...lists.suggestions, ...lists.filtered].map((entry) => entry.id),
       );
+      if (this._listed(UNREAD_ID)) {
+        ids.add(UNREAD_ID);
+      }
       if (this._editing !== null && !ids.has(this._editing)) {
         this._editing = null;
         this._editProblem = null;
@@ -503,7 +533,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       ${this.renderBanners()}
       ${lists
         ? html`${this._renderTabs(
-              lists.review.length + lists.suggestions.length,
+              lists.review.length + lists.suggestions.length + (this._unreadEmails() ? 1 : 0),
               lists.filtered.length,
             )}
             <div
@@ -568,28 +598,31 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     const settings = this.snapshot?.settings;
     const queue = settings ? aiQueueText(settings.ai_queue, settings.ai_queue_seconds) : null;
     const queueLine = queue ? html`<p class="hint queue-hint">${queue}</p>` : nothing;
-    // Always rendered, so screen readers announce what "Trust this sender" did.
-    const trustLine = html`<div class="trust-status" role="status">
-      ${this._trustStatus
+    // Always rendered, so screen readers announce what "Trust this sender" or "Try again" did.
+    const status = this._status;
+    const statusLine = html`<div class="action-status" role="status">
+      ${status
         ? html`<div class="alert">
-            <ha-icon icon="mdi:shield-check-outline" aria-hidden="true"></ha-icon>
-            <span class="grow">${this._trustStatus}</span>
+            <ha-icon icon=${status.icon} aria-hidden="true"></ha-icon>
+            <span class="grow">${status.text}</span>
             <button
               type="button"
               class="icon-btn"
               aria-label=${STRINGS.dismissMessage}
               title=${STRINGS.dismissMessage}
-              @click=${this._dismissTrustStatus}
+              @click=${this._dismissStatus}
             >
               <ha-icon icon="mdi:close" aria-hidden="true"></ha-icon>
             </button>
           </div>`
         : nothing}
     </div>`;
-    if (!items.length && !suggestions.length) {
-      return html`${trustLine}${queueLine}<p class="empty">${STRINGS.emptyReview}</p>`;
+    const unread = this._unreadEmails();
+    if (!items.length && !suggestions.length && !unread) {
+      return html`${statusLine}${queueLine}<p class="empty">${STRINGS.emptyReview}</p>`;
     }
-    return html`${trustLine}${queueLine}<div class="items">
+    return html`${statusLine}${queueLine}<div class="items">
+      ${unread ? this._renderUnreadEmails(unread) : nothing}
       ${repeat(
         suggestions,
         (item) => item.id,
@@ -601,6 +634,48 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         (item, index) => this._renderReviewItem(item, index),
       )}
     </div>`;
+  }
+
+  /** E-mails Parcels gave up reading: Try again reads them now, Dismiss leaves them unread. */
+  private _renderUnreadEmails(unread: UnreadEmails): TemplateResult {
+    const busy = this._busyItems.has(UNREAD_ID) ? "true" : "false";
+    const newest = unread.newest ? formatDateTime(unread.newest, this.locale) : "";
+    return html`<article
+      class="item"
+      tabindex="-1"
+      data-item-id=${UNREAD_ID}
+      aria-labelledby="unread-emails-title"
+      aria-busy=${busy}
+    >
+      <h3 class="subject" id="unread-emails-title">${unreadEmailsText(unread)}</h3>
+      ${newest
+        ? html`<p class="meta">
+            ${fmt(unread.count === 1 ? STRINGS.receivedOn : STRINGS.unreadNewest, { date: newest })}
+          </p>`
+        : nothing}
+      <p class="hint">${STRINGS.unreadHint}</p>
+      ${this._renderError(UNREAD_ID)}
+      <div class="row-actions">
+        <button
+          type="button"
+          class="btn primary"
+          title=${STRINGS.unreadRetryHint}
+          aria-disabled=${busy}
+          @click=${this._retryUnread}
+        >
+          ${STRINGS.retry}
+        </button>
+        <button
+          type="button"
+          class="btn"
+          title=${STRINGS.unreadDismissHint}
+          aria-disabled=${busy}
+          @click=${this._dismissUnread}
+        >
+          ${STRINGS.dismiss}
+        </button>
+      </div>
+    </article>`;
   }
 
   /** Parcels that are probably one: Merge the right candidate, or keep them all apart. */
@@ -1281,7 +1356,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   private async _trust(item: ReviewItem): Promise<void> {
     const domain = item.sender_domain || item.sender;
     this._confirmTrust = null;
-    this._trustStatus = null;
+    this._status = null;
     this._focusInItem(item.id, "[data-trust]");
     await this._command(
       item.id,
@@ -1292,19 +1367,45 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         hide: false,
         onSuccess: (result) => {
           const done = (result ?? {}) as Partial<TrustResult>;
-          this._trustStatus = trustResultText({
-            domain: done.domain ?? domain,
-            added: done.added ?? 0,
-            rechecking: done.rechecking ?? 0,
-            kept: done.kept ?? 0,
-          });
+          this._status = {
+            icon: "mdi:shield-check-outline",
+            text: trustResultText({
+              domain: done.domain ?? domain,
+              added: done.added ?? 0,
+              rechecking: done.rechecking ?? 0,
+              kept: done.kept ?? 0,
+            }),
+          };
         },
       },
     );
   }
 
-  private _dismissTrustStatus(): void {
-    this._trustStatus = null;
+  private async _retryUnread(): Promise<void> {
+    this._status = null;
+    await this._command(
+      UNREAD_ID,
+      "mail/retry_failed",
+      {},
+      {
+        // E-mails that still can't be read stay listed.
+        hide: false,
+        onSuccess: (result) => {
+          this._status = {
+            icon: "mdi:email-sync-outline",
+            text: unreadRetryText(normalizeRetryResult(result)),
+          };
+        },
+      },
+    );
+  }
+
+  private async _dismissUnread(): Promise<void> {
+    await this._command(UNREAD_ID, "mail/dismiss_failed", {});
+  }
+
+  private _dismissStatus(): void {
+    this._status = null;
   }
 
   /**

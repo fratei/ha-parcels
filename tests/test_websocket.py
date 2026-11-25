@@ -45,10 +45,12 @@ from custom_components.parcels.dedup import (
     apply_contribution,
 )
 from custom_components.parcels.engine import ParcelsEngine
-from custom_components.parcels.mail.errors import MailError
+from custom_components.parcels.mail.errors import MailError, MailServerError
 from custom_components.parcels.models import (
+    FINAL_ATTEMPTS,
     PARCELAPP_PREFIX,
     AutoMerge,
+    MessageRecord,
     MessageState,
     Origin,
     ParcelEvent,
@@ -60,7 +62,7 @@ from custom_components.parcels.models import (
     order_key,
 )
 from custom_components.parcels.parsers.auth import parse_authentication_results
-from custom_components.parcels.parsers.base import Eta, MailMessage
+from custom_components.parcels.parsers.base import Eta, MailMessage, message_hash
 from custom_components.parcels.services import MAX_LIST
 from custom_components.parcels.views import (
     SYSTEM_VIEWER,
@@ -820,6 +822,8 @@ async def test_hub_not_loaded(
     await refused(
         ws, "parcels/review/dismiss", "hub_not_loaded", review_id=review[SHOP]
     )
+    await refused(ws, "parcels/mail/retry_failed", "hub_not_loaded")
+    await refused(ws, "parcels/mail/dismiss_failed", "hub_not_loaded")
     assert no_errors_logged(caplog)
 
 
@@ -1467,6 +1471,117 @@ async def test_filtered_admin_only(
 
     assert err["code"] == "unauthorized"
     assert filtered_id in engine.data.filtered
+
+
+# -- E-mails Parcels couldn't read ----------------------------------------------
+
+
+def give_up(
+    engine: ParcelsEngine, client: FakeMailClient, path: str, provider_id: str
+) -> MessageRecord:
+    """Make an e-mail in Alex's mailbox one that Parcels gave up on."""
+    meta = client.add(path, provider_id=provider_id)
+    client.pending.remove(meta)
+    (mailbox,) = engine.mailboxes.values()
+    key = message_hash(meta.message_id, meta.sender, meta.subject, meta.sent)
+    record = engine.data.messages[key] = MessageRecord(
+        hash=key,
+        seen=dt_util.utcnow(),
+        state=MessageState.FAILED,
+        refs={mailbox.entry_id: provider_id},
+        received=meta.received,
+        sender_domain=meta.sender.rpartition("@")[2],
+        attempts=FINAL_ATTEMPTS,
+    )
+    return record
+
+
+async def test_unread_emails(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket, sam_ws: MockHAClientWebSocket
+) -> None:
+    """Administrators see how many e-mails Parcels gave up on, and from whom."""
+    none = {"count": 0, "senders": [], "newest": None}
+    assert (await result(ws, "parcels/list"))["unread_emails"] == none
+    domains = ("e.example", "d.example", "c.example", "b.example", "a.example")
+    for hour, domain in enumerate((*domains, "ups.com", "email.ups.com", "f.example")):
+        engine.data.messages[f"m_{hour}"] = MessageRecord(
+            hash=f"m_{hour}",
+            seen=dt_util.utcnow(),
+            state=MessageState.FAILED,
+            received=datetime(2026, 11, 17, hour, tzinfo=UTC),
+            sender_domain=domain,
+            attempts=FINAL_ATTEMPTS,
+        )
+    # Still tried: Parcels hasn't given up on it.
+    trying = engine.data.messages["m_7"]
+    trying.attempts, trying.retry_at = 2, dt_util.utcnow()
+
+    unread = (await result(ws, "parcels/list"))["unread_emails"]
+
+    # Newest first, each registrable domain once, five at most.
+    assert unread == {
+        "count": 7,
+        "senders": ["ups.com", "a.example", "b.example", "c.example", "d.example"],
+        "newest": "2026-11-17T06:00:00+00:00",
+    }
+    assert (await result(sam_ws, "parcels/list"))["unread_emails"] == none
+
+
+async def test_unread_emails_retry(
+    engine: ParcelsEngine, client: FakeMailClient, ws: MockHAClientWebSocket
+) -> None:
+    """Try again reads those that download now; the others stay unread."""
+    read = give_up(engine, client, "carriers/dhl_express_pt.eml", "m_read")
+    failing = give_up(engine, client, "shopify/shipped_es.eml", "m_failing")
+    client.fetch_errors["m_failing"] = MailServerError("503")
+    gone = give_up(engine, client, "carriers/gls_delivered_en.eml", "m_gone")
+    client.delete("m_gone")
+
+    counts = await result(ws, "parcels/mail/retry_failed")
+
+    assert counts == {"read": 1, "failed": 1, "gone": 1}
+    data = engine.data
+    assert data.messages[read.hash].state is not MessageState.FAILED
+    assert "5830164723" in {p.state.tracking_number for p in data.parcels.values()}
+    assert gone.hash not in data.messages
+    assert engine.gave_up_emails() == [failing]
+    assert (await result(ws, "parcels/list"))["unread_emails"]["count"] == 1
+
+
+async def test_unread_emails_dismiss(
+    engine: ParcelsEngine, client: FakeMailClient, ws: MockHAClientWebSocket
+) -> None:
+    """Dismiss leaves the e-mails unread, and the page stops counting them."""
+    records = [
+        give_up(engine, client, "carriers/dhl_express_pt.eml", "m_1"),
+        give_up(engine, client, "shopify/shipped_es.eml", "m_2"),
+    ]
+    fetches = len(client.fetches)
+
+    assert await result(ws, "parcels/mail/dismiss_failed") == {"dismissed": 2}
+
+    assert {record.state for record in records} == {MessageState.DISMISSED}
+    assert (await result(ws, "parcels/list"))["unread_emails"]["count"] == 0
+    assert await result(ws, "parcels/mail/dismiss_failed") == {"dismissed": 0}
+    assert len(client.fetches) == fetches
+
+
+@pytest.mark.parametrize("command", ["retry_failed", "dismiss_failed"])
+async def test_unread_emails_admin_only(
+    engine: ParcelsEngine,
+    client: FakeMailClient,
+    sam_ws: MockHAClientWebSocket,
+    command: str,
+) -> None:
+    """Only administrators decide about the e-mails Parcels couldn't read."""
+    record = give_up(engine, client, "carriers/dhl_express_pt.eml", "m_1")
+    fetches = len(client.fetches)
+
+    err = await error(sam_ws, f"parcels/mail/{command}")
+
+    assert err["code"] == "unauthorized"
+    assert engine.gave_up_emails() == [record]
+    assert len(client.fetches) == fetches
 
 
 # -- Removing e-mails ---------------------------------------------------------

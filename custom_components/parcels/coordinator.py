@@ -28,6 +28,7 @@ from .const import (
     DEFAULT_LOOKBACK_DAYS,
     DOMAIN,
 )
+from .engine import MailCheck
 from .mail.errors import (
     MailApiDisabled,
     MailAuthError,
@@ -83,6 +84,9 @@ class MailboxCoordinator(DataUpdateCoordinator[MailboxStatus]):
         self.mailbox = mailbox
         self.failures = 0
         self.last_error: str | None = None
+        # Set for a refresh the user asked for: its check tries the e-mails
+        # that failed at once, without counting the tries.
+        self.retry_now = False
         # A refresh asked for during a long sync waits for it to finish.
         self._sync_lock = asyncio.Lock()
 
@@ -164,6 +168,9 @@ class MailboxCoordinator(DataUpdateCoordinator[MailboxStatus]):
         complete = False
         more = False
         ok = False
+        outage: Exception | None = None
+        check = MailCheck(retry_all=self.retry_now)
+        self.retry_now = False
         engine.begin_sync(entry_id)
         try:
             for _ in range(MAX_ROUNDS):
@@ -176,7 +183,7 @@ class MailboxCoordinator(DataUpdateCoordinator[MailboxStatus]):
                 )
                 count += len(result.messages)
                 await engine.async_process_mail(
-                    mailbox, result.messages, first_sync=first_sync
+                    mailbox, result.messages, first_sync=first_sync, check=check
                 )
                 # Only advance after every e-mail of the round was handled.
                 engine.data.cursors[entry_id] = result.cursor
@@ -185,7 +192,11 @@ class MailboxCoordinator(DataUpdateCoordinator[MailboxStatus]):
                     complete = True
                     break
             more = not complete
-            ok = True
+            if engine.started:
+                # Tries the e-mails that failed before; returns the mail
+                # server's error when its downloads fail.
+                outage = await engine.async_finish_check(mailbox, check)
+            ok = outage is None
         except MailAuthError as err:
             raise ConfigEntryAuthFailed(
                 translation_domain=DOMAIN,
@@ -198,6 +209,8 @@ class MailboxCoordinator(DataUpdateCoordinator[MailboxStatus]):
         if complete and first_sync:
             engine.mark_synced(entry_id)
         self.update_interval = self._interval if complete else FOLLOW_UP
+        if outage is not None:
+            raise outage
         return MailboxStatus(
             last_sync=dt_util.utcnow(),
             messages=count,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { callParcelsServiceForParcel } from "../src/api.ts";
@@ -27,5 +28,35 @@ describe("services that answer", () => {
     for (const result of [undefined, {}, { response: null }, { response: { parcel_id: 7 } }, { response: { parcel_id: "" } }]) {
       assert.equal(await callParcelsServiceForParcel(fakeHass(result, []), "merge", {}), null);
     }
+  });
+});
+
+describe("WebSocket commands", () => {
+  test("the cards send only commands the integration registers", () => {
+    const websocket = readFileSync(new URL("../../custom_components/parcels/websocket.py", import.meta.url), "utf8");
+    const registered = new Set([...websocket.matchAll(/f"\{DOMAIN\}\/([a-z_/]+)"/g)].map((match) => match[1]));
+    const src = new URL("../src/", import.meta.url);
+    const sent = new Set<string>();
+    for (const name of readdirSync(src).filter((file) => file.endsWith(".ts"))) {
+      const text = readFileSync(new URL(name, src), "utf8");
+      const calls = /(?:callParcelsCommand(?:<[^>]*>)?\(\s*hass,|this\._command\(\s*[\w.]+,)\s*"([^"]+)"/g;
+      for (const match of text.matchAll(calls)) {
+        sent.add(match[1] ?? "");
+      }
+    }
+    for (const command of [
+      "get",
+      "origin/remove",
+      "review/accept",
+      "review/trust_sender",
+      "mail/retry_failed",
+      "mail/dismiss_failed",
+    ]) {
+      assert.ok(sent.has(command), command);
+    }
+    assert.deepEqual(
+      [...sent].filter((command) => !registered.has(command)),
+      [],
+    );
   });
 });

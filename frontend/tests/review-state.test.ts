@@ -11,6 +11,8 @@ import {
   settleHidden,
   trustResultText,
   unhide,
+  unreadEmailsText,
+  unreadRetryText,
   withoutHidden,
   type HiddenItems,
 } from "../src/review-state.ts";
@@ -161,5 +163,43 @@ describe("filteredTitle", () => {
 
   test("an e-mail removed from a parcel says where it came from, as no subject is kept", () => {
     assert.equal(filteredTitle({ subject: "", removed: true }), "Removed from a parcel");
+  });
+});
+
+describe("e-mails Parcels couldn't read", () => {
+  const unread = (count: number, senders: string[]) => ({ count, senders, newest: null });
+
+  test("say nothing when every e-mail was read", () => {
+    assert.equal(unreadEmailsText(unread(0, ["a.example"])), null);
+  });
+
+  test("count the e-mails and name up to three senders", () => {
+    assert.equal(unreadEmailsText(unread(1, [])), "Couldn't read 1 e-mail.");
+    assert.equal(unreadEmailsText(unread(1, ["a.example"])), "Couldn't read 1 e-mail, from a.example.");
+    assert.equal(
+      unreadEmailsText(unread(4, ["a.example", "b.example"])),
+      "Couldn't read 4 e-mails, from a.example and b.example.",
+    );
+    assert.equal(
+      unreadEmailsText(unread(3, ["ups.com", "a.example", "b.example"])),
+      "Couldn't read 3 e-mails, from ups.com, a.example and b.example.",
+    );
+    assert.equal(
+      unreadEmailsText(unread(6, ["ups.com", "a.example", "b.example", "c.example", "d.example"])),
+      "Couldn't read 6 e-mails, from ups.com, a.example, b.example and others.",
+    );
+  });
+
+  test("say what trying again did", () => {
+    assert.equal(
+      unreadRetryText({ read: 1, failed: 1, gone: 1 }),
+      "Tried again: read 1 e-mail, 1 still couldn't be read, 1 is no longer in the mailbox.",
+    );
+    assert.equal(unreadRetryText({ read: 2, failed: 0, gone: 0 }), "Tried again: read 2 e-mails.");
+    assert.equal(
+      unreadRetryText({ read: 0, failed: 3, gone: 2 }),
+      "Tried again: 3 still couldn't be read, 2 are no longer in the mailbox.",
+    );
+    assert.equal(unreadRetryText({ read: 0, failed: 0, gone: 0 }), "No e-mails were waiting to be read again.");
   });
 });

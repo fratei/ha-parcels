@@ -5,6 +5,7 @@ import {
   normalizeDetails,
   normalizeMergeSuggestion,
   normalizeParcel,
+  normalizeRetryResult,
   normalizeReviewItem,
   normalizeSettings,
   normalizeSnapshot,
@@ -21,6 +22,7 @@ describe("normalizeSnapshot", () => {
       review: [],
       merge_suggestions: [],
       filtered: [],
+      unread_emails: { count: 0, senders: [], newest: null },
       settings: {
         user_is_admin: false,
         ai_enabled: false,
@@ -119,6 +121,37 @@ describe("normalizeSnapshot", () => {
       filtered.map((item) => item.removed),
       [true, false],
     );
+  });
+
+  test("reads the e-mails Parcels couldn't read strictly", () => {
+    assert.deepEqual(
+      normalizeSnapshot(
+        {
+          unread_emails: {
+            count: 6,
+            senders: ["ups.com", "", 3, null, "a.example"],
+            newest: "2026-11-17T05:00:00+00:00",
+          },
+        },
+        NOW,
+      ).unread_emails,
+      { count: 6, senders: ["ups.com", "a.example"], newest: "2026-11-17T05:00:00+00:00" },
+    );
+    for (const raw of [null, "6", [], { count: "6", senders: "ups.com", newest: 5 }, { count: -1 }, { count: 2.5 }]) {
+      assert.deepEqual(
+        normalizeSnapshot({ unread_emails: raw }, NOW).unread_emails,
+        { count: 0, senders: [], newest: null },
+        JSON.stringify(raw),
+      );
+    }
+  });
+});
+
+describe("normalizeRetryResult", () => {
+  test("counts what trying again did, and nothing from a broken answer", () => {
+    assert.deepEqual(normalizeRetryResult({ read: 2, failed: 1, gone: 3 }), { read: 2, failed: 1, gone: 3 });
+    assert.deepEqual(normalizeRetryResult({ read: "2", failed: -1, gone: 1.5 }), { read: 0, failed: 0, gone: 0 });
+    assert.deepEqual(normalizeRetryResult(null), { read: 0, failed: 0, gone: 0 });
   });
 });
 

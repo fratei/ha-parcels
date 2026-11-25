@@ -808,8 +808,7 @@ async def test_check_decides_emails_that_failed_to_download(
     add_mailbox(hass, address=OTHER_ADDRESS, owner=OTHER_OWNER)
 
     with patch_mail_clients(alex, sam):
-        with patch("custom_components.parcels.engine.FETCH_ATTEMPTS", 1):
-            engine = await async_setup_parcels(hass)
+        engine = await async_setup_parcels(hass)
         record = record_of(engine, "shipped_es.eml")
         assert record.state is MessageState.FAILED
         assert record.owners == (OWNER, OTHER_OWNER)
@@ -846,8 +845,7 @@ async def test_check_decides_failed_emails_as_on_a_first_sync(
     add_mailbox(hass)
 
     with patch_mail_clients(client):
-        with patch("custom_components.parcels.engine.FETCH_ATTEMPTS", 1):
-            engine = await async_setup_parcels(hass)
+        engine = await async_setup_parcels(hass)
         record = record_of(engine, "return_pickup_no_order_pt.eml")
         assert record.state is MessageState.FAILED
         client.fetch_errors.clear()

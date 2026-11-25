@@ -1,6 +1,6 @@
 /** The review card's optimistic state and its text, kept apart so they can be tested. */
 import { STRINGS, fmt } from "./strings.ts";
-import type { SenderChecks, TrustResult } from "./types.ts";
+import type { RetryResult, SenderChecks, TrustResult, UnreadEmails } from "./types.ts";
 
 /**
  * Why an item is hidden: "pending" while its command runs, then the snapshot
@@ -124,6 +124,43 @@ export function trustResultText(result: TrustResult): string {
   return parts.length
     ? fmt(STRINGS.trustDoneWith, { domain: result.domain, parts: parts.join(", ") })
     : fmt(STRINGS.trustDone, { domain: result.domain });
+}
+
+/** Senders shown by name; more become "and others". */
+const UNREAD_NAMED = 3;
+
+function andList(items: readonly string[]): string {
+  return items.length < 2
+    ? (items[0] ?? "")
+    : fmt(STRINGS.listAnd, { list: items.slice(0, -1).join(", "), last: items.at(-1) ?? "" });
+}
+
+/** "Couldn't read 2 e-mails, from ups.com and shop.example."; null when there are none. */
+export function unreadEmailsText(unread: UnreadEmails): string | null {
+  if (unread.count <= 0) {
+    return null;
+  }
+  const what =
+    unread.count === 1 ? STRINGS.unreadOne : fmt(STRINGS.unreadMany, { count: unread.count });
+  if (!unread.senders.length) {
+    return `${what}.`;
+  }
+  const named = unread.senders.slice(0, UNREAD_NAMED);
+  const senders =
+    unread.senders.length > UNREAD_NAMED ? andList([...named, STRINGS.unreadOthers]) : andList(named);
+  return fmt(STRINGS.unreadFrom, { unread: what, senders });
+}
+
+/** "Tried again: read 1 e-mail, 1 still couldn't be read." */
+export function unreadRetryText(result: RetryResult): string {
+  const parts = [
+    counted(result.read, STRINGS.retryReadOne, STRINGS.retryReadMany),
+    counted(result.failed, STRINGS.retryFailedOne, STRINGS.retryFailedMany),
+    counted(result.gone, STRINGS.retryGoneOne, STRINGS.retryGoneMany),
+  ].filter((part): part is string => part !== null);
+  return parts.length
+    ? fmt(STRINGS.retryDoneWith, { parts: parts.join(", ") })
+    : STRINGS.retryNothing;
 }
 
 /** The rows of "Sender check details": headers, the servers that wrote them, and the results. */

@@ -21,6 +21,7 @@ import type {
   ParcelSource,
   ParcelStatus,
   PickupRule,
+  RetryResult,
   ReturnEmail,
   ReviewItem,
   SenderChecks,
@@ -29,6 +30,7 @@ import type {
   Suggestion,
   TimelineEntry,
   TimelineSource,
+  UnreadEmails,
 } from "./types.ts";
 
 type Obj = Record<string, unknown>;
@@ -339,6 +341,21 @@ export function normalizeSettings(raw: unknown, now: number = Date.now()): Setti
   };
 }
 
+function normalizeUnreadEmails(raw: unknown): UnreadEmails {
+  const unread = isObj(raw) ? raw : {};
+  return {
+    count: count(unread.count),
+    senders: strs(unread.senders).filter(Boolean),
+    newest: str(unread.newest),
+  };
+}
+
+/** The answer of `parcels/mail/retry_failed`. */
+export function normalizeRetryResult(raw: unknown): RetryResult {
+  const result = isObj(raw) ? raw : {};
+  return { read: count(result.read), failed: count(result.failed), gone: count(result.gone) };
+}
+
 export function normalizeSnapshot(raw: unknown, now: number = Date.now()): Snapshot {
   const snapshot = isObj(raw) ? raw : {};
   return {
@@ -347,6 +364,7 @@ export function normalizeSnapshot(raw: unknown, now: number = Date.now()): Snaps
     review: list(snapshot.review, normalizeReviewItem),
     merge_suggestions: list(snapshot.merge_suggestions, normalizeMergeSuggestion),
     filtered: list(snapshot.filtered, normalizeFilteredItem),
+    unread_emails: normalizeUnreadEmails(snapshot.unread_emails),
     settings: normalizeSettings(snapshot.settings, now),
   };
 }

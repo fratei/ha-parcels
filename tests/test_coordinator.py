@@ -43,7 +43,11 @@ from custom_components.parcels.mail.errors import (
     MailRateLimited,
     MailServerError,
 )
-from custom_components.parcels.models import MessageState
+from custom_components.parcels.models import (
+    FINAL_ATTEMPTS,
+    MessageRecord,
+    MessageState,
+)
 from custom_components.parcels.parsers.base import (
     MailMessage,
     ParseResult,
@@ -62,8 +66,13 @@ from .common import (
 )
 
 NOW = "2026-11-17 10:00:00+00:00"
+START = datetime(2026, 11, 17, 10, 0, tzinfo=UTC)
 INTERVAL = timedelta(minutes=5)
 CTT = "carriers/ctt_in_transit_pt.eml"
+CTT_NUMBER = "RR482915732PT"
+# A shop's e-mail, sent by DPD.
+SHOP = "shopify/shipped_es.eml"
+SHOP_NUMBER = "01906004718236"
 # Amazon's e-mail of 17 November: no carrier number, delivery on 19 November.
 AMAZON = "amazon/shipped_de.eml"
 AMAZON_ORDER = "303-5928471-2039485"
@@ -547,19 +556,12 @@ async def test_reconcile_waits_for_the_sync(
     assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_DAY
 
 
-@pytest.mark.parametrize("stage", ["download", "parse"])
-async def test_an_email_that_cant_be_read_is_skipped(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture, stage: str
-) -> None:
-    """An e-mail that fails to download or parse is skipped after three tries.
-
-    Whatever the error, the mailbox then reads its newer e-mails.
-    """
+def _bad_and_good() -> RelistClient:
+    """Return a mailbox with a shop's e-mail at 09:00 and CTT's at 09:30."""
     client = RelistClient()
     client.add(
         dataclasses.replace(
-            load_message("shopify/shipped_es.eml"),
-            received=datetime(2026, 11, 17, 9, 0, tzinfo=UTC),
+            load_message(SHOP), received=datetime(2026, 11, 17, 9, 0, tzinfo=UTC)
         ),
         provider_id="bad",
     )
@@ -569,7 +571,54 @@ async def test_an_email_that_cant_be_read_is_skipped(
         ),
         provider_id="good",
     )
+    return client
+
+
+def _shop_email(minute: int) -> MailMessage:
+    """Return a copy of the shop's e-mail of its own, received at 09:``minute``."""
+    return dataclasses.replace(
+        load_message(SHOP),
+        message_id=f"<shop-{minute}@tienda-ejemplo.es>",
+        received=datetime(2026, 11, 17, 9, minute, tzinfo=UTC),
+    )
+
+
+def _record(
+    engine: ParcelsEngine, mailbox: MockConfigEntry, provider_id: str
+) -> MessageRecord:
+    """Return the record of the e-mail a mailbox knows as ``provider_id``."""
+    [record] = (
+        record
+        for record in engine.data.messages.values()
+        if record.refs.get(mailbox.entry_id) == provider_id
+    )
+    return record
+
+
+def _numbers(engine: ParcelsEngine) -> list[str | None]:
+    """Return the parcels' tracking numbers, sorted."""
+    return sorted(
+        (parcel.state.tracking_number for parcel in engine.data.parcels.values()),
+        key=str,
+    )
+
+
+@pytest.mark.parametrize("stage", ["download", "parse"])
+async def test_an_email_that_cant_be_read_is_tried_again(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+    stage: str,
+) -> None:
+    """An e-mail that fails to download or parse doesn't hold up the others.
+
+    The mailbox reads its newer e-mails at once and tries that one again
+    five minutes later. One e-mail that fails isn't a problem of the mailbox.
+    """
+    caplog.set_level(logging.DEBUG)
+    client = _bad_and_good()
     secret = "Olá Alex Doe, a sua encomenda"
+    broken = {stage}
     if stage == "download":
         client.fetch_errors["bad"] = RuntimeError(secret)
     parse = ParcelsEngine.async_parse
@@ -577,34 +626,369 @@ async def test_an_email_that_cant_be_read_is_skipped(
     async def async_parse(
         engine: ParcelsEngine, message: MailMessage, verdict: SenderVerdict
     ) -> ParseResult:
-        if stage == "parse" and message.provider_id == "bad":
+        if "parse" in broken and message.provider_id == "bad":
             raise RecursionError(secret)
         return await parse(engine, message, verdict)
 
     with patch.object(ParcelsEngine, "async_parse", async_parse):
         mailbox, coordinator, engine = await _setup(hass, client)
-        _failure(coordinator)
-        await coordinator.async_refresh()
-        _failure(coordinator)
-        assert client.fetches == ["bad", "bad"]
-        assert engine.data.parcels == {}
-
-        await coordinator.async_refresh()
 
         assert coordinator.last_update_success
-        assert client.fetches == ["bad", "bad", "bad", "good"]
-        [parcel] = engine.data.parcels.values()
-        assert parcel.state.tracking_number == "RR482915732PT"
-        [record] = (
-            record
-            for record in engine.data.messages.values()
-            if record.refs.get(mailbox.entry_id) == "bad"
-        )
+        assert _problem(hass, mailbox) == "off"
+        assert client.fetches == ["bad", "good"]
+        assert _numbers(engine) == [CTT_NUMBER]
+        record = _record(engine, mailbox, "bad")
         assert record.state is MessageState.FAILED
+        assert (record.attempts, record.retry_at) == (1, START + INTERVAL)
 
+        # Not before its time.
+        await coordinator.async_refresh()
+        assert client.fetches == ["bad", "good"]
+
+        client.fetch_errors.clear()
+        broken.clear()
+        # The next check. A scheduled one runs in the background, and its
+        # parse in the executor: refresh here to wait for it.
+        freezer.tick(INTERVAL)
         await coordinator.async_refresh()
 
-        assert coordinator.last_update_success
-        assert client.fetches == ["bad", "bad", "bad", "good"]
-    assert "failed 3 times" in caplog.text
+    assert coordinator.last_update_success
+    assert client.fetches == ["bad", "good", "bad"]
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+    record = _record(engine, mailbox, "bad")
+    assert record.state is MessageState.APPLIED
+    assert (record.attempts, record.retry_at) == (0, None)
     assert "Alex Doe" not in caplog.text
+
+
+async def test_an_email_that_keeps_failing_waits_for_the_user(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After 8 tries over almost four days, Parcels stops trying an e-mail.
+
+    Needs review says so, and Retry there reads it.
+    """
+    client = _bad_and_good()
+    client.fetch_errors["bad"] = MailServerError("HTTP 500")
+    mailbox, coordinator, engine = await _setup(hass, client)
+    assert engine.diagnostics()["failed_emails"] == {
+        "retrying": 1,
+        "gave_up": 0,
+        "next_retry": (START + INTERVAL).isoformat(),
+    }
+
+    tries = []
+    while (record := _record(engine, mailbox, "bad")).retry_at is not None:
+        tries.append(record.retry_at - START)
+        freezer.move_to(record.retry_at)
+        await coordinator.async_refresh()
+        assert coordinator.last_update_success
+    assert tries == [
+        timedelta(minutes=5),
+        timedelta(minutes=20),
+        timedelta(hours=1, minutes=20),
+        timedelta(hours=5, minutes=20),
+        timedelta(hours=17, minutes=20),
+        timedelta(days=1, hours=17, minutes=20),
+        timedelta(days=3, hours=17, minutes=20),
+    ]
+    assert (record.state, record.attempts) == (MessageState.FAILED, 8)
+    assert client.fetches.count("bad") == 8
+    assert _problem(hass, mailbox) == "off"
+    assert "Couldn't read an e-mail from tienda-ejemplo.es after 8 tries" in (
+        caplog.text
+    )
+    assert engine.diagnostics()["failed_emails"] == {
+        "retrying": 0,
+        "gave_up": 1,
+        "next_retry": None,
+    }
+
+    freezer.move_to(START + timedelta(days=10))
+    await coordinator.async_refresh()
+    assert client.fetches.count("bad") == 8
+
+    assert await engine.async_retry_gave_up() == {"read": 0, "failed": 1, "gone": 0}
+    assert _record(engine, mailbox, "bad").attempts == 8
+
+    client.fetch_errors.clear()
+    assert await engine.async_retry_gave_up() == {"read": 1, "failed": 0, "gone": 0}
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+    assert engine.diagnostics()["failed_emails"]["gave_up"] == 0
+
+
+async def test_an_email_given_up_can_be_dismissed(hass: HomeAssistant) -> None:
+    """Dismiss leaves an e-mail Parcels gave up on unread for good."""
+    client = _bad_and_good()
+    client.fetch_errors["bad"] = MailServerError("HTTP 500")
+    mailbox, _, engine = await _setup(hass, client)
+    record = _record(engine, mailbox, "bad")
+    record.attempts, record.retry_at = 8, None
+
+    assert engine.dismiss_gave_up() == 1
+
+    assert record.state is MessageState.DISMISSED
+    assert engine.diagnostics()["failed_emails"]["gave_up"] == 0
+    assert engine.dismiss_gave_up() == 0
+    assert await engine.async_retry_gave_up() == {"read": 0, "failed": 0, "gone": 0}
+
+
+async def test_an_outage_counts_against_no_email(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """When the e-mails already read fail to download too, the mailbox fails.
+
+    The problem sensor turns on, and the e-mails that failed meanwhile are
+    tried again with the next check without counting the tries.
+    """
+    client = FakeMailClient()
+    client.add(CTT, provider_id="read")
+    mailbox, coordinator, engine = await _setup(hass, client)
+    client.add(SHOP, provider_id="new")
+    outage = MailServerError("HTTP 503")
+    client.fetch_errors.update(read=outage, new=outage)
+
+    await coordinator.async_refresh()
+
+    err = _failure(coordinator)
+    assert err.translation_key == "mailbox_sync_failed"
+    assert err.translation_placeholders == {"error": "HTTP 503"}
+    assert coordinator.last_error == "MailServerError"
+    assert _problem(hass, mailbox) == "on"
+    assert client.fetches == ["read", "new", "read"]
+    record = _record(engine, mailbox, "new")
+    assert (record.state, record.attempts) == (MessageState.FAILED, 0)
+    assert record.retry_at == START + INTERVAL
+
+    client.fetch_errors.clear()
+    freezer.tick(INTERVAL)
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert _problem(hass, mailbox) == "off"
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+
+
+@pytest.mark.parametrize("stage", ["download", "parse"])
+async def test_refresh_tries_failed_emails_without_counting(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, stage: str
+) -> None:
+    """Refresh tries an e-mail that failed again at once, without counting.
+
+    Three refreshes in 30 seconds can't use up an e-mail's tries, whether it
+    then fails to download or to parse.
+    """
+    client = FakeMailClient()
+    client.add(CTT, provider_id="read")
+    broken: set[str] = set()
+    parse = ParcelsEngine.async_parse
+
+    async def async_parse(
+        engine: ParcelsEngine, message: MailMessage, verdict: SenderVerdict
+    ) -> ParseResult:
+        if message.provider_id in broken:
+            raise RecursionError("the parser failed")
+        return await parse(engine, message, verdict)
+
+    with patch.object(ParcelsEngine, "async_parse", async_parse):
+        mailbox, _, engine = await _setup(hass, client)
+        client.add(SHOP, provider_id="new")
+        client.fetch_errors["new"] = MailServerError("HTTP 500")
+
+        for _ in range(3):
+            await engine.async_refresh()
+            await _advance(hass, freezer, timedelta(seconds=11))
+            if stage == "parse":
+                client.fetch_errors.clear()
+                broken.add("new")
+
+        assert client.fetches.count("new") == 3
+        record = _record(engine, mailbox, "new")
+        assert (record.state, record.attempts) == (MessageState.FAILED, 1)
+
+        client.fetch_errors.clear()
+        broken.clear()
+        await engine.async_refresh()
+        await hass.async_block_till_done()
+
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+
+
+async def test_retries_stop_while_no_download_works(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """While no download works, a check tries three failed e-mails at most.
+
+    The others wait for a check whose downloads work.
+    """
+    client = FakeMailClient()
+    client.add(CTT, provider_id="read")
+    mailbox, coordinator, engine = await _setup(hass, client)
+    outage = MailServerError("HTTP 503")
+    client.fetch_errors["read"] = outage
+    failed = [f"new_{minute}" for minute in range(5)]
+    for minute, provider_id in enumerate(failed):
+        client.add(_shop_email(minute), provider_id=provider_id)
+        client.fetch_errors[provider_id] = outage
+    await coordinator.async_refresh()
+    assert client.fetches[-6:] == [*failed, "read"]
+
+    freezer.tick(INTERVAL)
+    fetches = len(client.fetches)
+    await coordinator.async_refresh()
+
+    # The oldest three, then an e-mail read before, to tell an outage.
+    assert client.fetches[fetches:] == [*failed[:3], "read"]
+    assert _problem(hass, mailbox) == "on"
+    assert {_record(engine, mailbox, key).attempts for key in failed} == {0}
+
+    client.fetch_errors.clear()
+    freezer.tick(INTERVAL)
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    states = {_record(engine, mailbox, key).state for key in failed}
+    assert MessageState.FAILED not in states
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+
+
+async def test_failed_emails_of_an_ignored_sender_are_left_alone(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Parcels stops trying the failed e-mails of a sender the user ignores.
+
+    Needs review doesn't count them either.
+    """
+    client = _bad_and_good()
+    client.fetch_errors["bad"] = MailServerError("HTTP 500")
+    mailbox, coordinator, engine = await _setup(hass, client)
+    record = _record(engine, mailbox, "bad")
+    assert record.sender_domain == "tienda-ejemplo.es"
+    engine.data.sender("tienda-ejemplo.es").ignored = True
+
+    freezer.move_to(record.retry_at)
+    await coordinator.async_refresh()
+
+    assert client.fetches == ["bad", "good"]
+    assert engine.diagnostics()["failed_emails"]["retrying"] == 0
+
+    record.attempts, record.retry_at = FINAL_ATTEMPTS, None
+    assert engine.gave_up_emails() == []
+    assert engine.diagnostics()["failed_emails"]["gave_up"] == 0
+    assert await engine.async_retry_gave_up() == {"read": 0, "failed": 0, "gone": 0}
+    assert engine.dismiss_gave_up() == 0
+    assert record.state is MessageState.FAILED
+    assert client.fetches == ["bad", "good"]
+
+
+async def test_emails_given_up_dont_make_an_outage(hass: HomeAssistant) -> None:
+    """E-mails Parcels gave up on don't tell whether the mail server works.
+
+    They fail again, and the mailbox would look broken.
+    """
+    client = FakeMailClient()
+    client.add(
+        dataclasses.replace(
+            load_message(CTT), received=datetime(2026, 11, 17, 8, 0, tzinfo=UTC)
+        ),
+        provider_id="read",
+    )
+    broken = [f"broken_{minute}" for minute in range(3)]
+    for minute, provider_id in enumerate(broken):
+        client.add(_shop_email(minute), provider_id=provider_id)
+        client.fetch_errors[provider_id] = MailServerError("HTTP 500")
+    mailbox, coordinator, engine = await _setup(hass, client)
+    for provider_id in broken:
+        record = _record(engine, mailbox, provider_id)
+        record.attempts, record.retry_at = FINAL_ATTEMPTS, None
+    assert engine.dismiss_gave_up() == 3
+    client.add(_shop_email(10), provider_id="new")
+    client.fetch_errors["new"] = MailServerError("HTTP 500")
+    fetches = len(client.fetches)
+
+    await coordinator.async_refresh()
+
+    assert client.fetches[fetches:] == ["new", "read"]
+    assert coordinator.last_update_success
+    assert _problem(hass, mailbox) == "off"
+    assert _record(engine, mailbox, "new").attempts == 1
+
+
+async def test_one_email_read_before_that_downloads_shows_the_server_works(
+    hass: HomeAssistant,
+) -> None:
+    """The check for an outage stops at the first e-mail that downloads.
+
+    The e-mail that failed meanwhile counts its try, though an e-mail read
+    before fails too.
+    """
+    client = FakeMailClient()
+    client.add(_shop_email(0), provider_id="older")
+    client.add(_shop_email(30), provider_id="newer")
+    mailbox, coordinator, engine = await _setup(hass, client)
+    client.fetch_errors["newer"] = MailServerError("HTTP 500")
+    client.add(_shop_email(45), provider_id="new")
+    client.fetch_errors["new"] = MailServerError("HTTP 500")
+    fetches = len(client.fetches)
+
+    await coordinator.async_refresh()
+
+    assert client.fetches[fetches:] == ["new", "newer", "older"]
+    assert coordinator.last_update_success
+    assert _record(engine, mailbox, "new").attempts == 1
+
+
+async def test_try_again_reads_the_emails_given_up_oldest_first(
+    hass: HomeAssistant,
+) -> None:
+    """Try again reads the e-mails Parcels gave up on in the order they came."""
+    client = FakeMailClient()
+    minutes = (20, 0, 40)
+    for minute in minutes:
+        client.add(_shop_email(minute), provider_id=f"m_{minute}")
+        client.fetch_errors[f"m_{minute}"] = MailServerError("HTTP 500")
+    mailbox, _, engine = await _setup(hass, client)
+    for minute in minutes:
+        record = _record(engine, mailbox, f"m_{minute}")
+        record.attempts, record.retry_at = FINAL_ATTEMPTS, None
+    client.fetch_errors.clear()
+    fetches = len(client.fetches)
+
+    assert await engine.async_retry_gave_up() == {"read": 3, "failed": 0, "gone": 0}
+
+    assert client.fetches[fetches:] == ["m_0", "m_20", "m_40"]
+
+
+async def test_a_failed_email_deleted_meanwhile_is_forgotten(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """An e-mail deleted before its next try is forgotten."""
+    client = _bad_and_good()
+    client.fetch_errors["bad"] = MailServerError("HTTP 500")
+    mailbox, coordinator, engine = await _setup(hass, client)
+    key = _record(engine, mailbox, "bad").hash
+
+    client.fetch_errors.clear()
+    client.delete("bad")
+    await _advance(hass, freezer, INTERVAL)
+
+    assert coordinator.last_update_success
+    assert key not in engine.data.messages
+    assert _numbers(engine) == [CTT_NUMBER]
+
+
+async def test_removing_a_mailbox_forgets_its_failed_emails(
+    hass: HomeAssistant,
+) -> None:
+    """A failed e-mail no other mailbox holds goes with its mailbox."""
+    client = _bad_and_good()
+    client.fetch_errors["bad"] = MailServerError("HTTP 500")
+    mailbox, _, engine = await _setup(hass, client)
+    key = _record(engine, mailbox, "bad").hash
+
+    await hass.config_entries.async_remove(mailbox.entry_id)
+    await hass.async_block_till_done()
+
+    assert key not in engine.data.messages

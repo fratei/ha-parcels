@@ -64,6 +64,8 @@ if TYPE_CHECKING:
     from .engine import ParcelsEngine
 
 PERSON_DOMAIN = "person"
+# How many senders the page names for the e-mails Parcels couldn't read.
+UNREAD_SENDERS = 5
 # How the parcel details name the source of an inferred delivery.
 _INFERRED_SOURCES: dict[InferredReason, str] = {
     "shop": "inferred",
@@ -559,6 +561,26 @@ def settings_json(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
     }
 
 
+def unread_emails_json(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
+    """Return how many e-mails Parcels gave up on reading, and from whom.
+
+    The senders are registrable domains, newest first. Only administrators
+    see the review lists, so only they get them.
+    """
+    records = engine.gave_up_emails() if viewer.is_admin else []
+    senders: list[str] = []
+    for record in records:
+        domain = organizational_domain(record.sender_domain)
+        if domain and domain not in senders:
+            senders.append(domain)
+    newest = records[0] if records else None
+    return {
+        "count": len(records),
+        "senders": senders[:UNREAD_SENDERS],
+        "newest": dt_to_str(newest.received or newest.seen) if newest else None,
+    }
+
+
 def _newest_first[T: (ReviewItem, FilteredItem)](items: list[T]) -> list[T]:
     return sorted(
         items, key=lambda item: (item.received or item.created, item.id), reverse=True
@@ -607,6 +629,7 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
         "review": review,
         "merge_suggestions": suggestions,
         "filtered": filtered,
+        "unread_emails": unread_emails_json(engine, viewer),
         "settings": settings_json(engine, viewer),
     }
 

@@ -105,6 +105,8 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_suggestion_accept,
         ws_suggestion_dismiss,
         ws_parcel_check_again,
+        ws_mail_retry_failed,
+        ws_mail_dismiss_failed,
     ):
         websocket_api.async_register_command(hass, command)
 
@@ -501,3 +503,38 @@ async def ws_parcel_check_again(
         _send_validation_error(connection, msg["id"], err)
         return
     connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({p.Required("type"): f"{DOMAIN}/mail/retry_failed"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_mail_retry_failed(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Try once more to read the e-mails Parcels gave up on.
+
+    The answer counts those read, those that failed again and those deleted
+    from the mailbox meanwhile.
+    """
+    try:
+        engine = _engine(hass)
+    except ServiceValidationError as err:
+        _send_validation_error(connection, msg["id"], err)
+        return
+    connection.send_result(msg["id"], await engine.async_retry_gave_up())
+
+
+@websocket_api.websocket_command({p.Required("type"): f"{DOMAIN}/mail/dismiss_failed"})
+@websocket_api.require_admin
+@_expected_errors
+@callback
+def ws_mail_dismiss_failed(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Leave the e-mails Parcels gave up on unread, and stop listing them."""
+    dismissed = _engine(hass).dismiss_gave_up()
+    connection.send_result(msg["id"], {"dismissed": dismissed})
