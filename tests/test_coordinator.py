@@ -32,7 +32,7 @@ from custom_components.parcels.dedup import (
     REASON_SAME_MERCHANT_DAY,
     REASON_SAME_MERCHANT_ETA,
 )
-from custom_components.parcels.engine import ParcelsEngine
+from custom_components.parcels.engine import RETRY_DELAYS, ParcelsEngine
 from custom_components.parcels.mail import MessageMeta, SyncResult
 from custom_components.parcels.mail.errors import (
     MailApiDisabled,
@@ -54,6 +54,7 @@ from custom_components.parcels.parsers.base import (
     SenderVerdict,
 )
 from custom_components.parcels.store import ParcelsStore
+from custom_components.parcels.views import SYSTEM_VIEWER, unread_emails_json
 
 from .common import (
     ADDRESS,
@@ -62,6 +63,7 @@ from .common import (
     add_mailbox,
     async_setup_parcels,
     load_message,
+    meta_for,
     patch_mail_clients,
 )
 
@@ -992,3 +994,408 @@ async def test_removing_a_mailbox_forgets_its_failed_emails(
     await hass.async_block_till_done()
 
     assert key not in engine.data.messages
+
+
+def _unread_client() -> FakeMailClient:
+    """Return a mailbox with CTT's e-mail and the shop's, whose headers fail."""
+    client = FakeMailClient()
+    client.add(CTT, provider_id="read")
+    client.add(SHOP, provider_id="new")
+    client.meta_errors["new"] = MailServerError("HTTP 500")
+    return client
+
+
+async def test_an_email_whose_headers_fail_is_tried_again(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An e-mail whose headers fail to download doesn't hold up the others.
+
+    Gmail reports it apart. Parcels notes it unread, with no sender yet, and
+    reads its headers again five minutes later, then the e-mail. One e-mail
+    that fails isn't a problem of the mailbox.
+    """
+    caplog.set_level(logging.DEBUG)
+    client = _unread_client()
+    mailbox, coordinator, engine = await _setup(hass, client)
+
+    assert coordinator.last_update_success
+    assert _problem(hass, mailbox) == "off"
+    assert client.fetches == ["read"]
+    assert _numbers(engine) == [CTT_NUMBER]
+    record = _record(engine, mailbox, "new")
+    assert record.state is MessageState.FAILED
+    assert (record.attempts, record.retry_at) == (1, START + INTERVAL)
+    assert (record.sender_domain, record.received) == ("", None)
+    assert engine.diagnostics()["failed_emails"] == {
+        "retrying": 1,
+        "gave_up": 0,
+        "next_retry": (START + INTERVAL).isoformat(),
+    }
+    assert "Couldn't read an e-mail, try 1 (MailServerError)" in caplog.text
+
+    # Not before its time.
+    await coordinator.async_refresh()
+    assert client.meta_fetches == []
+
+    client.meta_errors.clear()
+    freezer.tick(INTERVAL)
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert client.meta_fetches == ["new"]
+    assert client.fetches == ["read", "new"]
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+    record = _record(engine, mailbox, "new")
+    assert record.state is MessageState.APPLIED
+    assert record.sender_domain == "tienda-ejemplo.es"
+    assert len(engine.data.messages) == 2
+
+
+async def test_refresh_reads_failed_headers_without_counting(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Refresh reads failed headers again at once, without counting the tries."""
+    client = FakeMailClient()
+    client.add(CTT, provider_id="read")
+    mailbox, _, engine = await _setup(hass, client)
+    meta = client.add(SHOP, provider_id="new")
+    client.meta_errors["new"] = MailServerError("HTTP 500")
+
+    for _ in range(3):
+        await engine.async_refresh()
+        await _advance(hass, freezer, timedelta(seconds=11))
+
+    # Listed by the first refresh, read again by the others.
+    assert client.meta_fetches == ["new", "new"]
+    record = _record(engine, mailbox, "new")
+    assert (record.state, record.attempts) == (MessageState.FAILED, 1)
+
+    # Listed again by a refresh, it isn't read twice, and still not counted.
+    client.pending.append(meta)
+    await engine.async_refresh()
+    await _advance(hass, freezer, timedelta(seconds=11))
+    assert client.meta_fetches == ["new", "new"]
+    assert _record(engine, mailbox, "new").attempts == 1
+
+    client.meta_errors.clear()
+    await engine.async_refresh()
+    await hass.async_block_till_done()
+
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+
+
+async def test_an_outage_counts_against_no_unread_email(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Failed headers don't count while e-mails read before fail to download.
+
+    The problem sensor turns on, and the headers are read again with the
+    next check.
+    """
+    client = FakeMailClient()
+    client.add(CTT, provider_id="read")
+    mailbox, coordinator, engine = await _setup(hass, client)
+    client.add(SHOP, provider_id="new")
+    outage = MailServerError("HTTP 503")
+    client.meta_errors["new"] = outage
+    client.fetch_errors["read"] = outage
+
+    await coordinator.async_refresh()
+
+    assert _failure(coordinator).translation_placeholders == {"error": "HTTP 503"}
+    assert _problem(hass, mailbox) == "on"
+    assert client.fetches == ["read", "read"]
+    record = _record(engine, mailbox, "new")
+    assert (record.state, record.attempts) == (MessageState.FAILED, 0)
+    assert record.retry_at == START + INTERVAL
+
+    client.meta_errors.clear()
+    client.fetch_errors.clear()
+    freezer.tick(INTERVAL)
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert _problem(hass, mailbox) == "off"
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+
+
+async def test_an_unread_email_deleted_meanwhile_is_forgotten(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """An e-mail deleted before its headers are read again is forgotten."""
+    client = _unread_client()
+    mailbox, coordinator, engine = await _setup(hass, client)
+    key = _record(engine, mailbox, "new").hash
+
+    client.meta_errors.clear()
+    client.delete("new")
+    await _advance(hass, freezer, INTERVAL)
+
+    assert coordinator.last_update_success
+    assert key not in engine.data.messages
+    assert client.meta_fetches == ["new"]
+    assert client.fetches == ["read"]
+    assert _numbers(engine) == [CTT_NUMBER]
+
+
+async def test_an_unread_email_waits_out_a_mailbox_error(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """When the mailbox fails just after its headers came, it stays to try."""
+    client = _unread_client()
+    mailbox, coordinator, engine = await _setup(hass, client)
+    key = _record(engine, mailbox, "new").hash
+    client.meta_errors.clear()
+    client.fetch_errors["new"] = MailRateLimited()
+
+    freezer.tick(INTERVAL)
+    await coordinator.async_refresh()
+
+    assert _failure(coordinator).translation_key == "mailbox_rate_limited"
+    record = engine.data.messages[key]
+    assert (record.state, record.attempts) == (MessageState.FAILED, 1)
+    assert _numbers(engine) == [CTT_NUMBER]
+
+    client.fetch_errors.clear()
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert key not in engine.data.messages
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+
+
+async def test_unread_headers_of_a_newsletter_are_left_alone(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Once its headers are read, an e-mail about no parcel isn't downloaded."""
+    client = FakeMailClient()
+    client.add(CTT, provider_id="read")
+    client.add("common/newsletter.eml", provider_id="news")
+    client.meta_errors["news"] = MailServerError("HTTP 500")
+    mailbox, coordinator, engine = await _setup(hass, client)
+    assert _record(engine, mailbox, "news").state is MessageState.FAILED
+
+    client.meta_errors.clear()
+    await _advance(hass, freezer, INTERVAL)
+
+    assert coordinator.last_update_success
+    assert client.meta_fetches == ["news"]
+    assert client.fetches == ["read"]
+    assert len(engine.data.messages) == 1
+
+
+async def test_an_unread_email_listed_again_is_read(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """An e-mail listed again with headers that work is read at once.
+
+    Listed again while they still fail, before its next try, the try doesn't
+    count. Listed again when its next try is due, the listing is that try.
+    """
+    client = _unread_client()
+    mailbox, coordinator, engine = await _setup(hass, client)
+    meta = meta_for(client.messages["new"])
+
+    client.pending.append(meta)
+    await coordinator.async_refresh()
+    assert _record(engine, mailbox, "new").attempts == 1
+
+    freezer.tick(INTERVAL)
+    client.pending.append(meta)
+    await coordinator.async_refresh()
+    record = _record(engine, mailbox, "new")
+    assert (record.attempts, record.retry_at) == (
+        2,
+        START + INTERVAL + RETRY_DELAYS[1],
+    )
+    assert client.meta_fetches == []
+
+    client.meta_errors.clear()
+    client.pending.append(meta)
+    await coordinator.async_refresh()
+
+    # With the due try failing alone, the probe downloaded CTT's e-mail again.
+    assert client.fetches == ["read", "read", "new"]
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+    assert len(engine.data.messages) == 2
+    assert client.meta_fetches == []
+
+
+async def test_headers_of_an_email_read_before_are_left_alone(
+    hass: HomeAssistant,
+) -> None:
+    """An e-mail read before, listed again with headers that fail, stays read."""
+    client = FakeMailClient()
+    meta = client.add(CTT, provider_id="read")
+    mailbox, coordinator, engine = await _setup(hass, client)
+    client.meta_errors["read"] = MailServerError("HTTP 500")
+
+    client.pending.append(meta)
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert _problem(hass, mailbox) == "off"
+    assert len(engine.data.messages) == 1
+    assert _record(engine, mailbox, "read").state is MessageState.APPLIED
+    assert engine.diagnostics()["failed_emails"]["retrying"] == 0
+
+
+async def test_an_email_whose_headers_keep_failing_waits_for_the_user(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After 8 tries, Parcels stops reading an e-mail's headers.
+
+    Needs review counts it, with no sender, and Try again reads it.
+    """
+    client = _unread_client()
+    mailbox, coordinator, engine = await _setup(hass, client)
+
+    while (record := _record(engine, mailbox, "new")).retry_at is not None:
+        freezer.move_to(record.retry_at)
+        await coordinator.async_refresh()
+        assert coordinator.last_update_success
+    assert (record.state, record.attempts) == (MessageState.FAILED, FINAL_ATTEMPTS)
+    assert client.meta_fetches == ["new"] * (FINAL_ATTEMPTS - 1)
+    assert "new" not in client.fetches
+    assert _problem(hass, mailbox) == "off"
+    assert "Couldn't read an e-mail after 8 tries (" in caplog.text
+    assert engine.gave_up_emails() == [record]
+    assert engine.diagnostics()["failed_emails"] == {
+        "retrying": 0,
+        "gave_up": 1,
+        "next_retry": None,
+    }
+    unread = unread_emails_json(engine, SYSTEM_VIEWER)
+    assert (unread["count"], unread["senders"], unread["unnamed"]) == (1, [], 1)
+
+    freezer.move_to(START + timedelta(days=10))
+    await coordinator.async_refresh()
+    assert client.meta_fetches.count("new") == FINAL_ATTEMPTS - 1
+
+    assert await engine.async_retry_gave_up() == {"read": 0, "failed": 1, "gone": 0}
+    assert _record(engine, mailbox, "new").attempts == FINAL_ATTEMPTS
+
+    client.meta_errors.clear()
+    assert await engine.async_retry_gave_up() == {"read": 1, "failed": 0, "gone": 0}
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+    assert engine.gave_up_emails() == []
+    assert len(engine.data.messages) == 2
+
+
+async def test_an_unread_email_given_up_stays_unread(hass: HomeAssistant) -> None:
+    """Listed again, an e-mail Parcels gave up on isn't read, nor once dismissed."""
+    client = _unread_client()
+    mailbox, coordinator, engine = await _setup(hass, client)
+    record = _record(engine, mailbox, "new")
+    record.attempts, record.retry_at = FINAL_ATTEMPTS, None
+    client.meta_errors.clear()
+    meta = meta_for(client.messages["new"])
+
+    client.pending.append(meta)
+    await coordinator.async_refresh()
+    assert engine.gave_up_emails() == [record]
+
+    assert engine.dismiss_gave_up() == 1
+    client.pending.append(meta)
+    await coordinator.async_refresh()
+
+    assert record.state is MessageState.DISMISSED
+    assert client.fetches == ["read"]
+    assert client.meta_fetches == []
+    assert _numbers(engine) == [CTT_NUMBER]
+
+
+async def test_try_again_forgets_an_unread_email_deleted_meanwhile(
+    hass: HomeAssistant,
+) -> None:
+    """Try again forgets an e-mail whose headers it can't find any more."""
+    client = _unread_client()
+    mailbox, _, engine = await _setup(hass, client)
+    record = _record(engine, mailbox, "new")
+    record.attempts, record.retry_at = FINAL_ATTEMPTS, None
+    client.meta_errors.clear()
+    client.delete("new")
+
+    assert await engine.async_retry_gave_up() == {"read": 0, "failed": 0, "gone": 1}
+
+    assert record.hash not in engine.data.messages
+
+
+async def test_try_again_keeps_an_email_given_up_that_fails_to_download(
+    hass: HomeAssistant,
+) -> None:
+    """When its headers work but the e-mail doesn't download, it stays given up.
+
+    Needs review then knows its sender.
+    """
+    client = _unread_client()
+    mailbox, _, engine = await _setup(hass, client)
+    record = _record(engine, mailbox, "new")
+    record.attempts, record.retry_at = FINAL_ATTEMPTS, None
+    client.meta_errors.clear()
+    client.fetch_errors["new"] = MailServerError("HTTP 500")
+
+    assert await engine.async_retry_gave_up() == {"read": 0, "failed": 1, "gone": 0}
+
+    [record] = engine.gave_up_emails()
+    assert record.refs == {mailbox.entry_id: "new"}
+    assert record.sender_domain == "tienda-ejemplo.es"
+    assert (record.attempts, record.retry_at) == (FINAL_ATTEMPTS, None)
+    assert len(engine.data.messages) == 2
+
+    client.fetch_errors.clear()
+    assert await engine.async_retry_gave_up() == {"read": 1, "failed": 0, "gone": 0}
+    assert _numbers(engine) == [SHOP_NUMBER, CTT_NUMBER]
+
+
+async def test_try_again_reads_an_unread_email_read_before_under_its_id(
+    hass: HomeAssistant,
+) -> None:
+    """Headers without the Message-ID can hide an e-mail read before.
+
+    Downloaded, the e-mail turns out to be read before: Try again reads it.
+    """
+    client = _unread_client()
+    mailbox, _, engine = await _setup(hass, client)
+    record = _record(engine, mailbox, "new")
+    record.attempts, record.retry_at = FINAL_ATTEMPTS, None
+    client.meta_errors.clear()
+    shop = client.messages["new"]
+    known = MessageRecord(
+        hash=shop.hash, seen=START, state=MessageState.IGNORED, refs={"other": "x"}
+    )
+    engine.data.messages[shop.hash] = known
+    fetch_meta = client.async_fetch_meta
+
+    async def without_message_id(provider_id: str) -> MessageMeta | None:
+        meta = await fetch_meta(provider_id)
+        return None if meta is None else dataclasses.replace(meta, message_id=None)
+
+    with patch.object(client, "async_fetch_meta", without_message_id):
+        assert await engine.async_retry_gave_up() == {
+            "read": 1,
+            "failed": 0,
+            "gone": 0,
+        }
+
+    assert record.hash not in engine.data.messages
+    assert known.refs == {"other": "x", mailbox.entry_id: "new"}
+    assert engine.gave_up_emails() == []
+
+
+async def test_an_unread_email_is_never_downloaded_without_its_headers(
+    hass: HomeAssistant,
+) -> None:
+    """Reading an e-mail again downloads nothing until its headers are read."""
+    client = _unread_client()
+    mailbox, _, engine = await _setup(hass, client)
+    client.meta_errors.clear()
+
+    fetched = await engine.async_refetch(_record(engine, mailbox, "new"))
+
+    assert (fetched.message, fetched.mailbox, fetched.gone) == (None, None, False)
+    assert client.fetches == ["read"]

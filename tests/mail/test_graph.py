@@ -475,6 +475,58 @@ async def test_fetch(
     assert headers["Prefer"] == 'outlook.body-content-type="html"'
 
 
+async def test_fetch_meta(
+    graph_client: GraphClient, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """The headers of one e-mail are read as the delta query reads them."""
+    aioclient_mock.get(MESSAGE_URL, json=item(1))
+
+    meta = await graph_client.async_fetch_meta("AAMkAD1")
+
+    assert meta == MessageMeta(
+        provider_id="AAMkAD1",
+        message_id="<1.order@shop.example>",
+        sender="orders@shop.example",
+        sender_name="Example Shop",
+        subject="Order 1 has shipped",
+        received=RECEIVED,
+        sent=SENT,
+        folder=None,
+        preview="Your order is on its way",
+    )
+    _, url, _, _ = aioclient_mock.mock_calls[0]
+    assert url.query["$select"] == META_SELECT
+
+
+async def test_fetch_meta_of_an_email_gone(
+    graph_client: GraphClient, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A deleted e-mail has no headers to read."""
+    aioclient_mock.get(
+        MESSAGE_URL,
+        status=404,
+        json={"error": {"code": "ErrorItemNotFound"}},
+    )
+
+    assert await graph_client.async_fetch_meta("AAMkAD1") is None
+
+
+async def test_fetch_meta_refused(
+    graph_client: GraphClient, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A refusal to read one e-mail's headers isn't the mailbox's."""
+    aioclient_mock.get(
+        MESSAGE_URL,
+        status=403,
+        json={"error": {"code": "ErrorAccessDenied"}},
+    )
+
+    with pytest.raises(MailError) as exc_info:
+        await graph_client.async_fetch_meta("AAMkAD1")
+
+    assert type(exc_info.value) is MailError
+
+
 async def test_fetch_normalizes(
     graph_client: GraphClient, aioclient_mock: AiohttpClientMocker
 ) -> None:

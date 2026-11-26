@@ -135,7 +135,10 @@ function andList(items: readonly string[]): string {
     : fmt(STRINGS.listAnd, { list: items.slice(0, -1).join(", "), last: items.at(-1) ?? "" });
 }
 
-/** "Couldn't read 2 e-mails, from ups.com and shop.example."; null when there are none. */
+/**
+ * "Couldn't read 2 e-mails, from ups.com and shop.example."; null when there
+ * are none. E-mails whose headers never downloaded add "an unknown sender".
+ */
 export function unreadEmailsText(unread: UnreadEmails): string | null {
   if (unread.count <= 0) {
     return null;
@@ -146,9 +149,14 @@ export function unreadEmailsText(unread: UnreadEmails): string | null {
     return `${what}.`;
   }
   const named = unread.senders.slice(0, UNREAD_NAMED);
-  const senders =
-    unread.senders.length > UNREAD_NAMED ? andList([...named, STRINGS.unreadOthers]) : andList(named);
-  return fmt(STRINGS.unreadFrom, { unread: what, senders });
+  const unknown = unread.unnamed === 1 ? STRINGS.unreadUnknownOne : STRINGS.unreadUnknownMany;
+  const listed =
+    unread.senders.length > UNREAD_NAMED
+      ? [...named, STRINGS.unreadOthers]
+      : unread.unnamed > 0
+        ? [...named, unknown]
+        : named;
+  return fmt(STRINGS.unreadFrom, { unread: what, senders: andList(listed) });
 }
 
 /** "Tried again: read 1 e-mail, 1 still couldn't be read." */

@@ -1501,7 +1501,7 @@ async def test_unread_emails(
     engine: ParcelsEngine, ws: MockHAClientWebSocket, sam_ws: MockHAClientWebSocket
 ) -> None:
     """Administrators see how many e-mails Parcels gave up on, and from whom."""
-    none = {"count": 0, "senders": [], "newest": None}
+    none = {"count": 0, "senders": [], "unnamed": 0, "newest": None}
     assert (await result(ws, "parcels/list"))["unread_emails"] == none
     domains = ("e.example", "d.example", "c.example", "b.example", "a.example")
     for hour, domain in enumerate((*domains, "ups.com", "email.ups.com", "f.example")):
@@ -1516,13 +1516,21 @@ async def test_unread_emails(
     # Still tried: Parcels hasn't given up on it.
     trying = engine.data.messages["m_7"]
     trying.attempts, trying.retry_at = 2, dt_util.utcnow()
+    # Its headers never downloaded, so its sender isn't known.
+    engine.data.messages["u_1"] = MessageRecord(
+        hash="u_1",
+        seen=datetime(2026, 11, 17, 3, 30, tzinfo=UTC),
+        state=MessageState.FAILED,
+        attempts=FINAL_ATTEMPTS,
+    )
 
     unread = (await result(ws, "parcels/list"))["unread_emails"]
 
     # Newest first, each registrable domain once, five at most.
     assert unread == {
-        "count": 7,
+        "count": 8,
         "senders": ["ups.com", "a.example", "b.example", "c.example", "d.example"],
+        "unnamed": 1,
         "newest": "2026-11-17T06:00:00+00:00",
     }
     assert (await result(sam_ws, "parcels/list"))["unread_emails"] == none

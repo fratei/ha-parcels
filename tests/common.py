@@ -71,9 +71,11 @@ class FakeMailClient:
     """A mailbox API held in memory.
 
     ``add`` delivers an e-mail: the next sync reports it and a fetch returns
-    it. Set ``sync_error`` or ``fetch_errors`` to make calls fail. Set
-    ``relist`` to have a sync without a cursor list every e-mail again, as a
-    mail API lists the whole lookback period.
+    it. Set ``sync_error`` or ``fetch_errors`` to make calls fail, and
+    ``meta_errors`` to make reading an e-mail's headers fail: a sync then
+    reports it as failed, as Gmail does. Set ``relist`` to have a sync without
+    a cursor list every e-mail again, as a mail API lists the whole lookback
+    period.
     """
 
     def __init__(self, provider: str = "google", address: str = ADDRESS) -> None:
@@ -84,8 +86,10 @@ class FakeMailClient:
         self.pending: list[MessageMeta] = []
         self.sync_error: Exception | None = None
         self.fetch_errors: dict[str, Exception] = {}
+        self.meta_errors: dict[str, Exception] = {}
         self.syncs: list[Mapping[str, Any] | None] = []
         self.fetches: list[str] = []
+        self.meta_fetches: list[str] = []
         self.relist = False
 
     def add(
@@ -127,9 +131,26 @@ class FakeMailClient:
         messages, self.pending = self.pending, []
         if cursor is None and self.relist:
             messages = [meta_for(message) for message in self.messages.values()]
+        failed = {
+            meta.provider_id: error
+            for meta in messages
+            if (error := self.meta_errors.get(meta.provider_id)) is not None
+        }
         return SyncResult(
-            messages=messages, cursor={"round": len(self.syncs)}, complete=True
+            messages=[meta for meta in messages if meta.provider_id not in failed],
+            cursor={"round": len(self.syncs)},
+            complete=True,
+            failed=failed,
         )
+
+    async def async_fetch_meta(self, provider_id: str) -> MessageMeta | None:
+        """Return the headers of one e-mail, or None once it's deleted."""
+        self.meta_fetches.append(provider_id)
+        if (error := self.meta_errors.get(provider_id)) is not None:
+            raise error
+        if (message := self.messages.get(provider_id)) is None:
+            return None
+        return meta_for(message)
 
     async def async_fetch(self, provider_id: str) -> MailMessage:
         """Return one e-mail."""

@@ -22,7 +22,7 @@ describe("normalizeSnapshot", () => {
       review: [],
       merge_suggestions: [],
       filtered: [],
-      unread_emails: { count: 0, senders: [], newest: null },
+      unread_emails: { count: 0, senders: [], unnamed: 0, newest: null },
       settings: {
         user_is_admin: false,
         ai_enabled: false,
@@ -130,17 +130,25 @@ describe("normalizeSnapshot", () => {
           unread_emails: {
             count: 6,
             senders: ["ups.com", "", 3, null, "a.example"],
+            unnamed: 2,
             newest: "2026-11-17T05:00:00+00:00",
           },
         },
         NOW,
       ).unread_emails,
-      { count: 6, senders: ["ups.com", "a.example"], newest: "2026-11-17T05:00:00+00:00" },
+      { count: 6, senders: ["ups.com", "a.example"], unnamed: 2, newest: "2026-11-17T05:00:00+00:00" },
     );
-    for (const raw of [null, "6", [], { count: "6", senders: "ups.com", newest: 5 }, { count: -1 }, { count: 2.5 }]) {
+    for (const raw of [
+      null,
+      "6",
+      [],
+      { count: "6", senders: "ups.com", unnamed: "1", newest: 5 },
+      { count: -1, unnamed: -1 },
+      { count: 2.5, unnamed: 1.5 },
+    ]) {
       assert.deepEqual(
         normalizeSnapshot({ unread_emails: raw }, NOW).unread_emails,
-        { count: 0, senders: [], newest: null },
+        { count: 0, senders: [], unnamed: 0, newest: null },
         JSON.stringify(raw),
       );
     }

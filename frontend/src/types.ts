@@ -230,6 +230,8 @@ export interface UnreadEmails {
   count: number;
   /** Their senders' domains, newest first; at most five. */
   senders: string[];
+  /** How many have no known sender: their headers never downloaded. */
+  unnamed: number;
   /** When the newest arrived. */
   newest: string | null;
 }

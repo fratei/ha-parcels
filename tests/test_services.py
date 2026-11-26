@@ -41,6 +41,7 @@ from custom_components.parcels.const import (
 from custom_components.parcels.dedup import (
     REASON_SAME_MERCHANT_ETA,
     apply_contribution,
+    manual_origin_id,
     merge_parcels,
 )
 from custom_components.parcels.engine import ParcelsEngine
@@ -572,6 +573,27 @@ async def test_undo_a_delivery_marked_by_hand(
     await refused(
         hass, "undo_delivery", {"parcel_id": parcel_id}, "no_delivery_to_undo"
     )
+
+
+async def test_undoing_the_mark_of_a_parcel_without_emails_deletes_it(
+    hass: HomeAssistant, engine: ParcelsEngine
+) -> None:
+    """A mark that was all that was left of a parcel goes with the parcel."""
+    parcel_id = apply_contribution(
+        engine.data,
+        contribution("msg:a#0", carrier="ctt", number=CTT_NUMBER, owner=None),
+        dt_util.utcnow(),
+    ).parcel_id
+    engine.async_changed()
+    await call(hass, "mark_delivered", {"parcel_id": parcel_id})
+    # Read again, its only e-mail turned out not to be about a parcel.
+    engine.clear_outputs("a", dt_util.utcnow())
+    assert set(engine.data.parcels[parcel_id].origins) == {manual_origin_id(parcel_id)}
+
+    await call(hass, "undo_delivery", {"parcel_id": parcel_id})
+    await hass.async_block_till_done()
+
+    assert parcel_id not in engine.data.parcels
 
 
 async def test_a_reported_delivery_isnt_by_hand(

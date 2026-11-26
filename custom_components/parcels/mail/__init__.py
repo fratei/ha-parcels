@@ -62,6 +62,9 @@ class SyncResult:
     messages: list[MessageMeta] = field(default_factory=list)
     cursor: dict[str, Any] = field(default_factory=dict)
     complete: bool = True
+    # E-mails listed whose headers failed to download, by provider ID. The
+    # cursor moves past them: Parcels reads their headers again later.
+    failed: dict[str, Exception] = field(default_factory=dict)
 
 
 class MailClient(Protocol):
@@ -80,6 +83,9 @@ class MailClient(Protocol):
         folders: Sequence[str] = (),
     ) -> SyncResult:
         """Return e-mails added since ``cursor``, or within ``lookback``."""
+
+    async def async_fetch_meta(self, provider_id: str) -> MessageMeta | None:
+        """Return the headers of one e-mail; None once it's deleted."""
 
     async def async_fetch(self, provider_id: str) -> MailMessage:
         """Download one full e-mail and normalise it."""

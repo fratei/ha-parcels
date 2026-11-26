@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 import json
 import logging
 
@@ -61,6 +61,11 @@ def _event(status: ParcelStatus | None, when, **kwargs) -> ParcelEvent:
     return ParcelEvent(time=when, status=status, **kwargs)
 
 
+def _carrier(origin_id: str = "o1", **kwargs) -> Origin:
+    """Return an origin from an e-mail of the carrier's own domain."""
+    return _origin(origin_id, label="ctt.pt", **kwargs)
+
+
 def _parcel(*events: ParcelEvent, origins: tuple[Origin, ...] = ()) -> Parcel:
     parcel = Parcel(id="p_test", created=T0, updated=T0)
     for origin in origins or (_origin(),):
@@ -105,9 +110,19 @@ def test_delay_takes_out_for_delivery_back_to_transit() -> None:
     assert parcel.state.status is S.IN_TRANSIT
     assert parcel.state.eta == new_eta
 
-    # Any newer news does, without the delay kind too.
-    plain = _parcel(_event(S.OUT_FOR_DELIVERY, at()), _event(S.IN_TRANSIT, at(hours=6)))
+    # The carrier's newer news does, without the delay kind too.
+    events = (_event(S.OUT_FOR_DELIVERY, at()), _event(S.IN_TRANSIT, at(hours=6)))
+    plain = _parcel(*events, origins=(_carrier(),))
     assert plain.state.status is S.IN_TRANSIT
+    # A shop's doesn't.
+    assert _parcel(*events).state.status is S.OUT_FOR_DELIVERY
+
+    # A delay notice doesn't take a parcel from its pickup point.
+    ready = _parcel(
+        _event(S.READY_FOR_PICKUP, at()),
+        _event(S.IN_TRANSIT, at(hours=6), kind=MailKind.DELAYED, eta=new_eta),
+    )
+    assert ready.state.status is S.READY_FOR_PICKUP
 
 
 # Out for delivery, or waiting at a pickup point, can end in more news: the
@@ -121,17 +136,112 @@ NEWS_AFTER = [
 
 
 @pytest.mark.parametrize(("current", "news"), NEWS_AFTER)
-def test_newer_news_wins(current: ParcelStatus, news: ParcelStatus) -> None:
+@pytest.mark.parametrize("source", [Source.SEVENTEENTRACK, Source.PARCELAPP])
+def test_newer_news_wins(
+    current: ParcelStatus, news: ParcelStatus, source: Source
+) -> None:
     """The newest news decides the status, whichever source gave it."""
     parcel = _parcel(
         _event(S.SHIPPED, at(days=-1)),
         _event(current, at()),
-        _event(news, at(hours=2), source=Source.SEVENTEENTRACK, origin="o2"),
-        origins=(_origin(), _origin("o2", source=Source.SEVENTEENTRACK)),
+        _event(news, at(hours=2), source=source, origin="o2"),
+        origins=(_origin(), _origin("o2", source=source)),
     )
     state = parcel.state
     assert (state.status, state.status_time) == (news, at(hours=2))
     assert [entry.accepted for entry in state.timeline] == [True, True, True]
+
+
+@pytest.mark.parametrize(("current", "news"), NEWS_AFTER)
+@pytest.mark.parametrize("source", [Source.PARSER, Source.AI])
+@pytest.mark.parametrize(
+    "label",
+    [
+        "ctt.pt",
+        "notifications.cttexpress.com",
+        # A shop that sends its carriers' notices from its own domain.
+        "leroymerlin.pt",
+    ],
+)
+def test_the_carriers_newer_email_steps_back(
+    current: ParcelStatus, news: ParcelStatus, source: Source, label: str
+) -> None:
+    """The carrier's own e-mail is its news, read by a parser or the AI."""
+    parcel = _parcel(
+        _event(S.SHIPPED, at(days=-1)),
+        _event(current, at()),
+        _event(news, at(hours=2), source=source, origin="o2"),
+        origins=(_origin(), _origin("o2", source=source, label=label)),
+    )
+    state = parcel.state
+    assert (state.status, state.status_time) == (news, at(hours=2))
+
+
+# Senders whose e-mails pass on a carrier's news, timed when they were sent:
+# a shop, the Shop app, Shopify, an unknown domain and a free mail one.
+SHOP_LABELS = ["lumenhaus.example", "shop.app", "shopify.com", "", "gmail.com"]
+
+
+@pytest.mark.parametrize(("current", "news"), NEWS_AFTER)
+@pytest.mark.parametrize("source", [Source.PARSER, Source.AI])
+@pytest.mark.parametrize("label", SHOP_LABELS)
+def test_a_shops_newer_email_never_steps_back(
+    current: ParcelStatus, news: ParcelStatus, source: Source, label: str
+) -> None:
+    """A shop passes on the carrier's news late: it never takes a step back.
+
+    The parcel stays at its pickup point, with its last day to collect it.
+    """
+    collect_by = date(2026, 11, 9)
+    parcel = _parcel(
+        _event(S.SHIPPED, at(days=-1)),
+        _event(current, at(), collect_by=collect_by),
+        _event(news, at(hours=2), source=source, origin="o2"),
+        origins=(_carrier(), _origin("o2", source=source, label=label)),
+    )
+    state = parcel.state
+    assert (state.status, state.status_time) == (current, at())
+    assert [entry.accepted for entry in state.timeline] == [True, True, False]
+    if current is S.READY_FOR_PICKUP:
+        assert state.collect_by == collect_by
+
+
+@pytest.mark.parametrize(("current", "news"), NEWS_AFTER)
+@pytest.mark.parametrize(
+    ("label", "own", "number"),
+    [
+        ("amazon.es", "amazon", "TBA123456789012"),
+        ("vinted.pt", "vinted_go", None),
+    ],
+)
+def test_a_shop_whose_own_service_delivers_is_the_carrier(
+    current: ParcelStatus,
+    news: ParcelStatus,
+    label: str,
+    own: str,
+    number: str | None,
+) -> None:
+    """A shop's e-mails are the carrier's news when its own service delivers.
+
+    Not when it hands the parcel to a carrier, such as CTT, or when the user
+    says another carrier delivers it.
+    """
+
+    def state(carrier: str, number: str | None, *edits: Origin) -> ParcelState:
+        origins = tuple(
+            _origin(oid, label=label, carrier=carrier, tracking_number=number)
+            for oid in ("o1", "o2")
+        )
+        return _parcel(
+            _event(current, at()),
+            _event(news, at(hours=2), origin="o2"),
+            origins=(*origins, *edits),
+        ).state
+
+    assert state(own, number).status is news
+    assert state("ctt", "RR123456785PT").status is current
+    edit = _origin("man:p_test", source=Source.MANUAL, carrier="ctt")
+    assert state(own, number, edit).status is current
 
 
 @pytest.mark.parametrize(("current", "news"), NEWS_AFTER)
@@ -143,11 +253,153 @@ def test_late_news_still_never_moves_a_parcel_back(
         _event(S.SHIPPED, at(days=-1)),
         _event(current, at()),
         _event(news, at(hours=-2), origin="o2"),
-        origins=(_origin(), _origin("o2")),
+        origins=(_carrier(), _carrier("o2")),
     )
     state = parcel.state
     assert (state.status, state.status_time) == (current, at())
     assert [entry.status for entry in state.timeline] == [S.SHIPPED, news, current]
+
+
+LOCKER = "Locker 12, Rua Inventada 7"
+
+
+def _at_locker(*events: ParcelEvent, origins: tuple[Origin, ...] = ()) -> Parcel:
+    """Return a parcel the carrier left at a locker, followed by more news."""
+    ready = _carrier(pickup_point=LOCKER, pickup_code="731905")
+    return _parcel(
+        _event(S.READY_FOR_PICKUP, at(), collect_by=date(2026, 11, 9)),
+        *events,
+        origins=(ready, *origins),
+    )
+
+
+def _tracked(when: datetime) -> tuple[Origin, ParcelEvent]:
+    """Return 17TRACK's origin and its news: out for delivery then."""
+    return (
+        _origin("o2", source=Source.SEVENTEENTRACK, time=when),
+        _event(S.OUT_FOR_DELIVERY, when, source=Source.SEVENTEENTRACK, origin="o2"),
+    )
+
+
+@pytest.mark.parametrize("news", [S.IN_TRANSIT, S.OUT_FOR_DELIVERY])
+@pytest.mark.parametrize(
+    ("source", "label"),
+    [
+        (Source.PARSER, "ctt.pt"),
+        (Source.SEVENTEENTRACK, ""),
+        (Source.PARCELAPP, ""),
+    ],
+)
+def test_leaving_the_pickup_point_takes_its_details(
+    news: ParcelStatus, source: Source, label: str
+) -> None:
+    """News taking a parcel from its pickup point takes the point's details.
+
+    Out for delivery, the locker's code would read as the delivery PIN.
+    """
+    parcel = _at_locker(
+        _event(news, at(hours=2), source=source, origin="o2"),
+        origins=(_origin("o2", source=source, label=label, time=at(hours=2)),),
+    )
+    state = parcel.state
+    assert state.status is news
+    assert (state.pickup_point, state.pickup_code, state.collect_by) == (
+        None,
+        None,
+        None,
+    )
+
+
+@pytest.mark.parametrize("between", [S.ATTEMPTED, S.EXCEPTION])
+def test_leaving_the_pickup_point_after_an_attempt_or_a_problem(
+    between: ParcelStatus,
+) -> None:
+    """A failed attempt or a problem at the pickup point doesn't take it away.
+
+    Leaving it after that does.
+    """
+    track, out = _tracked(at(days=1))
+    attempt = _event(between, at(hours=1), source=Source.SEVENTEENTRACK, origin="o2")
+    state = _at_locker(attempt, origins=(track,)).state
+    assert (state.status, state.pickup_point, state.pickup_code) == (
+        between,
+        LOCKER,
+        "731905",
+    )
+    state = _at_locker(attempt, out, origins=(track,)).state
+    assert (state.status, state.pickup_point, state.pickup_code) == (
+        S.OUT_FOR_DELIVERY,
+        None,
+        None,
+    )
+
+
+def test_news_after_leaving_the_pickup_point_gives_new_details() -> None:
+    """Only news from after the parcel left its pickup point gives details.
+
+    The e-mail that took it away may give a code for the new delivery, and so
+    may one sent later. One sent later about its time at the locker doesn't.
+    """
+    out = _carrier("o2", time=at(hours=2), pickup_code="4826")
+    parcel = _at_locker(
+        _event(S.OUT_FOR_DELIVERY, at(hours=2), origin="o2"), origins=(out,)
+    )
+    assert (parcel.state.pickup_point, parcel.state.pickup_code) == (None, "4826")
+
+    # An e-mail with a code and no news counts from when it was sent.
+    track, back = _tracked(at(hours=2))
+    later = _carrier("o3", time=at(hours=3), pickup_code="5512")
+    earlier = _carrier("o3", time=at(hours=1), pickup_code="5512")
+    assert _at_locker(back, origins=(track, later)).state.pickup_code == "5512"
+    assert _at_locker(back, origins=(track, earlier)).state.pickup_code is None
+
+    late = _carrier("o3", time=at(hours=3), pickup_point="Locker 15", pickup_code="1")
+    parcel = _at_locker(
+        _event(S.READY_FOR_PICKUP, at(hours=1), origin="o3"),
+        back,
+        origins=(track, late),
+    )
+    state = parcel.state
+    assert (state.status, state.pickup_point, state.pickup_code) == (
+        S.OUT_FOR_DELIVERY,
+        None,
+        None,
+    )
+
+
+def test_back_at_a_pickup_point_its_details_show_again() -> None:
+    """Back at a pickup point, its newest details show again."""
+    track, out = _tracked(at(hours=2))
+    ready = _event(
+        S.READY_FOR_PICKUP, at(days=1), source=Source.SEVENTEENTRACK, origin="o2"
+    )
+    state = _at_locker(out, ready, origins=(track,)).state
+    assert (state.status, state.pickup_point, state.pickup_code) == (
+        S.READY_FOR_PICKUP,
+        LOCKER,
+        "731905",
+    )
+
+
+def test_heading_for_a_pickup_point_keeps_its_details() -> None:
+    """A parcel on its way to its pickup point hasn't left it."""
+    track, out = _tracked(at(hours=2))
+    parcel = _parcel(
+        _event(S.SHIPPED, at(days=-1)),
+        _event(S.IN_TRANSIT, at()),
+        out,
+        origins=(_carrier(pickup_point=LOCKER), track),
+    )
+    state = parcel.state
+    assert (state.status, state.pickup_point) == (S.OUT_FOR_DELIVERY, LOCKER)
+
+
+def test_typed_pickup_details_stay_after_leaving() -> None:
+    """What the user typed stays: it may be for the new delivery."""
+    track, out = _tracked(at(hours=2))
+    edit = _origin("man:p_test", source=Source.MANUAL, pickup_code="2468")
+    state = _at_locker(out, origins=(track, edit)).state
+    assert (state.pickup_point, state.pickup_code) == (None, "2468")
 
 
 @pytest.mark.parametrize(

@@ -23,7 +23,10 @@ Device kinds
     out for delivery, ready for pickup, delivered, attempted and exception,
     and one per return pickup while it waits. An iPhone gets those
     notifications too for the parcels of an activity the user dismissed (tag
-    ``parcel-<id>-news``; see Live Activities).
+    ``parcel-<id>-news``; see Live Activities), also once they moved to a
+    later day. When newer news takes a parcel from out for delivery or ready
+    for pickup back to transit, its notification is replaced with what holds
+    now, since the old one would no longer be true.
     Macs, watches and unknown systems get nothing; they mirror the iPhone.
     The Live Activities switch covers these notifications too.
 
@@ -305,6 +308,8 @@ MOVABLE = frozenset({S.ORDERED, S.SHIPPED, S.IN_TRANSIT, S.ATTEMPTED, S.EXCEPTIO
 PROBLEMS = frozenset({S.ATTEMPTED, S.EXCEPTION})
 GONE = frozenset({S.RETURNED, S.CANCELLED})
 PIN_STATUSES = frozenset({S.OUT_FOR_DELIVERY, S.READY_FOR_PICKUP})
+# What a notification said that newer news can take back (see _taken_back).
+TAKEN_BACK_FROM = frozenset({S.OUT_FOR_DELIVERY.value, S.READY_FOR_PICKUP.value})
 
 ICONS: dict[ParcelStatus, str] = {
     S.ORDERED: "mdi:cart-outline",
@@ -1212,19 +1217,26 @@ def _combined_content(
     first line, and the PIN leads the second. ``returns`` are the device's
     return pickups of the day; they count after the parcels. ``holds`` says
     how many orders its packages may hold, last (see :func:`_holds`).
+
+    A delivery that Parcels only inferred is a guess, not news: it counts
+    apart, as probable ("1 of 2 delivered · 1 probably"), and doesn't make the
+    day done.
     """
     states = [parcel.state for parcel in parcels]
     total = len(states)
     counts = Counter(state.status for state in states)
-    delivered = counts[S.DELIVERED]
+    probably = sum(state.inferred for state in states)
+    delivered = counts[S.DELIVERED] - probably
     pickup = counts[S.READY_FOR_PICKUP]
     problems = counts[S.ATTEMPTED] + counts[S.EXCEPTION]
     out = counts[S.OUT_FOR_DELIVERY]
     picked = sum(entry.done(ctx.today) for entry in returns)
     waiting = len(returns) - picked
     done = bool(total or returns) and delivered == total and not waiting
-    head = f"{delivered} of {total} delivered" + (
-        f" {CHECK}" if total and delivered == total else ""
+    head = (
+        f"{delivered} of {total} delivered"
+        + (f" {CHECK}" if total and delivered == total else "")
+        + (f"{SEP}{probably} probably" if probably else "")
     )
     parts: list[str] = []
     if pickup:
@@ -1777,6 +1789,16 @@ def _key_news(
         and day["notified"].get(device_id, {}).get(parcel.id) != status
         and (shown or {}).get(parcel.id) != status
     )
+
+
+def _taken_back(day: dict[str, Any], device_id: str, parcel: Parcel) -> bool:
+    """Return whether a device's notification of a parcel no longer holds.
+
+    That is a notification that it was out for delivery or ready for pickup,
+    once newer news took it back to transit.
+    """
+    told = day["notified"].get(device_id, {}).get(parcel.id)
+    return told in TAKEN_BACK_FROM and parcel.state.status not in KEY_STATUSES
 
 
 class Notifier:
@@ -2365,6 +2387,7 @@ class Notifier:
                 ),
                 possibly=possibly,
                 riding=riding,
+                moved=moved,
             )
             return
         keep = {
@@ -2385,9 +2408,20 @@ class Notifier:
             )
         for parcel in moved:
             record = day["activities"].get(device_id, {}).get(parcel.id)
-            if record is not None and record["running"]:
-                content = _parcel_content(parcel, ctx)
+            if record is None:
+                continue
+            content = _parcel_content(parcel, ctx)
+            if record["running"]:
                 await self._async_linger(ctx, device, record, content, REASON_MOVED)
+            await self._async_notify_instead(
+                ctx,
+                day,
+                device,
+                record,
+                [parcel],
+                lambda member: _parcel_content(member, ctx),
+                content.status,
+            )
         for item in pickups:
             await self._async_return(ctx, day, device, item)
 
@@ -2491,11 +2525,13 @@ class Notifier:
         holds: str | None = None,
         possibly: Mapping[str, Sequence[str]] | None = None,
         riding: Mapping[str, Sequence[Parcel]] | None = None,
+        moved: Sequence[Parcel] = (),
     ) -> None:
         """Start, update, restart or end the combined activity of one iPhone.
 
         ``possibly`` and ``riding`` are what each package may hold, for the
-        notifications that replace the activity once the user dismissed it.
+        notifications that replace the activity once the user dismissed it;
+        those cover the ``moved`` parcels, now expected on a later day, too.
         """
 
         def member_content(member: Parcel) -> _Content:
@@ -2510,6 +2546,9 @@ class Notifier:
         pending = any(
             parcel.state.status is not S.DELIVERED for parcel in members
         ) or any(not entry.done(ctx.today) for entry in returns)
+        # A delivery that was only inferred keeps a running activity until
+        # the carrier confirms it, but doesn't start or restart one.
+        probable = any(parcel.state.inferred for parcel in members)
         content = _combined_content(members, ctx, returns=returns, holds=holds)
         # The PIN of the delivery it names; else the code of its one parcel
         # ready for pickup, with the place.
@@ -2537,7 +2576,13 @@ class Notifier:
         if record is None or not record["running"]:
             if record is not None and record["end_reason"] == REASON_DISMISSED:
                 await self._async_notify_instead(
-                    ctx, day, device, record, members, member_content, content.status
+                    ctx,
+                    day,
+                    device,
+                    record,
+                    [*members, *moved],
+                    member_content,
+                    content.status,
                 )
                 return
             if not pending:
@@ -2556,15 +2601,21 @@ class Notifier:
         if not members and not returns:
             await self._async_end(device.device_id, record, REASON_REMOVED, ctx.now)
             return
-        if not pending:
+        if not pending and not probable:
             await self._async_linger(ctx, device, record, content, REASON_DELIVERED)
         else:
             record["linger"] = record["end_at"] = None
             await self._async_keep_alive(
-                ctx, day, device, COMBINED, record, content, pinned
+                ctx, day, device, COMBINED, record, content, pinned, restart=pending
             )
         await self._async_notify_instead(
-            ctx, day, device, record, members, member_content, content.status
+            ctx,
+            day,
+            device,
+            record,
+            [*members, *moved],
+            member_content,
+            content.status,
         )
 
     async def _async_keep_alive(
@@ -2576,11 +2627,15 @@ class Notifier:
         record: dict[str, Any],
         content: _Content,
         pinned: tuple[_Content, str] | None = None,
+        *,
+        restart: bool = True,
     ) -> None:
         """Update an activity, restarting it before Apple ends it after 8 hours.
 
         A restart is plain, like every start: the PIN follows it quietly. An
-        activity the user dismissed isn't restarted.
+        activity the user dismissed isn't restarted. Without ``restart``, when
+        nothing is left to wait for but inferred deliveries, it ends instead:
+        a restart would alert with nothing new.
         """
         started = _parse_dt(record["started"])
         if (
@@ -2594,6 +2649,11 @@ class Notifier:
                 and self._live_route(device, record["tag"], ctx.now)[0] is _Route.OTHER
             ):
                 _mark_ended(record, REASON_DISMISSED)
+                return
+            if not restart:
+                await self._async_end(
+                    device.device_id, record, REASON_DELIVERED, ctx.now
+                )
                 return
             if await self._async_end(device.device_id, record, REASON_RESTART, ctx.now):
                 gen = record["gen"] + 1
@@ -2979,7 +3039,10 @@ class Notifier:
             return
         sent = failed = False
         for parcel in parcels:
-            if not _key_news(day, device.device_id, parcel, record["shown"]):
+            if not (
+                _key_news(day, device.device_id, parcel, record["shown"])
+                or _taken_back(day, device.device_id, parcel)
+            ):
                 continue
             if await self._async_notify_key(
                 ctx, day, device, parcel, content_of(parcel), _news_tag(parcel.id)
@@ -3014,7 +3077,10 @@ class Notifier:
         ]
         entries, possibly, riding = _packages(self._host.data, board, ctx.today)
         for parcel in entries:
-            if not _key_news(day, device.device_id, parcel):
+            if not (
+                _key_news(day, device.device_id, parcel)
+                or _taken_back(day, device.device_id, parcel)
+            ):
                 continue
             content = _parcel_content(
                 parcel,

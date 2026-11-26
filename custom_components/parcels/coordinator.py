@@ -183,7 +183,11 @@ class MailboxCoordinator(DataUpdateCoordinator[MailboxStatus]):
                 )
                 count += len(result.messages)
                 await engine.async_process_mail(
-                    mailbox, result.messages, first_sync=first_sync, check=check
+                    mailbox,
+                    result.messages,
+                    first_sync=first_sync,
+                    check=check,
+                    unread=result.failed,
                 )
                 # Only advance after every e-mail of the round was handled.
                 engine.data.cursors[entry_id] = result.cursor

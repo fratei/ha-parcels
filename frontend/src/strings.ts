@@ -192,6 +192,8 @@ export const STRINGS = {
   unreadMany: "Couldn't read {count} e-mails",
   unreadFrom: "{unread}, from {senders}.",
   unreadOthers: "others",
+  unreadUnknownOne: "an unknown sender",
+  unreadUnknownMany: "unknown senders",
   unreadHint:
     "Parcels tried each one several times over a few days. Try again reads them now; Dismiss leaves them unread.",
   unreadNewest: "Newest received {date}",

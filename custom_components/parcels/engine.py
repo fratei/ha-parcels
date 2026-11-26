@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 import copy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta, tzinfo
+import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -174,6 +175,8 @@ from .seventeentrack import (
     PICKUPS_READ_VERSION,
     PICKUPS_REPAIR_KEY,
     PICKUPS_REREAD_KEY,
+    TIMELESS_REPAIR_KEY,
+    mark_timeless_news,
     repair_pickups,
     restore_pickup_places,
 )
@@ -368,6 +371,22 @@ def _domain(address: str) -> str:
     return address.rpartition("@")[2].strip().lower().rstrip(">")
 
 
+# An e-mail whose headers failed to download is stored under this prefix and
+# a hash of its mailbox and provider ID, until its headers are read.
+UNREAD_PREFIX = "u:"
+
+
+def unread_key(entry_id: str, provider_id: str) -> str:
+    """Return the key of an e-mail of a mailbox whose headers aren't read."""
+    digest = hashlib.sha256(f"{entry_id}|{provider_id}".encode()).hexdigest()
+    return UNREAD_PREFIX + digest[:32]
+
+
+def is_unread_key(key: str) -> bool:
+    """Return True for the key of an e-mail whose headers aren't read."""
+    return key.startswith(UNREAD_PREFIX)
+
+
 @dataclass(slots=True)
 class MailboxRuntime:
     """A loaded mailbox entry: its API client and polling coordinator."""
@@ -545,6 +564,9 @@ class ParcelsEngine:
         if int(data.engine.get(PICKUPS_READ_KEY) or 0) < PICKUPS_READ_VERSION:
             data.engine[PICKUPS_REREAD_KEY] = repair_pickups(data, now, self.tz)
             data.engine[PICKUPS_READ_KEY] = PICKUPS_READ_VERSION
+            self.store.async_schedule_save()
+        if TIMELESS_REPAIR_KEY not in data.engine:
+            data.engine[TIMELESS_REPAIR_KEY] = mark_timeless_news(data, now)
             self.store.async_schedule_save()
         if ORDER_FOLD_KEY not in data.engine:
             data.engine[ORDER_FOLD_KEY] = fold_known_orders(data, now)
@@ -1027,13 +1049,16 @@ class ParcelsEngine:
         *,
         first_sync: bool,
         check: MailCheck | None = None,
+        unread: Mapping[str, Exception] | None = None,
     ) -> None:
         """Process new e-mails of a mailbox.
 
         Raises the mailbox's own errors (auth, rate limit, cursor, no
         mailbox). An e-mail that fails to download or parse is stored as
         failed and tried again later; ``check`` collects the downloads for
-        async_finish_check.
+        async_finish_check. ``unread`` holds the e-mails listed whose headers
+        failed to download, by provider ID: each is stored as failed, with
+        no sender yet, and its headers are read again later.
         """
         check = MailCheck() if check is None else check
         changed = False
@@ -1044,6 +1069,16 @@ class ParcelsEngine:
         )
         try:
             for meta in ordered:
+                key = unread_key(mailbox.entry_id, meta.provider_id)
+                if key in self.data.messages:
+                    async with self._hold(key):
+                        if (record := self.data.messages.get(key)) is not None:
+                            if not self._retrying(record):
+                                # Given up on, or dismissed: it stays unread.
+                                continue
+                            # Its headers downloaded at last.
+                            self._drop_ref(record, mailbox.entry_id)
+                            changed = True
                 key = message_hash(
                     meta.message_id, meta.sender, meta.subject, meta.sent
                 )
@@ -1053,9 +1088,64 @@ class ParcelsEngine:
                         mailbox, meta, key, check, first_sync=first_sync
                     ):
                         changed = True
+            if unread and await self._async_note_unread(mailbox, unread, check):
+                changed = True
         finally:
             if changed:
                 self.async_changed()
+
+    async def _async_note_unread(
+        self,
+        mailbox: MailboxRuntime,
+        unread: Mapping[str, Exception],
+        check: MailCheck,
+    ) -> bool:
+        """Store the e-mails whose headers failed to download; True on changes.
+
+        A new one counts as this check's failed try. One listed again before
+        its next try counts only as an early try, as a refresh makes, and
+        not at all in a check of its own. An e-mail the mailbox read before
+        is left alone.
+        """
+        data = self.data
+        entry_id = mailbox.entry_id
+        known = {
+            provider_id
+            for record in data.messages.values()
+            if not is_unread_key(record.hash)
+            and (provider_id := record.refs.get(entry_id)) is not None
+        }
+        changed = False
+        for provider_id, err in unread.items():
+            if provider_id in known:
+                continue
+            key = unread_key(entry_id, provider_id)
+            async with self._hold(key):
+                now = dt_util.utcnow()
+                if (record := data.messages.get(key)) is None:
+                    check.tried.add(key)
+                    check.failed[key] = err
+                    data.messages[key] = MessageRecord(
+                        hash=key,
+                        seen=now,
+                        state=MessageState.FAILED,
+                        refs={entry_id: provider_id},
+                        owners=_owners(mailbox.owner),
+                        retry_at=now + RETRY_DELAYS[0],
+                    )
+                    changed = True
+                    continue
+                if not self._retrying(record) or key in check.tried:
+                    continue
+                check.tried.add(key)
+                if record.retry_at <= now + RETRY_SLACK:  # type: ignore[operator]
+                    check.failed[key] = err
+                    # Not again before the check counts it.
+                    record.retry_at = now + RETRY_DELAYS[0]
+                elif check.retry_all:
+                    check.failed[key] = err
+                    check.early.add(key)
+        return changed
 
     @asynccontextmanager
     async def _hold(self, key: str) -> AsyncIterator[None]:
@@ -1183,20 +1273,33 @@ class ParcelsEngine:
         location = error_location(err)
         if record.attempts >= FINAL_ATTEMPTS:
             record.retry_at = None
-            _LOGGER.warning(
-                "Couldn't read an e-mail from %s after %d tries (%s)",
+            if record.sender_domain:
+                _LOGGER.warning(
+                    "Couldn't read an e-mail from %s after %d tries (%s)",
+                    record.sender_domain,
+                    record.attempts,
+                    location,
+                )
+            else:
+                # Its headers never downloaded: the sender isn't known.
+                _LOGGER.warning(
+                    "Couldn't read an e-mail after %d tries (%s)",
+                    record.attempts,
+                    location,
+                )
+            return True
+        record.retry_at = now + RETRY_DELAYS[record.attempts - 1]
+        if record.sender_domain:
+            _LOGGER.debug(
+                "Couldn't read an e-mail from %s, try %d (%s)",
                 record.sender_domain,
                 record.attempts,
                 location,
             )
-            return True
-        record.retry_at = now + RETRY_DELAYS[record.attempts - 1]
-        _LOGGER.debug(
-            "Couldn't read an e-mail from %s, try %d (%s)",
-            record.sender_domain,
-            record.attempts,
-            location,
-        )
+        else:
+            _LOGGER.debug(
+                "Couldn't read an e-mail, try %d (%s)", record.attempts, location
+            )
         return False
 
     async def async_finish_check(
@@ -1268,6 +1371,19 @@ class ParcelsEngine:
                 early = record.retry_at > due  # type: ignore[operator]
                 if early:
                     check.early.add(key)
+                if is_unread_key(key):
+                    try:
+                        await self._async_read_unread(record, mailbox, check)
+                    except MAILBOX_ERRORS:
+                        raise
+                    except Exception as err:
+                        check.failed[key] = err
+                        failures += 1
+                        if not early:
+                            record.retry_at = now + RETRY_DELAYS[0]
+                    else:
+                        changed = True
+                    continue
                 try:
                     message = await mailbox.client.async_fetch(record.refs[entry_id])
                 except MailNotFound:
@@ -1295,6 +1411,31 @@ class ParcelsEngine:
         record.refs.pop(entry_id, None)
         if not record.refs and self.data.messages.get(record.hash) is record:
             del self.data.messages[record.hash]
+
+    async def _async_read_unread(
+        self, record: MessageRecord, mailbox: MailboxRuntime, check: MailCheck
+    ) -> str | None:
+        """Read the headers of an e-mail that failed to, then the e-mail.
+
+        Raises when the headers fail again, or the mailbox does. Otherwise
+        the e-mail is read as a new one, and its key returned; the record
+        of its headers is forgotten, as is a deleted e-mail's, for which
+        None is returned. Only an e-mail about a parcel is downloaded.
+        """
+        entry_id = mailbox.entry_id
+        try:
+            meta = await mailbox.client.async_fetch_meta(record.refs[entry_id])
+        except MailNotFound:
+            meta = None
+        if meta is None:
+            self._drop_ref(record, entry_id)
+            return None
+        check.ok += 1
+        key = message_hash(meta.message_id, meta.sender, meta.subject, meta.sent)
+        async with self._hold(key):
+            await self._async_intake(mailbox, meta, key, check, first_sync=True)
+        self._drop_ref(record, entry_id)
+        return key
 
     async def _async_read_failed(
         self,
@@ -1405,6 +1546,11 @@ class ParcelsEngine:
             async with self._hold(key):
                 if data.messages.get(key) is not record or not self.gave_up(record):
                     continue
+                if is_unread_key(key):
+                    outcome = await self._async_retry_unread(record)
+                    counts[outcome] += 1
+                    changed = changed or data.messages.get(key) is not record
+                    continue
                 fetched = await self.async_refetch(record)
                 if data.messages.get(key) is not record or not self.gave_up(record):
                     continue
@@ -1430,6 +1576,47 @@ class ParcelsEngine:
         if changed:
             self.async_changed()
         return counts
+
+    async def _async_retry_unread(self, record: MessageRecord) -> str:
+        """Try again an e-mail given up on whose headers never downloaded.
+
+        Returns "read", "gone", or "failed" when it stays given up: also
+        when its headers download but the e-mail doesn't, or can't be read.
+        Its sender is then known.
+        """
+        data = self.data
+        mailbox = next(
+            (
+                mailbox
+                for entry_id in record.refs
+                if (mailbox := self.mailboxes.get(entry_id)) is not None
+            ),
+            None,
+        )
+        if mailbox is None:
+            return "failed"
+        check = MailCheck()
+        try:
+            key = await self._async_read_unread(record, mailbox, check)
+        except Exception as err:
+            # Only where it failed: an error's message could quote the e-mail.
+            _LOGGER.debug("Download failed (%s)", error_location(err))
+            return "failed"
+        if key is None:
+            return "gone"
+        if key not in check.tried:
+            # Read before, not about a parcel, or from an ignored sender.
+            return "read"
+        if (read := data.messages.get(key)) is None:
+            # Read before under another key, or deleted meanwhile: only its
+            # headers downloaded.
+            return "read" if check.ok > 1 else "gone"
+        if read.state is MessageState.FAILED:
+            # It stays given up, now with its sender.
+            read.attempts = max(read.attempts, record.attempts)
+            read.retry_at = None
+            return "failed"
+        return "read"
 
     @callback
     def dismiss_gave_up(self) -> int:
@@ -1973,7 +2160,12 @@ class ParcelsEngine:
             record.state = MessageState.FILTERED
 
     async def async_refetch(self, record: MessageRecord) -> Refetch:
-        """Download a stored e-mail again from any mailbox that has it."""
+        """Download a stored e-mail again from any mailbox that has it.
+
+        Not one whose headers never downloaded: what it is isn't known.
+        """
+        if is_unread_key(record.hash):
+            return Refetch()
         unavailable = False
         for entry_id, provider_id in list(record.refs.items()):
             if (mailbox := self.mailboxes.get(entry_id)) is None:
@@ -3506,6 +3698,7 @@ class ParcelsEngine:
             "seventeentrack_pickups_repaired": data.engine.get(PICKUPS_REPAIR_KEY),
             "seventeentrack_pickups_restored": data.engine.get(PICKUP_PLACES_KEY),
             "seventeentrack_pickups_reread": data.engine.get(PICKUPS_REREAD_KEY),
+            "seventeentrack_timeless_repaired": data.engine.get(TIMELESS_REPAIR_KEY),
             "reconcile_waiting": len(self._syncing | self._more),
             # How the sender checks went for the newest e-mails under review:
             # the shop's domain and the servers that wrote the headers only.

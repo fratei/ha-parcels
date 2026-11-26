@@ -38,7 +38,12 @@ from .const import (
 from .parsers.base import Eta
 from .parsers.carriers import brand_carriers
 from .parsers.items import unique_items
-from .parsers.senders import KNOWN_SENDERS, lookup, organizational_domain
+from .parsers.senders import (
+    KNOWN_SENDERS,
+    lookup,
+    organizational_domain,
+    relays_carrier_mail,
+)
 from .parsers.tracking import (
     detect_carrier,
     normalize_tracking_number,
@@ -1080,7 +1085,7 @@ def _accepts(
 
 # The steps back that only news surely newer than the status takes: a parcel
 # out for delivery or at a pickup point can go back to transit, out again or
-# to a new attempt.
+# to a new attempt. Only the carrier's news takes them (see ``_may_step_back``).
 _NEWS_ONLY_STEPS = frozenset(
     {
         (ParcelStatus.OUT_FOR_DELIVERY, ParcelStatus.IN_TRANSIT),
@@ -1089,6 +1094,43 @@ _NEWS_ONLY_STEPS = frozenset(
         (ParcelStatus.READY_FOR_PICKUP, ParcelStatus.ATTEMPTED),
     }
 )
+
+
+def _carrier_news(parcel: Parcel, event: ParcelEvent, carrier: str | None) -> bool:
+    """Return True for news from the parcel's carrier.
+
+    17TRACK and the Parcel app follow the carrier. An e-mail is the carrier's
+    when it comes from the carrier's own domain, from a shop that sends its
+    carriers' notices from its own (Leroy Merlin), or from a shop or platform
+    whose own service delivers the parcel (Amazon, Vinted Go). Other shops
+    pass on the carrier's news when they get round to it, in e-mails timed
+    when they were sent.
+    """
+    if event.source in (Source.SEVENTEENTRACK, Source.PARCELAPP):
+        return True
+    origin = parcel.origins.get(event.origin) if event.origin else None
+    if event.source not in _MAIL_SOURCES or origin is None:
+        return False
+    if is_carrier_mail(origin) or relays_carrier_mail(origin.label):
+        return True
+    info = lookup(origin.label)
+    return info is not None and info.carrier is not None and info.carrier == carrier
+
+
+def _may_step_back(
+    parcel: Parcel,
+    event: ParcelEvent,
+    current: ParcelStatus | None,
+    carrier: str | None,
+) -> bool:
+    """Return whether an event may take one of the news-only steps back.
+
+    The carrier's news may. So may a delay notice from anyone, for a parcel
+    out for delivery: it comes with the parcel's new date.
+    """
+    return _carrier_news(parcel, event, carrier) or (
+        event.kind is MailKind.DELAYED and current is ParcelStatus.OUT_FOR_DELIVERY
+    )
 
 
 def _after_status(
@@ -1169,15 +1211,6 @@ def derive_state(parcel: Parcel) -> ParcelState:
             )
         )
 
-    def latest(attr: str) -> str | None:
-        found, value = manual_value(attr)
-        if found:
-            return value
-        return next((getattr(o, attr) for o in ranked if getattr(o, attr)), None)
-
-    pickup_point = latest("pickup_point")
-    pickup_code = latest("pickup_code")
-
     # A shipment's e-mails list what the package holds; an order's e-mails
     # list the whole order, which may come in several packages. What a parser
     # or the user found replaces what the AI read.
@@ -1243,20 +1276,31 @@ def derive_state(parcel: Parcel) -> ParcelState:
     collect_by: date | None = None
     next_attempt: date | None = None
     left_at: LeftAt | None = None
+    # Whether the parcel is at a pickup point, and the news that took it away.
+    at_pickup = False
+    left_pickup: ParcelEvent | None = None
     timeline: list[TimelineEntry] = []
     for event in sorted(parcel.events, key=_event_sort_key):
         accepted, new_status = _accepts(status, event)
         if (
             accepted
             and (status, new_status) in _NEWS_ONLY_STEPS
-            and not _after_status(
-                event, status_time, status_undated, status_by, status_origin
+            and not (
+                _may_step_back(parcel, event, status, carrier)
+                and _after_status(
+                    event, status_time, status_undated, status_by, status_origin
+                )
             )
         ):
             accepted, new_status = False, status
         if accepted and new_status is not status:
             if event.inferred:
                 inferred_over = status or ParcelStatus.ORDERED
+            if new_status is ParcelStatus.READY_FOR_PICKUP:
+                at_pickup, left_pickup = True, None
+            elif new_status in _LEAVING_PICKUP and at_pickup:
+                # A failed attempt or a problem there doesn't take it away.
+                at_pickup, left_pickup = False, event
             status = new_status
             status_time = None if event.dayless else event.time
             status_undated = event.undated
@@ -1351,6 +1395,32 @@ def derive_state(parcel: Parcel) -> ParcelState:
         )
     if status is None:
         status = ParcelStatus.ORDERED
+
+    # The pickup point and its code: a manual edit wins, then the best
+    # source, latest first. Once the parcel left the point, only news from
+    # then on counts: the point's code would read as a delivery PIN. An
+    # e-mail with news counts by its news, one without by when it was sent.
+    among = ranked
+    if left_pickup is not None:
+        since = _event_sort_key(left_pickup)
+        after = {
+            e.origin for e in parcel.events if e.origin and _event_sort_key(e) >= since
+        }
+        with_news = {e.origin for e in parcel.events if e.origin}
+        among = [
+            o
+            for o in ranked
+            if o.id in after or (o.id not in with_news and o.time >= left_pickup.time)
+        ]
+
+    def latest(attr: str) -> str | None:
+        found, value = manual_value(attr)
+        if found:
+            return value
+        return next((getattr(o, attr) for o in among if getattr(o, attr)), None)
+
+    pickup_point = latest("pickup_point")
+    pickup_code = latest("pickup_code")
     if status in TERMINAL_STATUSES and not status_inferred:
         # A delivery code is no use once the parcel arrived or went back.
         pickup_code = None
@@ -1414,6 +1484,8 @@ def derive_state(parcel: Parcel) -> ParcelState:
 
 # The statuses a collect-by date belongs to: a parcel the carrier holds.
 _COLLECT_STATUSES = frozenset({ParcelStatus.READY_FOR_PICKUP, ParcelStatus.ATTEMPTED})
+# The statuses that take a parcel from its pickup point to a new delivery.
+_LEAVING_PICKUP = frozenset({ParcelStatus.IN_TRANSIT, ParcelStatus.OUT_FOR_DELIVERY})
 # Sources whose event times are an e-mail's when it didn't say when.
 _MAIL_SOURCES = frozenset({Source.PARSER, Source.AI})
 

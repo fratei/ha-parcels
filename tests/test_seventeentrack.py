@@ -34,6 +34,7 @@ from pytest_homeassistant.common import (
     mock_platform,
 )
 
+from custom_components.parcels import seventeentrack
 from custom_components.parcels.const import (
     CONF_SEVENTEENTRACK,
     DOMAIN,
@@ -53,6 +54,7 @@ from custom_components.parcels.dedup import (
 )
 from custom_components.parcels.engine import ParcelsEngine
 from custom_components.parcels.models import (
+    INFERRED_SHIPMENT,
     Origin,
     Parcel,
     ParcelEvent,
@@ -62,6 +64,7 @@ from custom_components.parcels.models import (
 )
 from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.parsers.tracking import s10_check_digit
+from custom_components.parcels.quiet import infer_quiet_deliveries
 from custom_components.parcels.seventeentrack import (
     ADD_RETRIES,
     ADD_RETRY_DELAY,
@@ -988,6 +991,186 @@ async def test_newer_news_takes_a_parcel_back_from_the_locker(
     assert engine.data.parcels[ready.id].state.collect_by is None
 
 
+async def test_news_without_a_time_keeps_the_day_s_delivery(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """17TRACK's news without a time is news without a date Parcels can read.
+
+    It counts from when Parcels read it, so on the day the carrier's e-mail
+    sent a parcel out for delivery it doesn't take it back to transit, unless
+    17TRACK listed it after its own news that set the status. The same news
+    with a time after the e-mail's does.
+    """
+    sent = timedelta(minutes=40)
+    timeless = add_parcel(
+        engine, "timeless", CTT, carrier="ctt", kind=MailKind.OUT_FOR_DELIVERY, age=sent
+    )
+    dated = add_parcel(
+        engine, "dated", OTHER, carrier="ctt", kind=MailKind.OUT_FOR_DELIVERY, age=sent
+    )
+    third = s10(10000003)
+    listed = add_parcel(engine, "listed", third, carrier="ctt")
+    await tracker.async_refresh()
+    track.put(
+        third,
+        "Ready to be picked up",
+        info="Em entrega - O objeto saiu para entrega ao destinatário.",
+        timestamp="2026-11-17T09:30:00+00:00",
+    )
+    await tracker.async_refresh()
+    assert status(engine, listed.id) is ParcelStatus.OUT_FOR_DELIVERY
+
+    track.put(CTT, "In Transit", info="Em trânsito")
+    track.put(
+        OTHER, "In Transit", info="Em trânsito", timestamp="2026-11-17T09:40:00+00:00"
+    )
+    track.put(third, "In Transit", info="Em trânsito")
+    await tracker.async_refresh()
+
+    state = engine.data.parcels[timeless.id].state
+    assert state.status is ParcelStatus.OUT_FOR_DELIVERY
+    assert not state.timeline[-1].accepted
+    [event] = news(engine, timeless.id, CTT)
+    assert (event.undated, event.dayless, event.timeless) == (True, False, False)
+    assert (event.time, event.by) == (NOW_DT, NOW_DT)
+    assert [entry["at"] for entry in records(engine)[CTT]["history"]] == [None]
+    assert status(engine, dated.id) is ParcelStatus.IN_TRANSIT
+    assert not news(engine, dated.id, OTHER)[0].undated
+    assert status(engine, listed.id) is ParcelStatus.IN_TRANSIT
+
+
+async def test_news_without_a_time_read_on_a_later_day_is_newer(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Read on a later day than the news that set the status, it takes the step.
+
+    It keeps the time Parcels first read it when 17TRACK's later news is added.
+    """
+    parcel = add_parcel(
+        engine,
+        "out",
+        CTT,
+        carrier="ctt",
+        kind=MailKind.OUT_FOR_DELIVERY,
+        age=timedelta(minutes=40),
+    )
+    await tracker.async_refresh()
+    read = datetime(2026, 11, 18, 8, 30, tzinfo=UTC)
+    freezer.move_to(read)
+    track.put(CTT, "In Transit", info="Em trânsito")
+    await tracker.async_refresh()
+
+    state = engine.data.parcels[parcel.id].state
+    assert (state.status, state.status_time) == (ParcelStatus.IN_TRANSIT, read)
+
+    freezer.move_to(read + timedelta(minutes=30))
+    track.put(
+        CTT,
+        "In Transit",
+        info="Em trânsito - Chegada ao centro operacional",
+        timestamp="2026-11-18T08:50:00+00:00",
+    )
+    await tracker.async_refresh()
+    first, later = news(engine, parcel.id, CTT)
+    assert (first.undated, first.time, first.by) == (True, read, read)
+    assert (later.undated, later.by) == (False, None)
+
+
+async def test_update_reads_stored_news_without_a_time_as_undated(
+    hass: HomeAssistant, hass_storage: dict[str, Any], track: FakeSeventeenTrack
+) -> None:
+    """Once, 17TRACK's stored news without a time becomes news without a date.
+
+    Before 0.1.22 it was dated when Parcels read it, so on the day a parcel
+    went out for delivery it took the parcel back to transit. Dated news
+    stays as it was.
+    """
+    data = ParcelsData()
+    sent = datetime(2026, 11, 17, 9, 20, tzinfo=UTC)
+    read = datetime(2026, 11, 17, 9, 50, tzinfo=UTC)
+    packages: dict[str, dict[str, Any]] = {}
+    ids: dict[str, str] = {}
+    for number, at in ((CTT, None), (OTHER, read)):
+        applied = apply_contribution(
+            data,
+            contribution(
+                f"msg:{number}#0",
+                kind=MailKind.OUT_FOR_DELIVERY,
+                time=sent,
+                carrier="ctt",
+                number=number,
+            ),
+            sent,
+        )
+        assert applied.parcel_id is not None
+        ids[number] = applied.parcel_id
+        apply_contribution(
+            data,
+            Contribution(
+                origin=Origin(
+                    id=origin_id(number),
+                    source=Source.SEVENTEENTRACK,
+                    time=read,
+                    label="17TRACK",
+                    carrier="ctt",
+                    tracking_number=number,
+                ),
+                events=[
+                    ParcelEvent(
+                        time=read,
+                        source=Source.SEVENTEENTRACK,
+                        status=ParcelStatus.IN_TRANSIT,
+                        label="Em trânsito",
+                    )
+                ],
+            ),
+            read,
+        )
+        packages[number] = {
+            "parcel": applied.parcel_id,
+            "own": True,
+            "status": "in_transit",
+            "history": [
+                {
+                    "status": "in_transit",
+                    "info": "Em trânsito",
+                    "at": dt_to_str(at),
+                    "time": dt_to_str(read),
+                }
+            ],
+        }
+    data.seventeentrack["packages"] = packages
+    data.engine[REPAIR_KEY] = REPAIR_VERSION
+    hass_storage[DOMAIN] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": DOMAIN,
+        "data": data.as_dict(),
+    }
+    add_hub(hass)
+
+    engine = await async_setup_parcels(hass)
+    tracker = engine.tracker
+    assert tracker is not None
+    await tracker.async_stop()
+
+    assert {number: status(engine, ids[number]) for number in (CTT, OTHER)} == {
+        CTT: ParcelStatus.OUT_FOR_DELIVERY,
+        OTHER: ParcelStatus.IN_TRANSIT,
+    }
+    [event] = news(engine, ids[CTT], CTT)
+    assert (event.undated, event.time, event.by) == (True, read, read)
+    assert not news(engine, ids[OTHER], OTHER)[0].undated
+    assert {number: engine.data.parcels[ids[number]].updated for number in ids} == {
+        CTT: NOW_DT,
+        OTHER: read,
+    }
+    assert engine.diagnostics()["seventeentrack_timeless_repaired"] == 1
+
+
 async def test_update_takes_back_pickups_17track_alone_gave(
     hass: HomeAssistant, hass_storage: dict[str, Any], track: FakeSeventeenTrack
 ) -> None:
@@ -1449,6 +1632,7 @@ async def test_adds_the_numbers_of_active_parcels(
         "last_refresh": NOW_ISO,
         "last_error": None,
         "unreadable_times": 0,
+        "unreadable_packages": 0,
         "not_found_by_carrier": {},
     }
     assert CTT not in str(diagnostics)
@@ -1581,6 +1765,102 @@ async def test_archived_parcels_get_no_news(
     assert records(engine)[CTT]["archived"] == NOW_ISO
 
 
+async def test_an_inferred_delivery_stays_in_17track(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """A delivery Parcels only inferred doesn't take a number out of 17TRACK.
+
+    17TRACK goes on following it, so its newer news takes the guess back,
+    and only a delivery 17TRACK reports archives the number.
+    """
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    parcel.events.append(
+        ParcelEvent(
+            time=NOW_DT - timedelta(minutes=20),
+            source=Source.PARSER,
+            status=ParcelStatus.DELIVERED,
+            kind=MailKind.DELIVERED,
+            label=INFERRED_SHIPMENT,
+            inferred=True,
+        )
+    )
+    parcel.touch(NOW_DT)
+    engine.async_changed()
+    assert parcel.state.inferred
+
+    await tracker.async_refresh()
+
+    assert track.numbers("archive_package") == []
+    assert "archived" not in records(engine)[CTT]
+
+    track.put(CTT, info="Em trânsito", timestamp="2026-11-17T09:59:00+00:00")
+    await tracker.async_refresh()
+
+    parcel = engine.data.parcels[parcel.id]
+    assert status(engine, parcel.id) is ParcelStatus.IN_TRANSIT
+    assert not parcel.state.inferred
+    assert track.numbers("archive_package") == []
+
+    track.put(CTT, "Delivered", timestamp="2026-11-17T09:59:30+00:00")
+    await tracker.async_refresh()
+
+    assert status(engine, parcel.id) is ParcelStatus.DELIVERED
+    assert not engine.data.parcels[parcel.id].state.inferred
+    assert track.numbers("archive_package") == [CTT]
+
+
+async def test_numbers_of_inferred_deliveries_are_added_last(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """A number whose delivery Parcels only inferred is still added.
+
+    17TRACK can confirm the delivery or take it back, but the parcels on
+    their way need the places more, so their numbers go first.
+    """
+    guessed = add_parcel(
+        engine, "guessed", CTT, carrier="ctt", eta=Eta(start=TODAY, end=TODAY)
+    )
+    guessed.events.append(
+        ParcelEvent(
+            time=NOW_DT - timedelta(minutes=20),
+            source=Source.PARSER,
+            status=ParcelStatus.DELIVERED,
+            kind=MailKind.DELIVERED,
+            label=INFERRED_SHIPMENT,
+            inferred=True,
+        )
+    )
+    guessed.touch(NOW_DT)
+    tomorrow = TODAY + timedelta(days=1)
+    add_parcel(
+        engine, "later", OTHER, carrier="ctt", eta=Eta(start=tomorrow, end=tomorrow)
+    )
+    assert guessed.state.inferred
+
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == [OTHER, CTT]
+
+
+async def test_a_quiet_parcels_inferred_delivery_leaves_17track(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """Three weeks without news still archive a number, inferred delivery or not."""
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt", age=timedelta(days=21))
+    tracked_before(
+        engine, track, CTT, parcel, added=dt_to_str(NOW_DT - timedelta(days=21))
+    )
+    infer_quiet_deliveries(engine.data, NOW_DT)
+    engine.async_changed()
+    assert parcel.state.inferred_reason == "quiet"
+
+    await tracker.async_refresh()
+
+    assert track.numbers("archive_package") == [CTT]
+    assert records(engine)[CTT]["archived"] == NOW_ISO
+
+
 @pytest.mark.parametrize(
     ("package", "zone", "info", "at"),
     [
@@ -1656,6 +1936,118 @@ async def test_an_impossible_package_time_is_counted(
     assert diagnostics["unreadable_times"] == 1
     assert diagnostics["last_error"] is None
     assert "2026-13-02" not in str(diagnostics)
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        "9999-12-31T23:59:59-12:00",
+        "0001-01-01T00:00:00+14:00",
+        "1999-12-31T23:59:59+00:00",
+        "yesterday-ish",
+    ],
+    ids=["after-the-last-day", "before-the-first-day", "before-2000", "words"],
+)
+async def test_a_package_time_parcels_cant_place_is_counted(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    timestamp: str,
+) -> None:
+    """A time at the calendar's edges, or text that isn't a time, is unreadable.
+
+    It gives news without a time, and the other packages still update.
+    """
+    add_parcel(engine, "ctt", CTT, carrier="ctt")
+    add_parcel(engine, "ups", UPS, carrier="ups")
+    await tracker.async_refresh()
+    track.put(CTT, timestamp=timestamp)
+    track.put(UPS, "Delivered", timestamp="2026-11-17T09:30:00+00:00")
+
+    await tracker.async_refresh()
+
+    assert records(engine)[CTT]["history"] == [
+        {"status": "in_transit", "info": None, "at": None, "time": NOW_ISO}
+    ]
+    assert records(engine)[UPS]["history"][-1]["status"] == "delivered"
+    diagnostics = tracker.diagnostics()
+    assert (diagnostics["unreadable_times"], diagnostics["last_error"]) == (1, None)
+    assert tracker.last_refresh == NOW_DT
+
+
+async def test_a_package_parcels_cant_read_doesnt_stop_the_others(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Whatever fails in one package, the others update and the refresh ends.
+
+    It's counted, and logged once while it lasts, without its number.
+    """
+    add_parcel(engine, "ctt", CTT, carrier="ctt")
+    add_parcel(engine, "ups", UPS, carrier="ups")
+    await tracker.async_refresh()
+
+    def failing(raw: str, info: str | None) -> ParcelStatus | None:
+        if info == "Avariado":
+            raise RuntimeError(f"{CTT} can't be read")
+        return map_status(raw, info)
+
+    monkeypatch.setattr(seventeentrack, "map_status", failing)
+    track.put(CTT, info="Avariado")
+    track.put(UPS, "Delivered", timestamp="2026-11-17T09:30:00+00:00")
+
+    await tracker.async_refresh()
+    await tracker.async_refresh()
+
+    assert records(engine)[UPS]["history"][-1]["status"] == "delivered"
+    assert tracker.last_refresh == NOW_DT
+    assert tracker.diagnostics()["unreadable_packages"] == 1
+    assert logged_warnings(caplog) == [
+        "17TRACK: Parcels couldn't read 1 package (RuntimeError)"
+    ]
+    assert CTT not in caplog.text
+
+    track.put(CTT, info="Em trânsito")
+    await tracker.async_refresh()
+
+    assert tracker.diagnostics()["unreadable_packages"] == 0
+    assert records(engine)[CTT]["history"][-1]["info"] == "Em trânsito"
+
+
+async def test_news_that_failed_to_apply_is_read_again(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """News kept only once applied: the next refresh applies it."""
+    parcel = add_parcel(engine, "ctt", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    real = seventeentrack.tracker_details
+    calls = 0
+
+    def flaky(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("once")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(seventeentrack, "tracker_details", flaky)
+    track.put(CTT, "Delivered", timestamp="2026-11-17T09:30:00+00:00")
+
+    await tracker.async_refresh()
+
+    assert status(engine, parcel.id) is ParcelStatus.SHIPPED
+    assert "history" not in records(engine)[CTT]
+
+    await tracker.async_refresh()
+
+    assert status(engine, parcel.id) is ParcelStatus.DELIVERED
+    assert tracker.diagnostics()["unreadable_packages"] == 0
 
 
 async def test_package_text_gives_details(
@@ -2541,6 +2933,7 @@ async def test_nothing_without_the_integration(hass: HomeAssistant) -> None:
         "last_refresh": None,
         "last_error": None,
         "unreadable_times": 0,
+        "unreadable_packages": 0,
         "not_found_by_carrier": {},
     }
 

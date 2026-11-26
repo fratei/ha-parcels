@@ -485,13 +485,15 @@ class Env:
         collect_by: date | None = None,
         next_attempt: date | None = None,
         left_at: LeftAt | None = None,
+        label: str = "",
     ) -> None:
         """Add an event to a parcel and tell the notifier.
 
         With ``sent``, the event comes from an e-mail sent then, which may
         name a pickup point and a code; an event at the time its e-mail was
-        sent has only that time. ``timeless`` gives the day without the time.
-        As news does, it replaces a delivery Parcels only inferred.
+        sent has only that time. ``label`` is the e-mail's sender domain.
+        ``timeless`` gives the day without the time. As news does, it
+        replaces a delivery Parcels only inferred.
         """
         moment = when or dt_util.utcnow()
         parcel.events = [event for event in parcel.events if not event.inferred]
@@ -502,6 +504,7 @@ class Env:
                 id=origin,
                 source=Source.PARSER,
                 time=sent,
+                label=label,
                 pickup_point=pickup_point,
                 pickup_code=pickup_code,
             )
@@ -1231,7 +1234,7 @@ async def test_a_delivery_marked_by_hand_taken_back(env: Env) -> None:
 
 
 async def test_probably_delivered_in_the_combined_activity(env: Env) -> None:
-    """An inferred delivery counts in the combined activity, without an alert.
+    """An inferred delivery counts apart in the combined activity, quietly.
 
     Even when the parcel was out for delivery; taking it back is quiet too,
     and a real delivery alerts.
@@ -1256,9 +1259,9 @@ async def test_probably_delivered_in_the_combined_activity(env: Env) -> None:
         activity(
             COMBINED,
             "Parcels today",
-            "1 of 2 delivered",
-            "1/2",
-            1,
+            f"0 of 2 delivered{SEP}1 probably",
+            "0/2",
+            0,
             BOX,
             0.5,
             progress_max=2,
@@ -1279,6 +1282,100 @@ async def test_probably_delivered_in_the_combined_activity(env: Env) -> None:
     assert [
         (payload["message"], payload["data"].get("silent")) for payload in phone.take()
     ] == [("1 of 2 delivered", None)]
+
+
+async def test_probably_delivered_last_in_the_combined_activity(env: Env) -> None:
+    """A day whose last package was only inferred delivered isn't done.
+
+    The combined activity says the delivery is probable, without the check
+    mark, and keeps showing; the carrier's confirmation alerts, and the
+    activity ends 30 minutes after it.
+    """
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    first = env.parcel(eta=on())
+    last = env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert len(iphone.take()) == 1
+
+    await env.goto(at(9))
+    env.change(first, S.DELIVERED)
+    await env.settle()
+    assert [payload["message"] for payload in iphone.take()] == ["1 of 2 delivered"]
+    assert len(ipad.take()) == 1
+
+    await env.goto(at(10, 42))
+    env.infer(last)
+    await env.settle()
+    assert iphone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"1 of 2 delivered{SEP}1 probably",
+            "1/2",
+            1,
+            BOX,
+            0.2,
+            progress_max=2,
+            silent=True,
+        )
+    ]
+    assert ipad.take() == []
+    await env.goto(at(14))
+    assert iphone.take() == []
+
+    env.change(last, S.DELIVERED)
+    await env.settle()
+    assert iphone.take() == [
+        activity(
+            COMBINED,
+            "Parcels today",
+            f"2 of 2 delivered {CHECK}",
+            "2/2",
+            2,
+            DONE,
+            0.2,
+            progress_max=2,
+        )
+    ]
+    assert [payload["message"] for payload in ipad.take()] == [
+        f"Delivered {CHECK} 14:00{SEP}CTT"
+    ]
+    await env.goto(at(14, 25))
+    assert iphone.take() == []
+    await env.goto(at(14, 31))
+    assert iphone.take() == [end(COMBINED)]
+
+
+async def test_probably_delivered_last_ends_instead_of_restarting(env: Env) -> None:
+    """With only inferred deliveries left, the combined activity isn't restarted.
+
+    A restart would alert with nothing new: after 7.5 hours it ends instead,
+    and the carrier's later confirmation starts nothing.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    first = env.parcel(eta=on())
+    last = env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    await env.goto(at(9))
+    env.change(first, S.DELIVERED)
+    env.infer(last)
+    await env.settle()
+    assert [payload["message"] for payload in phone.take()] == [
+        f"1 of 2 delivered{SEP}1 probably"
+    ]
+
+    await env.goto(at(15, 31))
+    assert phone.take() == [end(COMBINED)]
+    await env.goto(at(16))
+    env.change(last, S.DELIVERED)
+    await env.settle()
+    assert phone.take() == []
 
 
 async def test_probably_delivered_taken_back(env: Env) -> None:
@@ -3653,6 +3750,128 @@ async def test_pickup_code_follows_the_alert(env: Env) -> None:
     assert sam.calls == []
 
 
+async def test_pickup_code_stays_at_the_pickup_point(
+    env: Env, hass: HomeAssistant
+) -> None:
+    """Taken from its locker back to delivery, a parcel shows no locker code.
+
+    The locker's code would read as the PIN of the new delivery.
+    """
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    env.hub(**{CONF_PIN_ON_LOCK_SCREEN: True})
+    parcel = env.parcel(eta=on(), merchant="Decathlon", carrier="ctt")
+    tag = tag_of(parcel)
+    await env.start()
+    await env.goto(at(8))
+    assert len(iphone.take()) == 1
+    assert ipad.take() == []
+    env.token(iphone, tag)
+
+    await env.goto(at(10, 15))
+    env.change(
+        parcel,
+        S.READY_FOR_PICKUP,
+        sent=at(10, 15),
+        pickup_point="Locker 12, Rua Inventada 7",
+        pickup_code="731905",
+        collect_by=date(2026, 6, 24),
+    )
+    await env.settle()
+    await env.goto(at(10, 16))
+    assert [payload["message"] for payload in iphone.take()] == [
+        f"Ready at Locker 12{SEP}collect by Wed 24{SEP}CTT",
+        f"Ready for pickup\nPIN 731905{SEP}Locker 12{SEP}collect by Wed 24{SEP}CTT",
+    ]
+    assert len(ipad.take()) == 1
+
+    await env.goto(at(11))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(11), eta=window(16, 19), label="ctt.pt"
+    )
+    await env.settle()
+    out = f"Out for delivery 16:00{DASH}19:00{SEP}CTT"
+    short = f"16{DASH}19h"
+    assert iphone.take() == [activity(tag, "Decathlon", out, short, 3, OUT, 0.9)]
+    assert summary(ipad.take()) == [(tag, out)]
+    await env.goto(at(11, 5))
+    assert iphone.take() == []
+    shown = str(persistent(hass))
+    assert f"- Decathlon{SEP}CTT{SEP}Out for delivery 16:00{DASH}19:00" in shown
+    assert "Locker 12" not in shown
+    assert "731905" not in shown
+
+
+@pytest.mark.parametrize("status", [S.OUT_FOR_DELIVERY, S.READY_FOR_PICKUP])
+async def test_a_parcel_taken_back_replaces_its_notification(
+    env: Env, status: ParcelStatus
+) -> None:
+    """Taken back to transit, a parcel's notification says when it's expected.
+
+    iPads and Android phones were told it was out for delivery, or ready for
+    pickup; the carrier's newer news replaces that, with an alert as the
+    iPhone's activity gives, and only once. Its next key news comes again.
+    """
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    android = env.phone("Sam Pixel", SAM, "android")
+    parcel = env.parcel(eta=window(14, 18), merchant="Decathlon", carrier="ctt")
+    tag = tag_of(parcel)
+    await env.start()
+    await env.goto(at(8))
+    assert len(iphone.take()) == 1
+    env.token(iphone, tag)
+
+    await env.goto(at(9))
+    if status is S.OUT_FOR_DELIVERY:
+        env.change(parcel, status, sent=at(9), eta=window(14, 18), label="ctt.pt")
+        told = f"Out for delivery 14:00{DASH}18:00{SEP}CTT"
+    else:
+        env.change(
+            parcel, status, sent=at(9), pickup_point="Locker 12, Rua Inventada 7"
+        )
+        told = f"Ready at Locker 12{SEP}CTT"
+    await env.settle()
+    assert summary(ipad.take()) == summary(android.take()) == [(tag, told)]
+    assert len(iphone.take()) == 1
+
+    await env.goto(at(11))
+    tomorrow = on(DAY + timedelta(days=1))
+    env.change(parcel, S.IN_TRANSIT, sent=at(11), eta=tomorrow, label="ctt.pt")
+    await env.settle()
+    back = f"Expected tomorrow{SEP}CTT"
+    assert summary(iphone.take()) == [(tag, back)]
+    assert ipad.take() == [
+        {
+            "title": "Decathlon",
+            "message": back,
+            "data": {"tag": tag, "url": link_of(parcel)},
+        }
+    ]
+    assert android.take() == [
+        {
+            "title": "Decathlon",
+            "message": back,
+            "data": {
+                "tag": tag,
+                "clickAction": link_of(parcel),
+                "notification_icon": TRUCK,
+                "color": BLUE,
+            },
+        }
+    ]
+    env.changed()
+    await env.goto(at(11, 10))
+    assert ipad.take() == android.take() == []
+
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(11, 10), eta=window(15, 19), label="ctt.pt"
+    )
+    await env.settle()
+    again = [(tag, f"Out for delivery 15:00{DASH}19:00{SEP}CTT")]
+    assert summary(ipad.take()) == summary(android.take()) == again
+
+
 async def test_pin_waits_until_the_activity_can_be_updated(env: Env) -> None:
     """A PIN waits for the token of the running activity, and starts none.
 
@@ -3897,6 +4116,85 @@ async def test_news_after_a_dismissal_comes_as_notifications(
     assert today["running"] == 0
 
 
+@pytest.mark.parametrize("when", ["today", "tomorrow"])
+@pytest.mark.parametrize("threshold", [1, 9])
+async def test_news_notification_replaced_when_taken_back(
+    env: Env, threshold: int, when: str
+) -> None:
+    """After a dismissal, a parcel taken back from out for delivery says so.
+
+    The notification that said it was out for delivery is replaced once, also
+    when the parcel moved to tomorrow, as on an iPad.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: threshold})
+    parcel = env.parcel(eta=window(14, 18), merchant="Decathlon", carrier="ctt")
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    notifier = await env.start()
+    await env.goto(at(8))
+    started = phone.take()
+    assert len(started) == (1 if threshold == 1 else 2)
+    await env.goto(at(8, 10))
+    for payload in started:
+        env.untoken(phone, payload["data"]["tag"])
+
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(8, 10), eta=window(14, 18), label="ctt.pt"
+    )
+    await env.settle()
+    out = f"Out for delivery 14:00{DASH}18:00{SEP}CTT"
+    assert summary(phone.take()) == [(news_tag(parcel), out)]
+
+    await env.goto(at(11))
+    if when == "today":
+        eta, back = window(15, 17), f"Expected today 15:00{DASH}17:00{SEP}CTT"
+    else:
+        eta, back = on(DAY + timedelta(days=1)), f"Expected tomorrow{SEP}CTT"
+    env.change(parcel, S.IN_TRANSIT, sent=at(11), eta=eta, label="ctt.pt")
+    await env.settle()
+    assert phone.take() == [
+        {
+            "title": "Decathlon",
+            "message": back,
+            "data": {"tag": news_tag(parcel), "url": link_of(parcel)},
+        }
+    ]
+    env.changed()
+    await env.goto(at(11, 10))
+    assert phone.take() == []
+    assert notifier.diagnostics()["today"]["activity_starts"] == len(started)
+
+
+@pytest.mark.parametrize("threshold", [1, 9])
+async def test_news_of_a_parcel_moved_after_a_dismissal(
+    env: Env, threshold: int
+) -> None:
+    """A missed parcel moved to tomorrow still comes as a notification.
+
+    After the user dismissed its activity, as on an iPad.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: threshold})
+    parcel = env.parcel(eta=on(), merchant="Decathlon", carrier="ctt")
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    started = phone.take()
+    await env.goto(at(8, 10))
+    for payload in started:
+        env.untoken(phone, payload["data"]["tag"])
+
+    await env.goto(at(12, 30))
+    env.change(parcel, S.ATTEMPTED, eta=on(DAY + timedelta(days=1)))
+    await env.settle()
+    assert summary(phone.take()) == [
+        (news_tag(parcel), f"Missed 12:30{SEP}Expected tomorrow{SEP}CTT")
+    ]
+    env.changed()
+    await env.settle()
+    assert phone.take() == []
+
+
 @pytest.mark.parametrize("how", ["switch", "recipient"])
 async def test_a_dismissed_activity_comes_back_when_turned_on_again(
     env: Env, hass: HomeAssistant, how: str
@@ -4007,6 +4305,36 @@ async def test_news_reaches_an_iphone_that_sends_no_token(env: Env) -> None:
     assert phone.take() == [
         activity(tag, "Amazon", out, "Today", 3, OUT, 0.9, silent=True)
     ]
+
+
+@pytest.mark.parametrize("threshold", [1, 9])
+async def test_news_of_a_moved_parcel_reaches_an_iphone_that_sends_no_token(
+    env: Env, threshold: int
+) -> None:
+    """Without the activity's token, a parcel missed and moved to tomorrow says so.
+
+    As for a parcel still expected today, also with a combined activity.
+    """
+    env.auto_token = False
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: threshold})
+    parcel = env.parcel(eta=on(), merchant="Decathlon", carrier="ctt")
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == (1 if threshold == 1 else 2)
+
+    await env.goto(at(8, 2))
+    env.change(parcel, S.ATTEMPTED, eta=on(DAY + timedelta(days=1)))
+    await env.settle()
+    assert phone.take() == []
+
+    await env.goto(at(8, 6))
+    assert summary(phone.take()) == [
+        (news_tag(parcel), f"Missed 08:02{SEP}Expected tomorrow{SEP}CTT")
+    ]
+    await env.goto(at(8, 10))
+    assert phone.take() == []
 
 
 async def test_activity_dismissed_before_an_upgrade(env: Env) -> None:

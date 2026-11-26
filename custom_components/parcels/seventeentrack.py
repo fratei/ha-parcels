@@ -26,8 +26,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta, tzinfo
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta, tzinfo
 import logging
 import re
 from typing import TYPE_CHECKING, Any, Final
@@ -49,6 +49,7 @@ from .models import (
     Parcel,
     ParcelEvent,
     ParcelsData,
+    ParcelState,
     Source,
     dt_from_str,
     dt_to_str,
@@ -81,6 +82,9 @@ PICKUP_PLACES_KEY: Final = "seventeentrack_pickup_places"
 PICKUPS_REREAD_KEY: Final = "seventeentrack_pickups_reread"
 PICKUPS_READ_KEY: Final = "seventeentrack_pickups_read"
 PICKUPS_READ_VERSION: Final = 2
+# The engine state key of the parcels whose stored news without a time
+# :func:`mark_timeless_news` made news without a date.
+TIMELESS_REPAIR_KEY: Final = "seventeentrack_timeless"
 
 INTERVAL: Final = timedelta(minutes=30)
 # While a parcel is out for delivery or due today.
@@ -93,6 +97,9 @@ MAX_HISTORY: Final = 10
 MAX_INFO_CHARS: Final = 160
 MIN_NUMBER_CHARS: Final = 8
 NOT_FOUND_ARCHIVE: Final = timedelta(days=14)
+# News from before this can't be a parcel's, and the calendar's first hours
+# don't fit every time zone.
+_EARLIEST: Final = datetime(2000, 1, 1, tzinfo=UTC)
 # A refused number is tried again after 6 and 12 hours, then once a day while
 # its parcel is active: 17TRACK refuses new numbers while the account is full,
 # and Parcels can't tell that apart from other refusals.
@@ -405,6 +412,46 @@ def restore_pickup_places(data: ParcelsData, now: datetime, tz: tzinfo) -> int:
     return changed
 
 
+def mark_timeless_news(data: ParcelsData, now: datetime) -> int:
+    """Make 17TRACK's stored news without a time news without a date.
+
+    Before 0.1.22, its events were dated when Parcels read them, so they took
+    the steps back that only newer news takes (see
+    :meth:`SeventeenTrackSync._apply`). Returns how many parcels changed.
+    """
+    packages = data.seventeentrack.get("packages")
+    # The package events without a time, by their origin, text and stored time.
+    timeless: set[tuple[str, Any, Any]] = set()
+    for number, record in (packages if isinstance(packages, dict) else {}).items():
+        if not isinstance(record, dict) or not isinstance(
+            history := record.get("history"), list
+        ):
+            continue
+        for entry in history:
+            if isinstance(entry, dict) and entry.get("at") is None:
+                timeless.add(
+                    (origin_id(str(number)), entry.get("info"), entry.get("time"))
+                )
+    changed = 0
+    for parcel in data.parcels.values() if timeless else ():
+        dirty = False
+        for event in parcel.events:
+            key = (event.origin or "", event.label, dt_to_str(event.time))
+            if (
+                event.source is not Source.SEVENTEENTRACK
+                or event.undated
+                or key not in timeless
+            ):
+                continue
+            event.undated = True
+            event.by = event.time
+            dirty = True
+        if dirty:
+            parcel.touch(now)
+            changed += 1
+    return changed
+
+
 def current_number(parcel: Parcel) -> str | None:
     """Return a parcel's tracking number, normalised, or None."""
     number = parcel.state.tracking_number
@@ -431,19 +478,23 @@ def clip_text(text: Any) -> str | None:
 
 
 def _package_time(package: Mapping[str, Any], now: datetime) -> datetime | None:
-    """Return the time of a package's news; ValueError when it is impossible."""
+    """Return the time of a package's news; ValueError when it can't be read."""
     raw = package.get("timestamp")
     if not raw:
         return None
     try:
         parsed = dt_util.parse_datetime(str(raw))
+        if parsed is None:
+            raise ValueError("not a time")
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt_util.get_default_time_zone())
+        time = dt_util.as_utc(parsed)
     except OverflowError as err:
+        # A time at the calendar's ends.
         raise ValueError("impossible time") from err
-    if parsed is None:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt_util.get_default_time_zone())
-    return min(dt_util.as_utc(parsed), now)
+    if time < _EARLIEST:
+        raise ValueError("impossible time")
+    return min(time, now)
 
 
 @dataclass(slots=True)
@@ -453,6 +504,8 @@ class _Stats:
     archived: int = 0
     # News whose time can't be read ("month 13"): read as news without a time.
     unreadable_times: int = 0
+    # The errors of packages that couldn't be read at all, by type.
+    unreadable_packages: list[str] = field(default_factory=list)
 
 
 class SeventeenTrackSync:
@@ -468,6 +521,8 @@ class SeventeenTrackSync:
         self.last_refresh: datetime | None = None
         self.last_error: str | None = None
         self.unreadable_times = 0
+        self.unreadable_packages = 0
+        self._unreadable_state: tuple[int, tuple[str, ...]] = (0, ())
 
     # -- State --------------------------------------------------------------
 
@@ -509,6 +564,7 @@ class SeventeenTrackSync:
             "last_refresh": dt_to_str(self.last_refresh),
             "last_error": self.last_error,
             "unreadable_times": self.unreadable_times,
+            "unreadable_packages": self.unreadable_packages,
             "not_found_by_carrier": self._not_found_by_carrier(),
         }
 
@@ -615,6 +671,7 @@ class SeventeenTrackSync:
         changed |= await self._async_archive(entry_id, packages, now, stats)
         self.last_refresh = now
         self.unreadable_times = stats.unreadable_times
+        self._unreadable(stats.unreadable_packages)
         if stats.added or stats.updated or stats.archived:
             _LOGGER.debug(
                 "17TRACK: added %d, updated %d, archived %d packages",
@@ -626,6 +683,21 @@ class SeventeenTrackSync:
             self.engine.async_changed()
         else:
             self.engine.async_schedule_save()
+
+    @callback
+    def _unreadable(self, errors: list[str]) -> None:
+        """Keep the packages that couldn't be read; log once while it lasts."""
+        state = (len(errors), tuple(sorted(set(errors))))
+        if errors and state != self._unreadable_state:
+            # The error's type only: its text may hold the tracking number.
+            _LOGGER.warning(
+                "17TRACK: Parcels couldn't read %d package%s (%s)",
+                len(errors),
+                "" if len(errors) == 1 else "s",
+                ", ".join(state[1]),
+            )
+        self._unreadable_state = state
+        self.unreadable_packages = len(errors)
 
     @callback
     def _failure(self, action: str, err: BaseException) -> None:
@@ -673,7 +745,7 @@ class SeventeenTrackSync:
             if parcel.archived is not None or parcel.private:
                 continue
             state = parcel.state
-            if state.terminal or (number := current_number(parcel)) is None:
+            if _done(state) or (number := current_number(parcel)) is None:
                 continue
             if len(number) < MIN_NUMBER_CHARS or is_amazon(number, state.carrier):
                 continue
@@ -710,7 +782,12 @@ class SeventeenTrackSync:
         records = self._packages
         failed = self._failed
         adds = 0
-        wanted = sorted(self._wanted().items(), key=lambda item: add_order(item[1]))
+        # A delivery Parcels only inferred needs 17TRACK less than parcels on
+        # their way.
+        wanted = sorted(
+            self._wanted().items(),
+            key=lambda item: (item[1].state.inferred, add_order(item[1])),
+        )
         for number, parcel in wanted:
             if number in records:
                 continue
@@ -791,49 +868,62 @@ class SeventeenTrackSync:
             package = packages.get(number)
             if package is None or record.get("archived"):
                 continue
-            parcel = self._parcel_for(number, record)
-            if parcel is None or parcel.archived is not None:
-                continue
-            if current_number(parcel) != number:
-                continue
-            raw_status = slugify(str(package.get("status") or ""))
-            record["status"] = raw_status
-            info = clip_text(package.get("info_text")) or clip_text(
-                package.get("location")
-            )
-            status = map_status(raw_status, info)
-            if status is None:
-                continue
             try:
-                time = _package_time(package, now)
-            except ValueError:
-                time = None
-                stats.unreadable_times += 1
-            history: list[dict[str, Any]] = record.setdefault("history", [])
-            key = (status.value, info, dt_to_str(time))
-            if (
-                history
-                and (
-                    history[-1].get("status"),
-                    history[-1].get("info"),
-                    history[-1].get("at"),
-                )
-                == key
-            ):
-                continue
-            history.append(
-                {
-                    "status": status.value,
-                    "info": info,
-                    "at": dt_to_str(time),
-                    "time": dt_to_str(time or now),
-                }
-            )
-            del history[:-MAX_HISTORY]
-            self._apply(number, parcel, history, now)
-            stats.updated += 1
-            changed = True
+                changed |= self._update_status(number, record, package, now, stats)
+            except Exception as err:
+                # One package Parcels can't read mustn't stop the others. It's
+                # read again at the next refresh.
+                stats.unreadable_packages.append(type(err).__name__)
         return changed
+
+    def _update_status(
+        self,
+        number: str,
+        record: dict[str, Any],
+        package: Mapping[str, Any],
+        now: datetime,
+        stats: _Stats,
+    ) -> bool:
+        parcel = self._parcel_for(number, record)
+        if parcel is None or parcel.archived is not None:
+            return False
+        if current_number(parcel) != number:
+            return False
+        raw_status = slugify(str(package.get("status") or ""))
+        record["status"] = raw_status
+        info = clip_text(package.get("info_text")) or clip_text(package.get("location"))
+        status = map_status(raw_status, info)
+        if status is None:
+            return False
+        try:
+            time = _package_time(package, now)
+        except ValueError:
+            time = None
+            stats.unreadable_times += 1
+        history: list[dict[str, Any]] = record.get("history") or []
+        key = (status.value, info, dt_to_str(time))
+        if (
+            history
+            and (
+                history[-1].get("status"),
+                history[-1].get("info"),
+                history[-1].get("at"),
+            )
+            == key
+        ):
+            return False
+        entry = {
+            "status": status.value,
+            "info": info,
+            "at": dt_to_str(time),
+            "time": dt_to_str(time or now),
+        }
+        history = [*history, entry][-MAX_HISTORY:]
+        self._apply(number, parcel, history, now)
+        # Kept once applied, so news that failed is read again.
+        record["history"] = history
+        stats.updated += 1
+        return True
 
     def _apply(
         self,
@@ -848,19 +938,19 @@ class SeventeenTrackSync:
                 status = ParcelStatus(entry.get("status"))
             except ValueError:
                 continue
+            at = dt_from_str(entry.get("at"))
+            time = dt_from_str(entry.get("time")) or now
             events.append(
                 ParcelEvent(
-                    time=dt_from_str(entry.get("time")) or now,
+                    time=time,
                     source=Source.SEVENTEENTRACK,
                     status=status,
                     label=entry.get("info"),
+                    # News without a time is placed when Parcels read it.
+                    undated=at is None,
+                    by=time if at is None else None,
                     # Relative days count from the package's own time only.
-                    **tracker_details(
-                        entry.get("info"),
-                        status,
-                        dt_from_str(entry.get("at")),
-                        self.engine.tz,
-                    ),
+                    **tracker_details(entry.get("info"), status, at, self.engine.tz),
                 )
             )
         first = min((event.time for event in events), default=now)
@@ -926,7 +1016,7 @@ class SeventeenTrackSync:
     ) -> bool:
         if parcel is None:
             return True
-        if parcel.archived is not None or parcel.private or parcel.state.terminal:
+        if parcel.archived is not None or parcel.private or _done(parcel.state):
             return True
         if self._left_out(number, parcel, now):
             return True
@@ -936,6 +1026,15 @@ class SeventeenTrackSync:
             and added is not None
             and now - added >= NOT_FOUND_ARCHIVE
         )
+
+
+def _done(state: ParcelState) -> bool:
+    """Return whether a parcel is done with 17TRACK.
+
+    A delivery Parcels only inferred isn't: 17TRACK's news can confirm it or
+    take it back.
+    """
+    return state.terminal and not state.inferred
 
 
 def _drop_origin(parcel: Parcel, number: str, now: datetime) -> bool:

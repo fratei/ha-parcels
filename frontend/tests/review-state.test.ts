@@ -171,7 +171,12 @@ describe("filteredTitle", () => {
 });
 
 describe("e-mails Parcels couldn't read", () => {
-  const unread = (count: number, senders: string[]) => ({ count, senders, newest: null });
+  const unread = (count: number, senders: string[], unnamed = 0) => ({
+    count,
+    senders,
+    unnamed,
+    newest: null,
+  });
 
   test("say nothing when every e-mail was read", () => {
     assert.equal(unreadEmailsText(unread(0, ["a.example"])), null);
@@ -194,6 +199,23 @@ describe("e-mails Parcels couldn't read", () => {
     );
   });
 
+  test("say when a sender isn't known", () => {
+    assert.equal(unreadEmailsText(unread(1, [], 1)), "Couldn't read 1 e-mail.");
+    assert.equal(unreadEmailsText(unread(3, [], 3)), "Couldn't read 3 e-mails.");
+    assert.equal(
+      unreadEmailsText(unread(2, ["ups.com"], 1)),
+      "Couldn't read 2 e-mails, from ups.com and an unknown sender.",
+    );
+    assert.equal(
+      unreadEmailsText(unread(4, ["ups.com", "a.example"], 2)),
+      "Couldn't read 4 e-mails, from ups.com, a.example and unknown senders.",
+    );
+    assert.equal(
+      unreadEmailsText(unread(6, ["ups.com", "a.example", "b.example", "c.example"], 1)),
+      "Couldn't read 6 e-mails, from ups.com, a.example, b.example and others.",
+    );
+  });
+
   test("say what trying again did", () => {
     assert.equal(
       unreadRetryText({ read: 1, failed: 1, gone: 1 }),
@@ -212,7 +234,7 @@ describe("the week card's link to Needs review", () => {
   test("counts what the review tab lists, the unread e-mails as one item", () => {
     const review = [{ id: "r1" }, { id: "r2" }] as ReviewItem[];
     const merge_suggestions = [{ id: "m1" }] as MergeSuggestion[];
-    const unread = (count: number) => ({ count, senders: [], newest: null });
+    const unread = (count: number) => ({ count, senders: [], unnamed: 0, newest: null });
     assert.equal(reviewCount({ review, merge_suggestions, unread_emails: unread(3) }), 4);
     assert.equal(reviewCount({ review, merge_suggestions, unread_emails: unread(0) }), 3);
     assert.equal(reviewCount({ review: [], merge_suggestions: [], unread_emails: unread(0) }), 0);

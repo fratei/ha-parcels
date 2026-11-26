@@ -574,19 +574,24 @@ def settings_json(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
 def unread_emails_json(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
     """Return how many e-mails Parcels gave up on reading, and from whom.
 
-    The senders are registrable domains, newest first. Only administrators
-    see the review lists, so only they get them.
+    The senders are registrable domains, newest first. `unnamed` counts the
+    e-mails whose sender isn't known, as their headers never downloaded.
+    Only administrators see the review lists, so only they get them.
     """
     records = engine.gave_up_emails() if viewer.is_admin else []
     senders: list[str] = []
+    unnamed = 0
     for record in records:
         domain = organizational_domain(record.sender_domain)
-        if domain and domain not in senders:
+        if not domain:
+            unnamed += 1
+        elif domain not in senders:
             senders.append(domain)
     newest = records[0] if records else None
     return {
         "count": len(records),
         "senders": senders[:UNREAD_SENDERS],
+        "unnamed": unnamed,
         "newest": dt_to_str(newest.received or newest.seen) if newest else None,
     }
 

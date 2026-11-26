@@ -599,18 +599,18 @@ async def test_fetch_unparseable(
     ],
     ids=["500", "403"],
 )
-async def test_metadata_failure_skips_the_email_after_three_tries(
+async def test_metadata_failure_is_reported_not_raised(
     gmail_client: GmailClient,
     aioclient_mock: AiohttpClientMocker,
     caplog: pytest.LogCaptureFixture,
     response: dict[str, Any],
     error: type[MailError],
 ) -> None:
-    """An e-mail whose headers can't be read stops the sync three times.
+    """An e-mail whose headers can't be read doesn't stop the sync.
 
-    The cursor stays, so the next sync tries it again; the third failure
-    skips it and the sync goes on. A refusal for one e-mail isn't the
-    mailbox's: it doesn't ask to sign in again.
+    The sync reports it with its error, for Parcels to try again, and moves
+    on. A refusal for one e-mail isn't the mailbox's: it doesn't ask to sign
+    in again.
     """
     aioclient_mock.get(
         f"{GMAIL}/history",
@@ -631,17 +631,116 @@ async def test_metadata_failure_skips_the_email_after_three_tries(
     aioclient_mock.get(f"{GMAIL}/messages/m6", json=meta_item("m6"))
     cursor = {"history_id": "1000", "pending": []}
 
-    for _ in range(2):
-        with pytest.raises(MailError) as exc_info:
-            await gmail_client.async_sync(cursor, lookback=LOOKBACK)
-        assert type(exc_info.value) is error
     result = await gmail_client.async_sync(cursor, lookback=LOOKBACK)
 
     assert ids(result.messages) == ["m4", "m6"]
+    assert list(result.failed) == ["m5"]
+    assert type(result.failed["m5"]) is error
     assert result.complete
     assert result.cursor == {"history_id": "1012", "pending": []}
-    assert paths(aioclient_mock).count("messages/m5") == 3
+    assert paths(aioclient_mock).count("messages/m5") == 1
     assert "m5" not in caplog.text
+
+
+async def test_metadata_rate_limit_stops_the_sync(
+    gmail_client: GmailClient, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A rate limit concerns the mailbox: the sync stops, and lists again."""
+    aioclient_mock.get(
+        f"{GMAIL}/history",
+        json={
+            "history": [
+                added(("m4", ("INBOX",)), ("m5", ("INBOX",)), record_id="1005")
+            ],
+            "historyId": "1012",
+        },
+    )
+    aioclient_mock.get(f"{GMAIL}/messages/m4", json=meta_item("m4"))
+    aioclient_mock.get(
+        f"{GMAIL}/messages/m5",
+        status=429,
+        json={"error": {"errors": [{"reason": "rateLimitExceeded"}]}},
+    )
+
+    with pytest.raises(MailRateLimited):
+        await gmail_client.async_sync(
+            {"history_id": "1000", "pending": []}, lookback=LOOKBACK
+        )
+
+
+async def test_fetch_meta(
+    gmail_client: GmailClient, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """The headers of one e-mail are read again, as the sync reads them."""
+    aioclient_mock.get(f"{GMAIL}/messages/m1", json=meta_item("m1"))
+
+    meta = await gmail_client.async_fetch_meta("m1")
+
+    assert meta == MessageMeta(
+        provider_id="m1",
+        message_id="<m1@shop.example>",
+        sender="envios@shop.example",
+        sender_name="Loja Exempló",
+        subject="Encomenda enviada ✓",
+        received=RECEIVED,
+        sent=SENT,
+        folder="inbox",
+        preview="Your order '1' has shipped",
+    )
+    request = aioclient_mock.mock_calls[0][1]
+    assert request.query["format"] == "metadata"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [{"status": 404}, {"json": meta_item("m1", "TRASH")}],
+    ids=["deleted", "trash"],
+)
+async def test_fetch_meta_of_an_email_gone(
+    gmail_client: GmailClient,
+    aioclient_mock: AiohttpClientMocker,
+    response: dict[str, Any],
+) -> None:
+    """An e-mail deleted or in the trash has no headers to read."""
+    aioclient_mock.get(f"{GMAIL}/messages/m1", **response)
+
+    assert await gmail_client.async_fetch_meta("m1") is None
+
+
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        ({"status": 500}, MailServerError),
+        (
+            {
+                "status": 403,
+                "json": {"error": {"errors": [{"reason": "forbidden"}]}},
+            },
+            MailError,
+        ),
+        (
+            {
+                "status": 429,
+                "json": {"error": {"errors": [{"reason": "rateLimitExceeded"}]}},
+            },
+            MailRateLimited,
+        ),
+    ],
+    ids=["500", "403", "429"],
+)
+async def test_fetch_meta_failure(
+    gmail_client: GmailClient,
+    aioclient_mock: AiohttpClientMocker,
+    response: dict[str, Any],
+    error: type[MailError],
+) -> None:
+    """Reading the headers fails with the error of the request."""
+    aioclient_mock.get(f"{GMAIL}/messages/m1", **response)
+
+    with pytest.raises(MailError) as exc_info:
+        await gmail_client.async_fetch_meta("m1")
+
+    assert type(exc_info.value) is error
 
 
 async def test_fetch_refused(

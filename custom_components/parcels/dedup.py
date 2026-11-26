@@ -4263,7 +4263,10 @@ def undo_delivery(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel:
     Taking back the user's own brings back the news before it, which can be
     a delivery Parcels inferred: nothing stops a delivery from being marked,
     inferred or reported again. An inferred one taken back isn't inferred
-    again. A delivery that was reported can't be taken back.
+    again. A delivery that was reported can't be taken back. When the
+    user's mark was all that was left of the parcel, e.g. after its e-mails
+    were removed, the parcel goes with it, as a parcel left without origins
+    always does.
     """
     parcel = data.parcels[parcel_id]
     if own := hand_delivery_events(parcel):
@@ -4277,7 +4280,7 @@ def undo_delivery(data: ParcelsData, parcel_id: str, now: datetime) -> Parcel:
             and all(getattr(origin, key) is None for key in UPDATABLE_FIELDS)
             and not any(event.origin == edits for event in parcel.events)
         ):
-            del parcel.origins[edits]
+            remove_origins(data, parcel, {edits}, now)
     elif any(event.inferred for event in parcel.events):
         parcel.events = [event for event in parcel.events if not event.inferred]
         parcel.delivery_rejected = True

@@ -1956,6 +1956,50 @@ def test_undo_a_delivery_marked_before_a_merge() -> None:
     assert manual_origin_id(second) in parcel.origins
 
 
+def test_undoing_the_mark_of_a_parcel_left_without_emails_deletes_it() -> None:
+    """Only the mark kept the parcel after its e-mail went: it goes with it.
+
+    As when a parcel's e-mails go, a parcel left without origins is deleted.
+    """
+    data = ParcelsData()
+    pid = apply_contribution(
+        data, contribution("msg:a#0", carrier="dpd", number=DPD), T0
+    ).parcel_id
+    mark_delivered(data, pid, at(hours=1))
+    remove_message(data, "a", at(hours=2))
+    assert set(data.parcels[pid].origins) == {manual_origin_id(pid)}
+
+    undo_delivery(data, pid, at(hours=3))
+
+    assert pid not in data.parcels
+
+
+def test_undoing_a_kept_delivery_of_a_parcel_left_without_emails_deletes_it() -> None:
+    """The same for a delivery Parcels inferred and the user kept."""
+    data = ParcelsData()
+    pid = apply_contribution(
+        data, contribution("msg:a#0", carrier="dpd", number=DPD), T0
+    ).parcel_id
+    data.parcels[pid].events.append(
+        ParcelEvent(
+            time=at(hours=1),
+            source=Source.PARSER,
+            status=S.DELIVERED,
+            kind=MailKind.DELIVERED,
+            inferred=True,
+        )
+    )
+    kept = update_parcel(data, pid, {"confirm_delivery": True}, at(hours=2))
+    assert kept.state.status is S.DELIVERED
+    assert not kept.state.inferred
+    remove_message(data, "a", at(hours=3))
+    assert set(data.parcels[pid].origins) == {manual_origin_id(pid)}
+
+    undo_delivery(data, pid, at(hours=4))
+
+    assert pid not in data.parcels
+
+
 def test_anchored_contribution() -> None:
     """An anchored contribution joins the parcel holding its anchor, or nothing."""
     data = ParcelsData()

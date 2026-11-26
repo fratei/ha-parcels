@@ -12,12 +12,10 @@ import logging
 from typing import Any
 from urllib.parse import quote
 
-import aiohttp
-
 from ..const import PROVIDER_GOOGLE
 from ..parsers import normalize
 from ..parsers.base import MailMessage
-from . import ApiClient, MessageMeta, SyncResult, TokenGetter, async_parse, text
+from . import ApiClient, MessageMeta, SyncResult, async_parse, text
 from .errors import (
     MAILBOX_ERRORS,
     MailError,
@@ -33,8 +31,6 @@ LIST_PAGE_SIZE = 100
 HISTORY_PAGE_SIZE = 500
 MAX_PAGES = 20
 MAX_METADATA_FETCHES = 200
-# Failed header reads of one e-mail before the sync skips it.
-META_ATTEMPTS = 3
 SKIP_LABELS = frozenset({"TRASH", "SENT", "DRAFT", "CHAT"})
 METADATA_HEADERS = ("From", "Subject", "Message-ID", "Date")
 
@@ -150,17 +146,6 @@ class GmailClient(ApiClient):
         }
     )
 
-    def __init__(
-        self,
-        session: aiohttp.ClientSession,
-        get_token: TokenGetter,
-        *,
-        address: str | None = None,
-    ) -> None:
-        """Initialise the client with no failed header reads."""
-        super().__init__(session, get_token, address=address)
-        self._meta_failures: dict[str, int] = {}
-
     async def _async_profile(self) -> dict[str, Any]:
         """Return the mailbox profile."""
         return await self.async_get_json(f"{GMAIL_URL}/profile")
@@ -184,7 +169,9 @@ class GmailClient(ApiClient):
         """Return e-mails added since ``cursor``, or within ``lookback``.
 
         ``folders`` is ignored: Gmail has labels, not folders. Gmail may
-        return e-mails seen before, so the caller deduplicates.
+        return e-mails seen before, so the caller deduplicates. An e-mail
+        whose headers fail to download is reported in ``failed``, and the
+        others are read: the mailbox's own errors fail the sync.
         """
         state: Mapping[str, Any] = cursor if isinstance(cursor, Mapping) else {}
         history_id = _history_id(state.get("history_id"))
@@ -226,24 +213,15 @@ class GmailClient(ApiClient):
         batch = pending_ids[:MAX_METADATA_FETCHES]
         rest = pending_ids[MAX_METADATA_FETCHES:]
         messages: list[MessageMeta] = []
+        failed: dict[str, Exception] = {}
         for message_id in batch:
             try:
-                meta = await self._async_meta(message_id)
+                meta = await self.async_fetch_meta(message_id)
             except MAILBOX_ERRORS:
                 raise
-            except MailError:
-                # The sync fails and is tried again until one e-mail failed
-                # META_ATTEMPTS times; that e-mail is then skipped.
-                failures = self._meta_failures.pop(message_id, 0) + 1
-                if failures < META_ATTEMPTS:
-                    self._meta_failures[message_id] = failures
-                    raise
-                _LOGGER.warning(
-                    "Skipping an e-mail whose headers failed to download %d times",
-                    failures,
-                )
+            except MailError as err:
+                failed[message_id] = err
                 continue
-            self._meta_failures.pop(message_id, None)
             if meta is not None:
                 messages.append(meta)
 
@@ -251,7 +229,10 @@ class GmailClient(ApiClient):
         if query:
             new_cursor |= {"query": query, "page_token": page_token}
         return SyncResult(
-            messages=messages, cursor=new_cursor, complete=complete and not rest
+            messages=messages,
+            cursor=new_cursor,
+            complete=complete and not rest,
+            failed=failed,
         )
 
     async def _async_list(
@@ -320,8 +301,8 @@ class GmailClient(ApiClient):
                 return ids, _history_id(page.get("historyId")) or last, True
         return ids, last, False
 
-    async def _async_meta(self, message_id: str) -> MessageMeta | None:
-        """Return the headers of one e-mail, or None to skip it."""
+    async def async_fetch_meta(self, message_id: str) -> MessageMeta | None:
+        """Return the headers of one e-mail; None once it's deleted or trashed."""
         try:
             item = await self.async_get_json(
                 f"{GMAIL_URL}/messages/{quote(message_id, safe='')}",

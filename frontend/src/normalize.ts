@@ -347,6 +347,7 @@ function normalizeUnreadEmails(raw: unknown): UnreadEmails {
   return {
     count: count(unread.count),
     senders: strs(unread.senders).filter(Boolean),
+    unnamed: count(unread.unnamed),
     newest: str(unread.newest),
   };
 }

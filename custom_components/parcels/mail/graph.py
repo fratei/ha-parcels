@@ -163,7 +163,7 @@ class GraphClient(ApiClient):
         return messages, {"next_link": str(url)}, False
 
     @staticmethod
-    def _meta(item: Mapping[str, Any], folder: str) -> MessageMeta:
+    def _meta(item: Mapping[str, Any], folder: str | None) -> MessageMeta:
         """Return the headers of a Graph message."""
         sender = item.get("from")
         email = sender.get("emailAddress") if isinstance(sender, Mapping) else None
@@ -181,6 +181,18 @@ class GraphClient(ApiClient):
             folder=folder,
             preview=text(item.get("bodyPreview")),
         )
+
+    async def async_fetch_meta(self, provider_id: str) -> MessageMeta | None:
+        """Return the headers of one e-mail; None once it's deleted."""
+        try:
+            item = await self.async_get_json(
+                f"{GRAPH_URL}/me/messages/{quote(provider_id, safe='')}",
+                params={"$select": META_SELECT},
+                per_message=True,
+            )
+        except MailNotFound:
+            return None
+        return self._meta(item, None)
 
     async def async_fetch(self, provider_id: str) -> MailMessage:
         """Download one e-mail with its HTML body and Internet headers."""
