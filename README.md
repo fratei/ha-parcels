@@ -56,7 +56,16 @@ api.parcel.app, which Parcels contacts itself with your API key.
   gets a parcel of its own, and Parcels asks in **Needs review** whether to
   merge the two. A late order e-mail joins its order's parcel even once that
   parcel was delivered or archived, without reopening it, unless the parcel
-  holds other items. An e-mail that
+  holds other items. A number you type when adding or editing a parcel,
+  without a carrier or with "Other", may be the shop's order number rather
+  than a tracking number, as with Leroy Merlin: the shop's e-mails that name
+  that order join the parcel, and adding a parcel by such a number joins the
+  order's only open parcel without a tracking number. Once an e-mail names
+  it as the order's, it's no longer the parcel's tracking number: Parcels
+  stops following it on 17TRACK, and drops 17TRACK's news about it, at the
+  next refresh, and the carrier's number from the e-mails takes its place.
+  A number typed with a carrier, or in a carrier's format, stays a tracking
+  number. An e-mail that
   arrives late never moves a parcel back to an earlier status. An order's
   cancellation cancels its parcel while the parcel shows as ordered, or while
   no news says that it shipped: a tracking number, an Amazon shipment, or a
@@ -134,7 +143,9 @@ api.parcel.app, which Parcels contacts itself with your API key.
   show as the code of the pickup point the parcel then goes to. A code you
   typed while the parcel was out for delivery stays its delivery PIN. Back
   at the point it left, without having gone out for delivery, they show
-  again, the last day to collect included.
+  again, the last day to collect included, but the days to collect it don't
+  come back as its expected date, so the Parcels page lists it under **No
+  date yet**.
 - **Parcels without a tracking number**: when a carrier delivers another
   parcel from the same shop around the expected day, and no e-mail says
   otherwise, the parcel is marked as probably delivered, unless that delivery
@@ -201,8 +212,11 @@ api.parcel.app, which Parcels contacts itself with your API key.
   "GLS PT Informa"), its text or a link. A marketplace seller shows as
   **Sold by**. The survey Leroy Merlin sends after a shipment never creates
   a parcel: it marks the parcel with that shipment number delivered, after
-  its last news and no later than the survey. Newsletters, from
-  mailing.leroymerlin.pt, are ignored.
+  its last news and no later than the survey. Leroy Merlin's newsletters
+  come from mailing.leroymerlin.pt, which also sends news about orders,
+  such as "A encomenda … foi expedida do nosso armazém": an e-mail from
+  there counts as a newsletter, and is ignored, only when it has no status
+  and names no order or shipment.
 - **Returns**: an item you send back to a shop becomes a return of its own,
   apart from the parcel it came in, which keeps its delivery day. The return
   shows on its pickup day, in its own color and with an outgoing-parcel icon.
@@ -314,9 +328,14 @@ api.parcel.app, which Parcels contacts itself with your API key.
   never appear in entity states or attributes, the recorder, events,
   Parcels' own logs, diagnostics, the persistent notification or the
   notifications of iPads and Android phones, and reach iPhones only with the
-  option below. Parcels hides a PIN once its parcel is delivered, returned
-  or cancelled, and deletes it at the nightly cleanup or when the parcel is
-  archived. It hides a pickup code once the parcel leaves its pickup point.
+  option below. The one exception is a code you pass to the `parcels.update`
+  action: Home Assistant fires every action call with its data as a
+  `call_service` event, which the recorder keeps. A code you type in
+  **Needs review** on the Parcels page goes over Parcels' own websocket
+  commands, which aren't recorded. Parcels hides a PIN once its parcel is
+  delivered, returned or cancelled, and deletes it at the nightly cleanup
+  or when the parcel is archived. It hides a pickup code once the parcel
+  leaves its pickup point.
   A delivery that Parcels only inferred keeps its PIN in the details until
   the parcel is archived, in case it hasn't arrived.
 - **Delivery PINs on the lock screen** are off by default. With **Show
@@ -730,8 +749,10 @@ was left, and can't open its details. A return of a private parcel
 is private too: others see only "Private return" on its day. Parcels never
 guesses that someone else's e-mail or parcel goes with a private parcel, by
 its shop and date for example, since they would then see it: it suggests the
-merge instead to those who can see both, and merging shares the parcel. What
-isn't a guess still joins, such as an e-mail with the parcel's tracking
+merge instead, and merging shares the parcel. Suggestions show only to
+administrators who can see both parcels, so one about a parcel private to
+people who aren't administrators shows to no one. What isn't a guess still
+joins, such as an e-mail with the parcel's tracking
 number, and shares it too. Adding or editing a parcel by hand can't join
 someone else's private parcel: Parcels refuses a tracking number, shipment
 reference (such as a Paack order ID) or order number that it has, saying the
@@ -742,7 +763,13 @@ card, with **Needs review** and **Filtered**, shows only to administrators.
 
 Parcels knows Amazon, Shop, Shopify stores, Leroy Merlin Portugal and the
 carriers above. Their e-mails are added straight away when DKIM or DMARC
-passes. An e-mail with parcel details from any other sender waits in
+passes. One that Parcels can't read, but whose subject looks like shipping
+mail, or whose text names an order or a parcel number in shipping words,
+such as "A sua encomenda 123456789 foi expedida", goes to the local AI or
+waits in **Needs review**; it's never taken for an e-mail about no parcel.
+Two of them from one sender within 7 days raise the repair "Shipping
+e-mails from … aren't understood" (see [Troubleshooting](#troubleshooting)).
+An e-mail with parcel details from any other sender waits in
 **Needs review**; one with nothing parcel-like goes to **Filtered**, or is
 skipped when its sender isn't authenticated. In **Needs review** you can:
 
@@ -1373,7 +1400,12 @@ Assistant host through Ollama; e-mails never leave your network.
      "AI", for you to accept or correct.
    - **Automatic**: results from known or trusted senders that pass every
      check are added straight away, still marked "AI" until you confirm them;
-     the rest go to review.
+     the rest go to review. Only a result with a tracking number or a
+     shipment reference from the e-mail, or an order e-mail's order number,
+     is added this way: a delivery or shipping e-mail that names only the
+     order always waits in **Needs review**, and joins the order's parcel
+     (see **Each parcel once** in [What it does](#what-it-does)) once you
+     accept it.
 
 Parcels only sends e-mails from senders whose DKIM or DMARC passes, one at a
 time and newest first. The refunds and returns that the parsers recognize are
@@ -1382,12 +1414,13 @@ confidence waits in **Needs review**.
 
 **Filling in what a parser missed**: when a parser reads an e-mail but leaves
 out the delivery date, the items, or a shipping e-mail's tracking number or
-carrier, Parcels asks the AI for those details only, after the e-mails no
-parser read and for up to 20 e-mails a day. The parser's values always stay.
-In Suggest mode the details wait in **Needs review** as "The local AI found
-details the parser missed"; accept them to add them to the parcel. In
-Automatic mode they're added straight away, and the parcel shows "AI" until
-you confirm them in its details.
+carrier, and the parcel doesn't have them either, such as a parcel that left
+its pickup point without a new date, Parcels asks the AI for those details
+only, after the e-mails no parser read and for up to 20 e-mails a day. The
+parser's values always stay. In Suggest mode the details wait in **Needs
+review** as "The local AI found details the parser missed"; accept them to
+add them to the parcel. In Automatic mode they're added straight away, and
+the parcel shows "AI" until you confirm them in its details.
 
 **Check again**: an open parcel without a date has a **Check again** button in
 its details, for administrators. Parcels downloads the parcel's newest e-mails
@@ -1493,7 +1526,7 @@ downloaded or read, headers included, doesn't turn it on.
 
 | Action | What it does |
 | --- | --- |
-| `parcels.add` | Adds a parcel by tracking number and returns its ID. |
+| `parcels.add` | Adds a parcel by tracking number, or by the shop's order number (see **Each parcel once** in [What it does](#what-it-does)), and returns its ID. |
 | `parcels.update` | Corrects a parcel's details, confirms what the AI found, or keeps an automatic merge or inferred delivery. |
 | `parcels.mark_delivered` | Marks a parcel delivered now. `parcels.undo_delivery` takes that back. |
 | `parcels.archive` | Archives a parcel. |
@@ -1517,7 +1550,10 @@ downloaded or read, headers included, doesn't turn it on.
 `tracking_number`. They never carry item names. Returns fire no events, and
 neither do deliveries that Parcels only inferred, taking them back, archived
 parcels, or news more than a day old, such as old e-mails read in a mailbox's
-first sync. When the carrier reports an inferred delivery later, or you mark
+first sync. Neither do the changes Parcels makes once as it starts after an
+update, such as the statuses that came back when 17TRACK's news without a
+time became news without a date (see [Troubleshooting](#troubleshooting)).
+When the carrier reports an inferred delivery later, or you mark
 it delivered or keep it, `parcels_status_changed`, with the status the news
 gave before as `previous_status`, and `parcels_delivered` fire. News read
 together with an inferred delivery fires if that delivery is taken back.
@@ -1611,6 +1647,27 @@ actions:
   for them. After the update, Parcels reads once more the Leroy Merlin
   e-mails whose local AI reading was rejected, and adds the ones it now
   understands. The others stay in **Needs review**.
+- **A Leroy Merlin order is missing, and its e-mail isn't in Needs review or
+  Filtered.** Before 0.1.25, Parcels took every e-mail from
+  mailing.leroymerlin.pt for a newsletter, also news about an order such as
+  "A encomenda … foi expedida do nosso armazém". After the update, when its
+  first mail check ends, Parcels downloads once more the e-mails from
+  leroymerlin.pt and its subdomains of the last 30 days that it took for no
+  parcel, at most 50 and newest first, and reads them with its parsers,
+  never the local AI. Current news, whose expected day hasn't passed or,
+  without one, from the last 7 days, adds its parcel or updates it. Older
+  news only joins the parcel it's about, such as one you added by hand with
+  the order number (see **Each parcel once** in
+  [What it does](#what-it-does)), and never reopens a parcel that was
+  delivered or archived. As in a first sync, news more than a day old fires
+  no events. An e-mail the parsers can't read waits in **Needs review** when
+  it looks like shipping news (see
+  [Trusted and ignored senders](#trusted-and-ignored-senders)). E-mails from
+  ignored senders are skipped. The hub's diagnostics count the e-mails read,
+  those that now add to a parcel, those waiting in review, the older ones
+  that found no parcel, those left as they were, those deleted since, those
+  that couldn't be downloaded or read and those over the limit
+  (`leroymerlin_mailing_check`).
 - **A Paack parcel shows only "Paack" as its shop.** Versions before 0.1.7
   couldn't read the shop Paack's e-mails name. After the update, when its
   first mail check ends, Parcels downloads once more the Paack e-mails of the
@@ -1871,7 +1928,8 @@ actions:
   Amazon's e-mails in Europe don't give, so Amazon's newer news couldn't
   take a parcel from an Amazon Locker. After the update, while no carrier
   is known and none has sent news, a shop with its own delivery service
-  counts as the carrier.
+  counts as the carrier, so Amazon's newer news, a delay notice included,
+  takes the parcel from the locker.
 - **An iPad or Android phone still said "Out for delivery" after newer
   news.** In 0.1.21, when the carrier's newer news took a parcel out for
   delivery or ready for pickup back to in transit, iPads and Android phones
@@ -1900,9 +1958,11 @@ actions:
   a pickup point, such news took it back to in transit. After the update,
   it's news without a date Parcels can read (see **Statuses** in
   [What it does](#what-it-does)). Parcels changes the stored news once, so
-  those parcels show their status again, without an event, and the news's
-  details say "Date not known". The hub's diagnostics count the parcels
-  whose news it changed (`seventeentrack_timeless_repaired`).
+  those parcels show their status again, silently: no
+  `parcels_status_changed` event fires (see [Events](#events)), and the
+  news's details say "Date not known". The hub's diagnostics count the
+  parcels whose news it changed, including those whose status stayed
+  (`seventeentrack_timeless_repaired`).
 - **17TRACK's news showed again at every refresh.** Before 0.1.23,
   17TRACK's news timed after the moment Parcels read it was stored again at
   each refresh, as new news, so its copies pushed the parcel's older
@@ -1972,7 +2032,9 @@ actions:
   after updating to 0.1.11 (`paack_shop_check`), the check that read Amazon's
   e-mails again after updating to 0.1.16 (`amazon_ai_check`) and the one
   that read again those whose AI answer you accepted after updating to
-  0.1.18 (`amazon_accepted_check`), the shapes of
+  0.1.18 (`amazon_accepted_check`), the one that read again Leroy Merlin's
+  e-mails taken for no parcel after updating to 0.1.25
+  (`leroymerlin_mailing_check`), the shapes of
   Amazon's shipment IDs (`amazon_shipment_ids`), the Amazon shipments that
   Amazon's tracking linked to a carrier's package since 0.1.13 (`made`) and
   the guesses it undid since 0.1.16 (`undone`), and at the last

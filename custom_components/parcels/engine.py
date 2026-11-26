@@ -66,6 +66,7 @@ from .const import (
     REASON_UNKNOWN_SENDER,
     SIGNAL_AI_UPDATED,
     SIGNAL_DATA_UPDATED,
+    UNTRACKED_GRACE,
     AIMode,
     MailKind,
     ParcelStatus,
@@ -155,7 +156,13 @@ from .models import (
 from .parcelapp.sync import DATES_REPAIR_KEY, repair_parcel_dates
 from .parsers import NOTE_KNOWN_SENDER_UNPARSED, is_refund, parse_message
 from .parsers.auth import verify_sender
-from .parsers.base import MailMessage, ParseResult, SenderVerdict, message_hash
+from .parsers.base import (
+    MailMessage,
+    ParsedShipment,
+    ParseResult,
+    SenderVerdict,
+    message_hash,
+)
 from .parsers.prefilter import is_candidate
 from .parsers.senders import (
     is_free_mail,
@@ -295,6 +302,15 @@ AMAZON_AI_CHECK_MAX = 100
 # limit as above; then Amazon's cancellations taken for partial ones cancel
 # their parcel where it hasn't shipped. Then it holds what the check found.
 AMAZON_ACCEPTED_CHECK_KEY = "amazon_accepted_check"
+# Set when the store of an earlier release is loaded. Once the mailboxes were
+# read, Leroy Merlin's recent e-mails that releases before 0.1.25 took for
+# newsletters or no parcel are read again by the parsers. Then it holds what
+# the check found.
+LEROYMERLIN_MAILING_CHECK_KEY = "leroymerlin_mailing_check"
+# The check reads Leroy Merlin's e-mails of this many recent days...
+LEROYMERLIN_MAILING_CHECK_WINDOW = timedelta(days=30)
+# ... at most this many, newest first.
+LEROYMERLIN_MAILING_CHECK_MAX = 50
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -580,6 +596,7 @@ class ParcelsEngine:
             PAACK_SHOP_CHECK_KEY,
             AMAZON_AI_CHECK_KEY,
             AMAZON_ACCEPTED_CHECK_KEY,
+            LEROYMERLIN_MAILING_CHECK_KEY,
         ):
             data.engine.setdefault(
                 key,
@@ -701,6 +718,13 @@ class ParcelsEngine:
             and not {"started", "done"} & accepted_check.keys()
         ):
             accepted = dt_from_str(accepted_check.get("before"))
+        mailing_check = engine.get(LEROYMERLIN_MAILING_CHECK_KEY)
+        mailing = None
+        if (
+            isinstance(mailing_check, dict)
+            and not {"started", "done"} & mailing_check.keys()
+        ):
+            mailing = dt_from_str(mailing_check.get("before"))
         fill = not engine.get(FILL_CHECK_KEY)
         paack = not engine.get(PAACK_CHECK_KEY)
         leroymerlin = not engine.get(LEROYMERLIN_CHECK_KEY)
@@ -709,6 +733,7 @@ class ParcelsEngine:
             and shops is None
             and amazon_ai is None
             and accepted is None
+            and mailing is None
             and not (fill or paack or leroymerlin)
         ):
             return
@@ -721,6 +746,8 @@ class ParcelsEngine:
             amazon_check["started"] = dt_to_str(dt_util.utcnow())
         if accepted is not None:
             accepted_check["started"] = dt_to_str(dt_util.utcnow())
+        if mailing is not None:
+            mailing_check["started"] = dt_to_str(dt_util.utcnow())
         engine[FILL_CHECK_KEY] = True
         engine[PAACK_CHECK_KEY] = True
         engine[LEROYMERLIN_CHECK_KEY] = True
@@ -734,6 +761,7 @@ class ParcelsEngine:
                 fill=fill,
                 paack=paack,
                 leroymerlin=leroymerlin,
+                leroymerlin_mailing=mailing,
             ),
             "parcels checks",
         )
@@ -1703,12 +1731,17 @@ class ParcelsEngine:
         first_sync: bool,
         now: datetime,
         reread: bool = False,
+        use_ai: bool = True,
+        keep_closed: bool = False,
     ) -> None:
         """Apply, queue, review, filter or ignore a parsed e-mail.
 
         An e-mail read again (``reread``) keeps its parcels until a new
         reading replaces them: under review, or while the local AI reads it,
-        they stay as they were.
+        they stay as they were. ``use_ai`` False keeps the local AI out: it
+        doesn't read the e-mail or fill in or check what the parsers read;
+        what they can't read goes to review. With ``keep_closed``, a parcel
+        put away or closed stays so.
         """
         org = organizational_domain(message.sender_domain)
         if reread:
@@ -1745,9 +1778,10 @@ class ParcelsEngine:
                     time=self.message_time(message, now),
                     label=org,
                     now=now,
+                    keep_closed=keep_closed,
                 )
                 received = record.received or now
-                if not (
+                if use_ai and not (
                     (
                         not first_sync
                         or now - received <= timedelta(days=AI_FIRST_SYNC_DAYS)
@@ -1795,7 +1829,8 @@ class ParcelsEngine:
         )
         received = record.received or now
         if (
-            self.ai_active
+            use_ai
+            and self.ai_active
             and verdict.authenticated
             and (not first_sync or now - received <= timedelta(days=AI_FIRST_SYNC_DAYS))
         ):
@@ -2818,16 +2853,17 @@ class ParcelsEngine:
         fill: bool,
         paack: bool,
         leroymerlin: bool,
+        leroymerlin_mailing: datetime | None = None,
     ) -> None:
         """Run the one-time checks in turn.
 
         Returns first, as they can remove parcels. Paack's, Leroy Merlin's
-        and then Amazon's e-mails last, so that what the parsers read then
-        isn't filled in by the local AI: first those only the AI read, then
-        those whose AI answer the user accepted, so that Amazon's
-        cancellations are judged on the parsers' reading. The shops of
-        Paack's parcels at the very end, once the e-mails under review were
-        read.
+        (both checks) and then Amazon's e-mails last, so that what the
+        parsers read then isn't filled in by the local AI: first those only
+        the AI read, then those whose AI answer the user accepted, so that
+        Amazon's cancellations are judged on the parsers' reading. The shops
+        of Paack's parcels at the very end, once the e-mails under review
+        were read.
         """
         if before is not None:
             await self._async_returns_check(before)
@@ -2837,6 +2873,8 @@ class ParcelsEngine:
             await self._async_rejected_check(_paack_rejected, "Paack")
         if leroymerlin:
             await self._async_rejected_check(_leroymerlin_rejected, "Leroy Merlin")
+        if leroymerlin_mailing is not None:
+            await self._async_leroymerlin_mailing_check(leroymerlin_mailing)
         if amazon_ai is not None:
             await self._async_amazon_ai_check(amazon_ai)
         if accepted is not None:
@@ -2923,6 +2961,141 @@ class ParcelsEngine:
             self.async_changed()
         else:
             self.async_schedule_save()
+
+    def _leroymerlin_mailing_keys(self, before: datetime, now: datetime) -> list[str]:
+        """Return Leroy Merlin's e-mails taken for no parcel, newest first.
+
+        Those of the last 30 days that an earlier release, before ``before``,
+        took for a newsletter or no parcel. Senders the user ignores never
+        count.
+        """
+        data = self.data
+        since = now - LEROYMERLIN_MAILING_CHECK_WINDOW
+
+        def received(key: str) -> datetime:
+            record = data.messages[key]
+            return record.received or record.seen
+
+        keys = [
+            key
+            for key, record in data.messages.items()
+            if record.state is MessageState.NOT_PARCEL
+            and record.seen < before
+            and received(key) >= since
+            and (info := lookup(record.sender_domain)) is not None
+            and info.parser == "leroymerlin"
+            and not self.is_ignored(record.sender_domain)
+        ]
+        return sorted(keys, key=received, reverse=True)
+
+    def _makes_parcel(
+        self, result: ParseResult, record: MessageRecord, now: datetime
+    ) -> bool:
+        """Return True when an e-mail read late may add a parcel of its own.
+
+        Only current news does: an expected day not yet past or, without one,
+        an e-mail of the last days. Older news only joins its parcel, so that
+        a parcel delivered long ago doesn't come back as late.
+        """
+        etas = [shipment.eta for shipment in result.shipments if shipment.eta]
+        if etas:
+            today = dt_util.now(self.tz).date()
+            return any(eta.end >= today for eta in etas)
+        return now - (record.received or record.seen) <= UNTRACKED_GRACE
+
+    async def _async_leroymerlin_mailing_check(self, before: datetime) -> None:
+        """Read Leroy Merlin's e-mails taken for no parcel again, once.
+
+        Releases before 0.1.25 took every e-mail from mailing.leroymerlin.pt
+        for a newsletter, orders and deliveries too. Each e-mail is
+        downloaded and read again by the parsers, never the AI: what they
+        can't read goes to review. Current news adds its parcel and older
+        news only joins the parcel it's about, without reopening a parcel
+        that was put away. Nothing changes when the e-mail changed state
+        while it was read.
+        """
+        data = self.data
+        keys = self._leroymerlin_mailing_keys(before, dt_util.utcnow())
+        counts = dict.fromkeys(
+            ("read", "applied", "review", "old", "kept", "gone", "failed"), 0
+        )
+        counts["skipped"] = max(0, len(keys) - LEROYMERLIN_MAILING_CHECK_MAX)
+        readings: list[
+            tuple[
+                MessageRecord, MailMessage, MailboxRuntime, SenderVerdict, ParseResult
+            ]
+        ] = []
+        for key in keys[:LEROYMERLIN_MAILING_CHECK_MAX]:
+            if (record := data.messages.get(key)) is None:
+                continue
+            fetched = await self.async_refetch(record)
+            message, mailbox = fetched.message, fetched.mailbox
+            if message is None or mailbox is None:
+                counts["gone" if fetched.gone else "failed"] += 1
+                continue
+            if (read := await self.async_read(message)) is None:
+                counts["failed"] += 1
+                continue
+            counts["read"] += 1
+            readings.append((record, message, mailbox, *read))
+        now = dt_util.utcnow()
+        # Current news first, so that older news finds the parcel it's about;
+        # each in the order the e-mails came.
+        decisions = sorted(
+            (
+                (self._makes_parcel(reading[4], reading[0], now), reading)
+                for reading in readings
+            ),
+            key=lambda decision: (
+                not decision[0],
+                decision[1][0].received or decision[1][0].seen,
+                decision[1][0].hash,
+            ),
+        )
+        for current, (record, message, mailbox, verdict, result) in decisions:
+            key = record.hash
+            if (
+                data.messages.get(key) is not record
+                or record.state is not MessageState.NOT_PARCEL
+            ):
+                counts["kept"] += 1
+                continue
+            if not current and is_confident(result):
+                result = replace(
+                    result,
+                    shipments=[
+                        replace(shipment, attach_only=True)
+                        for shipment in result.shipments
+                    ]
+                    or [ParsedShipment(attach_only=True)],
+                )
+            self._decide(
+                message,
+                verdict,
+                result,
+                record,
+                mailbox=mailbox.entry_id,
+                owner=record.owners[0] if record.owners else mailbox.owner,
+                first_sync=False,
+                now=dt_util.utcnow(),
+                reread=True,
+                use_ai=False,
+                keep_closed=True,
+            )
+            if record.state is MessageState.APPLIED:
+                counts["applied" if message_outputs(data, key) else "old"] += 1
+            elif record.state is MessageState.REVIEW:
+                counts["review"] += 1
+            else:
+                counts["kept"] += 1
+        check = data.engine.setdefault(LEROYMERLIN_MAILING_CHECK_KEY, {})
+        check["done"] = dt_to_str(dt_util.utcnow())
+        check["counts"] = counts
+        if counts["applied"] or counts["review"] or counts["old"]:
+            self.async_changed()
+        else:
+            self.async_schedule_save()
+        _LOGGER.debug("Leroy Merlin's e-mails read again: %s", counts)
 
     def _amazon_check_messages(self, before: datetime, now: datetime) -> list[str]:
         """Return Amazon's e-mails of the last 30 days read before ``before``.
@@ -3688,6 +3861,7 @@ class ParcelsEngine:
             "paack_shop_check": data.engine.get(PAACK_SHOP_CHECK_KEY),
             "amazon_ai_check": data.engine.get(AMAZON_AI_CHECK_KEY),
             "amazon_accepted_check": data.engine.get(AMAZON_ACCEPTED_CHECK_KEY),
+            "leroymerlin_mailing_check": data.engine.get(LEROYMERLIN_MAILING_CHECK_KEY),
             "recent_emails": self._recent_emails(dt_util.utcnow()),
             "working_days": self.workdays.source,
             "amazon_shipment_ids": amazon_shipment_id_counts(data, dt_util.utcnow()),

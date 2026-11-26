@@ -305,7 +305,7 @@ def test_survey_closes_the_shipment_tracked_by_its_number() -> None:
     ],
 )
 def test_newsletters_are_not_parcels(subject: str) -> None:
-    """The newsletters come from a subdomain and are never about a parcel."""
+    """The newsletters come from a subdomain and name no order or shipment."""
     result = _lm(
         subject,
         "Descubra as novidades da semana para a sua casa.\n",
@@ -313,6 +313,81 @@ def test_newsletters_are_not_parcels(subject: str) -> None:
     )
 
     assert result.parser == "leroymerlin"
+    assert result.kind is MailKind.NOT_PARCEL
+
+
+WAREHOUSE_ORDER = "001234567890"
+FROM_WAREHOUSE = (
+    "Olá Cliente Exemplo,\n"
+    f"A sua encomenda {WAREHOUSE_ORDER} foi expedida do nosso armazém.\n"
+    "A entrega está prevista para dia 04-12-2026.\n"
+    "Acompanhe aqui aqui o estado da sua encomenda.\n"
+    "Será contactado pelo transportador, no dia anterior, com a informação "
+    "do horário de entrega.\n"
+    "Caso tenha alguma dúvida, contacte 800 000 000\n"
+    "A Equipa LEROY MERLIN\n"
+)
+MAILING = "delivery@mailing.leroymerlin.pt"
+
+
+def test_order_mail_from_the_newsletter_subdomain() -> None:
+    """The subdomain sends order e-mails too, and they're read."""
+    result = _lm(
+        f"A encomenda {WAREHOUSE_ORDER} foi expedida do nosso armazém",
+        FROM_WAREHOUSE,
+        sender=MAILING,
+    )
+
+    assert result.parser == "leroymerlin"
+    assert result.kind is MailKind.SHIPPED
+    assert result.merchant == "Leroy Merlin"
+    assert result.order_numbers == (WAREHOUSE_ORDER,)
+    assert result.confidence >= CONFIDENCE_APPLY
+    [shipment] = result.shipments
+    assert shipment.eta == eta("2026-12-04")
+    assert shipment.tracking_number is None
+
+
+@pytest.mark.parametrize(
+    ("subject", "text"),
+    [
+        pytest.param(
+            "Informação sobre a sua encomenda", FROM_WAREHOUSE, id="status-in-body"
+        ),
+        pytest.param(
+            f"Encomenda {WAREHOUSE_ORDER}",
+            f"Olá Cliente Exemplo,\nA sua encomenda {WAREHOUSE_ORDER}.\n",
+            id="number-without-status",
+        ),
+        pytest.param(
+            "Uma mensagem para si",
+            f"Olá Cliente Exemplo,\nA sua encomenda {WAREHOUSE_ORDER} foi expedida.\n",
+            id="plain-subject",
+        ),
+        pytest.param(
+            "A sua encomenda foi expedida",
+            "Olá Cliente Exemplo,\nAté breve!\n",
+            id="status-without-number",
+        ),
+    ],
+)
+def test_the_subdomain_alone_never_makes_a_newsletter(subject: str, text: str) -> None:
+    """With a status or a number, an e-mail reads as from the main domain."""
+    mailing = _lm(subject, text, sender=MAILING)
+    main = _lm(subject, text, sender="delivery@leroymerlin.pt")
+
+    assert mailing == main
+    assert mailing.kind is not MailKind.NOT_PARCEL
+
+
+def test_bounce_from_the_newsletter_subdomain() -> None:
+    """A bounce quotes someone else's e-mail and is never a parcel."""
+    result = _lm(
+        "Undeliverable: A sua encomenda",
+        FROM_WAREHOUSE,
+        sender="mailer-daemon@mailing.leroymerlin.pt",
+    )
+
     assert result.kind is MailKind.NOT_PARCEL
 
 

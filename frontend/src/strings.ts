@@ -99,6 +99,10 @@ export const STRINGS = {
     "Not confirmed: Amazon's tracking of these orders fits this delivery's times. Merge the ones that came in it, and rule out the rest.",
   possibleHintAmazonDeliveryOne:
     "Not confirmed: Amazon's tracking of this order fits this delivery's times. Merge the order if it came in it, or rule it out.",
+  possibleHintSameOrderMany:
+    "Not confirmed: these name the same order, which may come in more than one package. Merge the one about this package, or rule out the others.",
+  possibleHintSameOrderOne:
+    "Not confirmed: both name the same order, which may come in more than one package. Merge it if it's about the same package, or rule it out.",
   candidateEmail: "1 e-mail from {name}",
   candidateEmails: "{count} e-mails from {name}",
   candidateUpdate: "1 update from {name}",

@@ -21,6 +21,11 @@ the subject has one, weak keywords don't count either. Keywords
 are folded (lowercase, no accents), matched as whole words, and may hold
 small regular expressions; a space matches any whitespace and an
 apostrophe matches ' or its typographic form.
+
+``has_shipping_words`` applies the strong keywords to a downloaded body,
+for the parser dispatcher's safety net. There an order-number label alone
+("Order number", "Número de encomenda") doesn't count: invoices and
+account e-mails name the order too.
 """
 
 from __future__ import annotations
@@ -33,6 +38,8 @@ from .senders import lookup, organizational_domain
 
 # Only this much of subject + preview is looked at.
 MAX_CHARS = 2000
+# And this much of a body, by has_shipping_words.
+BODY_CHARS = 20_000
 
 MARKETING_PHRASES: dict[str, tuple[str, ...]] = {
     "en": (
@@ -628,8 +635,23 @@ _ORDER_NUMBER_RE = re.compile(
     r"|:\s*#?\s*\d{3,})"
 )
 _URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
-_EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
+# Starts only where a run of address characters starts: linear on long runs.
+_EMAIL_RE = re.compile(r"(?<![\w.+\-])[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 _OPTIONAL_SPACE_RE = re.compile(r" \?")
+# The strong keywords that only label an order's number: invoices and
+# account e-mails name the order too, so in a body they aren't news.
+_ORDER_LABELS = (
+    r"order (?:number|no|nr)",
+    r"numero (?:de|da|do|del) (?:encomenda|pedido)",
+    r"n\.? ?[o\u00b0]\.? ?(?:de |da |do )?(?:encomenda|pedido)",
+    r"(?:bestell|auftrags)nummer",
+    "bestellnr",
+    r"numero de commande",
+    r"n\.? ?[o\u00b0]\.? ?(?:de )?commande",
+    r"numero (?:d'|dell')?ordine",
+    r"n\. ordine",
+    r"(?:bestel|order)nummer",
+)
 
 
 def _fragment(pattern: str) -> str:
@@ -649,6 +671,7 @@ _MARKETING_PHRASE_RE = _compile(MARKETING_PHRASES.values())
 _MARKETING_RE = _compile(MARKETING_WORDS.values())
 _STRONG_RE = _compile(STRONG_KEYWORDS.values())
 _WEAK_RE = _compile([*WEAK_KEYWORDS.values(), CARRIER_KEYWORDS])
+_ORDER_LABEL_RE = _compile([_ORDER_LABELS])
 
 
 def _sender_domain(sender: str) -> str:
@@ -659,11 +682,25 @@ def _sender_domain(sender: str) -> str:
     return address.rpartition("@")[2].strip().strip(".").lower()
 
 
-def _prepare(subject: str, preview: str) -> str:
-    """Fold subject and preview, without links and advertising phrases."""
-    text = f"{subject}\n{preview}"[:MAX_CHARS]
+def _clean(text: str) -> str:
+    """Fold text, without links, addresses and advertising phrases."""
     text = _EMAIL_RE.sub(" ", _URL_RE.sub(" ", text))
     return _MARKETING_PHRASE_RE.sub(" | ", fold(text))
+
+
+def _prepare(subject: str, preview: str) -> str:
+    """Fold subject and preview, without links and advertising phrases."""
+    return _clean(f"{subject}\n{preview}"[:MAX_CHARS])
+
+
+def has_shipping_words(text: str) -> bool:
+    """Return True when an e-mail body has strong shipping keywords.
+
+    The first ``BODY_CHARS`` are read. Order-number labels alone don't
+    count, nor do links and advertising phrases.
+    """
+    folded = _ORDER_LABEL_RE.sub(" | ", _clean(text[:BODY_CHARS]))
+    return _STRONG_RE.search(folded) is not None
 
 
 def is_candidate(

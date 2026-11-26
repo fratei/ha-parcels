@@ -47,6 +47,7 @@ def _message(
     headers: dict[str, str] | None = None,
     links: tuple[Link, ...] = (),
     auth: AuthResult | None = None,
+    text: str = BODY,
 ) -> MailMessage:
     """Return a synthetic e-mail."""
     return MailMessage(
@@ -58,7 +59,7 @@ def _message(
         sender_name="Example Store",
         subject=subject,
         date=datetime(2026, 11, 17, 9, 30, tzinfo=UTC),
-        text=BODY,
+        text=text,
         links=links,
         auth=auth,
         headers=headers or {},
@@ -257,6 +258,95 @@ def test_known_sender_unparsed(
     message = _message("info@ctt.pt", subject)
     assert parse_message(message, _verdict(message), tz) == expected
     assert calls == ["carrier"]
+
+
+PLAIN_SUBJECT = "Uma mensagem para si"
+
+
+@pytest.mark.parametrize(
+    ("sender", "parser"),
+    [
+        ("info@ctt.pt", "ctt"),
+        ("ship-confirm@amazon.es", "amazon"),
+        ("encomendas@leroymerlin.pt", "leroymerlin"),
+        ("delivery@mailing.leroymerlin.pt", "leroymerlin"),
+    ],
+)
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(
+            "Olá Alex,\nA sua encomenda 001234567890 foi expedida do nosso armazém.\n",
+            id="pt-order",
+        ),
+        pytest.param(
+            "Hello Alex,\nYour order #10045 has been shipped.\n", id="en-order"
+        ),
+        pytest.param(
+            "Hello Alex,\nYour parcel 1Z999AA10123456784 is out for delivery.\n",
+            id="tracking-number",
+        ),
+    ],
+)
+def test_body_names_a_shipped_order(
+    calls: Calls, tz: ZoneInfo, sender: str, parser: str, text: str
+) -> None:
+    """A number and shipping words in the body ask for an update too."""
+    message = _message(sender, PLAIN_SUBJECT, text=text)
+    assert parse_message(message, _verdict(message), tz) == ParseResult(
+        parser=parser, kind=MailKind.UNKNOWN, confidence=0.0, notes=UNPARSED_NOTES
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(BODY, id="no-number"),
+        pytest.param(
+            "Olá Alex,\nSegue em anexo a fatura da encomenda n.º 001234567890.\n",
+            id="no-shipping-words",
+        ),
+        # A number's label alone isn't news about the order.
+        pytest.param(
+            "Olá Alex,\nNúmero de encomenda: 001234567890\nSegue em anexo a fatura.\n",
+            id="pt-label",
+        ),
+        pytest.param(
+            "Hello Alex,\nOrder number: 10045. Your invoice is attached.\n",
+            id="en-label",
+        ),
+    ],
+)
+def test_body_without_shipping_news(calls: Calls, tz: ZoneInfo, text: str) -> None:
+    """Without both a number and shipping words, other mail is skipped."""
+    message = _message("info@ctt.pt", PLAIN_SUBJECT, text=text)
+    assert parse_message(message, _verdict(message), tz) == ParseResult(
+        parser="ctt", kind=MailKind.NOT_PARCEL, confidence=0.9
+    )
+
+
+def test_body_check_error_is_not_a_silent_skip(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    calls: Calls,
+    tz: ZoneInfo,
+) -> None:
+    """If the body can't be checked, an unread e-mail goes to review."""
+
+    def explode(*args: object, **kwargs: object) -> bool:
+        raise RuntimeError(SECRET)
+
+    monkeypatch.setattr(parsers.prefilter, "has_shipping_words", explode)
+    caplog.set_level(logging.DEBUG)
+    message = _message(
+        "ship-confirm@amazon.es",
+        OTHER_SUBJECT,
+        text=f"Hello Alex, {SECRET}. Your order #10045.",
+    )
+    result = parse_message(message, _verdict(message), tz)
+    assert result.kind is MailKind.UNKNOWN
+    assert result.notes == UNPARSED_NOTES
+    _assert_no_content_logged(caplog, "Body check failed: RuntimeError")
 
 
 @pytest.mark.parametrize(

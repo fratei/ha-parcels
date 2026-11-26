@@ -455,4 +455,20 @@ describe("possible matches", () => {
     );
     assert.match(possibleHint(mixed), /^Not confirmed: the carrier's e-mails for these deliveries/);
   });
+
+  test("say when news may be about another package of the same order", () => {
+    const out = box("out", "2026-07-18", { status: "out_for_delivery", delivered_at: null });
+    const delivery = makeParcel({ ...order, id: "delivery", status: "delivered" });
+    const suggestions = [suggestion("s1", out, [delivery], "same_order")];
+    const one =
+      "Not confirmed: both name the same order, which may come in more than one package. Merge it if it's about the same package, or rule it out.";
+    assert.equal(possibleHint(possibleMatches(suggestions, "delivery")), one);
+    assert.equal(possibleHint(possibleMatches(suggestions, "out")), one);
+    const returned = makeParcel({ ...order, id: "returned", status: "returned" });
+    const two = possibleMatches([...suggestions, suggestion("s2", out, [returned], "same_order")], "out");
+    assert.equal(
+      possibleHint(two),
+      "Not confirmed: these name the same order, which may come in more than one package. Merge the one about this package, or rule out the others.",
+    );
+  });
 });

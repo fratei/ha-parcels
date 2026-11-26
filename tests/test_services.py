@@ -1453,6 +1453,34 @@ async def test_private_order_refused(
     assert engine.data.parcels[mine].state.merchant == shop
 
 
+async def test_number_typed_as_a_private_order_s_refused(
+    hass: HomeAssistant, engine: ParcelsEngine, sam: User
+) -> None:
+    """A number typed as the order of someone else's private parcel is refused.
+
+    The parcel would join it. An automation may add it.
+    """
+    order = "001234567890"
+    private = apply_contribution(
+        engine.data,
+        contribution(
+            "msg:alexmail#0",
+            merchant="Loja Exemplo",
+            orders=(order,),
+            owner=OWNER,
+            private=True,
+        ),
+        dt_util.utcnow(),
+    ).parcel_id
+
+    data = {"tracking_number": order, "merchant": "Loja Exemplo"}
+    await refused(hass, "add", data, "not_allowed", user=sam)
+    assert list(engine.data.parcels) == [private]
+
+    assert await add(hass, order, merchant="Loja Exemplo") == private
+    assert list(engine.data.parcels) == [private]
+
+
 async def test_shared_and_own_parcels_allowed(
     hass: HomeAssistant, engine: ParcelsEngine, hass_admin_user: MockUser, sam: User
 ) -> None:

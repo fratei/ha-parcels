@@ -2874,6 +2874,39 @@ async def test_corrected_number_replaces_the_old_one(
     assert status(engine, parcel.id) is ParcelStatus.SHIPPED
 
 
+async def test_number_typed_as_the_order_s_goes(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """A number typed by hand goes once the shop's e-mail names it as the order's.
+
+    It isn't a tracking number: 17TRACK's news about it goes too.
+    """
+    order = "001234567890"
+    parcel_id = engine.add_parcel(order, merchant="Loja Exemplo")
+    await tracker.async_refresh()
+    track.put(order)
+    await tracker.async_refresh()
+
+    assert set(records(engine)) == {order}
+    assert news(engine, parcel_id, order)
+
+    now = dt_util.utcnow()
+    applied = apply_contribution(
+        engine.data,
+        contribution("msg:shop#0", time=now, merchant="Loja Exemplo", orders=(order,)),
+        now,
+    )
+    engine.async_changed()
+    track.calls.clear()
+    await tracker.async_refresh()
+
+    assert applied.parcel_id == parcel_id
+    assert track.calls == [get_call(track), archive_call(track, order)]
+    assert records(engine) == {}
+    assert origin_id(order) not in engine.data.parcels[parcel_id].origins
+    assert engine.data.parcels[parcel_id].state.tracking_number is None
+
+
 async def test_merged_parcels_keep_their_current_number(
     engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
 ) -> None:

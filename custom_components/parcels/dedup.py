@@ -362,15 +362,33 @@ def parcel_order_keys(parcel: Parcel) -> set[str]:
 
 
 def order_parcels(
-    data: ParcelsData, key: str, *, include_archived: bool = True
+    data: ParcelsData, key: str, *, include_archived: bool = True, typed: bool = False
 ) -> list[Parcel]:
-    """Return the parcels of an order."""
+    """Return the parcels of an order.
+
+    With ``typed``, also the ones whose number, typed by hand, may be the
+    order's (see typed_order_key()).
+    """
     return [
         parcel
         for parcel in data.parcels.values()
         if (include_archived or parcel.archived is None)
-        and key in parcel_order_keys(parcel)
+        and (
+            key in parcel_order_keys(parcel)
+            or (typed and typed_order_key(parcel) == key)
+        )
     ]
+
+
+def typed_order_key(parcel: Parcel) -> str | None:
+    """Return the key of the order a number typed by hand may be, or None.
+
+    See ParcelState.typed_number.
+    """
+    state = parcel.state
+    if state.typed_number is None:
+        return None
+    return order_key(state.merchant, state.typed_number)
 
 
 def shipment_parcels(data: ParcelsData, shipment: str) -> list[Parcel]:
@@ -456,11 +474,13 @@ def join_keys(parcel: Parcel) -> set[JoinKey]:
     """Return the keys the deduplication can join a parcel to others by.
 
     Its tracking numbers, whatever the carrier, shipment references, orders
-    and Amazon shipments.
+    and Amazon shipments, and the order a number typed by hand may be.
     """
     keys: set[JoinKey] = {("number", key.number) for key in parcel_numbers(parcel)}
     keys.update(("reference", *key) for key in parcel_reference_keys(parcel))
     keys.update(("order", key) for key in parcel_order_keys(parcel))
+    if typed := typed_order_key(parcel):
+        keys.add(("order", typed))
     keys.update(("shipment", value) for value in parcel.state.amazon_shipment_ids)
     return keys
 
@@ -658,6 +678,21 @@ def _untracked(parcel: Parcel) -> bool:
     )
 
 
+def _typed_order_only(parcel: Parcel, key: str) -> bool:
+    """Return True for an open parcel known only by a number typed as order ``key``.
+
+    No e-mail has said yet whether the number is the order's.
+    """
+    state = parcel.state
+    return (
+        parcel.archived is None
+        and not state.terminal
+        and not state.typed_order
+        and not state.amazon_shipment_ids
+        and typed_order_key(parcel) == key
+    )
+
+
 def _finished(parcel: Parcel) -> bool:
     """Return True for a parcel that news or the user closed, not a guess."""
     state = parcel.state
@@ -794,7 +829,8 @@ def _absorbable(
 
     That's the order's only such parcel, unless it lists other items. Of
     several, it's the only one with the shipment's items: a guess, returned
-    apart from the sure ones, which the user can undo.
+    apart from the sure ones, which the user can undo. A parcel whose only
+    number was typed as the order's counts as one without a number.
     """
     sure: set[str] = set()
     guessed: set[str] = set()
@@ -805,8 +841,8 @@ def _absorbable(
     for key in origin_order_keys(origin):
         candidates = [
             parcel
-            for parcel in order_parcels(data, key, include_archived=False)
-            if _untracked(parcel)
+            for parcel in order_parcels(data, key, include_archived=False, typed=True)
+            if _untracked(parcel) or _typed_order_only(parcel, key)
         ]
         several = len(candidates) > 1
         if items:
@@ -864,6 +900,30 @@ def _same_order_target(
     return None
 
 
+def _typed_target(data: ParcelsData, origin: Origin) -> str | None:
+    """Return the order's parcel that a number typed by hand as its order names.
+
+    That's the order's only open parcel without a number. A number typed
+    with a carrier ("Other" is none), or in a carrier's format, is a
+    tracking number.
+    """
+    number = origin.tracking_number
+    if (
+        origin.source is not Source.MANUAL
+        or not number
+        or origin.carrier not in (None, "other")
+        or detect_carrier(number)
+        or (key := order_key(origin.merchant, number)) is None
+    ):
+        return None
+    candidates = [
+        parcel.id
+        for parcel in order_parcels(data, key, include_archived=False)
+        if _untracked(parcel)
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _order_only_target(
     data: ParcelsData,
     origin: Origin,
@@ -874,11 +934,14 @@ def _order_only_target(
     """Pick the parcel that order-level news without a number belongs to.
 
     It's one of the order's parcels, archived ones only with
-    ``include_archived``: see _order_pick().
+    ``include_archived``: see _order_pick(). A parcel whose number was typed
+    as the order's is one of them.
     """
     parcels: dict[str, Parcel] = {}
     for key in origin_order_keys(origin):
-        for parcel in order_parcels(data, key, include_archived=include_archived):
+        for parcel in order_parcels(
+            data, key, include_archived=include_archived, typed=True
+        ):
             if not _conflicts(parcel, origin):
                 parcels[parcel.id] = parcel
     if not parcels:
@@ -1296,6 +1359,8 @@ def apply_contribution(
                 absorb_reason = REASON_SAME_ORDER
             else:
                 ambiguous = True
+        if not targets and not ambiguous and (typed := _typed_target(data, origin)):
+            targets = {typed}
         reason = reason or absorb_reason
     elif not targets:
         target, reason, ambiguous = _reference_target(data, origin)

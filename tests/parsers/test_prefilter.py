@@ -11,6 +11,7 @@ from custom_components.parcels.parsers.prefilter import (
     MARKETING_PHRASES,
     STRONG_KEYWORDS,
     WEAK_KEYWORDS,
+    has_shipping_words,
     is_candidate,
 )
 
@@ -288,6 +289,37 @@ def test_order_number_patterns_pass() -> None:
 def test_strong_keyword_beats_advertising() -> None:
     """A real status phrase passes even next to an offer."""
     assert is_candidate(UNKNOWN, "Your order has shipped - free returns for 30 days")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A sua encomenda 001234567890 foi expedida do nosso armazém.",
+        "Número de encomenda: 001234567890. A sua encomenda foi expedida.",
+        "Ihre Sendungsnummer: 00340434161094042557",
+        # Bodies are read further than subjects.
+        "Olá Alex,\n" + "Novidades da semana. " * 150 + "A encomenda foi expedida.",
+    ],
+)
+def test_body_shipping_words(text: str) -> None:
+    """A body's status phrases and parcel-number labels count."""
+    assert has_shipping_words(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Número de encomenda: 001234567890. Segue em anexo a fatura.",
+        "Order number: 10045. Your invoice is attached.",
+        "Bestellnummer 100234: Ihre Rechnung",
+        "Numéro de commande 123456 : votre facture",
+        "Free shipping on your next order!",
+        "See https://example.com/out-for-delivery",
+    ],
+)
+def test_body_without_shipping_words(text: str) -> None:
+    """An order-number label alone, an offer or a link doesn't count."""
+    assert not has_shipping_words(text)
 
 
 # Subjects of e-mails that only give a delivery or pickup code, and of

@@ -4,7 +4,9 @@ Leroy Merlin sends its own e-mails about orders and marketplace shipments
 ("Encomenda em distribuição!", "Envio entregue. Até breve!"), a survey
 after each shipment, and some of its carriers' notices from its own domain
 under the carrier's name ("GLS PT Informa"). Its newsletters come from a
-subdomain (mailing.leroymerlin.pt) and are never about a parcel.
+subdomain (mailing.leroymerlin.pt), which sends some order e-mails too: an
+e-mail from there is a newsletter only when it has no status and names no
+order or shipment.
 
 The e-mails name the order ("Encomenda n.º"), Leroy Merlin's shipment
 number ("Envio n.º"), the marketplace seller ("Vendido e expedido por")
@@ -102,16 +104,14 @@ def parse_leroymerlin(
 ) -> ParseResult | None:
     """Read an e-mail from Leroy Merlin.
 
-    Returns ``NOT_PARCEL`` for newsletters and bounces, and None when the
-    e-mail has no status or nothing that identifies the order or the
-    shipment; the dispatcher then decides between review and ``NOT_PARCEL``.
+    Returns ``NOT_PARCEL`` for bounces and newsletters: e-mails from the
+    newsletter subdomain without a status that name no order or shipment.
+    Returns None when another e-mail has no status or nothing that
+    identifies the order or the shipment; the dispatcher then decides
+    between review and ``NOT_PARCEL``.
     """
-    if message.sender_domain.lower().startswith(_NEWSLETTER_PREFIX) or is_bounce(
-        message
-    ):
-        return ParseResult(
-            parser=PARSER, kind=MailKind.NOT_PARCEL, confidence=NOT_PARCEL_CONFIDENCE
-        )
+    if is_bounce(message):
+        return _not_parcel()
     subject = message.subject[:MAX_SUBJECT_CHARS]
     text = message.text[:SCAN_CHARS]
     language = message.language or detect_language(
@@ -123,7 +123,8 @@ def parse_leroymerlin(
     relayed = brand_carriers(message.sender_name)
     relay = relayed[0] if len(relayed) == 1 else None
     kind, source = detect_kind(subject, text, lang=language)
-    if kind is None and relay is None:
+    newsletter = message.sender_domain.lower().startswith(_NEWSLETTER_PREFIX)
+    if kind is None and relay is None and not newsletter:
         return None
 
     folded = fold_text(text)
@@ -151,6 +152,9 @@ def parse_leroymerlin(
         }
         if len(found) == 1:
             carrier, tracking_number = found.pop()
+    if kind is None and relay is None:
+        # Only from the newsletter subdomain, which sends order e-mails too.
+        return None if orders or reference or tracking_number else _not_parcel()
     if not (orders or reference or tracking_number):
         return None
 
@@ -192,6 +196,12 @@ def parse_leroymerlin(
         confidence=CONFIDENCE if certain else BODY_KIND_CONFIDENCE,
         language=language,
         notes=tuple(notes),
+    )
+
+
+def _not_parcel() -> ParseResult:
+    return ParseResult(
+        parser=PARSER, kind=MailKind.NOT_PARCEL, confidence=NOT_PARCEL_CONFIDENCE
     )
 
 

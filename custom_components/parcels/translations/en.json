@@ -423,7 +423,7 @@
         },
         "pickup_code": {
           "name": "Pickup code",
-          "description": "The code to collect the parcel."
+          "description": "The code to collect the parcel. Home Assistant records every action call with its data, this code included."
         },
         "private": {
           "name": "Private",

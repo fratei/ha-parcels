@@ -888,6 +888,12 @@ class ParcelState:
     # The status's time is when an e-mail reported it, not when it happened:
     # the e-mail didn't say.
     status_reported: bool = False
+    # A number the user typed that may be the shop's order number: no
+    # carrier was given ("Other" is none), its format is no carrier's, and no
+    # e-mail has it as a tracking number. ``typed_order``: an e-mail names it
+    # as the order's, so it's no longer the tracking number.
+    typed_number: str | None = None
+    typed_order: bool = False
 
     @property
     def carrier_name(self) -> str | None:
@@ -1071,6 +1077,30 @@ def _best_carrier(ranked: list[Origin], number: str | None) -> str | None:
     )
 
 
+def _plain_number(number: str | None) -> str:
+    """Return a number's letters and digits, as order keys compare them."""
+    return re.sub(r"[^0-9A-Z]", "", (number or "").upper())
+
+
+def _may_be_order_number(
+    number: str, carrier: str | None, ranked: list[Origin]
+) -> bool:
+    """Return whether a number typed with ``carrier`` may be an order number.
+
+    Only 17TRACK, which Parcels gives the numbers to, may have it.
+    """
+    plain = _plain_number(number)
+    return (
+        carrier in (None, "other")
+        and not detect_carrier(number)
+        and not any(
+            o.source is not Source.SEVENTEENTRACK
+            and _plain_number(o.tracking_number) == plain
+            for o in ranked
+        )
+    )
+
+
 type _EventKey = tuple[datetime, int, str]
 
 
@@ -1237,12 +1267,32 @@ def derive_state(parcel: Parcel) -> ParcelState:
 
     # Tracking number and carrier: a manual edit wins, then the best source,
     # latest first (an international number changes carrier at the border).
+    # A number typed as the shop's order number isn't the tracking number,
+    # nor is the guess 17TRACK made from it.
     number_set, number = manual_value("tracking_number")
-    if not number_set:
-        number = next((o.tracking_number for o in ranked if o.tracking_number), None)
     carrier_set, carrier = manual_value("carrier")
-    if not carrier_set:
-        carrier = _best_carrier(ranked, number)
+    typed_number = (
+        number
+        if number_set and number and _may_be_order_number(number, carrier, ranked)
+        else None
+    )
+    typed_order = typed_number is not None and any(
+        _plain_number(order) == _plain_number(typed_number)
+        for o in origins
+        for order in o.order_numbers
+    )
+    numbered = ranked
+    if typed_order:
+        number_set = False
+        numbered = [
+            o
+            for o in ranked
+            if _plain_number(o.tracking_number) != _plain_number(typed_number)
+        ]
+    if not number_set:
+        number = next((o.tracking_number for o in numbered if o.tracking_number), None)
+    if not carrier_set or (typed_order and carrier == "other"):
+        carrier = _best_carrier(numbered, number) or carrier
 
     # The shop's own e-mails name it best; a bare domain only counts when no
     # e-mail gives a name, and a carrier is never the seller.
@@ -1684,6 +1734,8 @@ def derive_state(parcel: Parcel) -> ParcelState:
         next_attempt=next_attempt if status is ParcelStatus.ATTEMPTED else None,
         left_at=left_at if status is ParcelStatus.DELIVERED else None,
         status_reported=status_reported and status_time is not None,
+        typed_number=typed_number,
+        typed_order=typed_order,
     )
 
 

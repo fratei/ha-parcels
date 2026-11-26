@@ -343,6 +343,9 @@ export function possibleHint(matches: readonly PossibleMatch[]): string {
     }
     return many ? STRINGS.possibleHintAmazonMany : STRINGS.possibleHintAmazonOne;
   }
+  if (matches.length && matches.every((match) => match.reason === "same_order")) {
+    return many ? STRINGS.possibleHintSameOrderMany : STRINGS.possibleHintSameOrderOne;
+  }
   if (delivery) {
     return many ? STRINGS.possibleHintDeliveryMany : STRINGS.possibleHintDeliveryOne;
   }

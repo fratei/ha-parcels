@@ -9,12 +9,14 @@ its markers rather than by the sender. Parsers run for every sender,
 authenticated or not; the engine applies the trust rules afterwards.
 
 When a dedicated parser can't read an e-mail whose subject looks like
-shipping mail, or a shop's e-mail whose body is about a return (a pickup
-label, "your return"), the result is ``UNKNOWN`` with the ``known_sender_unparsed``
-note, so the engine asks the AI and reports that the parser needs an
-update; the sender's other e-mails (marketing, account e-mails) become
-``NOT_PARCEL``. Parser errors never escape: only the parser's name and the
-exception type are logged, at debug level, never anything from the e-mail.
+shipping mail, whose body names an order or a parcel number in shipping
+words ("A sua encomenda 001234567890 foi expedida"), or a shop's e-mail
+whose body is about a return (a pickup label, "your return"), the result
+is ``UNKNOWN`` with the ``known_sender_unparsed`` note, so the engine asks
+the AI and reports that the parser needs an update; the sender's other
+e-mails (marketing, account e-mails, invoices) become ``NOT_PARCEL``.
+Parser errors never escape: only the parser's name and the exception type
+are logged, at debug level, never anything from the e-mail.
 
 Every result but a carrier's then goes through ``sort_returns``: a refund
 becomes ``NOT_PARCEL`` with the ``refund`` note (the engine drops it), and
@@ -45,9 +47,11 @@ from . import (
     returns,
     senders,
     shopify,
+    tracking,
 )
 from .base import MailMessage, ParseResult, SenderVerdict
 from .details import add_details
+from .lang import fold
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,6 +73,12 @@ _SHOPIFY_MAILER = "mailer@shopify.com"
 _SHOPIFY_LINK_RE = re.compile(
     r"^https?://(?:[a-z0-9-]+\.)*(?:cdn\.shopify\.com|myshopify\.com)(?:[:/?#]|$)",
     re.IGNORECASE,
+)
+# "A sua encomenda 001234567890 foi expedida": a number without a label.
+_BARE_NUMBER_RE = re.compile(
+    r"(?<![a-z0-9])(?:order|pedido|encomenda|bestellung|auftrag|commande|ordine"
+    r"|bestelling|envio|shipment|sendung|colis|spedizione|zending)\s+\d{6,}"
+    r"(?![0-9a-z])"
 )
 
 
@@ -215,8 +225,10 @@ def _dedicated(
 
 def _unparsed(name: str, message: MailMessage) -> ParseResult:
     """Result for a known sender's e-mail that its parser couldn't read."""
-    if _looks_like_shipping(message.subject) or (
-        name in _MERCHANT_PARSERS and _about_a_return(message)
+    if (
+        _looks_like_shipping(message.subject)
+        or _numbered_shipping(message)
+        or (name in _MERCHANT_PARSERS and _about_a_return(message))
     ):
         return ParseResult(
             parser=name,
@@ -227,6 +239,26 @@ def _unparsed(name: str, message: MailMessage) -> ParseResult:
     return ParseResult(
         parser=name, kind=MailKind.NOT_PARCEL, confidence=NOT_PARCEL_CONFIDENCE
     )
+
+
+def _numbered_shipping(message: MailMessage) -> bool:
+    """Return True when the body names an order or a parcel in shipping words.
+
+    The subject can be plain ("Uma mensagem para si") while the body says
+    "A sua encomenda 001234567890 foi expedida".
+    """
+    try:
+        text = message.text[: generic.SCAN_CHARS]
+        if not prefilter.has_shipping_words(text):
+            return False
+        return bool(
+            _BARE_NUMBER_RE.search(fold(text))
+            or generic.find_order_numbers(text)
+            or tracking.find_tracking_numbers(text)
+        )
+    except Exception as exc:
+        _LOGGER.debug("Body check failed: %s", type(exc).__name__)
+        return True
 
 
 def _about_a_return(message: MailMessage) -> bool:
