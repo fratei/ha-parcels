@@ -9,7 +9,7 @@ import { suggestionToForm, type FormProblem, type SuggestionForm } from "../src/
 import { normalizeSnapshot } from "../src/normalize.ts";
 import { ParcelsReviewCard } from "../src/review-card.ts";
 import { SHOW_REVIEW_EVENT } from "../src/review-state.ts";
-import type { ReviewItem, Snapshot, Suggestion } from "../src/types.ts";
+import type { FilteredItem, ReviewItem, Snapshot, Suggestion } from "../src/types.ts";
 import { renderText } from "./render.ts";
 
 interface EditFormHost {
@@ -32,6 +32,7 @@ const SUGGESTION: Suggestion = {
   pickup_point: null,
   pickup_code: null,
   items: [],
+  amazon_shipment_id: null,
 };
 
 const ITEM = {
@@ -40,11 +41,13 @@ const ITEM = {
   received: null,
   sender: "shop@example.com",
   sender_domain: "example.com",
+  sender_org: "example.com",
   subject: "Your order",
   mailbox_owner: null,
   reason: "unknown_sender",
   authenticated: true,
   trusted_sender: false,
+  known_sender: false,
   checks: null,
   fill: false,
   errors: [],
@@ -126,5 +129,80 @@ describe("the week card's link to Needs review", () => {
     second._onShowReview(event);
     assert.equal(first._tab, "review");
     assert.equal(second._tab, "filtered");
+  });
+});
+
+describe("review actions", () => {
+  interface ActionsHost {
+    _confirmIgnore: string | null;
+    _snapshots: { snapshot: Snapshot | null };
+    _renderReviewActions(item: ReviewItem, busy: boolean): TemplateResult;
+    _renderFilteredList(items: readonly FilteredItem[]): TemplateResult;
+  }
+
+  function actions(item: ReviewItem, confirmIgnore: string | null = null): string {
+    const card = new ParcelsReviewCard() as unknown as ActionsHost;
+    card._confirmIgnore = confirmIgnore;
+    return renderText(card._renderReviewActions(item, false));
+  }
+
+  const MAILING: ReviewItem = {
+    ...ITEM,
+    sender: "news@mailing.example.com",
+    sender_domain: "mailing.example.com",
+    sender_org: "example.com",
+  };
+
+  test("a sender Parcels already reads can only lose this e-mail", () => {
+    const html = actions({ ...MAILING, known_sender: true });
+    assert.doesNotMatch(html, /Trust this sender|Ignore this sender|data-ignore/);
+    assert.match(
+      html,
+      /title="Remove only this e-mail. Parcels keeps reading the other e-mails from example.com."[^>]*> Dismiss </,
+    );
+  });
+
+  test("ignoring another sender asks first and says what it stops", () => {
+    const asked = actions(MAILING);
+    assert.match(asked, /data-ignore title="Skip e-mails from example.com from now on" aria-disabled="false" aria-expanded="false"/);
+    assert.doesNotMatch(asked, /Ignore every e-mail/);
+
+    const html = actions(MAILING, MAILING.id);
+    assert.match(html, /data-ignore [^>]*aria-expanded="true"/);
+    assert.match(html, /Ignore every e-mail from example.com\? Parcels stops reading its e-mails, including news/);
+    assert.match(html, /class="btn danger primary" aria-disabled="false"> Ignore example.com </);
+    assert.match(html, /data-ignore-cancel> Cancel </);
+  });
+
+  test("a suggestion without a number offers Edit first, not Accept", () => {
+    assert.match(actions(ITEM), /class="btn primary" aria-disabled="false"> Accept </);
+    assert.match(actions(ITEM), /class="btn" data-edit/);
+
+    for (const suggestion of [
+      { ...SUGGESTION, tracking_numbers: [], order_numbers: [] },
+      { ...SUGGESTION, carrier: "not-a-carrier" },
+    ]) {
+      const html = actions({ ...ITEM, suggestion });
+      assert.doesNotMatch(html, /> Accept </);
+      assert.match(html, /class="btn primary" data-edit/);
+    }
+    const amazon = { ...SUGGESTION, tracking_numbers: [], order_numbers: [], amazon_shipment_id: "TESTSHIPMENT1" };
+    assert.match(actions({ ...ITEM, suggestion: amazon }), /> Accept </);
+  });
+
+  test("ignored senders can be read again from Filtered", () => {
+    const card = new ParcelsReviewCard() as unknown as ActionsHost;
+    card._snapshots.snapshot = normalizeSnapshot({
+      settings: { user_is_admin: true },
+      ignored_senders: [{ domain: "example.net", updated: "2030-03-04T09:00:00+00:00" }],
+    });
+    const html = renderText(card._renderFilteredList([]));
+    assert.match(html, /No filtered e-mails\./);
+    assert.match(html, /<h3 class="section-label" id="ignored-senders-title">Ignored senders<\/h3>/);
+    assert.match(html, /data-item-id="ignored-sender:example.net"/);
+    assert.match(html, /aria-label="Stop ignoring example.net" aria-disabled="false"> Stop ignoring </);
+
+    card._snapshots.snapshot = normalizeSnapshot({ settings: { user_is_admin: true } });
+    assert.doesNotMatch(renderText(card._renderFilteredList([])), /Ignored senders/);
   });
 });

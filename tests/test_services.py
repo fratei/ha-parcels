@@ -398,6 +398,7 @@ async def test_hub_not_loaded(hass: HomeAssistant, engine: ParcelsEngine) -> Non
     await refused(hass, "add", {"tracking_number": CTT_NUMBER}, "hub_not_loaded")
     await refused(hass, "refresh", {}, "hub_not_loaded")
     await refused(hass, "trust_sender", {"domain": SHOP}, "hub_not_loaded")
+    await refused(hass, "unignore_sender", {"domain": SHOP}, "hub_not_loaded")
 
 
 # -- Editing parcels ----------------------------------------------------------
@@ -1249,6 +1250,47 @@ async def test_trust_then_ignore_domain(
     assert not prefs.trusted
 
 
+async def test_unignore_sender(hass: HomeAssistant, mail: Mail) -> None:
+    """A sender ignored by mistake is read again, with its recent e-mails."""
+    engine, _ = mail
+    (review,) = engine.data.review.values()
+    await call(hass, "ignore_sender", {"review_id": review.id})
+
+    result = await call(
+        hass, "unignore_sender", {"domain": f" {SHOP.upper()} "}, response=True
+    )
+    await async_wait_reprocess(hass)
+
+    assert result == {"domain": SHOP, "rechecking": 1}
+    assert not engine.data.senders[SHOP].ignored
+    (again,) = engine.data.review.values()
+    assert again.message == review.message
+    assert engine.data.messages[review.message].state is MessageState.REVIEW
+    err = await refused(hass, "unignore_sender", {"domain": SHOP}, "not_ignored")
+    assert err.translation_placeholders == {"domain": SHOP}
+
+
+@pytest.mark.parametrize("service", ["trust_sender", "ignore_sender"])
+async def test_known_sender(hass: HomeAssistant, mail: Mail, service: str) -> None:
+    """A sender Parcels knows is trusted or ignored only by its domain.
+
+    Ignoring it from one e-mail it couldn't read would stop them all.
+    """
+    engine, _ = mail
+    (review,) = engine.data.review.values()
+    # As if a carrier had sent it.
+    review.sender_domain = "email.ups.com"
+
+    err = await refused(hass, service, {"review_id": review.id}, "known_sender")
+
+    assert err.translation_placeholders == {"domain": "ups.com"}
+    assert review.id in engine.data.review
+    assert not engine.data.senders
+    assert await call(hass, service, {"domain": "ups.com"}, response=True) == {
+        "domain": "ups.com"
+    }
+
+
 @pytest.mark.parametrize(
     ("service", "key"),
     [
@@ -1277,7 +1319,9 @@ async def test_free_mail_sender(
         {"domain": SHOP, "review_id": "r_1"},
     ],
 )
-@pytest.mark.parametrize("service", ["trust_sender", "ignore_sender"])
+@pytest.mark.parametrize(
+    "service", ["trust_sender", "ignore_sender", "unignore_sender"]
+)
 async def test_sender_bad_input(
     hass: HomeAssistant, engine: ParcelsEngine, service: str, data: dict[str, Any]
 ) -> None:
@@ -1559,6 +1603,7 @@ async def test_unknown_user(
         ("reprocess", {"parcel_id": "p_1"}),
         ("trust_sender", {"domain": SHOP}),
         ("ignore_sender", {"domain": SHOP}),
+        ("unignore_sender", {"domain": SHOP}),
         ("test_live_activity", {}),
     ],
 )

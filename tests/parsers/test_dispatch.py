@@ -260,6 +260,90 @@ def test_known_sender_unparsed(
     assert calls == ["carrier"]
 
 
+@pytest.mark.parametrize(
+    ("sender", "parser"),
+    [("info@ctt.pt", "ctt"), ("ship-confirm@amazon.es", "amazon")],
+)
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Como correu a sua encomenda #1912?",
+        "Rate your delivery experience",
+        "Fatura da encomenda #1912",
+        "Wie zufrieden waren Sie mit uns?",
+        "Horario especial de Navidad",
+        "Neu: die Post & DHL App",
+        "Your UPS invoice is ready",
+    ],
+)
+def test_known_sender_mail_about_something_else(
+    calls: Calls, tz: ZoneInfo, sender: str, parser: str, subject: str
+) -> None:
+    """Feedback, invoices and notices are skipped, though they name a parcel."""
+    message = _message(sender, subject)
+    assert parse_message(message, _verdict(message), tz) == ParseResult(
+        parser=parser, kind=MailKind.NOT_PARCEL, confidence=0.9
+    )
+
+
+@pytest.mark.parametrize(
+    ("sender", "parser", "subject", "text"),
+    [
+        pytest.param(
+            "info@ctt.pt",
+            "ctt",
+            "Tu opinión nos importa",
+            "Hola Alex,\nTu pedido 1912345 fue entregado ayer. ¿Nos dejas tu opinión?\n",
+            id="carrier",
+        ),
+        pytest.param(
+            "mailer@shopify.com",
+            "shopify",
+            "Gostou das velas?",
+            "Olá Alex,\nA sua encomenda #1912 foi entregue. Deixe a sua avaliação.\n",
+            id="shopify",
+        ),
+        pytest.param(
+            "opiniao@mailing.leroymerlin.pt",
+            "leroymerlin",
+            "Diga-nos o que achou",
+            "Olá Alex,\nA sua encomenda 001234567890 foi entregue. Conte-nos tudo.\n",
+            id="leroymerlin",
+        ),
+        pytest.param(
+            "ship-confirm@amazon.es",
+            "amazon",
+            "Alex, comparte tu opinión",
+            "Hola Alex,\nTu pedido 406-2958173-6604821 fue entregado.\n",
+            id="amazon",
+        ),
+    ],
+)
+def test_feedback_about_a_delivered_order(
+    calls: Calls, tz: ZoneInfo, sender: str, parser: str, subject: str, text: str
+) -> None:
+    """A request for feedback is skipped, though its body names the delivery."""
+    message = _message(sender, subject, text=text)
+    assert parse_message(message, _verdict(message), tz) == ParseResult(
+        parser=parser, kind=MailKind.NOT_PARCEL, confidence=0.9
+    )
+
+
+def test_account_mail_naming_an_order(calls: Calls, tz: ZoneInfo) -> None:
+    """An order added to the shop's account, to follow there, isn't news."""
+    message = _message(
+        "conta@leroymerlin.pt",
+        "A sua conta Leroy Merlin",
+        text=(
+            "Olá Alex,\nA encomenda 001234567890 foi associada à sua conta. "
+            "Acompanhe a sua encomenda na área de cliente.\n"
+        ),
+    )
+    assert parse_message(message, _verdict(message), tz) == ParseResult(
+        parser="leroymerlin", kind=MailKind.NOT_PARCEL, confidence=0.9
+    )
+
+
 PLAIN_SUBJECT = "Uma mensagem para si"
 
 
@@ -286,6 +370,11 @@ PLAIN_SUBJECT = "Uma mensagem para si"
             "Hello Alex,\nYour parcel 1Z999AA10123456784 is out for delivery.\n",
             id="tracking-number",
         ),
+        pytest.param(
+            "Olá Alex,\nA sua encomenda 001234567890 foi expedida. "
+            "Acompanhe a sua encomenda na área de cliente.\n",
+            id="pt-order-account-link",
+        ),
     ],
 )
 def test_body_names_a_shipped_order(
@@ -295,6 +384,20 @@ def test_body_names_a_shipped_order(
     message = _message(sender, PLAIN_SUBJECT, text=text)
     assert parse_message(message, _verdict(message), tz) == ParseResult(
         parser=parser, kind=MailKind.UNKNOWN, confidence=0.0, notes=UNPARSED_NOTES
+    )
+
+
+def test_review_of_a_delivery_address_asks_for_an_update(
+    calls: Calls, tz: ZoneInfo
+) -> None:
+    """A request to review the shipping address is no request for feedback."""
+    message = _message(
+        "info@ctt.pt",
+        "Review and confirm your shipping address",
+        text="Hello Alex,\nYour parcel is on its way. Tracking: 1Z999AA10123456784\n",
+    )
+    assert parse_message(message, _verdict(message), tz) == ParseResult(
+        parser="ctt", kind=MailKind.UNKNOWN, confidence=0.0, notes=UNPARSED_NOTES
     )
 
 
@@ -431,19 +534,34 @@ def test_helper_errors_never_escape(
     _assert_no_content_logged(caplog, "Parser dispatch failed: RuntimeError")
 
 
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("known_sender_subject",),
+        ("not_shipping_topic",),
+        ("known_sender_subject", "not_shipping_topic"),
+    ],
+)
 def test_prefilter_error_is_not_a_silent_skip(
-    monkeypatch: pytest.MonkeyPatch, calls: Calls, tz: ZoneInfo
+    monkeypatch: pytest.MonkeyPatch,
+    calls: Calls,
+    tz: ZoneInfo,
+    caplog: pytest.LogCaptureFixture,
+    names: tuple[str, ...],
 ) -> None:
     """If the subject can't be checked, an unread e-mail goes to review."""
 
     def explode(*args: object, **kwargs: object) -> bool:
         raise RuntimeError(SECRET)
 
-    monkeypatch.setattr(parsers.prefilter, "is_candidate", explode)
+    for name in names:
+        monkeypatch.setattr(parsers.prefilter, name, explode)
     message = _message("ship-confirm@amazon.es", OTHER_SUBJECT)
-    result = parse_message(message, _verdict(message), tz)
+    with caplog.at_level(logging.DEBUG, logger=parsers.__name__):
+        result = parse_message(message, _verdict(message), tz)
     assert result.kind is MailKind.UNKNOWN
     assert result.notes == UNPARSED_NOTES
+    assert SECRET not in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -514,6 +632,49 @@ def test_fixture_not_parsed(
     assert result.kind is kind
     assert result.confidence == confidence
     assert result.notes == notes
+    assert not result.shipments
+
+
+def test_carrier_changed_layout_asks_for_an_update(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+) -> None:
+    """A carrier's shipping e-mail it can't read asks for a parser update."""
+    message = load_eml("carriers/ups_changed_layout_en.eml")
+    result = parse_message(message, verdict_for(message), tz)
+    assert result.parser == "ups"
+    assert result.kind is MailKind.UNKNOWN
+    assert result.confidence == 0.0
+    assert result.notes == UNPARSED_NOTES
+    assert not result.shipments
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "carriers/correos_express_marketing_es",
+        "carriers/dhl_marketing_de",
+        "carriers/gls_marketing_it",
+        "carriers/inpost_marketing_pt",
+        "carriers/mrw_service_notice_es",
+        "carriers/nacex_marketing_es",
+        "carriers/paack_survey_es",
+        "carriers/ups_marketing_en",
+    ],
+)
+def test_carrier_fixtures_about_something_else(
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    path: str,
+) -> None:
+    """A carrier's newsletters, surveys and notices are skipped, not reviewed."""
+    message = load_eml(f"{path}.eml")
+    result = parse_message(message, verdict_for(message), tz)
+    assert result.kind is MailKind.NOT_PARCEL
+    assert result.confidence == 0.9
+    assert not result.notes
     assert not result.shipments
 
 

@@ -57,6 +57,8 @@ MAX_ITEMS = 20
 # Ends the ID of the origin that holds what the local AI filled in for an
 # e-mail a parser read: the parser's origins end in "#0", "#1"…
 FILL_ORIGIN_SUFFIX = "#ai"
+# Marks, in Origin.typed_at, a carrier typed while the number was the order's.
+TYPED_ORDER_MARK = "typed_order"
 
 
 class Source(StrEnum):
@@ -566,7 +568,8 @@ class Origin:
     # The marketplace seller that a shop's e-mail names, besides the shop.
     seller: str | None = None
     # When the user last typed or cleared each field of a manual origin, so
-    # that a pickup point or code he typed belongs to where the parcel was.
+    # that a pickup point or code he typed belongs to where the parcel was,
+    # and TYPED_ORDER_MARK (see derive_state).
     typed_at: dict[str, datetime] = field(default_factory=dict)
 
     @property
@@ -891,7 +894,9 @@ class ParcelState:
     # A number the user typed that may be the shop's order number: no
     # carrier was given ("Other" is none), its format is no carrier's, and no
     # e-mail has it as a tracking number. ``typed_order``: an e-mail names it
-    # as the order's, so it's no longer the tracking number.
+    # as the order's, so it's no longer the tracking number, even once he
+    # types the carrier; a number he typed for the order's parcel before
+    # adding it again under the order's number stays its tracking number.
     typed_number: str | None = None
     typed_order: bool = False
 
@@ -1101,6 +1106,44 @@ def _may_be_order_number(
     )
 
 
+def _carrier_for_order(carrier: Origin | None, number: Origin | None) -> bool:
+    """Return whether the user typed the carrier while the number was the order's.
+
+    ``carrier`` and ``number`` are the manual origins that set them. The
+    carrier is then the order's, so the number stays the order's until
+    it's typed again.
+    """
+    if carrier is None or number is None:
+        return False
+    mark = carrier.typed_at.get(TYPED_ORDER_MARK)
+    return (
+        mark is not None
+        and mark == carrier.typed_at.get("carrier")
+        and mark > number.typed_at.get("tracking_number", number.time)
+    )
+
+
+def _number_typed_before(
+    older: list[Origin], typed: str, ordered: set[str]
+) -> tuple[bool, str | None]:
+    """Return a tracking number the user typed before adding the parcel again.
+
+    Adding a parcel under its order's number, he may add the order's parcel,
+    which has the number he typed for it before. ``older`` are the manual
+    origins older than the one added, newest first; ``ordered`` the plain
+    numbers of the parcel's orders. A number cleared since doesn't count.
+    """
+    for origin in older:
+        if origin.tracking_number is None:
+            continue
+        if not origin.tracking_number:
+            break
+        plain = _plain_number(origin.tracking_number)
+        if plain != _plain_number(typed) and plain not in ordered:
+            return True, origin.tracking_number
+    return False, None
+
+
 type _EventKey = tuple[datetime, int, str]
 
 
@@ -1258,12 +1301,13 @@ def derive_state(parcel: Parcel) -> ParcelState:
         key=lambda o: (SOURCE_PRIORITY[o.source], -o.time.timestamp(), o.id),
     )
 
+    def manual_origin(attr: str) -> Origin | None:
+        return next((o for o in manual if getattr(o, attr) is not None), None)
+
     def manual_value(attr: str) -> tuple[bool, str | None]:
-        for origin in manual:
-            value = getattr(origin, attr)
-            if value is not None:
-                return True, value or None
-        return False, None
+        if (origin := manual_origin(attr)) is None:
+            return False, None
+        return True, getattr(origin, attr) or None
 
     # Tracking number and carrier: a manual edit wins, then the best source,
     # latest first (an international number changes carrier at the border).
@@ -1271,16 +1315,24 @@ def derive_state(parcel: Parcel) -> ParcelState:
     # nor is the guess 17TRACK made from it.
     number_set, number = manual_value("tracking_number")
     carrier_set, carrier = manual_value("carrier")
+    ordered = {_plain_number(order) for o in origins for order in o.order_numbers}
     typed_number = (
         number
-        if number_set and number and _may_be_order_number(number, carrier, ranked)
+        if number_set
+        and number
+        and (
+            _may_be_order_number(number, carrier, ranked)
+            or (
+                _plain_number(number) in ordered
+                and _may_be_order_number(number, None, ranked)
+                and _carrier_for_order(
+                    manual_origin("carrier"), manual_origin("tracking_number")
+                )
+            )
+        )
         else None
     )
-    typed_order = typed_number is not None and any(
-        _plain_number(order) == _plain_number(typed_number)
-        for o in origins
-        for order in o.order_numbers
-    )
+    typed_order = typed_number is not None and _plain_number(typed_number) in ordered
     numbered = ranked
     if typed_order:
         number_set = False
@@ -1289,6 +1341,10 @@ def derive_state(parcel: Parcel) -> ParcelState:
             for o in ranked
             if _plain_number(o.tracking_number) != _plain_number(typed_number)
         ]
+        if (added := manual_origin("tracking_number")) and added.added_by_hand:
+            number_set, number = _number_typed_before(
+                manual[manual.index(added) + 1 :], typed_number or "", ordered
+            )
     if not number_set:
         number = next((o.tracking_number for o in numbered if o.tracking_number), None)
     if not carrier_set or (typed_order and carrier == "other"):
@@ -2111,6 +2167,9 @@ class ReviewItem:
     errors: tuple[str, ...] = ()
     # What the checks changed in an AI answer, as codes: not failures.
     notes: tuple[str, ...] = ()
+    # A known sender's e-mail no parser read: once it turns out to be about a
+    # parcel, it counts towards the repair saying the parser is outdated.
+    unparsed: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the item."""
@@ -2135,6 +2194,8 @@ class ReviewItem:
             data["errors"] = list(self.errors)
         if self.notes:
             data["notes"] = list(self.notes)
+        if self.unparsed:
+            data["unparsed"] = True
         return data
 
     @classmethod
@@ -2162,6 +2223,7 @@ class ReviewItem:
             fill=bool(data.get("fill", False)),
             errors=check_codes(data.get("errors")),
             notes=check_codes(data.get("notes")),
+            unparsed=data.get("unparsed") is True,
         )
 
 

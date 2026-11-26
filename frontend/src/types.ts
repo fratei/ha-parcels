@@ -176,6 +176,7 @@ export interface Suggestion {
   pickup_point: string | null;
   pickup_code: string | null;
   items: string[];
+  amazon_shipment_id: string | null;
   /** The carrier's or shop's reference for the shipment, such as Paack's order number. */
   reference: string | null;
 }
@@ -200,12 +201,16 @@ export interface ReviewItem {
   received: string | null;
   sender: string;
   sender_domain: string;
+  /** The organisation's domain, which trusting or ignoring the sender applies to. */
+  sender_org: string;
   subject: string;
   mailbox_owner: string | null;
   reason: string;
   authenticated: boolean;
   /** The sender is trusted, but this e-mail failed the sender checks. */
   trusted_sender: boolean;
+  /** Parcels has a parser for the sender or lists it, so it can't be trusted or ignored from here. */
+  known_sender: boolean;
   checks: SenderChecks | null;
   /** The local AI fills in details the parser missed, for a parcel the e-mail already updated. */
   fill: boolean;
@@ -223,6 +228,20 @@ export interface TrustResult {
   added: number;
   rechecking: number;
   kept: number;
+}
+
+/** A sender domain whose e-mails Parcels skips (administrators only). */
+export interface IgnoredSender {
+  domain: string;
+  /** When it was last changed. */
+  updated: string | null;
+}
+
+/** What "Stop ignoring" did. */
+export interface UnignoreResult {
+  domain: string;
+  /** Its recent e-mails being read again. */
+  rechecking: number;
 }
 
 /** E-mails Parcels gave up reading after trying for days (administrators only). */
@@ -289,6 +308,7 @@ export interface Snapshot {
   review: ReviewItem[];
   merge_suggestions: MergeSuggestion[];
   filtered: FilteredItem[];
+  ignored_senders: IgnoredSender[];
   unread_emails: UnreadEmails;
   settings: Settings;
 }

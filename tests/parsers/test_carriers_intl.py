@@ -285,6 +285,7 @@ NEGATIVE = (
     "dpd_marketing_en",
     "gls_marketing_it",
     "ups_marketing_en",
+    "ups_changed_layout_en",
     "dhl_marketing_de",
 )
 
@@ -299,7 +300,7 @@ def test_parses_email(case: Case, load_eml: Loader, verdict_for: VerdictFor) -> 
 def test_ignores_email_without_parcel_news(
     name: str, load_eml: Loader, verdict_for: VerdictFor
 ) -> None:
-    """Newsletters and promotions give no result."""
+    """Newsletters, promotions and layouts without a number give no result."""
     check_negative(name, load_eml, verdict_for)
 
 

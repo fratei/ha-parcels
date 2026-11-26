@@ -91,6 +91,9 @@
     "ignore_sender": {
       "service": "mdi:email-remove-outline"
     },
+    "unignore_sender": {
+      "service": "mdi:email-check-outline"
+    },
     "test_live_activity": {
       "service": "mdi:cellphone-message"
     }

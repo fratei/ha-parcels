@@ -2907,6 +2907,43 @@ async def test_number_typed_as_the_order_s_goes(
     assert engine.data.parcels[parcel_id].state.tracking_number is None
 
 
+async def test_carrier_typed_later_keeps_the_order_s_number_away(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A carrier typed once the number is known as the order's doesn't send
+    it to 17TRACK again (F27)."""
+    order = "001234567890"
+    parcel_id = engine.add_parcel(order, merchant="Loja Exemplo")
+    await tracker.async_refresh()
+    track.put(order)
+    await tracker.async_refresh()
+    freezer.tick(timedelta(minutes=5))
+    now = dt_util.utcnow()
+    apply_contribution(
+        engine.data,
+        contribution("msg:shop#0", time=now, merchant="Loja Exemplo", orders=(order,)),
+        now,
+    )
+    engine.async_changed()
+    await tracker.async_refresh()
+    assert records(engine) == {}
+
+    freezer.tick(timedelta(minutes=5))
+    update_parcel(engine.data, parcel_id, {"carrier": "dpd"}, dt_util.utcnow())
+    engine.async_changed()
+    track.calls.clear()
+    await tracker.async_refresh()
+
+    assert [call for call in track.calls if call[0] == "add_package"] == []
+    assert records(engine) == {}
+    state = engine.data.parcels[parcel_id].state
+    assert state.tracking_number is None
+    assert state.carrier == "dpd"
+
+
 async def test_merged_parcels_keep_their_current_number(
     engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
 ) -> None:

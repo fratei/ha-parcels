@@ -13,6 +13,8 @@ from custom_components.parcels.parsers.prefilter import (
     WEAK_KEYWORDS,
     has_shipping_words,
     is_candidate,
+    known_sender_subject,
+    not_shipping_topic,
 )
 
 UNKNOWN = "news@store.example"
@@ -315,11 +317,175 @@ def test_body_shipping_words(text: str) -> None:
         "Numéro de commande 123456 : votre facture",
         "Free shipping on your next order!",
         "See https://example.com/out-for-delivery",
+        # An account e-mail: the order was added to the account.
+        "A encomenda 001234567890 foi associada à sua conta. "
+        "Acompanhe a sua encomenda na área de cliente.",
+        "Order 10045 was added to your account. Track your order in your account.",
     ],
 )
 def test_body_without_shipping_words(text: str) -> None:
-    """An order-number label alone, an offer or a link doesn't count."""
+    """An order-number label alone, an offer or a link doesn't count.
+
+    Nor does a link to follow the order in the shop's account pages.
+    """
     assert not has_shipping_words(text)
+
+
+def test_body_account_link_beside_news() -> None:
+    """Next to a status, a link to the account pages doesn't hide it."""
+    assert has_shipping_words(
+        "A sua encomenda 001234567890 foi expedida. "
+        "Acompanhe a sua encomenda na área de cliente."
+    )
+
+
+# Subjects of a known sender's e-mails about something else than a parcel,
+# though some name one: feedback and surveys, invoices, service notices,
+# the sender's app, and offers to send parcels.
+NOT_SHIPPING_SUBJECTS: dict[str, list[str]] = {
+    "pt": [
+        "A sua opinião conta",
+        "Avalie a sua compra",
+        "Como correu a sua entrega?",
+        "Como correu a sua encomenda #1912?",
+        "Diga-nos o que achou",
+        "Gostou das velas?",
+        "Inquérito de satisfação",
+        "Fatura da sua encomenda",
+        "Fatura da encomenda #1912",
+        "Horário especial de Natal",
+        "Cuidado com SMS falsos sobre encomendas",
+        "Atualização dos termos e condições",
+        "Envia as tuas encomendas a partir de 2,99 € com InPost",
+    ],
+    "es": [
+        "Tu opinión nos importa",
+        "¿Qué tal fue tu experiencia con Paack?",
+        "Alex, ¿qué te ha parecido tu compra?",
+        "Valora tu experiencia con Tienda Ejemplo",
+        "Encuesta sobre tu envío",
+        "Tu factura del pedido 1912345",
+        "Horario especial de Navidad en MRW",
+        "Descubre la nueva app de Correos Express",
+        "Intentos de estafa con tu envío",
+    ],
+    "en": [
+        "How did we do?",
+        "Rate your delivery experience",
+        "Review your recent order",
+        "Tell us what you think of your parcel",
+        "Your UPS invoice is ready",
+        "Invoice for order #1912",
+        "Holiday opening hours",
+        "Beware of fake SMS about your parcel",
+        "Our privacy policy is changing",
+        "Ship more this holiday season with UPS",
+    ],
+    "de": [
+        "Wie zufrieden waren Sie mit uns?",
+        "Wie gefällt Ihnen Ihr Kauf?",
+        "Bewerten Sie Ihre Bestellung",
+        "Ihre Rechnung zur Online-Frankierung",
+        "Ihre Rechnung zur Bestellung #100234",
+        "Neue Öffnungszeiten Ihrer Filiale",
+        "Achtung Betrug: gefälschte Paket-SMS",
+        "Jetzt Pakete günstiger versenden",
+    ],
+    "fr": [
+        "Donnez votre avis sur votre commande",
+        "Votre avis compte",
+        "Enquête de satisfaction",
+        "Qu'en pensez-vous ?",
+        "Votre facture pour la commande 123456",
+        "Horaires d'ouverture des fêtes",
+        "Attention aux arnaques au colis",
+    ],
+    "it": [
+        "Com'è andata la consegna?",
+        "Lascia una recensione del tuo ordine",
+        "Cosa ne pensi del tuo acquisto?",
+        "La tua fattura per l'ordine 123456",
+        "Orari di apertura festivi",
+        "Con l'app GLS decidi tu dove ricevere i tuoi pacchi",
+    ],
+    "nl": [
+        "Hoe was je bezorging?",
+        "Beoordeel je bestelling",
+        "Wat vond je van je pakket?",
+        "Vragenlijst over je zending",
+        "Je factuur voor bestelling 123456",
+        "Openingstijden tijdens de feestdagen",
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        pytest.param(subject, id=f"{language}-{index}")
+        for language, subjects in NOT_SHIPPING_SUBJECTS.items()
+        for index, subject in enumerate(subjects)
+    ],
+)
+def test_known_sender_subject_about_something_else(subject: str) -> None:
+    """Feedback, invoices, notices and offers aren't shipping e-mails."""
+    assert not known_sender_subject(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Recoge tus compras en un punto NACEX.shop",
+        "Neu: die Post & DHL App",
+        "UPS My Choice",
+        "Black Friday CTT: 20% nos envios",
+    ],
+)
+def test_known_sender_subject_without_shipping_words(subject: str) -> None:
+    """A carrier's own name is no shipping word in its own e-mails."""
+    assert not known_sender_subject(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Your parcel is on its way",
+        "Ihr Zustellcode",
+        "A encomenda 001234567890 foi expedida do nosso armazém",
+        "Order #1001 confirmed",
+        "CTT: a sua encomenda",
+        "Sendung von DHL",
+        "Your DHL shipment",
+        "Su envío MRW está en reparto",
+        "Tu pedido llega hoy",
+        "Wir versenden Ihre Bestellung heute",
+        "Horario de entrega de tu pedido",
+        "Avis d'expédition de votre commande",
+        "Diga-nos quando quer receber a sua encomenda",
+        "Your return is under review",
+        "Review your delivery options",
+        # A status beats a request for feedback.
+        "Your order has shipped \u2013 rate your experience",
+        "A sua encomenda foi entregue: avalie a entrega",
+    ],
+)
+def test_known_sender_subject_about_a_parcel(subject: str) -> None:
+    """Statuses, numbers and parcel words still make a shipping e-mail."""
+    assert known_sender_subject(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Review your delivery options",
+        "Review and confirm your shipping address",
+        "Review the delivery address for your parcel",
+        "Your return is under review",
+    ],
+)
+def test_reviewing_a_delivery_choice_is_no_feedback(subject: str) -> None:
+    """Reviewing an address or options, or a review of a return, isn't feedback."""
+    assert not not_shipping_topic(subject)
 
 
 # Subjects of e-mails that only give a delivery or pickup code, and of

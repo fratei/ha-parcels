@@ -47,6 +47,7 @@ from custom_components.parcels.const import (
     ENTRY_TYPE_MAILBOX,
     ISSUE_AI_REFUSED,
     ISSUE_AI_UNAVAILABLE,
+    ISSUE_PARSER_OUTDATED,
     REASON_AI_FILL,
     REASON_AI_REJECTED,
     REASON_AI_SUGGESTION,
@@ -109,6 +110,7 @@ PICKUP_DAY = date(2026, 11, 18)
 CLOUD_MODEL = "gpt-oss:120b-cloud"
 SECRET = "Rua Secreta 99"
 REAL_RUN = AIWorker._async_run
+PARSER_OUTDATED = ISSUE_PARSER_OUTDATED.format("ctt.pt")
 
 
 @pytest.fixture(autouse=True)
@@ -331,6 +333,65 @@ async def test_auto_mode_only_suggests_for_unverified_senders(
     assert item.suggestion.order_numbers == ("1001",)
     assert not engine.data.parcels
     assert engine.ai.today()["applied"] == 0
+
+
+async def test_added_answers_raise_the_parser_repair(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """Two e-mails of a week a known sender's parser missed raise its repair.
+
+    In auto mode, once the AI's readings were added: they were about a parcel.
+    """
+    messages = [ctt_message(number=number) for number in (1, 2)]
+    engine = await async_setup(hass, client, *messages, mode="auto")
+    generate.return_value = result(kind="shipped")
+
+    await engine.ai._async_step()
+    assert issue(hass, PARSER_OUTDATED) is None
+    await engine.ai._async_step()
+
+    assert engine.ai.today()["applied"] == 2
+    assert issue(hass, PARSER_OUTDATED) is not None
+
+
+async def test_accepted_suggestions_raise_the_parser_repair(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """In suggest mode the AI's readings count once the user accepts them."""
+    messages = [ctt_message(number=number) for number in (1, 2)]
+    engine = await async_setup(hass, client, *messages)
+    generate.return_value = result(kind="in_transit")
+    for _ in messages:
+        await engine.ai._async_step()
+    assert len(engine.data.review) == 2
+    assert issue(hass, PARSER_OUTDATED) is None
+
+    for item in list(engine.data.review.values()):
+        engine.review_accept(item.id)
+
+    assert issue(hass, PARSER_OUTDATED) is not None
+
+
+async def test_not_parcel_answers_dont_raise_the_parser_repair(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """E-mails the AI finds aren't about a parcel don't count."""
+    messages = [
+        ctt_message(
+            "Temos novidades sobre a sua entrega. Consulte em breve.",
+            number=number,
+            subject="Informação sobre a entrega",
+        )
+        for number in (1, 2)
+    ]
+    engine = await async_setup(hass, client, *messages, mode="auto")
+    generate.return_value = result(kind="not_parcel")
+    for _ in messages:
+        await engine.ai._async_step()
+
+    assert len(engine.data.filtered) == 2
+    assert issue(hass, PARSER_OUTDATED) is None
+    assert not engine.data.engine.get("unparsed")
 
 
 async def test_not_parcel_answer_is_filtered(
@@ -1417,7 +1478,10 @@ async def test_dismissing_a_fill_keeps_the_email(
 async def test_trusting_the_sender_keeps_a_fill(
     hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
 ) -> None:
-    """Trusting a sender doesn't read again an e-mail it already added."""
+    """Trusting a sender doesn't read again an e-mail it already added.
+
+    A sender Parcels knows is trusted by its domain, never from an e-mail.
+    """
     message = ctt_message(NO_DATE)
     engine = await async_setup(hass, client, message)
     generate.return_value = dated()
@@ -1425,11 +1489,12 @@ async def test_trusting_the_sender_keeps_a_fill(
     (item,) = engine.data.review.values()
 
     engine.trust_domain(message.sender_domain)
-    result = engine.review_trust_sender(item.id)
     await hass.async_block_till_done()
+    with pytest.raises(ServiceValidationError) as err:
+        engine.review_trust_sender(item.id)
 
+    assert err.value.translation_key == "known_sender"
     assert list(engine.data.review.values()) == [item]
-    assert result["rechecking"] == result["added"] == result["kept"] == 0
     assert engine.ai.queue_size == 0
     assert engine.data.messages[message.hash].state is MessageState.APPLIED
 

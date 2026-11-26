@@ -225,6 +225,17 @@ export const STRINGS = {
   checkNoResult: "none",
   ignoreSender: "Ignore this sender",
   ignoreSenderHint: "Skip e-mails from {domain} from now on",
+  ignoreQuestion:
+    "Ignore every e-mail from {domain}? Parcels stops reading its e-mails, including news about parcels already added, and removes its e-mails from Needs review and Filtered. You can stop ignoring it under Filtered.",
+  ignoreConfirm: "Ignore {domain}",
+  dismissKnownHint: "Remove only this e-mail. Parcels keeps reading the other e-mails from {domain}.",
+  ignoredSenders: "Ignored senders",
+  ignoredSendersHint:
+    "Parcels doesn't read e-mails from these senders. Stop ignoring one to read its recent e-mails again.",
+  stopIgnoring: "Stop ignoring",
+  stopIgnoringLabel: "Stop ignoring {domain}",
+  unignoreDone: "Stopped ignoring {domain}. Parcels reads its recent e-mails again.",
+  ignoreDone: "Parcels now ignores {domain}. You can stop ignoring it under Filtered.",
   restore: "Restore",
   clear: "Clear",
   clearHint: "Remove this e-mail from the list. It won't be read again.",

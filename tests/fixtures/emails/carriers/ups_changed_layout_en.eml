@@ -1,0 +1,54 @@
+Return-Path: <bounce-d754820615@bounces.email.ups.com>
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@email.ups.com header.s=sel1 header.b=813ec9d4;
+       spf=pass (google.com: domain of bounce-d754820615@bounces.email.ups.com
+ designates 192.0.2.106 as permitted sender) smtp.mailfrom=bounce-d754820615@bounces.email.ups.com;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=email.ups.com
+From: UPS <ups@email.ups.com>
+To: Alex Doe <alex@example.com>
+Subject: Your UPS package: delivery update
+Date: Mon, 9 Nov 2026 15:00:00 +0000
+Message-ID: <20261109150000.e7d1@mail.example.com>
+MIME-Version: 1.0
+Content-Language: en-GB
+Content-Type: multipart/alternative; boundary="b1_99f531811784"
+
+--b1_99f531811784
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+UPS
+
+Delivery update
+
+Hello Alex,
+
+There is news about your package. Sign in to UPS My Choice to see the details and your delivery options.
+
+See the details [https://www.ups.com/track?loc=en_PT&utm_source=email]
+
+© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.
+
+Do not reply to this e-mail. UPS will not receive your reply.
+
+--b1_99f531811784
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Delivery update</title>
+</head>
+<body>
+<h1>Delivery update</h1>
+<p>Hello Alex,</p>
+<p>There is news about your package. Sign in to UPS My Choice to see the details and your delivery options.</p>
+<p><a href="https://www.ups.com/track?loc=en_PT&amp;utm_source=email">See the details</a></p>
+<p>© 2026 United Parcel Service of America, Inc. UPS, the UPS brandmark and the color brown are trademarks of United Parcel Service of America, Inc.</p>
+<p>Do not reply to this e-mail. UPS will not receive your reply.</p>
+</body>
+</html>
+
+--b1_99f531811784--

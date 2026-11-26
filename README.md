@@ -59,15 +59,25 @@ api.parcel.app, which Parcels contacts itself with your API key.
   holds other items. A number you type when adding or editing a parcel,
   without a carrier or with "Other", may be the shop's order number rather
   than a tracking number, as with Leroy Merlin: the shop's e-mails that name
-  that order join the parcel, and adding a parcel by such a number joins the
-  order's only open parcel without a tracking number. Once an e-mail names
-  it as the order's, it's no longer the parcel's tracking number: Parcels
-  stops following it on 17TRACK, and drops 17TRACK's news about it, at the
-  next refresh, and the carrier's number from the e-mails takes its place.
-  A number typed with a carrier, or in a carrier's format, stays a tracking
-  number. An e-mail that
-  arrives late never moves a parcel back to an earlier status. An order's
-  cancellation cancels its parcel while the parcel shows as ordered, or while
+  that order join the parcel, and adding a parcel by such a number, or
+  typing it in a parcel's details, joins the order's only open parcel, also
+  one with the carrier's tracking number. When the order has several open
+  parcels, or you add it as private and the order's parcel is someone
+  else's, it stays a parcel of its own, and Parcels suggests the merge in
+  **Needs review**. One left apart, such as one added before 0.1.26, joins
+  the order's only open parcel later as a guess you can undo. Once an e-mail
+  names the number as the order's, it's no longer the parcel's tracking
+  number, even after you pick a carrier for the parcel: Parcels stops
+  following it on 17TRACK, and drops 17TRACK's news about it, at the next
+  refresh, and the carrier's number from the e-mails takes its place. Until
+  then, picking a carrier makes it a tracking number, and a number typed
+  with a carrier, or in a carrier's format, stays one. Numbers you type have
+  5 to 40 letters and digits, spaces, dashes and dots aside, so type a
+  shop's order "#10012" as 10012; a shorter one, such as "#1001", can't be
+  added by its number. A number shorter than 8 names an order only when you
+  give the shop too. An e-mail that arrives late never
+  moves a parcel back to an earlier status. An order's cancellation
+  cancels its parcel while the parcel shows as ordered, or while
   no news says that it shipped: a tracking number, an Amazon shipment, or a
   status from shipped onwards from an e-mail, 17TRACK, the Parcel app or your
   own edit. A delay notice doesn't count, nor does the local AI's reading of
@@ -143,9 +153,13 @@ api.parcel.app, which Parcels contacts itself with your API key.
   show as the code of the pickup point the parcel then goes to. A code you
   typed while the parcel was out for delivery stays its delivery PIN. Back
   at the point it left, without having gone out for delivery, they show
-  again, the last day to collect included, but the days to collect it don't
-  come back as its expected date, so the Parcels page lists it under **No
-  date yet**.
+  again, the last day to collect included, but its days to collect from
+  before don't come back as its expected date. A carrier's e-mail saying
+  it's there again dates it, as any e-mail saying a parcel is ready to
+  collect does: from the e-mail's day to the last day to collect it names,
+  or just that day. News from 17TRACK, or from the Parcel app without an
+  expected date, gives none, so the Parcels page lists the parcel under
+  **No date yet** as well as in the week, from the day it got back.
 - **Parcels without a tracking number**: when a carrier delivers another
   parcel from the same shop around the expected day, and no e-mail says
   otherwise, the parcel is marked as probably delivered, unless that delivery
@@ -677,19 +691,21 @@ add a resource.
   don't have a delivery date yet. Option: `title`.
 - **Parcels review** (`custom:parcels-review-card`): **Needs review** lists the
   e-mails Parcels wasn't sure about, with what it found filled in, to accept,
-  edit, dismiss, or trust or ignore the sender. It also lists parcels that may
-  be the same one, to merge or keep apart. While e-mails wait for the local AI,
-  it says how many and, after the AI's first answer, about how long they'll
-  take. When Parcels gave up on e-mails it couldn't download or read, it says
-  how many and from which senders, where known, with **Try again** and
-  **Dismiss**.
+  edit or dismiss, and to trust or ignore a sender Parcels doesn't know (see
+  [Trusted and ignored senders](#trusted-and-ignored-senders)). It also
+  lists parcels that may be the same one, to merge or keep apart. While
+  e-mails wait for the local AI, it says how many and, after the AI's first
+  answer, about how long they'll take. When Parcels gave up on e-mails it
+  couldn't download or read, it says how many and from which senders, where
+  known, with **Try again** and **Dismiss**.
   **Filtered** lists e-mails that looked like shipping e-mails but
   turned out not to be about a parcel, and those removed from a parcel in its
   details; you can restore them, or clear one or all of them. A filtered
   e-mail goes back to **Needs review**; a removed one is read again, or waits
   in **Needs review** when it's gone from the mailbox. A cleared e-mail isn't
   read again, apart from one check for returns after updating to 0.1.5 (see
-  [Troubleshooting](#troubleshooting)).
+  [Troubleshooting](#troubleshooting)). Below them, **Ignored senders** lists
+  the senders Parcels ignores, each with **Stop ignoring**.
   Items leave the list as soon as you act on them, and come back with the
   error if the action fails. Option: `title`.
 
@@ -767,11 +783,29 @@ passes. One that Parcels can't read, but whose subject looks like shipping
 mail, or whose text names an order or a parcel number in shipping words,
 such as "A sua encomenda 123456789 foi expedida", goes to the local AI or
 waits in **Needs review**; it's never taken for an e-mail about no parcel.
-Two of them from one sender within 7 days raise the repair "Shipping
-e-mails from … aren't understood" (see [Troubleshooting](#troubleshooting)).
+That is, unless its subject asks for a review, a rating, your opinion or a
+survey, or is about an invoice, a service notice such as opening hours, a
+fraud warning or new terms, or the sender's app or offers: such an e-mail
+isn't about a parcel, even when it names an order, unless its subject also
+gives the parcel's status, as in "Foi entregue: avalie a entrega". Nor is a
+link to follow the order in the shop's account pages ("Acompanhe a sua
+encomenda na área de cliente") taken for shipping words. Two e-mails from
+one sender within 7 days that Parcels couldn't read, and that turned out to
+be about a parcel, as you accepted them in **Needs review** or the local AI
+added them in Automatic mode, raise the repair "Shipping e-mails from …
+aren't understood" (see [Troubleshooting](#troubleshooting)). Those that
+the AI or you found weren't about a parcel, or that you dismissed, don't
+count.
 An e-mail with parcel details from any other sender waits in
 **Needs review**; one with nothing parcel-like goes to **Filtered**, or is
-skipped when its sender isn't authenticated. In **Needs review** you can:
+skipped when its sender isn't authenticated.
+
+In **Needs review**, **Accept** shows when what Parcels found has a
+tracking number, an order number or another reference, such as a shipment
+ID, and no carrier or one Parcels knows; otherwise **Edit** comes first.
+For an e-mail from a sender Parcels knows, **Dismiss** removes only that
+e-mail, and Parcels keeps reading the sender's other e-mails. For other
+senders, you can also:
 
 - **Trust the sender**, for a shop that e-mails you itself: its e-mails are
   then treated like a known sender's, and those waiting in review are read
@@ -782,14 +816,22 @@ skipped when its sender isn't authenticated. In **Needs review** you can:
   sender. **Sender check details** on such an e-mail show how many
   authentication headers it had and which servers wrote them, with no
   addresses.
-- **Ignore the sender**: Parcels stops reading its e-mails and drops those
-  waiting in review.
+- **Ignore the sender**: Parcels first asks you to confirm, saying what it
+  stops. It then stops reading the sender's e-mails, news about parcels
+  already added included, and drops those waiting in **Needs review** and
+  **Filtered**.
 
 Both apply to the whole domain, so `mail.shop.example` counts as
 `shop.example`. Trusting an ignored sender stops ignoring it, and the other
 way round. Free mail domains such as gmail.com can't be trusted or ignored.
-Administrators can also use the `parcels.trust_sender` and
-`parcels.ignore_sender` actions.
+**Filtered** lists the ignored senders, with **Stop ignoring**: Parcels then
+reads again the sender's e-mails of the last 30 days that it ignored, up to
+50, and every mailbox looks over its lookback period again, on its next
+check, for those it skipped meanwhile. The sender isn't trusted again.
+Administrators can also use the `parcels.trust_sender`,
+`parcels.ignore_sender` and `parcels.unignore_sender` actions, which trust
+or ignore a sender Parcels knows only by its domain, not from one of its
+e-mails under review.
 
 ## Delivery day
 
@@ -1526,7 +1568,7 @@ downloaded or read, headers included, doesn't turn it on.
 
 | Action | What it does |
 | --- | --- |
-| `parcels.add` | Adds a parcel by tracking number, or by the shop's order number (see **Each parcel once** in [What it does](#what-it-does)), and returns its ID. |
+| `parcels.add` | Adds a parcel by tracking number, or by the shop's order number, of 5 to 40 letters and digits (see **Each parcel once** in [What it does](#what-it-does)), and returns its ID. |
 | `parcels.update` | Corrects a parcel's details, confirms what the AI found, or keeps an automatic merge or inferred delivery. |
 | `parcels.mark_delivered` | Marks a parcel delivered now. `parcels.undo_delivery` takes that back. |
 | `parcels.archive` | Archives a parcel. |
@@ -1538,8 +1580,9 @@ downloaded or read, headers included, doesn't turn it on.
 | `parcels.undo_return_picked_up` | Takes back marking a return picked up. |
 | `parcels.refresh` | Checks all mailboxes, and 17TRACK and the Parcel app when they're on, now. The Parcel app is read at most every 10 minutes. |
 | `parcels.reprocess` | Reads a parcel's or review item's e-mails again with the current parsers, optionally with the AI. The parcel stays the same one: its ID, privacy, merges and kept-apart parcels stay, and it isn't announced again. While a new reading waits under **Needs review** or for the AI, the parcel stays as it was; dismissing it there keeps the parcel. Administrators only. |
-| `parcels.trust_sender` | Trusts a sender's domain, so its e-mails are read as shipping e-mails. Administrators only. |
-| `parcels.ignore_sender` | Stops reading a sender's e-mails. Administrators only. |
+| `parcels.trust_sender` | Trusts a sender's domain, so its e-mails are read as shipping e-mails. Give the domain, or the ID of an e-mail under review from a sender Parcels doesn't know. Administrators only. |
+| `parcels.ignore_sender` | Stops reading a sender's e-mails. Give the domain, or the ID of an e-mail under review from a sender Parcels doesn't know. Administrators only. |
+| `parcels.unignore_sender` | Stops ignoring a sender's domain. The e-mails of the last 30 days that Parcels ignored are read again, at most 50, and every mailbox looks over its lookback period again on its next check. The sender isn't trusted again. Returns the domain and how many e-mails are being read again. Administrators only. |
 | `parcels.test_live_activity` | Sends a one-minute demo Live Activity to an iPhone, or a two-minute one that shows the made-up PIN 4826 when delivery PINs show on the lock screen. Administrators only. |
 
 ### Events
@@ -1668,6 +1711,25 @@ actions:
   that found no parcel, those left as they were, those deleted since, those
   that couldn't be downloaded or read and those over the limit
   (`leroymerlin_mailing_check`).
+- **A carrier's or a shop's parcels stopped updating.** Before 0.1.26,
+  **Needs review** offered **Ignore this sender** in one click also for an
+  e-mail from a sender Parcels knows, such as a carrier, and Parcels then
+  stopped reading every e-mail from it, also news about parcels already
+  added. Since 0.1.26, such an e-mail offers only **Dismiss**, and ignoring
+  another sender asks first. Look under **Filtered** → **Ignored senders**
+  and choose **Stop ignoring** for a sender ignored by mistake (see
+  [Trusted and ignored senders](#trusted-and-ignored-senders)). Review
+  requests, surveys, invoices and newsletters from known senders that
+  Parcels can't read no longer wait in **Needs review**; those already there
+  stay until you dismiss them.
+- **A parcel added by its order number shows twice.** Before 0.1.26, a
+  parcel added by the shop's order number stayed apart from the order's
+  parcel when that one had the carrier's tracking number, and a number typed
+  in a parcel's details never joined the order's parcel. After the update,
+  as Parcels starts, it joins such a parcel to the order's only open parcel,
+  marked so you can undo it, or suggests the merge in **Needs review** when
+  the order has several (see **Each parcel once** in
+  [What it does](#what-it-does)).
 - **A Paack parcel shows only "Paack" as its shop.** Versions before 0.1.7
   couldn't read the shop Paack's e-mails name. After the update, when its
   first mail check ends, Parcels downloads once more the Paack e-mails of the
@@ -1787,8 +1849,13 @@ actions:
   from web.parcelapp.net again in the Parcels options, or clear it. Parcels
   tries the key again every 6 hours.
 - **Repair: "Shipping e-mails from … aren't understood".** A known sender
-  changed its e-mails. The e-mails wait in review; check for an update of
-  Parcels.
+  may have changed its e-mails: two of its e-mails from the last 7 days that
+  Parcels couldn't read turned out to be about a parcel, as you accepted
+  them in **Needs review** or the local AI added them in Automatic mode.
+  Check for an update of Parcels. The repair goes away once Parcels reads
+  one of the sender's e-mails again. Before 0.1.26, every such e-mail
+  counted, also review requests, surveys, invoices and newsletters, so the
+  update clears the counts and the repairs once.
 - **Repair: "The local AI isn't available"** or **"The chosen AI task isn't
   local".** Check that the Ollama app and integration are running, and that
   the chosen AI task is an Ollama task on this host.

@@ -51,6 +51,7 @@ SERVICE_TRUST_SENDER = "trust_sender"
 SERVICE_UNDO_DELIVERY = "undo_delivery"
 SERVICE_UNDO_MERGE = "undo_merge"
 SERVICE_UNDO_RETURN_PICKED_UP = "undo_return_picked_up"
+SERVICE_UNIGNORE_SENDER = "unignore_sender"
 SERVICE_UPDATE = "update"
 
 
@@ -71,6 +72,7 @@ MAX_TEXT = 500
 MAX_LIST = 50
 TEXT = p.All(cv.string, p.Length(max=MAX_TEXT))
 TEXT_LIST = p.All(cv.ensure_list, [TEXT], p.Length(max=MAX_LIST))
+SENDER_DOMAIN = p.All(cv.string, p.Strip, p.Lower, p.Match(DOMAIN_PATTERN))
 _CARRIER = p.All(cv.string, p.Lower, p.In(list(CARRIER_NAMES)))
 _IDS = p.All(cv.ensure_list, [cv.string])
 
@@ -124,14 +126,13 @@ REPROCESS_SCHEMA = p.Schema(
 SENDER_SCHEMA = p.Schema(
     p.All(
         {
-            p.Optional(ATTR_DOMAIN): p.All(
-                cv.string, p.Strip, p.Lower, p.Match(DOMAIN_PATTERN)
-            ),
+            p.Optional(ATTR_DOMAIN): SENDER_DOMAIN,
             p.Optional(ATTR_REVIEW_ID): cv.string,
         },
         p.ExactlyOne(ATTR_DOMAIN, ATTR_REVIEW_ID),
     )
 )
+UNIGNORE_SCHEMA = p.Schema({p.Required(ATTR_DOMAIN): SENDER_DOMAIN})
 TEST_LIVE_ACTIVITY_SCHEMA = p.Schema({p.Optional(ATTR_DEVICE_ID): cv.string})
 
 
@@ -286,6 +287,10 @@ def _sender_service(
     return handle
 
 
+async def _async_unignore_sender(call: ServiceCall) -> ServiceResponse:
+    return _engine(call.hass).unignore_domain(call.data[ATTR_DOMAIN])
+
+
 async def _async_test_live_activity(call: ServiceCall) -> None:
     engine = _engine(call.hass)
     if engine.notifier is None:
@@ -361,6 +366,14 @@ def async_setup_services(hass: HomeAssistant) -> None:
             },
         ),
         SENDER_SCHEMA,
+        SupportsResponse.OPTIONAL,
+    )
+    async_register_admin_service(
+        hass,
+        DOMAIN,
+        SERVICE_UNIGNORE_SENDER,
+        _async_unignore_sender,
+        UNIGNORE_SCHEMA,
         SupportsResponse.OPTIONAL,
     )
     async_register_admin_service(

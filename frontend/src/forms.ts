@@ -149,8 +149,13 @@ export function suggestionToForm(suggestion: Suggestion | null): SuggestionForm 
   };
 }
 
-/** The `overrides` of `parcels/review/accept`, in the same shape as a suggestion. */
-export function formToSuggestion(form: SuggestionForm): Suggestion {
+/**
+ * The `overrides` of `parcels/review/accept`, in the same shape as a suggestion.
+ * The form doesn't show the Amazon shipment ID, so the suggestion's own is kept.
+ */
+export type SuggestionOverrides = Omit<Suggestion, "amazon_shipment_id">;
+
+export function formToSuggestion(form: SuggestionForm): SuggestionOverrides {
   return {
     kind: form.kind.trim() || DEFAULT_KIND,
     merchant: textOrNull(form.merchant),

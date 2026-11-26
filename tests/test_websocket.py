@@ -172,7 +172,7 @@ def client() -> FakeMailClient:
     for path in (
         "carriers/ctt_in_transit_pt.eml",
         SHOP_MAIL,
-        "carriers/ups_marketing_en.eml",
+        "carriers/ups_changed_layout_en.eml",
         "common/unknown_phone_only.eml",
     ):
         client.add(path)
@@ -1962,22 +1962,137 @@ async def test_review_senders(
     ws: MockHAClientWebSocket,
     review: dict[str, str],
 ) -> None:
-    """Trusting a sender adds what it sent; ignoring one drops its e-mails."""
+    """Trusting a sender adds what it sent; a known sender is left as it is.
+
+    Parcels reads a known sender's e-mails already: ignoring it from one
+    e-mail it couldn't read would stop them all, and trusting it changes
+    nothing. That e-mail can only be dismissed.
+    """
     trusted = await result(ws, "parcels/review/trust_sender", review_id=review[SHOP])
     await async_wait_reprocess(hass)
-    ignored = await result(ws, "parcels/review/ignore_sender", review_id=review[UPS])
+    for command in ("trust_sender", "ignore_sender"):
+        err = await refused(
+            ws, f"parcels/review/{command}", "known_sender", review_id=review[UPS]
+        )
+        assert err["translation_placeholders"] == {"domain": "ups.com"}
 
     assert trusted == {"domain": SHOP, "added": 0, "rechecking": 1, "kept": 0}
-    assert ignored == {"domain": "ups.com"}
-    assert not engine.data.review
+    assert [item.sender_domain for item in engine.data.review.values()] == [UPS]
     assert engine.data.senders[SHOP].trusted
-    assert engine.data.senders["ups.com"].ignored
+    assert "ups.com" not in engine.data.senders
     numbers = {p.state.tracking_number for p in engine.data.parcels.values()}
     assert numbers == {CTT_NUMBER, SHOP_NUMBER}
     for command in ("trust_sender", "ignore_sender"):
         await refused(
             ws, f"parcels/review/{command}", "unknown_review", review_id=review[SHOP]
         )
+
+
+async def test_review_lists_known_senders(
+    ws: MockHAClientWebSocket, review: dict[str, str]
+) -> None:
+    """The page knows which e-mails come from a sender Parcels reads already.
+
+    It also knows the domain trusting or ignoring would apply to.
+    """
+    listed = {r["id"]: r for r in (await result(ws, "parcels/list"))["review"]}
+
+    assert listed[review[UPS]]["known_sender"] is True
+    assert listed[review[SHOP]]["known_sender"] is False
+    assert listed[review[UPS]]["sender_domain"] == "email.ups.com"
+    assert listed[review[UPS]]["sender_org"] == "ups.com"
+
+
+async def test_stop_ignoring_sender(
+    hass: HomeAssistant,
+    engine: ParcelsEngine,
+    client: FakeMailClient,
+    ws: MockHAClientWebSocket,
+    review: dict[str, str],
+) -> None:
+    """A sender ignored by mistake is read again.
+
+    Its e-mails ignored in the last 30 days are read again at once, and the
+    next check lists the mailboxes again for those skipped meanwhile.
+    """
+    data = engine.data
+    item = data.review[review[SHOP]]
+    (mailbox,) = engine.mailboxes.values()
+    assert mailbox.coordinator is not None
+    ignored = await result(ws, "parcels/review/ignore_sender", review_id=item.id)
+    assert ignored == {"domain": SHOP}
+    assert data.messages[item.message].state is MessageState.IGNORED
+    listed = await result(ws, "parcels/list")
+    assert listed["ignored_senders"] == [
+        {"domain": SHOP, "updated": "2026-11-17T10:00:00+00:00"}
+    ]
+    # The shop writes again while it's ignored: Parcels skips the e-mail.
+    later = replace(
+        load_message(SHOP_MAIL, mailbox=ADDRESS),
+        provider_id="shop-2",
+        message_id="<shop-2@loja-exemplo.example>",
+    )
+    client.add(later)
+    await mailbox.coordinator.async_refresh()
+    assert later.hash not in data.messages
+    client.relist = True
+
+    stopped = await result(ws, "parcels/sender/unignore", domain=SHOP)
+    await async_wait_reprocess(hass)
+
+    assert stopped == {"domain": SHOP, "rechecking": 1}
+    prefs = data.senders[SHOP]
+    assert not prefs.ignored
+    assert not prefs.trusted
+    assert data.messages[item.message].state is MessageState.REVIEW
+    assert [r.message for r in data.review.values() if r.sender_domain == SHOP] == [
+        item.message
+    ]
+    assert (await result(ws, "parcels/list"))["ignored_senders"] == []
+
+    await mailbox.coordinator.async_refresh()
+
+    assert client.syncs[-1] is None
+    assert data.messages[later.hash].state is MessageState.REVIEW
+    numbers = {p.state.tracking_number for p in data.parcels.values()}
+    assert numbers == {CTT_NUMBER}
+
+
+async def test_stop_ignoring_during_a_sync(
+    hass: HomeAssistant, engine: ParcelsEngine, ws: MockHAClientWebSocket
+) -> None:
+    """A mailbox being read lists its e-mails again once it's done."""
+    data = engine.data
+    (mailbox,) = engine.mailboxes.values()
+    engine.ignore_domain(SHOP)
+    cursor = data.cursors[mailbox.entry_id]
+    engine.begin_sync(mailbox.entry_id)
+
+    await result(ws, "parcels/sender/unignore", domain=SHOP)
+    await async_wait_reprocess(hass)
+
+    assert data.cursors[mailbox.entry_id] == cursor
+    assert engine.is_synced(mailbox.entry_id)
+
+    engine.end_sync(mailbox.entry_id, more=False)
+    engine.mark_synced(mailbox.entry_id)
+    await hass.async_block_till_done()
+
+    assert mailbox.entry_id not in data.cursors
+    assert not engine.is_synced(mailbox.entry_id)
+
+
+async def test_stop_ignoring_refused(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket
+) -> None:
+    """Only an ignored sender can be read again, and only by its domain."""
+    for domain in (SHOP, "gmail.com"):
+        err = await refused(ws, "parcels/sender/unignore", "not_ignored", domain=domain)
+        assert err["translation_placeholders"] == {"domain": domain}
+    for bad in ("", "localhost", "shop .example"):
+        err = await error(ws, "parcels/sender/unignore", domain=bad)
+        assert err["code"] == "invalid_format"
+    assert not engine.data.senders
 
 
 def forged_shop_mail(number: int) -> MailMessage:
@@ -2132,6 +2247,19 @@ async def test_review_admin_only(
     assert review[SHOP] in engine.data.review
     assert filtered_id in engine.data.filtered
     assert not engine.data.senders
+
+
+async def test_stop_ignoring_admin_only(
+    engine: ParcelsEngine, sam_ws: MockHAClientWebSocket
+) -> None:
+    """Only administrators see the ignored senders and read them again."""
+    engine.ignore_domain(SHOP)
+
+    err = await error(sam_ws, "parcels/sender/unignore", domain=SHOP)
+
+    assert err["code"] == "unauthorized"
+    assert engine.data.senders[SHOP].ignored
+    assert (await result(sam_ws, "parcels/list"))["ignored_senders"] == []
 
 
 async def test_merge_suggestions(

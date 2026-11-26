@@ -10,6 +10,7 @@ import type {
   AutoMerged,
   CustomerReturn,
   FilteredItem,
+  IgnoredSender,
   InferredReason,
   LeftAt,
   MergeSuggestion,
@@ -30,6 +31,7 @@ import type {
   Suggestion,
   TimelineEntry,
   TimelineSource,
+  UnignoreResult,
   UnreadEmails,
 } from "./types.ts";
 
@@ -211,6 +213,7 @@ export function normalizeSuggestion(raw: unknown): Suggestion | null {
     pickup_point: str(raw.pickup_point),
     pickup_code: str(raw.pickup_code),
     items: strs(raw.items),
+    amazon_shipment_id: str(raw.amazon_shipment_id),
     reference: str(raw.reference),
   };
 }
@@ -229,11 +232,13 @@ export function normalizeReviewItem(raw: unknown): ReviewItem | null {
     received: str(raw.received),
     sender: text(raw.sender),
     sender_domain: text(raw.sender_domain),
+    sender_org: text(raw.sender_org),
     subject: text(raw.subject),
     mailbox_owner: str(raw.mailbox_owner),
     reason: text(raw.reason),
     authenticated: raw.authenticated === true,
     trusted_sender: raw.trusted_sender === true,
+    known_sender: raw.known_sender === true,
     checks: senderChecks(raw.checks),
     fill: raw.fill === true,
     errors: checkCodes(raw.errors),
@@ -358,6 +363,20 @@ export function normalizeRetryResult(raw: unknown): RetryResult {
   return { read: count(result.read), failed: count(result.failed), gone: count(result.gone) };
 }
 
+function ignoredSender(raw: unknown): IgnoredSender | null {
+  if (!isObj(raw)) {
+    return null;
+  }
+  const domain = id(raw.domain);
+  return domain ? { domain, updated: str(raw.updated) } : null;
+}
+
+/** The answer of `parcels/sender/unignore`. */
+export function normalizeUnignoreResult(raw: unknown): UnignoreResult {
+  const result = isObj(raw) ? raw : {};
+  return { domain: text(result.domain), rechecking: count(result.rechecking) };
+}
+
 export function normalizeSnapshot(raw: unknown, now: number = Date.now()): Snapshot {
   const snapshot = isObj(raw) ? raw : {};
   return {
@@ -366,6 +385,7 @@ export function normalizeSnapshot(raw: unknown, now: number = Date.now()): Snaps
     review: list(snapshot.review, normalizeReviewItem),
     merge_suggestions: list(snapshot.merge_suggestions, normalizeMergeSuggestion),
     filtered: list(snapshot.filtered, normalizeFilteredItem),
+    ignored_senders: list(snapshot.ignored_senders, ignoredSender),
     unread_emails: normalizeUnreadEmails(snapshot.unread_emails),
     settings: normalizeSettings(snapshot.settings, now),
   };

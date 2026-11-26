@@ -25,7 +25,17 @@ apostrophe matches ' or its typographic form.
 ``has_shipping_words`` applies the strong keywords to a downloaded body,
 for the parser dispatcher's safety net. There an order-number label alone
 ("Order number", "Número de encomenda") doesn't count: invoices and
-account e-mails name the order too.
+account e-mails name the order too. Nor does a link to follow the order in
+the shop's account pages ("Acompanhe a sua encomenda na área de cliente").
+
+``known_sender_subject`` checks the subject of a known sender's e-mail
+that its parser couldn't read. There carrier names don't count, and
+neither do subjects about something else (``not_shipping_topic``):
+requests for feedback and surveys (``FEEDBACK_TOPICS``), invoices
+(``INVOICE_TOPICS``), service notices such as opening hours, fraud
+warnings and terms (``NOTICE_TOPICS``), and the sender's app or offers to
+send parcels (``PROMOTION_TOPICS``), even when they name an order. A
+status in the same subject ("foi entregue: avalie a entrega") wins.
 """
 
 from __future__ import annotations
@@ -626,6 +636,168 @@ CARRIER_KEYWORDS: tuple[str, ...] = (
     "vinted go",
 )
 
+# Subjects of a known sender's e-mails about something else than a parcel,
+# though they name an order or a delivery: requests for feedback, surveys,
+# invoices and service notices (opening hours, fraud warnings, terms).
+FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
+    "pt": (
+        r"avali(?:e|a|ar)",
+        r"avaliac(?:ao|oes)",
+        r"opinia(?:o|oes)",
+        "inquerito",
+        "questionario",
+        "como correu",
+        "gostou",
+        r"o que (?:achou|achaste)",
+        r"(?:conte|diga)-nos (?:o que (?:achou|achaste|acha|pensa)|como correu|a (?:sua|tua) experiencia)",
+        "satisfacao",
+    ),
+    "es": (
+        r"valora(?:nos|r)?",
+        "valoracion",
+        r"opinion(?:es)?",
+        "encuesta",
+        r"que tal (?:fue|ha ido)",
+        r"que te (?:ha parecido|parecio)",
+        r"cuentanos (?:que|como|tu opinion|tu experiencia)",
+        r"resenas?",
+        r"califica(?:nos|r)?",
+        "satisfaccion",
+    ),
+    "en": (
+        # "Review your delivery options" asks for a choice, not for feedback.
+        r"(?<!under\s)reviews?(?! (?:and confirm )?(?:your |the )?(?:delivery|shipping|address))",
+        r"rate (?:us|your|our|the|this|it|how|my)",
+        "please rate",
+        r"ratings?",
+        "survey",
+        "feedback",
+        "how did we do",
+        r"how was (?:your|the)",
+        "your opinion",
+        "tell us what you think",
+        "questionnaire",
+        "satisfaction",
+        r"share your (?:thoughts|experience)",
+        "meet your expectations",
+    ),
+    "de": (
+        r"bewertung\w*",
+        r"bewerten?",
+        "umfrage",
+        "wie zufrieden",
+        r"(?:ihre|deine) meinung",
+        "wie gefallt",
+        "kundenzufriedenheit",
+    ),
+    "fr": (
+        r"donnez(?:[- ]nous)? votre avis",
+        r"votre avis (?:sur|compte|nous interesse)",
+        r"(?:laissez|deposez|partagez) (?:un|votre) avis",
+        r"avis clients?",
+        r"enquete (?:de satisfaction|client|qualite)",
+        r"notez (?:votre|vos|nous|notre)",
+        "evaluez",
+        "votre opinion",
+        "qu'en pensez-vous",
+    ),
+    "it": (
+        r"recension\w*",
+        "sondaggio",
+        "questionario",
+        r"valuta (?:il tuo|la tua)",
+        "opinione",
+        "cosa ne pensi",
+        "soddisfazione",
+        "com'e andata",
+    ),
+    "nl": (
+        "beoordeel",
+        r"beoordeling\w*",
+        "vragenlijst",
+        r"(?:vul|doe mee aan) (?:de |onze |deze )?enquete",
+        r"(?:je|uw) mening",
+        "hoe was",
+        "tevredenheid",
+        "wat vond je",
+    ),
+}
+
+INVOICE_TOPICS: tuple[str, ...] = (
+    r"faturas?",
+    r"facturas?",
+    r"notas? de credito",
+    r"invoices?",
+    r"credit notes?",
+    r"(?<!auf\s)rechnung\w*",
+    "gutschrift",
+    r"factures?",
+    r"fattur[ae]",
+    "nota di credito",
+    r"factu(?:ur|ren)",
+    "creditnota",
+)
+
+NOTICE_TOPICS: tuple[str, ...] = (
+    # Opening hours.
+    "horario especial",
+    r"horarios? de (?:natal|navidad|verao|verano|funcionamento|apertura|abertura|atendimento|atencion)",
+    r"opening (?:hours|times)",
+    "holiday hours",
+    "offnungszeiten",
+    "horaires d'ouverture",
+    r"horaires (?:des fetes|de noel|d'ete|speciaux)",
+    "orari di apertura",
+    r"orari (?:festivi|natalizi|estivi)",
+    "openingstijden",
+    # Fraud warnings.
+    r"fraud\w*",
+    r"scams?",
+    r"(?:ph|sm)ishing",
+    r"burlas?",
+    r"estafas?",
+    r"betrug\w*",
+    r"arnaques?",
+    "hameconnage",
+    r"truff[ae]",
+    "oplichting",
+    r"(?:mensagens|sms|e-?mails) (?:falsos|falsas|fraudulent[oa]s)",
+    r"fake (?:sms|messages?|e-?mails?|texts?)",
+    r"gefalschte?n? (?:sms|e-?mails?|nachrichten)",
+    # Terms and privacy.
+    "termos e condicoes",
+    r"privacidad[e]?",
+    "terminos y condiciones",
+    "terms and conditions",
+    r"terms of (?:service|use)",
+    r"privacy (?:policy|notice)",
+    r"datenschutz\w*",
+    "agb",
+    "conditions generales",
+    "confidentialite",
+    "termini e condizioni",
+    r"informativa (?:sulla )?privacy",
+    "algemene voorwaarden",
+    r"privacy(?:beleid|verklaring)",
+)
+
+# Subjects promoting the sender's app or its offers to send parcels: not
+# about a parcel, though the body may still be (see has_shipping_words).
+PROMOTION_TOPICS: tuple[str, ...] = (
+    r"(?:nova|nueva|new|neue|nuova|nieuwe|nouvelle) (?:app|aplicacao|aplicacion|applicazione|application)",
+    r"(?:con l'|avec l'|dans l')app",
+    r"(?:com a|con la|met de|mit der|with the|with our|in der|nella) app",
+    r"(?:descarga|descarregue|descarrega|download|scarica|telecharge[rz]?|lade) (?:\S+ )?(?:app|aplicacao|aplicacion|applicazione|application)",
+    r"envi[ae] as (?:suas|tuas) encomendas",
+    "envia tus paquetes",
+    r"pakete? (?:\S+ )?versenden",
+    r"send (?:your )?parcels",
+    "ship more",
+    "envoyez vos colis",
+    "spedisci",
+    r"pakket(?:ten)? versturen",
+)
+
 # "Order #1001", "Pedido n.º 1001", "Bestellung Nr. 1001", "Commande : 123456"...
 _ORDER_NUMBER_RE = re.compile(
     r"(?<![a-z0-9])(?:order|pedido|encomenda|bestellung|auftrag|commande|ordine"
@@ -652,6 +824,25 @@ _ORDER_LABELS = (
     r"n\. ordine",
     r"(?:bestel|order)nummer",
 )
+# Links to follow an order in the shop's account pages ("Acompanhe a sua
+# encomenda na área de cliente"): account e-mails have them too.
+_ACCOUNT_TRACKING = (
+    r"(?:acompanhe|acompanha|siga|segue|consulte) (?:o estado d[ao] )?"
+    r"(?:a sua |a tua |o seu |o teu |sua |tua |seu |teu )?(?:encomenda|pedido|envio|objeto)s? "
+    r"(?:na|no|em) (?:sua |tua )?(?:area (?:de |do )?cliente|area pessoal|conta|perfil|app|aplicacao)",
+    r"(?:sigue|consulta|rastrea) (?:el estado de )?(?:tu |su )?(?:pedido|envio|paquete)s? "
+    r"(?:en|desde) (?:tu |su |la )?(?:cuenta|area (?:de )?cliente|perfil|app|aplicacion)",
+    r"track (?:your|my) (?:order|parcel|package|shipment|delivery)s? (?:in|on|from|via) "
+    r"(?:your|my|the) (?:account|app|customer area|profile)",
+    r"(?:verfolge|verfolgen sie) (?:deine|ihre|dein|ihr) (?:bestellung|sendung|paket)(?:en|e)? "
+    r"(?:in|im|uber) (?:deinem |ihrem |dem |der )?(?:kundenkonto|konto|app|kundenbereich)",
+    r"suivez (?:votre|vos) (?:commande|colis)s? (?:dans|depuis|sur) (?:votre |l')"
+    r"(?:espace client|compte|application|app)",
+    r"(?:segui|traccia|monitora) (?:il tuo ordine|la (?:tua )?spedizione|il tuo pacco) "
+    r"(?:nel|dal|sul|nella|dalla|sulla) (?:tuo |tua )?(?:account|area (?:clienti|personale|riservata)|profilo|app)",
+    r"volg (?:je|uw) (?:bestelling|pakket|zending)(?:en)? (?:in|via|op) (?:je|uw|de) "
+    r"(?:account|klantenaccount|app|mijn omgeving)",
+)
 
 
 def _fragment(pattern: str) -> str:
@@ -671,7 +862,12 @@ _MARKETING_PHRASE_RE = _compile(MARKETING_PHRASES.values())
 _MARKETING_RE = _compile(MARKETING_WORDS.values())
 _STRONG_RE = _compile(STRONG_KEYWORDS.values())
 _WEAK_RE = _compile([*WEAK_KEYWORDS.values(), CARRIER_KEYWORDS])
+_WEAK_NO_CARRIER_RE = _compile(WEAK_KEYWORDS.values())
 _ORDER_LABEL_RE = _compile([_ORDER_LABELS])
+_BODY_LABEL_RE = _compile([_ORDER_LABELS, _ACCOUNT_TRACKING])
+_TOPIC_RE = _compile(
+    [*FEEDBACK_TOPICS.values(), INVOICE_TOPICS, NOTICE_TOPICS, PROMOTION_TOPICS]
+)
 
 
 def _sender_domain(sender: str) -> str:
@@ -697,10 +893,39 @@ def has_shipping_words(text: str) -> bool:
     """Return True when an e-mail body has strong shipping keywords.
 
     The first ``BODY_CHARS`` are read. Order-number labels alone don't
-    count, nor do links and advertising phrases.
+    count, nor do links to follow the order in the shop's account pages,
+    links and advertising phrases.
     """
-    folded = _ORDER_LABEL_RE.sub(" | ", _clean(text[:BODY_CHARS]))
+    folded = _BODY_LABEL_RE.sub(" | ", _clean(text[:BODY_CHARS]))
     return _STRONG_RE.search(folded) is not None
+
+
+def not_shipping_topic(subject: str) -> bool:
+    """Return True when a subject is about feedback, an invoice or a notice.
+
+    Those subjects can name an order ("Fatura da encomenda #1912"); a
+    status in the same subject ("foi entregue: avalie a entrega") wins.
+    """
+    text = _ORDER_LABEL_RE.sub(" | ", _prepare(subject, ""))
+    return _TOPIC_RE.search(text) is not None and _STRONG_RE.search(text) is None
+
+
+def known_sender_subject(subject: str) -> bool:
+    """Return True when a known sender's subject is about a parcel or an order.
+
+    Like ``is_candidate`` for other senders, but carrier names don't count
+    (a carrier names itself in all its e-mails), and neither do subjects
+    about something else (``not_shipping_topic``), even naming an order.
+    """
+    if not_shipping_topic(subject):
+        return False
+    text = _prepare(subject, "")
+    if _STRONG_RE.search(text) or _ORDER_NUMBER_RE.search(text):
+        return True
+    advertising = _MARKETING_PHRASE_RE.search(fold(subject[:MAX_CHARS]))
+    if advertising or not _WEAK_NO_CARRIER_RE.search(text):
+        return False
+    return "%" not in text and not _MARKETING_RE.search(text)
 
 
 def is_candidate(

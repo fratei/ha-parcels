@@ -857,6 +857,8 @@ class AIWorker:
                 label=organizational_domain(message.sender_domain),
                 now=now,
             )
+            if isinstance(review := entry.get("review"), dict):
+                engine.note_unparsed_read(ReviewItem.from_dict(review), now)
             self._count("applied")
             engine.async_changed()
             return

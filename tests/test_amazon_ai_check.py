@@ -729,6 +729,8 @@ async def test_check_clears_the_outdated_parser_repair(
     with patch_mail_clients(client):
         with parsed_as({"order-1": unread, "order-2": unread}):
             engine = await async_setup_parcels(hass)
+        for item in engine.data.review.values():
+            engine.note_unparsed_read(item, now)
         assert ir.async_get(hass).async_get_issue(DOMAIN, issue) is not None
         check = await async_check(hass, engine, freezer)
 

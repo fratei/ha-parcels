@@ -9,6 +9,7 @@ import {
   normalizeReviewItem,
   normalizeSettings,
   normalizeSnapshot,
+  normalizeUnignoreResult,
 } from "../src/normalize.ts";
 import { makeOrigin, makeParcel } from "./helpers.ts";
 
@@ -22,6 +23,7 @@ describe("normalizeSnapshot", () => {
       review: [],
       merge_suggestions: [],
       filtered: [],
+      ignored_senders: [],
       unread_emails: { count: 0, senders: [], unnamed: 0, newest: null },
       settings: {
         user_is_admin: false,
@@ -152,6 +154,21 @@ describe("normalizeSnapshot", () => {
         JSON.stringify(raw),
       );
     }
+  });
+});
+
+describe("ignored senders", () => {
+  test("lists them with their domain, and reads what stopping did", () => {
+    const snapshot = normalizeSnapshot(
+      { ignored_senders: [{ domain: "example.net", updated: "2026-07-14T08:00:00+00:00" }, { updated: 1 }, "x"] },
+      NOW,
+    );
+    assert.deepEqual(snapshot.ignored_senders, [{ domain: "example.net", updated: "2026-07-14T08:00:00+00:00" }]);
+    assert.deepEqual(normalizeUnignoreResult({ domain: "example.net", rechecking: 2 }), {
+      domain: "example.net",
+      rechecking: 2,
+    });
+    assert.deepEqual(normalizeUnignoreResult(null), { domain: "", rechecking: 0 });
   });
 });
 
@@ -371,16 +388,25 @@ describe("normalizeReviewItem", () => {
       received: null,
       sender: "orders@shop.example.com",
       sender_domain: "shop.example.com",
+      sender_org: "example.com",
+      known_sender: true,
       subject: "Your order has shipped",
       mailbox_owner: "Test User",
       reason: "unknown_sender",
       authenticated: "yes",
       source: "ai",
-      suggestion: { kind: "shipped", tracking_numbers: ["TEST0001", 2], carrier: "ups" },
+      suggestion: {
+        kind: "shipped",
+        tracking_numbers: ["TEST0001", 2],
+        carrier: "ups",
+        amazon_shipment_id: "TESTSHIPMENT1",
+      },
     });
     assert.ok(item);
     assert.equal(item.authenticated, false);
     assert.equal(item.source, "ai");
+    assert.equal(item.sender_org, "example.com");
+    assert.equal(item.known_sender, true);
     assert.deepEqual(item.suggestion, {
       kind: "shipped",
       merchant: null,
@@ -394,6 +420,7 @@ describe("normalizeReviewItem", () => {
       pickup_point: null,
       pickup_code: null,
       items: [],
+      amazon_shipment_id: "TESTSHIPMENT1",
       reference: null,
     });
     const paack = normalizeReviewItem({ id: "r8", suggestion: { kind: "delivered", reference: "Ab3Cd5Ef7" } });
@@ -403,6 +430,8 @@ describe("normalizeReviewItem", () => {
     assert.equal(plain.authenticated, true);
     assert.equal(plain.source, "parser");
     assert.equal(plain.suggestion, null);
+    assert.equal(plain.known_sender, false);
+    assert.equal(plain.sender_org, "");
   });
 
   test("keeps the sender checks, the trusted-sender note and fills", () => {

@@ -16,7 +16,7 @@ import probatio as p
 
 from .const import DOMAIN, SIGNAL_AI_UPDATED, SIGNAL_DATA_UPDATED
 from .engine import ParcelsEngine, get_engine, validation_error
-from .services import TEXT, TEXT_LIST, check_return, clearable
+from .services import SENDER_DOMAIN, TEXT, TEXT_LIST, check_return, clearable
 from .views import details, snapshot, viewer_for
 
 # Changes that come in bursts are sent to the page once.
@@ -97,6 +97,7 @@ def async_setup_websocket(hass: HomeAssistant) -> None:
         ws_review_dismiss,
         ws_review_trust_sender,
         ws_review_ignore_sender,
+        ws_sender_unignore,
         ws_review_restore,
         ws_origin_remove,
         ws_filtered_clear,
@@ -285,6 +286,24 @@ def ws_review_ignore_sender(
     """Ignore the sender of an e-mail under review."""
     domain = _engine(hass).review_ignore_sender(msg["review_id"])
     connection.send_result(msg["id"], {"domain": domain})
+
+
+@websocket_api.websocket_command(
+    {
+        p.Required("type"): f"{DOMAIN}/sender/unignore",
+        p.Required("domain"): SENDER_DOMAIN,
+    }
+)
+@websocket_api.require_admin
+@_expected_errors
+@callback
+def ws_sender_unignore(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Stop ignoring a sender, and read its recent e-mails again."""
+    connection.send_result(msg["id"], _engine(hass).unignore_domain(msg["domain"]))
 
 
 @websocket_api.websocket_command(

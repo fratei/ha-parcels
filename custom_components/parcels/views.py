@@ -489,12 +489,14 @@ def review_json(
         "received": dt_to_str(item.received),
         "sender": item.sender,
         "sender_domain": item.sender_domain,
+        "sender_org": organizational_domain(item.sender_domain),
         "subject": item.subject,
         "mailbox_owner": mailbox_owner(hass, item),
         "reason": item.reason,
         "authenticated": item.authenticated,
         "trusted_sender": not item.authenticated
         and organizational_domain(item.sender_domain) in trusted,
+        "known_sender": lookup(item.sender_domain) is not None,
         "checks": item.checks,
         "fill": item.fill,
         "errors": list(item.errors),
@@ -609,7 +611,13 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
     review: list[dict[str, Any]] = []
     filtered: list[dict[str, Any]] = []
     suggestions: list[dict[str, Any]] = []
+    ignored: list[dict[str, Any]] = []
     if viewer.is_admin:
+        ignored = [
+            {"domain": prefs.domain, "updated": dt_to_str(prefs.updated)}
+            for prefs in sorted(data.senders.values(), key=lambda p: p.domain)
+            if prefs.ignored
+        ]
         suggestions = [
             found
             for item in engine.suggestions
@@ -644,6 +652,7 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
         "review": review,
         "merge_suggestions": suggestions,
         "filtered": filtered,
+        "ignored_senders": ignored,
         "unread_emails": unread_emails_json(engine, viewer),
         "settings": settings_json(engine, viewer),
     }

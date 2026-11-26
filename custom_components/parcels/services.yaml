@@ -203,6 +203,14 @@ ignore_sender:
       selector:
         text:
 
+unignore_sender:
+  fields:
+    domain:
+      required: true
+      example: "example.com"
+      selector:
+        text:
+
 test_live_activity:
   fields:
     device_id:

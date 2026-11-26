@@ -121,6 +121,7 @@ describe("suggestion form", () => {
     pickup_point: null,
     pickup_code: null,
     items: ["Blue mug, large", "Tea towel"],
+    amazon_shipment_id: "TESTSHIPMENT1",
     reference: "Ab3Cd5Ef7",
   };
 
@@ -143,7 +144,8 @@ describe("suggestion form", () => {
   });
 
   test("round-trips into accept overrides", () => {
-    assert.deepEqual(formToSuggestion(suggestionToForm(suggestion)), { ...suggestion, window_end: "15:00" });
+    const { amazon_shipment_id: _kept, ...edited } = suggestion;
+    assert.deepEqual(formToSuggestion(suggestionToForm(suggestion)), { ...edited, window_end: "15:00" });
   });
 
   test("starts empty without a suggestion", () => {

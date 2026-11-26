@@ -49,6 +49,8 @@ describe("WebSocket commands", () => {
       "origin/remove",
       "review/accept",
       "review/trust_sender",
+      "review/ignore_sender",
+      "sender/unignore",
       "mail/retry_failed",
       "mail/dismiss_failed",
     ]) {

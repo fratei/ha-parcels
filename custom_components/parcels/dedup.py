@@ -103,6 +103,7 @@ from .const import MailKind, ParcelStatus
 from .models import (
     FILL_ORIGIN_SUFFIX,
     PARCELAPP_PREFIX,
+    TYPED_ORDER_MARK,
     AutoMerge,
     Order,
     Origin,
@@ -900,12 +901,11 @@ def _same_order_target(
     return None
 
 
-def _typed_target(data: ParcelsData, origin: Origin) -> str | None:
-    """Return the order's parcel that a number typed by hand as its order names.
+def _typed_key(origin: Origin) -> str | None:
+    """Return the key of the order a number typed by hand may be, or None.
 
-    That's the order's only open parcel without a number. A number typed
-    with a carrier ("Other" is none), or in a carrier's format, is a
-    tracking number.
+    A number typed with a carrier ("Other" is none), or in a carrier's
+    format, is a tracking number.
     """
     number = origin.tracking_number
     if (
@@ -913,15 +913,49 @@ def _typed_target(data: ParcelsData, origin: Origin) -> str | None:
         or not number
         or origin.carrier not in (None, "other")
         or detect_carrier(number)
-        or (key := order_key(origin.merchant, number)) is None
     ):
         return None
-    candidates = [
-        parcel.id
+    return order_key(origin.merchant, number)
+
+
+def _typed_candidates(
+    data: ParcelsData, key: str, typed: Parcel | None = None
+) -> list[Parcel]:
+    """Return the order's open parcels a number typed as its order may be.
+
+    With or without a tracking number of their own; not one that ``typed``,
+    the parcel with the number, can't be.
+    """
+    return [
+        parcel
         for parcel in order_parcels(data, key, include_archived=False)
-        if _untracked(parcel)
+        if parcel is not typed
+        and not parcel.state.terminal
+        and (typed is None or not _parcels_conflict(typed, parcel, typed=True))
     ]
-    return candidates[0] if len(candidates) == 1 else None
+
+
+def _typed_for(parcel: Parcel, other: Parcel) -> bool:
+    """Return True when a parcel is known only by a number typed as ``other``'s order.
+
+    Its tracking number is then only that order's number, so it doesn't
+    tell the two apart.
+    """
+    state = parcel.state
+    if (
+        state.typed_order
+        or state.amazon_shipment_ids
+        or (key := typed_order_key(parcel)) is None
+        or key not in parcel_order_keys(other)
+    ):
+        return False
+    typed = number_key_text(state.typed_number or "")
+    return all(
+        origin.source is Source.MANUAL
+        or not origin.tracking_number
+        or number_key_text(origin.tracking_number) == typed
+        for origin in parcel.origins.values()
+    )
 
 
 def _order_only_target(
@@ -1359,8 +1393,14 @@ def apply_contribution(
                 absorb_reason = REASON_SAME_ORDER
             else:
                 ambiguous = True
-        if not targets and not ambiguous and (typed := _typed_target(data, origin)):
-            targets = {typed}
+        if not targets and not ambiguous and (key := _typed_key(origin)):
+            # A number typed as the order's: the order's only open parcel.
+            # With several, the user says which (see _join_typed()).
+            candidates = _typed_candidates(data, key)
+            if len(candidates) == 1 and allowed(candidates[0].id, REASON_SAME_ORDER):
+                targets = {candidates[0].id}
+            elif candidates:
+                ambiguous = True
         reason = reason or absorb_reason
     elif not targets:
         target, reason, ambiguous = _reference_target(data, origin)
@@ -2027,12 +2067,14 @@ def update_parcel(
     """Apply the user's edits to a parcel.
 
     A key that is present with the value None clears that field. Changing the
-    tracking number to one another parcel already has merges the two.
-    Besides the fields, ``confirm`` confirms what the local AI found,
-    ``confirm_merge`` keeps an automatic merge and ``confirm_delivery`` keeps
-    an inferred delivery.
+    tracking number to one another parcel already has merges the two, and
+    a number typed as an order's joins the order's only open parcel, as
+    when adding it. Besides the fields, ``confirm`` confirms what the local
+    AI found, ``confirm_merge`` keeps an automatic merge and
+    ``confirm_delivery`` keeps an inferred delivery.
     """
     parcel = data.parcels[parcel_id]
+    typed_order = parcel.state.typed_order
     edits = {key: changes[key] for key in UPDATABLE_FIELDS if key in changes}
     if edits or any(key in changes for key in ETA_FIELDS):
         origin = _edit_origin(parcel, now)
@@ -2043,6 +2085,9 @@ def update_parcel(
             setattr(origin, key, text)
             # A pickup code typed at a point belongs to that point.
             origin.typed_at[key] = now
+        if typed_order and "carrier" in edits and "tracking_number" not in edits:
+            # The carrier is the order's, not its number's: see derive_state().
+            origin.typed_at[TYPED_ORDER_MARK] = now
         if any(key in changes for key in ETA_FIELDS):
             parcel.events.append(_eta_event(parcel, changes, origin.id, now))
     if "private" in changes:
@@ -2084,6 +2129,20 @@ def update_parcel(
         }
         if same:
             merge_parcels(data, parcel_id, same, now)
+    if (
+        edits.keys() & {"tracking_number", "merchant", "carrier"}
+        and (key := typed_order_key(parcel)) is not None
+        and _typed_order_only(parcel, key)
+    ):
+        apart = _apart_checker(data)
+        candidates = [
+            other
+            for other in _typed_candidates(data, key, parcel)
+            if not apart(parcel, other) and _may_share_parcels(other, parcel)
+        ]
+        # With several, or one a guess may not join, see _join_typed().
+        if len(candidates) == 1:
+            merge_parcels(data, parcel_id, (candidates[0].id,), now)
     _record_orders(data, parcel, now)
     return parcel
 
@@ -2348,7 +2407,7 @@ def prune_held_guesses(data: ParcelsData) -> None:
             or first.archived is not None
             or second.archived is not None
             or apart(first, second)
-            or _parcels_conflict(first, second, carried=True, numbers=True)
+            or _parcels_conflict(first, second, carried=True, numbers=True, typed=True)
         ):
             continue
         pairs.add(pair)
@@ -2365,7 +2424,8 @@ def prune_held_guesses(data: ParcelsData) -> None:
 def _suggest_held(data: ParcelsData, result: Reconciled) -> None:
     """Suggest the guesses held back, unless another suggestion has the pair.
 
-    The parcel with a tracking number is the one the other joins.
+    The parcel with a tracking number is the one the other joins, and the
+    order's parcel the one a number typed as its order joins.
     """
     owner = {
         origin_id: parcel.id
@@ -2383,7 +2443,9 @@ def _suggest_held(data: ParcelsData, result: Reconciled) -> None:
         if (pair := frozenset((first.id, second.id))) in seen:
             continue
         seen.add(pair)
-        if _tracked(second) and not _tracked(first):
+        if _typed_for(first, second) or (
+            not _typed_for(second, first) and _tracked(second) and not _tracked(first)
+        ):
             first, second = second, first
         result.suggestions.append(_suggestion(first, [second], None, reason))
 
@@ -2656,14 +2718,20 @@ def _reported_delivery(parcel: Parcel) -> datetime | None:
 
 
 def _parcels_conflict(
-    first: Parcel, second: Parcel, *, carried: bool = False, numbers: bool = False
+    first: Parcel,
+    second: Parcel,
+    *,
+    carried: bool = False,
+    numbers: bool = False,
+    typed: bool = False,
 ) -> bool:
     """Return True when two parcels can't be the same parcel.
 
     With ``carried``, a carrier's package that carries Amazon shipments may
     take one more, of another order, or hold another order of the day. With
     ``numbers``, two parcels with the same tracking number, read as two
-    carriers' numbers, may be one.
+    carriers' numbers, may be one. With ``typed``, a parcel known only by a
+    number typed as the other's order may be it (see :func:`_typed_for`).
     """
     one, two = first.state, second.state
     if (
@@ -2674,6 +2742,7 @@ def _parcels_conflict(
             and number_key_text(one.tracking_number)
             == number_key_text(two.tracking_number)
         )
+        and not (typed and (_typed_for(first, second) or _typed_for(second, first)))
     ):
         return True
     holds = carried and (
@@ -2988,6 +3057,55 @@ def _merge_one_by_order(
         _auto_merge(data, target, other, REASON_SAME_ORDER, now, result)
         return True
     return False
+
+
+def _join_typed(
+    data: ParcelsData,
+    apart: Callable[[Parcel, Parcel], bool],
+    now: datetime,
+    result: Reconciled,
+) -> None:
+    """Join a parcel typed under an order's number to the order's parcel.
+
+    One typed before the order's parcel came, or before Parcels joined such
+    numbers, joins the order's only open parcel, undoably. With several, or
+    when a guess may not put them together (see :func:`_may_share`), the
+    user gets a suggestion for each.
+    """
+    while True:
+        found: list[tuple[Parcel, list[Parcel]]] = []
+        for parcel in sorted(data.parcels.values(), key=lambda p: p.id):
+            if (key := typed_order_key(parcel)) is None or not _typed_order_only(
+                parcel, key
+            ):
+                continue
+            candidates = [
+                other
+                for other in _typed_candidates(data, key, parcel)
+                if not apart(parcel, other)
+            ]
+            if (
+                len(candidates) == 1
+                and _may_share_parcels(candidates[0], parcel)
+                and _may_auto_merge(candidates[0], parcel)
+            ):
+                _auto_merge(data, candidates[0], parcel, REASON_SAME_ORDER, now, result)
+                break
+            found.append((parcel, candidates))
+        else:
+            break
+    seen = {
+        frozenset((suggestion.parcel_id, candidate))
+        for suggestion in result.suggestions
+        for candidate in suggestion.candidates
+    }
+    for parcel, candidates in found:
+        for other in candidates:
+            if (pair := frozenset((other.id, parcel.id))) not in seen:
+                seen.add(pair)
+                result.suggestions.append(
+                    _suggestion(other, [parcel], None, REASON_SAME_ORDER)
+                )
 
 
 def _reconcile_pool(data: ParcelsData, start: datetime) -> list[Parcel]:
@@ -4209,6 +4327,7 @@ def reconcile(
             result.changed.add(parcel.id)
 
     _merge_by_order(data, start, apart, now, result)
+    _join_typed(data, apart, now, result)
     _absorb_by_domain(data, _reconcile_pool(data, start), apart, now, result)
     _pair_by_reference(data, _reconcile_pool(data, start), apart, now, result)
     undone = _undo_amazon_guesses(
@@ -4235,7 +4354,7 @@ def accept_suggestion(
     target, candidate = data.parcels.get(parcel_id), data.parcels.get(candidate_id)
     if target is None or candidate is None:
         raise DedupError("unknown_parcel")
-    if _parcels_conflict(target, candidate, carried=True, numbers=True):
+    if _parcels_conflict(target, candidate, carried=True, numbers=True, typed=True):
         raise DedupError("cannot_merge")
     return merge_parcels(data, parcel_id, (candidate_id,), now, keep_archived=True)
 

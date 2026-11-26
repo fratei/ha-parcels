@@ -14,7 +14,9 @@ words ("A sua encomenda 001234567890 foi expedida"), or a shop's e-mail
 whose body is about a return (a pickup label, "your return"), the result
 is ``UNKNOWN`` with the ``known_sender_unparsed`` note, so the engine asks
 the AI and reports that the parser needs an update; the sender's other
-e-mails (marketing, account e-mails, invoices) become ``NOT_PARCEL``.
+e-mails (marketing, account e-mails) become ``NOT_PARCEL``, and so do
+e-mails whose subject asks for feedback, or is an invoice or a service
+notice (``prefilter.not_shipping_topic``), even when they name an order.
 Parser errors never escape: only the parser's name and the exception type
 are logged, at debug level, never anything from the e-mail.
 
@@ -225,7 +227,7 @@ def _dedicated(
 
 def _unparsed(name: str, message: MailMessage) -> ParseResult:
     """Result for a known sender's e-mail that its parser couldn't read."""
-    if (
+    if not _other_topic(message.subject) and (
         _looks_like_shipping(message.subject)
         or _numbered_shipping(message)
         or (name in _MERCHANT_PARSERS and _about_a_return(message))
@@ -276,10 +278,18 @@ def _about_a_return(message: MailMessage) -> bool:
 
 
 def _looks_like_shipping(subject: str) -> bool:
-    """Return True when the subject has the prefilter's shipping keywords."""
+    """Return True when the subject has shipping words, carrier names aside."""
     try:
-        # No sender: known senders always pass the prefilter.
-        return prefilter.is_candidate("", subject)
+        return prefilter.known_sender_subject(subject)
     except Exception as exc:
         _LOGGER.debug("Prefilter failed: %s", type(exc).__name__)
         return True
+
+
+def _other_topic(subject: str) -> bool:
+    """Return True when the subject asks for feedback, or is an invoice or a notice."""
+    try:
+        return prefilter.not_shipping_topic(subject)
+    except Exception as exc:
+        _LOGGER.debug("Topic check failed: %s", type(exc).__name__)
+        return False

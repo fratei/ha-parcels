@@ -311,6 +311,16 @@ LEROYMERLIN_MAILING_CHECK_KEY = "leroymerlin_mailing_check"
 LEROYMERLIN_MAILING_CHECK_WINDOW = timedelta(days=30)
 # ... at most this many, newest first.
 LEROYMERLIN_MAILING_CHECK_MAX = 50
+# When the user stops ignoring a sender, its e-mails ignored in this many
+# recent days are read again...
+UNIGNORE_REREAD_WINDOW = timedelta(days=30)
+# ... at most this many, newest first.
+UNIGNORE_REREAD_MAX = 50
+# Set once what releases before 0.1.26 counted towards the repair "Shipping
+# e-mails from … aren't understood" was dropped, with those repairs: they
+# counted every e-mail of a known sender no parser read, surveys and invoices
+# too, and now only those that turn out to be about a parcel count.
+UNPARSED_RULE_KEY = "unparsed_rule"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -386,6 +396,24 @@ def _aware(value: datetime) -> datetime:
 def _domain(address: str) -> str:
     """Return the lowercased domain of an address or a bare domain."""
     return address.rpartition("@")[2].strip().lower().rstrip(">")
+
+
+def _unparsed_times(values: Any, now: datetime) -> dict[str, datetime]:
+    """Return a sender's counted e-mails still kept: arrival time by key.
+
+    Earlier releases stored a list of times: each counts as its own e-mail.
+    """
+    if isinstance(values, Mapping):
+        pairs = [(str(key), value) for key, value in values.items()]
+    elif isinstance(values, list):
+        pairs = [(str(value), value) for value in values]
+    else:
+        return {}
+    return {
+        key: t
+        for key, value in pairs
+        if (t := dt_from_str(value)) is not None and now - t <= UNPARSED_KEEP
+    }
 
 
 # An e-mail whose headers failed to download is stored under this prefix and
@@ -493,6 +521,8 @@ class ParcelsEngine:
         # Parcels are reconciled once all of them are done.
         self._syncing: set[str] = set()
         self._more: set[str] = set()
+        # Mailboxes list their lookback period again once none is being read.
+        self._relist_pending = False
         self._reconciling = False
         self._suggestions: dict[str, MergeSuggestion] = {}
         # Parcels whose delivery the user is taking back.
@@ -587,6 +617,10 @@ class ParcelsEngine:
             self.store.async_schedule_save()
         if ORDER_FOLD_KEY not in data.engine:
             data.engine[ORDER_FOLD_KEY] = fold_known_orders(data, now)
+            self.store.async_schedule_save()
+        if UNPARSED_RULE_KEY not in data.engine:
+            self._drop_unparsed_counts()
+            data.engine[UNPARSED_RULE_KEY] = {"done": dt_to_str(now)}
             self.store.async_schedule_save()
         if not (data.parcels or data.review):
             # Nothing stored by an earlier release to check after the update.
@@ -685,6 +719,9 @@ class ParcelsEngine:
             self._more.discard(entry_id)
         if self._reconcile(dt_util.utcnow()):
             self.async_changed(reconcile=False)
+        if self._relist_pending and not self._syncing:
+            # After the sync stores its cursor and notes the mailbox as read.
+            self.hass.loop.call_soon(self._relist_when_idle)
         if ok and self._started and not (self._syncing or self._more):
             self._start_checks()
 
@@ -765,6 +802,20 @@ class ParcelsEngine:
             ),
             "parcels checks",
         )
+
+    @callback
+    def _relist_when_idle(self) -> None:
+        """Have every mailbox read its lookback period again on its next sync.
+
+        A mailbox being read would store its cursor afterwards: then every
+        mailbox does so once none is being read.
+        """
+        if self._syncing:
+            self._relist_pending = True
+            return
+        self._relist_pending = False
+        self._relist()
+        self.async_schedule_save()
 
     @callback
     def _relist(self) -> int:
@@ -1814,8 +1865,6 @@ class ParcelsEngine:
                 record,
             )
             return
-        if verdict.verified and NOTE_KNOWN_SENDER_UNPARSED in result.notes:
-            self._track_unparsed(org, now)
         item = self.review_item(
             message,
             record,
@@ -1826,6 +1875,7 @@ class ParcelsEngine:
             mailbox=mailbox,
             owner=owner,
             now=now,
+            unparsed=verdict.verified and NOTE_KNOWN_SENDER_UNPARSED in result.notes,
         )
         received = record.received or now
         if (
@@ -2140,6 +2190,7 @@ class ParcelsEngine:
         mailbox: str | None,
         owner: str | None,
         now: datetime,
+        unparsed: bool = False,
     ) -> ReviewItem:
         """Return a review item for an e-mail."""
         return ReviewItem(
@@ -2157,6 +2208,7 @@ class ParcelsEngine:
             source=source,
             suggestion=suggestion,
             checks=verdict.check.as_dict() if verdict.check is not None else None,
+            unparsed=unparsed,
         )
 
     def add_review(self, item: ReviewItem, record: MessageRecord | None) -> None:
@@ -2222,16 +2274,31 @@ class ParcelsEngine:
 
     # -- Parser health ----------------------------------------------------
 
-    def _track_unparsed(self, org: str, now: datetime) -> None:
+    def note_unparsed_read(self, item: ReviewItem, now: datetime) -> None:
+        """Count an e-mail no parser read, once it turned out about a parcel.
+
+        Only a known sender's (``item.unparsed``), once, by the time it
+        arrived: two of them within the window raise the repair. A survey or
+        an invoice the user dismissed, or the local AI found isn't about a
+        parcel, never counts.
+        """
+        if item.unparsed and (org := organizational_domain(item.sender_domain)):
+            when = min(item.received or now, now)
+            self._track_unparsed(org, item.message, when, now)
+
+    def _track_unparsed(
+        self, org: str, key: str, when: datetime, now: datetime
+    ) -> None:
         unparsed = self.data.engine.setdefault("unparsed", {})
-        times = [
-            t
-            for value in unparsed.get(org, [])
-            if (t := dt_from_str(value)) is not None and now - t <= UNPARSED_KEEP
-        ]
-        times.append(now)
-        unparsed[org] = [dt_to_str(t) for t in times[-10:]]
-        recent = [t for t in times if now - t <= UNPARSED_WINDOW]
+        counted = _unparsed_times(unparsed.get(org), now)
+        if now - when <= UNPARSED_KEEP:
+            counted[key] = when
+        kept = sorted(counted.items(), key=lambda pair: pair[1])[-10:]
+        if not kept:
+            unparsed.pop(org, None)
+            return
+        unparsed[org] = {k: dt_to_str(t) for k, t in kept}
+        recent = [t for _, t in kept if now - t <= UNPARSED_WINDOW]
         if len(recent) >= UNPARSED_THRESHOLD:
             ir.async_create_issue(
                 self.hass,
@@ -2247,20 +2314,25 @@ class ParcelsEngine:
         if self.data.engine.get("unparsed", {}).pop(org, None) is not None:
             ir.async_delete_issue(self.hass, DOMAIN, ISSUE_PARSER_OUTDATED.format(org))
 
+    def _drop_unparsed_counts(self) -> None:
+        """Drop every sender's count and repair, as an update to 0.1.26 does."""
+        self.data.engine.pop("unparsed", None)
+        prefix = ISSUE_PARSER_OUTDATED.format("")
+        registry = ir.async_get(self.hass)
+        for domain, issue_id in list(registry.issues):
+            if domain == DOMAIN and issue_id.startswith(prefix):
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+
     def _prune_unparsed(self, now: datetime) -> bool:
         unparsed = self.data.engine.get("unparsed", {})
         changed = False
         for org, values in list(unparsed.items()):
-            kept = [
-                value
-                for value in values
-                if (t := dt_from_str(value)) is not None and now - t <= UNPARSED_KEEP
-            ]
-            if kept == values:
+            kept = _unparsed_times(values, now)
+            if isinstance(values, Mapping) and len(kept) == len(values):
                 continue
             changed = True
             if kept:
-                unparsed[org] = kept
+                unparsed[org] = {k: dt_to_str(t) for k, t in kept.items()}
             else:
                 del unparsed[org]
                 ir.async_delete_issue(
@@ -2324,6 +2396,7 @@ class ParcelsEngine:
             now=now,
             confirmed=True,
         )
+        self.note_unparsed_read(item, now)
         data.review.pop(review_id, None)
         self.ai.drop(item.message)
         if org and not is_free_mail(org):
@@ -2396,7 +2469,7 @@ class ParcelsEngine:
         trusted. Returns the trusted domain and how many e-mails were added,
         are being read again and still need review.
         """
-        org = self._trust(self._review(review_id).sender_domain)
+        org = self._trust(self._sender_to_judge(review_id))
         data = self.data
         added = kept = 0
         hashes: list[str] = []
@@ -2417,7 +2490,19 @@ class ParcelsEngine:
 
     def review_ignore_sender(self, review_id: str) -> str:
         """Ignore the sender of a reviewed e-mail; returns its domain."""
-        return self.ignore_domain(self._review(review_id).sender_domain)
+        return self.ignore_domain(self._sender_to_judge(review_id))
+
+    def _sender_to_judge(self, review_id: str) -> str:
+        """Return the sender of a reviewed e-mail, to trust or ignore it.
+
+        Never a sender Parcels knows: its e-mails are read already, and
+        ignoring it for one e-mail Parcels couldn't read would stop them all.
+        Only its domain can be trusted or ignored, on purpose.
+        """
+        domain = self._review(review_id).sender_domain
+        if lookup(domain) is not None:
+            raise validation_error("known_sender", domain=organizational_domain(domain))
+        return domain
 
     def trust_domain(self, domain: str) -> str:
         """Trust a sender organisation and re-read its e-mails under review.
@@ -2489,6 +2574,96 @@ class ParcelsEngine:
                 record.shells = ()
         self.async_changed()
         return org
+
+    def unignore_domain(self, domain: str) -> dict[str, Any]:
+        """Stop ignoring a sender organisation; read its recent e-mails again.
+
+        Its e-mails ignored in the last days are read again at once, and
+        every mailbox lists its lookback period again on its next sync, for
+        those skipped meanwhile. The sender isn't trusted again. Returns the
+        domain and how many e-mails are being read again.
+        """
+        org = organizational_domain(domain)
+        data = self.data
+        found = [
+            prefs
+            for key, prefs in data.senders.items()
+            if prefs.ignored and organizational_domain(key) == org
+        ]
+        if not found:
+            raise validation_error("not_ignored", domain=org)
+        now = dt_util.utcnow()
+        for prefs in found:
+            prefs.ignored = False
+            prefs.updated = now
+        since = now - UNIGNORE_REREAD_WINDOW
+
+        def received(key: str) -> datetime:
+            record = data.messages[key]
+            return record.received or record.seen
+
+        keys = sorted(
+            (
+                key
+                for key, record in data.messages.items()
+                if record.state is MessageState.IGNORED
+                and organizational_domain(record.sender_domain) == org
+                and received(key) >= since
+            ),
+            key=received,
+            reverse=True,
+        )[:UNIGNORE_REREAD_MAX]
+        self._relist_when_idle()
+        if keys:
+            self.async_create_task(
+                self._async_reread_ignored(keys[::-1]),
+                "parcels reprocess unignored sender",
+            )
+        self.async_changed()
+        return {"domain": org, "rechecking": len(keys)}
+
+    async def _async_reread_ignored(self, keys: list[str]) -> None:
+        """Read again, in order, e-mails of a sender no longer ignored.
+
+        Nothing changes for an e-mail that changed state meanwhile, or whose
+        sender is ignored again. A parcel put away stays so.
+        """
+        data = self.data
+        decided = False
+        for key in keys:
+            record = data.messages.get(key)
+            if record is None or record.state is not MessageState.IGNORED:
+                continue
+            fetched = await self.async_refetch(record)
+            message, mailbox = fetched.message, fetched.mailbox
+            if message is None or mailbox is None:
+                continue
+            if (read := await self.async_read(message)) is None:
+                continue
+            if (
+                data.messages.get(key) is not record
+                or record.state is not MessageState.IGNORED
+                or self.is_ignored(record.sender_domain)
+            ):
+                continue
+            verdict, result = read
+            self._decide(
+                message,
+                verdict,
+                result,
+                record,
+                mailbox=mailbox.entry_id,
+                owner=record.owners[0] if record.owners else mailbox.owner,
+                first_sync=True,
+                now=dt_util.utcnow(),
+                reread=True,
+                keep_closed=True,
+            )
+            decided = True
+        if decided:
+            self.async_changed()
+        else:
+            self.async_schedule_save()
 
     def filtered_restore(self, filtered_id: str) -> str:
         """Move a filtered e-mail to the review list; returns the review ID."""
@@ -2669,6 +2844,8 @@ class ParcelsEngine:
                 mailbox=mailbox.entry_id,
                 owner=owner,
                 now=now,
+                unparsed=verdict.verified
+                and NOTE_KNOWN_SENDER_UNPARSED in result.notes,
             )
             self._clear_lists(key)
             self.ai.enqueue(

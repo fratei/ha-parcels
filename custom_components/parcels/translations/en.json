@@ -232,7 +232,7 @@
       "message": "There's no parcel with this ID."
     },
     "invalid_tracking_number": {
-      "message": "Enter a tracking number of 6 to 40 letters and digits."
+      "message": "Enter a tracking number of 5 to 40 letters and digits."
     },
     "unknown_carrier": {
       "message": "Unknown carrier."
@@ -254,6 +254,12 @@
     },
     "cannot_ignore_free_mail": {
       "message": "{domain} is a free e-mail service, so ignoring it would also hide forwarded shipping e-mails."
+    },
+    "known_sender": {
+      "message": "Parcels already reads {domain}'s e-mails, so it can't be trusted or ignored from one e-mail. Dismiss this e-mail instead, or trust or ignore {domain} by its domain."
+    },
+    "not_ignored": {
+      "message": "{domain} isn't ignored."
     },
     "unknown_filtered": {
       "message": "This filtered e-mail isn't in the list anymore."
@@ -555,7 +561,7 @@
     },
     "trust_sender": {
       "name": "Trust sender",
-      "description": "Trusts a sender, so its e-mails are read as shipping e-mails, and reads its e-mails under review again. Give a domain or a review ID. With a review ID, the sender's e-mails under review that failed the sender checks are added too, since you have seen them, and the response counts what was added, what is being read again and what still needs review. Otherwise it returns the trusted domain. Only administrators can use this action.",
+      "description": "Trusts a sender, so its e-mails are read as shipping e-mails, and reads its e-mails under review again. Give a domain or a review ID. With a review ID, the sender's e-mails under review that failed the sender checks are added too, since you have seen them, and the response counts what was added, what is being read again and what still needs review. Otherwise it returns the trusted domain. A sender Parcels already knows, such as a carrier or a shop it reads, can be trusted only by its domain. Only administrators can use this action.",
       "fields": {
         "domain": {
           "name": "Domain",
@@ -569,7 +575,7 @@
     },
     "ignore_sender": {
       "name": "Ignore sender",
-      "description": "Ignores a sender: its e-mails are no longer read, and its e-mails under review are removed. Give a domain or a review ID. Returns the ignored domain. Only administrators can use this action.",
+      "description": "Ignores a sender: its e-mails are no longer read, and its e-mails under review are removed. Give a domain or a review ID. Returns the ignored domain. A sender Parcels already knows, such as a carrier or a shop it reads, can be ignored only by its domain. Undo it with Stop ignoring sender. Only administrators can use this action.",
       "fields": {
         "domain": {
           "name": "Domain",
@@ -578,6 +584,16 @@
         "review_id": {
           "name": "Review ID",
           "description": "The ID of an e-mail under review whose sender to ignore."
+        }
+      }
+    },
+    "unignore_sender": {
+      "name": "Stop ignoring sender",
+      "description": "Reads an ignored sender's e-mails again. Those it sent in the last 30 days that Parcels ignored are read again at once, at most 50, and every mailbox lists its lookback period again on its next check, for the e-mails skipped meanwhile. The sender isn't trusted again. Returns the domain and how many e-mails are being read again. Only administrators can use this action.",
+      "fields": {
+        "domain": {
+          "name": "Domain",
+          "description": "The ignored sender's domain. Parcels reads the whole organisation again, for example shop.example for mail.shop.example."
         }
       }
     },

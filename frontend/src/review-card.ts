@@ -26,7 +26,7 @@ import {
   type SuggestionForm,
 } from "./forms.ts";
 import { carrierLabel, checkMeaning, kindLabel, mergeReasonLabel, noteMeaning, reasonLabel } from "./labels.ts";
-import { normalizeRetryResult } from "./normalize.ts";
+import { normalizeRetryResult, normalizeUnignoreResult } from "./normalize.ts";
 import { compareLikelihood, etaRange } from "./parcels.ts";
 import { defineElement, registerCard } from "./register.ts";
 import {
@@ -49,6 +49,7 @@ import { KIND_LABELS, STRINGS, fmt } from "./strings.ts";
 import { baseStyles } from "./styles.ts";
 import type {
   FilteredItem,
+  IgnoredSender,
   MergeSuggestion,
   Parcel,
   ReviewItem,
@@ -64,10 +65,45 @@ type Tab = "review" | "filtered";
 /** The row of the e-mails Parcels couldn't read; item IDs are hex, so this can't clash. */
 const UNREAD_ID = "unread-emails";
 
-/** What the last "Trust this sender" or "Try again" did. */
+/** The row of an ignored sender, by its domain. */
+function ignoredId(domain: string): string {
+  return `ignored-sender:${domain}`;
+}
+
+/** The domain trusting or ignoring an e-mail's sender applies to. */
+function senderOrg(item: ReviewItem): string {
+  return item.sender_org || item.sender_domain || item.sender;
+}
+
+/**
+ * Whether Accept can add the suggestion as it is: Parcels needs a number to
+ * find the parcel again, and a carrier it knows. Otherwise Edit comes first.
+ */
+function acceptable(item: ReviewItem): boolean {
+  const suggestion = item.suggestion;
+  if (!suggestion) {
+    return false;
+  }
+  if (item.fill) {
+    return true;
+  }
+  if (suggestion.carrier && !Object.hasOwn(CARRIER_NAMES, suggestion.carrier)) {
+    return false;
+  }
+  return (
+    suggestion.kind === "customer_return" ||
+    suggestion.tracking_numbers.length > 0 ||
+    suggestion.order_numbers.length > 0 ||
+    Boolean(suggestion.amazon_shipment_id) ||
+    Boolean(suggestion.reference)
+  );
+}
+
+/** What the last "Trust this sender", "Ignore", "Try again" or "Stop ignoring" did, and where. */
 interface ActionStatus {
   icon: string;
   text: string;
+  tab: Tab;
 }
 
 const TABS: readonly Tab[] = ["review", "filtered"];
@@ -128,6 +164,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     _hidden: { state: true },
     _confirmClearAll: { state: true },
     _confirmTrust: { state: true },
+    _confirmIgnore: { state: true },
     _status: { state: true },
   };
 
@@ -295,6 +332,12 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         flex: 1;
         min-width: 0;
       }
+      .ignored {
+        margin-top: 16px;
+      }
+      .ignored .hint {
+        margin: 0;
+      }
       .subject-lines {
         margin: 4px 0 8px;
         font-size: 0.875rem;
@@ -326,7 +369,9 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   declare private _confirmClearAll: boolean;
   /** The review item whose "Trust this sender" waits for its confirmation. */
   declare private _confirmTrust: string | null;
-  /** What the last "Trust this sender" or "Try again" did. */
+  /** The review item whose "Ignore this sender" waits for its confirmation. */
+  declare private _confirmIgnore: string | null;
+  /** What the last "Trust this sender", "Ignore", "Try again" or "Stop ignoring" did. */
   declare private _status: ActionStatus | null;
 
   /** The focused item before the current render, to move focus on when it's gone. */
@@ -348,6 +393,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     this._hidden = new Map();
     this._confirmClearAll = false;
     this._confirmTrust = null;
+    this._confirmIgnore = null;
     this._status = null;
   }
 
@@ -371,7 +417,8 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       this._tab === "review"
         ? lists.review.length + lists.suggestions.length + (this._unreadEmails() ? 1 : 0)
         : lists.filtered.length;
-    return 2 + 2 * Math.max(1, items);
+    const ignored = this._tab === "filtered" ? this._ignoredSenders().length : 0;
+    return 2 + 2 * Math.max(1, items) + (ignored ? 2 + ignored : 0);
   }
 
   getGridOptions(): Record<string, unknown> {
@@ -474,10 +521,27 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       : null;
   }
 
-  /** True while the item (a review item, suggestion or filtered e-mail) is listed. */
+  /** The ignored senders, unless their "Stop ignoring" runs or just succeeded. */
+  private _ignoredSenders(): readonly IgnoredSender[] {
+    const snapshot = this.snapshot;
+    if (!snapshot?.ignored_senders.length) {
+      return [];
+    }
+    const hidden = this._hidden;
+    return hidden.size
+      ? snapshot.ignored_senders.filter(
+          (sender) => !isHidden(hidden, ignoredId(sender.domain), snapshot),
+        )
+      : snapshot.ignored_senders;
+  }
+
+  /** True while the item (a review item, suggestion, filtered e-mail or ignored sender) is listed. */
   private _listed(itemId: string): boolean {
     if (itemId === UNREAD_ID) {
       return (this.snapshot?.unread_emails.count ?? 0) > 0;
+    }
+    if (this.snapshot?.ignored_senders.some((sender) => ignoredId(sender.domain) === itemId)) {
+      return true;
     }
     const lists = this._lists();
     return lists
@@ -515,6 +579,9 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       );
       if (this._listed(UNREAD_ID)) {
         ids.add(UNREAD_ID);
+      }
+      for (const sender of this.snapshot?.ignored_senders ?? []) {
+        ids.add(ignoredId(sender.domain));
       }
       if (this._editing !== null && !ids.has(this._editing)) {
         this._editing = null;
@@ -622,25 +689,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     const settings = this.snapshot?.settings;
     const queue = settings ? aiQueueText(settings.ai_queue, settings.ai_queue_seconds) : null;
     const queueLine = queue ? html`<p class="hint queue-hint">${queue}</p>` : nothing;
-    // Always rendered, so screen readers announce what "Trust this sender" or "Try again" did.
-    const status = this._status;
-    const statusLine = html`<div class="action-status" role="status">
-      ${status
-        ? html`<div class="alert">
-            <ha-icon icon=${status.icon} aria-hidden="true"></ha-icon>
-            <span class="grow">${status.text}</span>
-            <button
-              type="button"
-              class="icon-btn"
-              aria-label=${STRINGS.dismissMessage}
-              title=${STRINGS.dismissMessage}
-              @click=${this._dismissStatus}
-            >
-              <ha-icon icon="mdi:close" aria-hidden="true"></ha-icon>
-            </button>
-          </div>`
-        : nothing}
-    </div>`;
+    const statusLine = this._renderStatus("review");
     const unread = this._unreadEmails();
     if (!items.length && !suggestions.length && !unread) {
       return html`${statusLine}${queueLine}<p class="empty">${STRINGS.emptyReview}</p>`;
@@ -786,8 +835,31 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       <span class="meta block items-line">${lines.items ?? lines.noItems}</span>`;
   }
 
+  /** What the last action on this tab did; always rendered, so screen readers announce it. */
+  private _renderStatus(tab: Tab): TemplateResult {
+    const status = this._status?.tab === tab ? this._status : null;
+    return html`<div class="action-status" role="status">
+      ${status
+        ? html`<div class="alert">
+            <ha-icon icon=${status.icon} aria-hidden="true"></ha-icon>
+            <span class="grow">${status.text}</span>
+            <button
+              type="button"
+              class="icon-btn"
+              aria-label=${STRINGS.dismissMessage}
+              title=${STRINGS.dismissMessage}
+              @click=${this._dismissStatus}
+            >
+              <ha-icon icon="mdi:close" aria-hidden="true"></ha-icon>
+            </button>
+          </div>`
+        : nothing}
+    </div>`;
+  }
+
   private _renderFilteredList(items: readonly FilteredItem[]): TemplateResult {
-    return html`<p class="hint filtered-hint">${STRINGS.filteredHint}</p>
+    return html`${this._renderStatus("filtered")}
+      <p class="hint filtered-hint">${STRINGS.filteredHint}</p>
       ${items.length
         ? html`${this._renderClearAll()}
             <div class="items">
@@ -797,7 +869,50 @@ export class ParcelsReviewCard extends ParcelsCardBase {
               (item, index) => this._renderFilteredItem(item, index),
             )}
           </div>`
-        : html`<p class="empty">${STRINGS.emptyFiltered}</p>`}`;
+        : html`<p class="empty">${STRINGS.emptyFiltered}</p>`}
+      ${this._renderIgnoredSenders()}`;
+  }
+
+  /** The senders Parcels ignores, each with "Stop ignoring": the way back from "Ignore this sender". */
+  private _renderIgnoredSenders(): TemplateResult | typeof nothing {
+    const senders = this._ignoredSenders();
+    if (!senders.length) {
+      return nothing;
+    }
+    return html`<section class="ignored" aria-labelledby="ignored-senders-title">
+      <h3 class="section-label" id="ignored-senders-title">${STRINGS.ignoredSenders}</h3>
+      <p class="hint">${STRINGS.ignoredSendersHint}</p>
+      <ul class="candidates">
+        ${repeat(
+          senders,
+          (sender) => sender.domain,
+          (sender) => {
+            const itemId = ignoredId(sender.domain);
+            const busy = this._busyItems.has(itemId) ? "true" : "false";
+            return html`<li
+              class="ignored-sender"
+              tabindex="-1"
+              data-item-id=${itemId}
+              aria-busy=${busy}
+            >
+              <div class="candidate">
+                <span class="grow">${sender.domain}</span>
+                <button
+                  type="button"
+                  class="btn"
+                  aria-label=${fmt(STRINGS.stopIgnoringLabel, { domain: sender.domain })}
+                  aria-disabled=${busy}
+                  @click=${() => void this._unignore(sender.domain)}
+                >
+                  ${STRINGS.stopIgnoring}
+                </button>
+              </div>
+              ${this._renderError(itemId)}
+            </li>`;
+          },
+        )}
+      </ul>
+    </section>`;
   }
 
   /** "Clear all", then its confirmation in place. */
@@ -883,7 +998,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
             <span class="grow">
               <strong class="block">${STRINGS.unverifiedSender}</strong>
               ${item.trusted_sender
-                ? fmt(STRINGS.trustedSenderNote, { domain: item.sender_domain || item.sender })
+                ? fmt(STRINGS.trustedSenderNote, { domain: senderOrg(item) })
                 : STRINGS.unverifiedSenderHint}
             </span>
           </div>`}
@@ -971,9 +1086,12 @@ export class ParcelsReviewCard extends ParcelsCardBase {
 
   private _renderReviewActions(item: ReviewItem, busy: boolean): TemplateResult {
     const disabled = busy ? "true" : "false";
-    const domain = item.sender_domain || item.sender;
+    const domain = senderOrg(item);
+    const accept = acceptable(item);
+    // A sender Parcels already reads keeps being read: only this e-mail can go.
+    const known = item.known_sender;
     return html`<div class="row-actions">
-      ${item.suggestion
+      ${accept
         ? html`<button
             type="button"
             class="btn primary"
@@ -985,7 +1103,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         : nothing}
       <button
         type="button"
-        class="btn"
+        class=${accept ? "btn" : "btn primary"}
         data-edit
         aria-disabled=${disabled}
         @click=${() => this._startEdit(item)}
@@ -995,12 +1113,13 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       <button
         type="button"
         class="btn"
+        title=${known ? fmt(STRINGS.dismissKnownHint, { domain }) : nothing}
         aria-disabled=${disabled}
         @click=${() => this._command(item.id, "review/dismiss", { review_id: item.id })}
       >
         ${STRINGS.dismiss}
       </button>
-      ${item.trusted_sender || item.fill
+      ${item.trusted_sender || item.fill || known
         ? nothing
         : html`<button
             type="button"
@@ -1017,17 +1136,53 @@ export class ParcelsReviewCard extends ParcelsCardBase {
           >
             ${STRINGS.trustSender}
           </button>`}
-      <button
-        type="button"
-        class="btn danger"
-        title=${fmt(STRINGS.ignoreSenderHint, { domain })}
-        aria-disabled=${disabled}
-        @click=${() => this._command(item.id, "review/ignore_sender", { review_id: item.id })}
-      >
-        ${STRINGS.ignoreSender}
-      </button>
+      ${known
+        ? nothing
+        : html`<button
+            type="button"
+            class="btn danger"
+            data-ignore
+            title=${fmt(STRINGS.ignoreSenderHint, { domain })}
+            aria-disabled=${disabled}
+            aria-expanded=${this._confirmIgnore === item.id ? "true" : "false"}
+            @click=${() => this._askIgnore(item)}
+          >
+            ${STRINGS.ignoreSender}
+          </button>`}
     </div>
-    ${this._confirmTrust === item.id ? this._renderTrustConfirm(item, domain, busy) : nothing}`;
+    ${this._confirmTrust === item.id ? this._renderTrustConfirm(item, domain, busy) : nothing}
+    ${this._confirmIgnore === item.id ? this._renderIgnoreConfirm(item, domain, busy) : nothing}`;
+  }
+
+  /** The confirmation of "Ignore this sender", which says what ignoring stops. */
+  private _renderIgnoreConfirm(item: ReviewItem, domain: string, busy: boolean): TemplateResult {
+    const questionId = `ignore-question-${item.id}`;
+    return html`<div
+      class="confirm"
+      role="group"
+      aria-labelledby=${questionId}
+      @keydown=${(event: KeyboardEvent) => this._onIgnoreKeyDown(event, item.id)}
+    >
+      <p id=${questionId}>${fmt(STRINGS.ignoreQuestion, { domain })}</p>
+      <div class="row-actions">
+        <button
+          type="button"
+          class="btn danger primary"
+          aria-disabled=${busy ? "true" : "false"}
+          @click=${() => this._ignore(item)}
+        >
+          ${fmt(STRINGS.ignoreConfirm, { domain })}
+        </button>
+        <button
+          type="button"
+          class="btn"
+          data-ignore-cancel
+          @click=${() => this._cancelIgnore(item.id)}
+        >
+          ${STRINGS.cancel}
+        </button>
+      </div>
+    </div>`;
   }
 
   /** The confirmation of "Trust this sender" for an e-mail that failed the sender checks. */
@@ -1371,6 +1526,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     if (this._busyItems.has(item.id)) {
       return;
     }
+    this._confirmIgnore = null;
     if (item.authenticated) {
       void this._trust(item);
       return;
@@ -1393,7 +1549,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   }
 
   private async _trust(item: ReviewItem): Promise<void> {
-    const domain = item.sender_domain || item.sender;
+    const domain = senderOrg(item);
     this._confirmTrust = null;
     this._status = null;
     this._focusInItem(item.id, "[data-trust]");
@@ -1414,6 +1570,75 @@ export class ParcelsReviewCard extends ParcelsCardBase {
               rechecking: done.rechecking ?? 0,
               kept: done.kept ?? 0,
             }),
+            tab: "review",
+          };
+        },
+      },
+    );
+  }
+
+  /** "Ignore this sender" stops every e-mail from the sender, so it always asks first. */
+  private _askIgnore(item: ReviewItem): void {
+    if (this._busyItems.has(item.id)) {
+      return;
+    }
+    this._confirmTrust = null;
+    this._confirmIgnore = item.id;
+    this._focusInItem(item.id, "[data-ignore-cancel]");
+  }
+
+  private _cancelIgnore(itemId: string): void {
+    this._confirmIgnore = null;
+    this._focusInItem(itemId, "[data-ignore]");
+  }
+
+  private _onIgnoreKeyDown(event: KeyboardEvent, itemId: string): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      this._cancelIgnore(itemId);
+    }
+  }
+
+  private _ignore(item: ReviewItem): void {
+    const domain = senderOrg(item);
+    this._confirmIgnore = null;
+    this._status = null;
+    void this._command(
+      item.id,
+      "review/ignore_sender",
+      { review_id: item.id },
+      {
+        onSuccess: (result) => {
+          const done = (result ?? {}) as { domain?: unknown };
+          this._status = {
+            icon: "mdi:email-off-outline",
+            text: fmt(STRINGS.ignoreDone, {
+              domain: typeof done.domain === "string" && done.domain ? done.domain : domain,
+            }),
+            tab: "review",
+          };
+        },
+      },
+    );
+  }
+
+  /** "Stop ignoring": Parcels reads the sender's e-mails again, its recent ones included. */
+  private async _unignore(domain: string): Promise<void> {
+    const itemId = ignoredId(domain);
+    this._status = null;
+    await this._command(
+      itemId,
+      "sender/unignore",
+      { domain },
+      {
+        onSuccess: (result) => {
+          this._status = {
+            icon: "mdi:email-check-outline",
+            text: fmt(STRINGS.unignoreDone, {
+              domain: normalizeUnignoreResult(result).domain || domain,
+            }),
+            tab: "filtered",
           };
         },
       },
@@ -1433,6 +1658,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
           this._status = {
             icon: "mdi:email-sync-outline",
             text: unreadRetryText(normalizeRetryResult(result)),
+            tab: "review",
           };
         },
       },
