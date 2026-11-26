@@ -477,16 +477,22 @@ async def test_delivery_code_mail(
 async def test_ai_filled(
     hass: HomeAssistant, engine: ParcelsEngine, ws: MockHAClientWebSocket
 ) -> None:
-    """A parcel shows what the AI filled in until someone confirms it."""
+    """A parcel shows what the AI filled in until someone confirms it.
+
+    The AI read CTT's own e-mail, so its date replaces the one CTT gave.
+    """
     data = engine.data
     now = dt_util.utcnow()
     applied = apply_contribution(
-        data, contribution("msg:m1#0", carrier="ctt", number=CTT_NUMBER), now
+        data,
+        contribution("msg:m1#0", carrier="ctt", number=CTT_NUMBER, label="ctt.pt"),
+        now,
     )
     fill = fill_contribution(
         Suggestion(kind=MailKind.SHIPPED, eta_start=date(2026, 11, 20)),
         message_hash="m1",
         time=now,
+        label="ctt.pt",
     )
     assert fill is not None
     assert apply_contribution(data, fill, now).parcel_id == applied.parcel_id

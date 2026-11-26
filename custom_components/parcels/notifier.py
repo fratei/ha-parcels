@@ -24,9 +24,12 @@ Device kinds
     and one per return pickup while it waits. An iPhone gets those
     notifications too for the parcels of an activity the user dismissed (tag
     ``parcel-<id>-news``; see Live Activities), also once they moved to a
-    later day. When newer news takes a parcel from out for delivery or ready
-    for pickup back to transit, its notification is replaced with what holds
-    now, since the old one would no longer be true.
+    later day, except news that iPhone's activities already showed that day.
+    When newer news takes a parcel from out for delivery or ready for pickup
+    back to transit, its notification is replaced with what holds now, since
+    the old one would no longer be true. News that brings back what a parcel
+    held less than ``FLIP_QUIET`` ago comes quietly (passive on iOS,
+    ``alert_once`` on Android), except a delivery and its undo.
     Macs, watches and unknown systems get nothing; they mirror the iPhone.
     The Live Activities switch covers these notifications too.
 
@@ -48,7 +51,10 @@ Live Activities
     activity (``parcels-today-YYYYMMDD``) once a device has more parcels than
     the collapse threshold; a device then stays combined for the rest of the
     day. Updates are sent only when the payload changes, and quietly when the
-    status didn't change. A delivered parcel shows its delivery time at 4/4 and
+    status didn't change or the news brings back what the parcel held less
+    than ``FLIP_QUIET`` ago; a shared activity's, when every package that
+    changed did that. A start, a delivery and its undo always alert. A
+    delivered parcel shows its delivery time at 4/4 and
     ends 30 minutes later; a parcel moved to a later day says so and ends 30
     minutes later. Apple ends activities after 8 hours, so an undelivered
     parcel's activity is ended and restarted with a ``-2`` (``-3`` ...) tag
@@ -66,8 +72,9 @@ Live Activities
     minutes, the activity's key news comes as notifications meanwhile. Once
     the token was there and is gone, the user dismissed the activity (or iOS
     ended it): it is over for the day, isn't restarted after 7.5 hours, and
-    its key news comes as notifications, like an iPad's, except news it
-    already showed. Only the switch being turned back on or the device
+    its key news comes as notifications, like an iPad's, except news that
+    the iPhone's activities already showed that day, until the parcel's
+    status changes. Only the switch being turned back on or the device
     becoming a recipient again starts it again.
 
     The icon and the progress bar take the colour of the status: blue on the
@@ -262,6 +269,10 @@ COUNTDOWN = timedelta(hours=1)
 PICKUP_DAYS = 7
 # Return pickups set before the start time join only this soon after it.
 RETURN_GRACE = timedelta(minutes=15)
+# News that brings back what a parcel held this recently is quiet; a delivery
+# and its undo always alert.
+FLIP_QUIET = timedelta(minutes=15)
+LATER = ":later"
 
 PROGRESS_MAX = 4
 COMBINED = "combined"
@@ -692,6 +703,11 @@ def _names(state: ParcelState) -> list[str]:
 def _expected_today(state: ParcelState, today: date) -> bool:
     """Return True for an undelivered parcel whose ETA ends today."""
     return state.eta is not None and state.eta.end == today and not state.terminal
+
+
+def _moved(state: ParcelState, today: date) -> bool:
+    """Return True for a parcel on its way that is now expected on a later day."""
+    return state.status in MOVABLE and state.eta is not None and state.eta.end > today
 
 
 def _routed(parcel: Parcel, device: _Device) -> bool:
@@ -1358,20 +1374,27 @@ def _end_payload(tag: str) -> dict[str, Any]:
     return {"message": CLEAR_NOTIFICATION, "data": {"tag": tag}}
 
 
-def _key_payload(content: _Content, tag: str, kind: DeviceKind) -> dict[str, Any]:
+def _key_payload(
+    content: _Content, tag: str, kind: DeviceKind, *, quiet: bool = False
+) -> dict[str, Any]:
     """Return a normal notification for an iPad, an Android phone, or an iPhone.
 
     An iPhone gets one for an activity the user dismissed, or whose token
     didn't come. Android tints the icon with the status colour; iOS
-    notifications have no colour.
+    notifications have no colour. A ``quiet`` one replaces the last without
+    an alert: passive on iOS, and on Android while the last still shows.
     """
     data: dict[str, Any] = {"tag": tag}
     if kind is DeviceKind.ANDROID:
         data["clickAction"] = content.url
         data["notification_icon"] = content.icon
         data["color"] = content.color
+        if quiet:
+            data["alert_once"] = True
     else:
         data["url"] = content.url
+        if quiet:
+            data["push"] = {"interruption-level": "passive"}
     return {"title": content.title, "message": content.message, "data": data}
 
 
@@ -1620,6 +1643,12 @@ def _new_day() -> dict[str, Any]:
         "combined": [],
         "activities": {},
         "notified": {},
+        # The news status of each parcel an activity of a device has shown
+        # today, so a dismissal doesn't repeat it as a notification.
+        "shown": {},
+        # Each parcel's news status (":later" once it moved to a later day),
+        # when it left the statuses it held, and whether news is now quiet.
+        "held": {},
     }
 
 
@@ -1688,6 +1717,50 @@ def _sanitize_record(raw: Any, key: str) -> dict[str, Any] | None:
     }
 
 
+def _statuses_by_device(raw: Any) -> dict[str, dict[str, str]]:
+    """Return a stored map of device to parcel to status."""
+    clean: dict[str, dict[str, str]] = {}
+    if not isinstance(raw, Mapping):
+        return clean
+    for device_id, statuses in raw.items():
+        if not isinstance(device_id, str) or not isinstance(statuses, Mapping):
+            continue
+        clean_statuses = {
+            parcel_id: status
+            for parcel_id, status in statuses.items()
+            if isinstance(parcel_id, str) and isinstance(status, str)
+        }
+        if clean_statuses:
+            clean[device_id] = clean_statuses
+    return clean
+
+
+def _sanitize_held(raw: Any) -> dict[str, dict[str, Any]]:
+    """Return the stored statuses parcels held today."""
+    clean: dict[str, dict[str, Any]] = {}
+    if not isinstance(raw, Mapping):
+        return clean
+    for parcel_id, value in raw.items():
+        if not isinstance(parcel_id, str) or not isinstance(value, Mapping):
+            continue
+        key = _optional_str(value.get("key"))
+        if key is None:
+            continue
+        left = value.get("left")
+        clean[parcel_id] = {
+            "key": key,
+            "quiet": value.get("quiet") is True,
+            "left": {
+                held: _iso(at)
+                for held, when in left.items()
+                if isinstance(held, str) and (at := _parse_dt(when)) is not None
+            }
+            if isinstance(left, Mapping)
+            else {},
+        }
+    return clean
+
+
 def _sanitize_day(raw: Mapping[str, Any]) -> dict[str, Any]:
     """Return the stored state of a day, dropping anything unusable."""
     day = _new_day()
@@ -1707,18 +1780,16 @@ def _sanitize_day(raw: Mapping[str, Any]) -> dict[str, Any]:
             }
             if clean:
                 day["activities"][device_id] = clean
-    notified = raw.get("notified")
-    if isinstance(notified, Mapping):
-        for device_id, sent in notified.items():
-            if not isinstance(device_id, str) or not isinstance(sent, Mapping):
-                continue
-            clean_sent = {
-                parcel_id: status
-                for parcel_id, status in sent.items()
-                if isinstance(parcel_id, str) and isinstance(status, str)
-            }
-            if clean_sent:
-                day["notified"][device_id] = clean_sent
+    day["notified"] = _statuses_by_device(raw.get("notified"))
+    if "shown" in raw:
+        day["shown"] = _statuses_by_device(raw.get("shown"))
+    else:
+        # Stored by an older version: what the day's activities still show.
+        for device_id, records in day["activities"].items():
+            for record in records.values():
+                if record["shown"]:
+                    day["shown"].setdefault(device_id, {}).update(record["shown"])
+    day["held"] = _sanitize_held(raw.get("held"))
     return day
 
 
@@ -1801,6 +1872,47 @@ def _taken_back(day: dict[str, Any], device_id: str, parcel: Parcel) -> bool:
     return told in TAKEN_BACK_FROM and parcel.state.status not in KEY_STATUSES
 
 
+def _note_shown(
+    day: dict[str, Any], device: _Device, record: dict[str, Any], content: _Content
+) -> None:
+    """Record what an activity shows now, and that its iPhone has shown it today.
+
+    So once the user dismisses any of that iPhone's activities, news one of
+    them showed isn't sent again, also for a parcel since moved to another
+    day; news changing the parcel's status makes it new again (see
+    :meth:`Notifier._update_held`).
+    """
+    shows = dict(content.shows)
+    record["shown"] = shows
+    if shows:
+        day["shown"].setdefault(device.device_id, {}).update(shows)
+
+
+def _flips_only(
+    record: Mapping[str, Any], content: _Content, flipping: set[str]
+) -> bool:
+    """Return whether a shared activity changed only for parcels flipping back.
+
+    That is, every parcel that changed, joined or left since its last update
+    brings back what it held a moment ago, and no return pickup joined or
+    left.
+    """
+    before: Mapping[str, str] = record["shown"]
+    after = dict(content.shows)
+    changed = {
+        parcel_id
+        for parcel_id in before.keys() | after.keys()
+        if before.get(parcel_id) != after.get(parcel_id)
+    }
+    status = record["status"]
+    return (
+        bool(changed)
+        and changed <= flipping
+        and status is not None
+        and status.split("/")[5:] == content.status.split("/")[5:]
+    )
+
+
 class Notifier:
     """Send the day's parcels to phones and keep a persistent notification."""
 
@@ -1829,6 +1941,9 @@ class Notifier:
         self._persistent_fp: str | None = _UNKNOWN
         self._devices: dict[str, _Device] = {}
         self._recipients: dict[str, _Device] = {}
+        # The parcels whose news brings back what they held within
+        # FLIP_QUIET, which updates and notifications give without an alert.
+        self._flipping: set[str] = set()
         self._saved = json.dumps(self._data, sort_keys=True)
 
     @property
@@ -2110,8 +2225,10 @@ class Notifier:
         if ctx.in_window:
             day = days.setdefault(ctx.key, _new_day())
             self._update_board(ctx, day, parcels, returns)
+            self._update_held(ctx, day, parcels)
         else:
             day = days.get(ctx.key)
+            self._flipping = set()
         if day is not None:
             for device_id in sorted(set(self._recipients) | set(day["activities"])):
                 await self._async_device(ctx, day, device_id, parcels, returns)
@@ -2281,6 +2398,50 @@ class Notifier:
             and self._return_joins(item.entry, ctx)
         ]
 
+    def _update_held(
+        self, ctx: _Context, day: dict[str, Any], parcels: Mapping[str, Parcel]
+    ) -> None:
+        """Note what each parcel of the day holds, and which ones flip back.
+
+        News that brings back a status, with its day, that a parcel left
+        within FLIP_QUIET is quiet until the parcel changes again: carriers
+        and 17TRACK that disagree then don't alert every device at each flip.
+        A delivery and its undo still alert, as they always did. A new status
+        also clears what the device's activities showed of the parcel, so a
+        dismissal doesn't take it for news already shown.
+        """
+        held: dict[str, dict[str, Any]] = day["held"]
+        since = ctx.now - FLIP_QUIET
+        self._flipping = set()
+        for parcel_id in day["board"]:
+            parcel = parcels.get(parcel_id)
+            if parcel is None:
+                continue
+            state = parcel.state
+            news = state.news_status.value
+            key = news + LATER if _moved(state, ctx.today) else news
+            entry = held.get(parcel_id)
+            if entry is None:
+                held[parcel_id] = {"key": key, "quiet": False, "left": {}}
+                continue
+            if entry["key"] != key:
+                left: dict[str, str] = entry["left"]
+                left[entry["key"]] = _iso(ctx.now)
+                for old, when in list(left.items()):
+                    if (moment := _parse_dt(when)) is None or moment < since:
+                        del left[old]
+                before = entry["key"].removesuffix(LATER)
+                if before != news:
+                    for shown in day["shown"].values():
+                        shown.pop(parcel_id, None)
+                entry["key"] = key
+                entry["quiet"] = key in left and S.DELIVERED.value not in (
+                    before,
+                    news,
+                )
+            if entry["quiet"]:
+                self._flipping.add(parcel_id)
+
     @staticmethod
     def _device_returns(
         day: dict[str, Any], returns: Mapping[str, _DayReturn], device: _Device
@@ -2357,11 +2518,7 @@ class Notifier:
             state = parcel.state
             if state.status in GONE:
                 continue
-            if (
-                state.status in MOVABLE
-                and state.eta is not None
-                and state.eta.end > ctx.today
-            ):
+            if _moved(state, ctx.today):
                 moved.append(parcel)
             else:
                 members.append(parcel)
@@ -2412,7 +2569,15 @@ class Notifier:
                 continue
             content = _parcel_content(parcel, ctx)
             if record["running"]:
-                await self._async_linger(ctx, device, record, content, REASON_MOVED)
+                await self._async_linger(
+                    ctx,
+                    day,
+                    device,
+                    record,
+                    content,
+                    REASON_MOVED,
+                    quiet=parcel.id in self._flipping,
+                )
             await self._async_notify_instead(
                 ctx,
                 day,
@@ -2476,12 +2641,15 @@ class Notifier:
                     ctx, day, device, parcel.id, gen, content, pin_later=pin_later
                 )
             return
+        quiet = parcel.id in self._flipping
         if status is S.DELIVERED:
-            await self._async_linger(ctx, device, record, content, REASON_DELIVERED)
+            await self._async_linger(
+                ctx, day, device, record, content, REASON_DELIVERED, quiet=quiet
+            )
         else:
             record["linger"] = record["end_at"] = None
             await self._async_keep_alive(
-                ctx, day, device, parcel.id, record, content, pinned
+                ctx, day, device, parcel.id, record, content, pinned, quiet=quiet
             )
         await self._async_notify_instead(
             ctx, day, device, record, [parcel], lambda _: content, content.status
@@ -2509,7 +2677,9 @@ class Notifier:
                 await self._async_start(ctx, day, device, entry.id, gen, content)
             return
         if done:
-            await self._async_linger(ctx, device, record, content, REASON_PICKED_UP)
+            await self._async_linger(
+                ctx, day, device, record, content, REASON_PICKED_UP
+            )
             return
         record["linger"] = record["end_at"] = None
         await self._async_keep_alive(ctx, day, device, entry.id, record, content)
@@ -2601,12 +2771,23 @@ class Notifier:
         if not members and not returns:
             await self._async_end(device.device_id, record, REASON_REMOVED, ctx.now)
             return
+        quiet = _flips_only(record, content, self._flipping)
         if not pending and not probable:
-            await self._async_linger(ctx, device, record, content, REASON_DELIVERED)
+            await self._async_linger(
+                ctx, day, device, record, content, REASON_DELIVERED, quiet=quiet
+            )
         else:
             record["linger"] = record["end_at"] = None
             await self._async_keep_alive(
-                ctx, day, device, COMBINED, record, content, pinned, restart=pending
+                ctx,
+                day,
+                device,
+                COMBINED,
+                record,
+                content,
+                pinned,
+                restart=pending,
+                quiet=quiet,
             )
         await self._async_notify_instead(
             ctx,
@@ -2629,13 +2810,15 @@ class Notifier:
         pinned: tuple[_Content, str] | None = None,
         *,
         restart: bool = True,
+        quiet: bool = False,
     ) -> None:
         """Update an activity, restarting it before Apple ends it after 8 hours.
 
         A restart is plain, like every start: the PIN follows it quietly. An
         activity the user dismissed isn't restarted. Without ``restart``, when
         nothing is left to wait for but inferred deliveries, it ends instead:
-        a restart would alert with nothing new.
+        a restart would alert with nothing new. ``quiet`` updates it without
+        an alert (see :meth:`_async_update`).
         """
         started = _parse_dt(record["started"])
         if (
@@ -2661,15 +2844,18 @@ class Notifier:
                     ctx, day, device, key, gen, content, pin_later=pinned is not None
                 )
             return
-        await self._async_update(ctx, device, record, content, pinned)
+        await self._async_update(ctx, day, device, record, content, pinned, quiet=quiet)
 
     async def _async_linger(
         self,
         ctx: _Context,
+        day: dict[str, Any],
         device: _Device,
         record: dict[str, Any],
         content: _Content,
         reason: str,
+        *,
+        quiet: bool = False,
     ) -> None:
         """Show a final state for 30 minutes, then end the activity."""
         end_at = _parse_dt(record["end_at"])
@@ -2680,7 +2866,7 @@ class Notifier:
         if ctx.now >= end_at - DUE_TOLERANCE:
             await self._async_end(device.device_id, record, reason, ctx.now)
         else:
-            await self._async_update(ctx, device, record, content)
+            await self._async_update(ctx, day, device, record, content, quiet=quiet)
 
     async def _async_start(
         self,
@@ -2727,8 +2913,9 @@ class Notifier:
             "pin": False,
             "plain": None,
             "seen": route is _Route.UPDATE,
-            "shown": dict(content.shows),
+            "shown": {},
         }
+        _note_shown(day, device, day["activities"][device.device_id][key], content)
         if pin_later or route is _Route.OTHER:
             self._pin_later(ctx.now, first=True)
         return True
@@ -2736,24 +2923,29 @@ class Notifier:
     async def _async_update(
         self,
         ctx: _Context,
+        day: dict[str, Any],
         device: _Device,
         record: dict[str, Any],
         content: _Content,
         pinned: tuple[_Content, str] | None = None,
+        *,
+        quiet: bool = False,
     ) -> None:
         """Update a running activity when what it shows changed.
 
         The title stays the one the activity started with; the update is quiet
-        when the status didn't change. ``pinned`` is what it shows with a PIN:
-        that goes only in a quiet update, pushed straight to an iPhone known to
-        hold the activity, so no alert and no new start ever carries a PIN.
+        when the status didn't change, or with ``quiet``, for news that brings
+        back what parcels held a moment ago. ``pinned`` is what it shows with a
+        PIN: that goes only in a quiet update, pushed straight to an iPhone
+        known to hold the activity, so no alert and no new start ever carries
+        a PIN.
 
         mobile_app starts an activity when it holds no token for it, so an
         update waits until the iPhone has sent the token of a new activity;
         once that token is gone, the user has dismissed the activity, and it
         is over.
         """
-        silent = record["status"] == content.status
+        silent = quiet or record["status"] == content.status
         payload = _activity_payload(
             content, record["tag"], record["title"], silent=silent
         )
@@ -2784,7 +2976,7 @@ class Notifier:
                     record["plain"] = plain
                     record["status"] = content.status
                     record["service"] = device.service
-                    record["shown"] = dict(content.shows)
+                    _note_shown(day, device, record, content)
                 else:
                     self._retry(ctx.now)
                 return
@@ -2806,7 +2998,7 @@ class Notifier:
             record["service"] = device.service
             record["pin"] = False
             record["plain"] = None
-            record["shown"] = dict(content.shows)
+            _note_shown(day, device, record, content)
             if pinned is not None and not silent:
                 self._pin_later(ctx.now, first=True)
         elif result is _Result.FAILED:
@@ -2996,8 +3188,13 @@ class Notifier:
         content: _Content,
         tag: str,
     ) -> bool:
-        """Notify a device of a parcel's key news; return True when it was sent."""
-        payload = _key_payload(content, tag, device.kind)
+        """Notify a device of a parcel's key news; return True when it was sent.
+
+        News that brings back what the parcel held a moment ago comes quietly.
+        """
+        payload = _key_payload(
+            content, tag, device.kind, quiet=parcel.id in self._flipping
+        )
         result = await self._async_send(device.service, device.kind, payload)
         if result is _Result.SENT:
             day["notified"].setdefault(device.device_id, {})[parcel.id] = (
@@ -3021,9 +3218,10 @@ class Notifier:
         """Send as notifications the key news an iPhone's activity can't show.
 
         That is once the user has dismissed the activity, or while the iPhone
-        hasn't sent a new activity's token 5 minutes after its start; news the
-        activity already showed isn't sent again. Once that news is sent, the
-        activity shows it quietly when its token comes.
+        hasn't sent a new activity's token 5 minutes after its start; news
+        that one of the iPhone's activities already showed that day isn't sent
+        again. Once that news is sent, the activity shows it quietly when its
+        token comes.
         """
         if record["running"]:
             started = _parse_dt(record["started"])
@@ -3038,9 +3236,10 @@ class Notifier:
         elif record["end_reason"] != REASON_DISMISSED:
             return
         sent = failed = False
+        shown = {**day["shown"].get(device.device_id, {}), **record["shown"]}
         for parcel in parcels:
             if not (
-                _key_news(day, device.device_id, parcel, record["shown"])
+                _key_news(day, device.device_id, parcel, shown)
                 or _taken_back(day, device.device_id, parcel)
             ):
                 continue

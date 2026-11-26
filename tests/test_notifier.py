@@ -1190,7 +1190,8 @@ async def test_probably_delivered_taken_back_once_ended(env: Env) -> None:
 async def test_a_delivery_marked_by_hand_taken_back(env: Env) -> None:
     """Undoing a mark brings the activity back, with an alert, also once ended.
 
-    Marking it delivered by mistake told everyone; so does taking it back.
+    Marking it delivered by mistake told everyone; so does taking it back, and
+    marking it again, however soon: that's no flip to damp.
     """
     phone = env.phone("Alex iPhone", ALEX)
     parcel = env.parcel(eta=on())
@@ -1224,7 +1225,7 @@ async def test_a_delivery_marked_by_hand_taken_back(env: Env) -> None:
     await env.goto(at(11))
     hand(mark_delivered)
     await env.settle()
-    assert len(phone.take()) == 1
+    assert shown() == [(tag_of(parcel), f"Delivered {CHECK} 11:00{SEP}DPD", None)]
     await env.goto(at(11, 31))
     assert phone.take() == [end(tag_of(parcel))]
     await env.goto(at(14))
@@ -1547,8 +1548,10 @@ async def test_updates_are_debounced(env: Env) -> None:
     assert len(phone.take()) == 1
 
     await env.goto(at(9))
-    env.change(parcel, S.OUT_FOR_DELIVERY, eta=window(13, 14))
-    env.change(parcel, eta=window(14, 15), when=at(9) + timedelta(seconds=1))
+    second = at(9) + timedelta(seconds=1)
+    dpd = "dpd.pt"
+    env.change(parcel, S.OUT_FOR_DELIVERY, eta=window(13, 14), sent=at(9), label=dpd)
+    env.change(parcel, eta=window(14, 15), when=second, sent=second, label=dpd)
     await env.hass.async_block_till_done()
     assert phone.calls == []
     await env.settle()
@@ -3872,6 +3875,179 @@ async def test_a_parcel_taken_back_replaces_its_notification(
     assert summary(ipad.take()) == summary(android.take()) == again
 
 
+async def test_a_step_back_reversed_soon_after_is_quiet(env: Env) -> None:
+    """A parcel flipping between two statuses alerts only for the first change.
+
+    News that brings back, within 15 minutes, the status the parcel had just
+    left updates the activity silently, and replaces the notifications of
+    iPads and Android phones quietly. Later news alerts again.
+    """
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    android = env.phone("Sam Pixel", SAM, "android")
+    parcel = env.parcel(eta=window(14, 18), merchant="Decathlon", carrier="ctt")
+    tag = tag_of(parcel)
+    await env.start()
+    await env.goto(at(8))
+    assert len(iphone.take()) == 1
+
+    await env.goto(at(9))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(9), eta=window(14, 18), label="ctt.pt"
+    )
+    await env.settle()
+    out = f"Out for delivery 14:00{DASH}18:00{SEP}CTT"
+    assert summary(ipad.take()) == summary(android.take()) == [(tag, out)]
+    (update,) = iphone.take()
+    assert "silent" not in update["data"]
+
+    await env.goto(at(11))
+    tomorrow = on(DAY + timedelta(days=1))
+    env.change(parcel, S.IN_TRANSIT, sent=at(11), eta=tomorrow, label="ctt.pt")
+    await env.settle()
+    back = f"Expected tomorrow{SEP}CTT"
+    (update,) = iphone.take()
+    assert summary([update]) == [(tag, back)]
+    assert "silent" not in update["data"]
+    assert ipad.take() == [
+        {
+            "title": "Decathlon",
+            "message": back,
+            "data": {"tag": tag, "url": link_of(parcel)},
+        }
+    ]
+    assert android.take() == [
+        {
+            "title": "Decathlon",
+            "message": back,
+            "data": {
+                "tag": tag,
+                "clickAction": link_of(parcel),
+                "notification_icon": TRUCK,
+                "color": BLUE,
+            },
+        }
+    ]
+
+    await env.goto(at(11, 1))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(11, 1), eta=window(15, 19), label="ctt.pt"
+    )
+    await env.settle()
+    out = f"Out for delivery 15:00{DASH}19:00{SEP}CTT"
+    (update,) = iphone.take()
+    assert summary([update]) == [(tag, out)]
+    assert update["data"]["silent"] is True
+    (notification,) = ipad.take()
+    assert notification["message"] == out
+    assert notification["data"]["push"] == {"interruption-level": "passive"}
+    (notification,) = android.take()
+    assert notification["message"] == out
+    assert notification["data"]["alert_once"] is True
+
+    await env.goto(at(11, 2))
+    env.change(parcel, S.IN_TRANSIT, sent=at(11, 2), eta=tomorrow, label="ctt.pt")
+    await env.settle()
+    (update,) = iphone.take()
+    assert summary([update]) == [(tag, back)]
+    assert update["data"]["silent"] is True
+    assert ipad.take() == [
+        {
+            "title": "Decathlon",
+            "message": back,
+            "data": {
+                "tag": tag,
+                "url": link_of(parcel),
+                "push": {"interruption-level": "passive"},
+            },
+        }
+    ]
+    assert android.take() == [
+        {
+            "title": "Decathlon",
+            "message": back,
+            "data": {
+                "tag": tag,
+                "clickAction": link_of(parcel),
+                "notification_icon": TRUCK,
+                "color": BLUE,
+                "alert_once": True,
+            },
+        }
+    ]
+
+    await env.goto(at(11, 20))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(11, 20), eta=window(16, 19), label="ctt.pt"
+    )
+    await env.settle()
+    out = f"Out for delivery 16:00{DASH}19:00{SEP}CTT"
+    (update,) = iphone.take()
+    assert summary([update]) == [(tag, out)]
+    assert "silent" not in update["data"]
+    assert ipad.take() == [
+        {
+            "title": "Decathlon",
+            "message": out,
+            "data": {"tag": tag, "url": link_of(parcel)},
+        }
+    ]
+    (notification,) = android.take()
+    assert notification["message"] == out
+    assert "alert_once" not in notification["data"]
+
+
+async def test_a_step_back_reversed_soon_after_is_quiet_when_shared(
+    env: Env,
+) -> None:
+    """A shared activity changes silently for a parcel flipping back.
+
+    It alerts when another parcel has news at the same time.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    parcel = env.parcel(eta=window(14, 18), merchant="Decathlon", carrier="ctt")
+    other = env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert [payload["data"]["tag"] for payload in phone.take()] == [COMBINED]
+
+    await env.goto(at(9))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(9), eta=window(14, 18), label="ctt.pt"
+    )
+    await env.settle()
+    (update,) = phone.take()
+    assert "silent" not in update["data"]
+
+    await env.goto(at(11))
+    tomorrow = on(DAY + timedelta(days=1))
+    env.change(parcel, S.IN_TRANSIT, sent=at(11), eta=tomorrow, label="ctt.pt")
+    await env.settle()
+    (update,) = phone.take()
+    assert "silent" not in update["data"]
+    assert update["message"].startswith("0 of 1 delivered")
+
+    await env.goto(at(11, 1))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(11, 1), eta=window(15, 19), label="ctt.pt"
+    )
+    await env.settle()
+    (update,) = phone.take()
+    assert update["message"].startswith("0 of 2 delivered")
+    assert update["data"]["silent"] is True
+
+    await env.goto(at(11, 5))
+    env.change(parcel, S.IN_TRANSIT, sent=at(11, 5), eta=tomorrow, label="ctt.pt")
+    env.change(
+        other, S.OUT_FOR_DELIVERY, sent=at(11, 5), eta=window(12, 14), label="ctt.pt"
+    )
+    await env.settle()
+    (update,) = phone.take()
+    assert update["message"].startswith("0 of 1 delivered")
+    assert "silent" not in update["data"]
+
+
 async def test_pin_waits_until_the_activity_can_be_updated(env: Env) -> None:
     """A PIN waits for the token of the running activity, and starts none.
 
@@ -4190,6 +4366,92 @@ async def test_news_of_a_parcel_moved_after_a_dismissal(
     assert summary(phone.take()) == [
         (news_tag(parcel), f"Missed 12:30{SEP}Expected tomorrow{SEP}CTT")
     ]
+    env.changed()
+    await env.settle()
+    assert phone.take() == []
+
+
+async def test_shown_news_of_a_moved_parcel_is_not_sent_after_a_dismissal(
+    env: Env,
+) -> None:
+    """A dismissed shared activity's news isn't sent again for a moved parcel.
+
+    The activity showed the missed delivery; moving the parcel to tomorrow
+    took it off, and the move alone isn't news.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    parcel = env.parcel(eta=on(), merchant="Decathlon", carrier="ctt")
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert [payload["data"]["tag"] for payload in phone.take()] == [COMBINED]
+
+    await env.goto(at(12, 30))
+    env.change(parcel, S.ATTEMPTED, sent=at(12, 30), label="ctt.pt")
+    await env.settle()
+    shown = phone.take()
+    assert len(shown) == 1
+    assert "1 problem" in shown[0]["message"]
+
+    await env.goto(at(12, 40))
+    tomorrow = on(DAY + timedelta(days=1))
+    env.change(parcel, eta=tomorrow, sent=at(12, 40), label="ctt.pt")
+    await env.settle()
+    assert "problem" not in phone.take()[-1]["message"]
+
+    await env.goto(at(13))
+    env.untoken(phone, COMBINED)
+    env.changed()
+    await env.settle()
+    assert phone.take() == []
+
+    await env.goto(at(15))
+    env.change(parcel, S.OUT_FOR_DELIVERY, sent=at(15), label="ctt.pt")
+    await env.settle()
+    assert summary(phone.take()) == [(news_tag(parcel), f"Out for delivery{SEP}CTT")]
+
+
+async def test_news_shown_before_a_collapse_is_not_sent_after_a_dismissal(
+    env: Env,
+) -> None:
+    """News a parcel's own activity showed isn't sent once a later one is dismissed.
+
+    The parcel's activity showed the missed delivery and ended when the
+    parcel moved to tomorrow; then the iPhone's activities collapsed into
+    the shared one, which the user dismissed.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 2})
+    parcel = env.parcel(eta=on(), merchant="Decathlon", carrier="ctt")
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 2
+
+    await env.goto(at(12, 30))
+    env.change(parcel, S.ATTEMPTED, sent=at(12, 30), label="ctt.pt")
+    await env.settle()
+    assert summary(phone.take()) == [
+        (tag_of(parcel), f"Missed{SEP}reported 12:30{SEP}CTT")
+    ]
+
+    await env.goto(at(12, 40))
+    tomorrow = on(DAY + timedelta(days=1))
+    env.change(parcel, eta=tomorrow, sent=at(12, 40), label="ctt.pt")
+    await env.settle()
+    await env.goto(at(13, 11))
+    assert phone.take()[-1] == end(tag_of(parcel))
+
+    await env.goto(at(13, 20))
+    env.parcel(eta=on(), merchant="IKEA", carrier="ctt")
+    env.parcel(eta=on(), merchant="Etsy", carrier="ctt")
+    env.changed()
+    await env.settle()
+    assert [payload["data"]["tag"] for payload in phone.take()][-1] == COMBINED
+
+    await env.goto(at(13, 30))
+    env.untoken(phone, COMBINED)
     env.changed()
     await env.settle()
     assert phone.take() == []

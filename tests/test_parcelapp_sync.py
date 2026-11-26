@@ -373,8 +373,12 @@ def add_parcel(
     private: bool = False,
     items: Iterable[str] = (),
     shipment: str | None = None,
+    label: str = "",
 ) -> Parcel:
-    """Add a parcel from an e-mail of ``owner``, received ``age`` ago."""
+    """Add a parcel from an e-mail of ``owner``, received ``age`` ago.
+
+    Without a ``label`` the e-mail is a shop's, not the carrier's.
+    """
     now = dt_util.utcnow()
     applied = apply_contribution(
         engine.data,
@@ -392,6 +396,7 @@ def add_parcel(
             status=status,
             private=private,
             items=items,
+            label=label,
         ),
         now,
     )
@@ -1741,7 +1746,11 @@ async def test_parcel_window_fills_an_email_date(
     engine: ParcelsEngine,
     parcel_app: FakeParcelApp,
 ) -> None:
-    """Parcel's window fills the day an e-mail gave, even after it's repeated."""
+    """Parcel's window fills the day an e-mail gave, and stays when it's repeated.
+
+    The carrier's e-mail saying the same day again without a window doesn't
+    take the window away.
+    """
     add_parcel(engine, "a", eta=Eta(day(19), day(19)))
     parcel_app.deliveries = [
         delivery(
@@ -1756,10 +1765,12 @@ async def test_parcel_window_fills_an_email_date(
     assert parcel.state.eta == window
 
     freezer.tick(timedelta(minutes=1))
-    add_parcel(engine, "b", eta=Eta(day(19), day(19)), age=timedelta(0))
+    add_parcel(
+        engine, "b", eta=Eta(day(19), day(19)), age=timedelta(0), label="ups.com"
+    )
     parcel = holder(engine)
     assert parcel is not None
-    assert parcel.state.eta == Eta(day(19), day(19))
+    assert parcel.state.eta == window
 
     await read(hass, freezer, parcel_app, after=MIN_INTERVAL - timedelta(minutes=1))
     parcel = holder(engine)
@@ -1774,8 +1785,11 @@ async def test_newer_news_wins_the_date(
     engine: ParcelsEngine,
     parcel_app: FakeParcelApp,
 ) -> None:
-    """Of the e-mails' and Parcel's dates, the newer news wins, either way."""
-    add_parcel(engine, "a", eta=Eta(day(19), day(19)))
+    """Of UPS's e-mails' and Parcel's dates, the newer news wins, either way.
+
+    A shop's newer e-mail wouldn't replace Parcel's date.
+    """
+    add_parcel(engine, "a", eta=Eta(day(19), day(19)), label="ups.com")
     parcel_app.deliveries = [delivery(date_expected="2026-11-20 00:00:00")]
     await read(hass, freezer, parcel_app)
     parcel = holder(engine)
@@ -1783,7 +1797,9 @@ async def test_newer_news_wins_the_date(
     assert parcel.state.eta == Eta(day(20), day(20))
 
     freezer.tick(timedelta(minutes=1))
-    add_parcel(engine, "b", eta=Eta(day(21), day(21)), age=timedelta(0))
+    add_parcel(
+        engine, "b", eta=Eta(day(21), day(21)), age=timedelta(0), label="ups.com"
+    )
     await read(hass, freezer, parcel_app, after=MIN_INTERVAL - timedelta(minutes=1))
     parcel = holder(engine)
     assert parcel is not None

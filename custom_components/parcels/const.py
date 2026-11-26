@@ -8,7 +8,7 @@ from typing import Final
 
 DOMAIN: Final = "parcels"
 NAME: Final = "Parcels"
-VERSION: Final = "0.1.22"
+VERSION: Final = "0.1.23"
 
 STORAGE_KEY: Final = "parcels"
 STORAGE_VERSION: Final = 1

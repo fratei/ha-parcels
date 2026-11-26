@@ -81,10 +81,14 @@ api.parcel.app, which Parcels contacts itself with your API key.
   e-mails, and those of a shop whose own service delivers the parcel, such
   as Amazon or Vinted Go, or that sends its carriers' notices itself, such
   as Leroy Merlin. Other shops' e-mails, the Shop app's included, pass on
-  the carrier's news late, so they never take these steps, and a parcel at
-  a pickup point keeps its last day to collect. The one exception is a
-  delay notice, from anyone: it takes a parcel out for delivery back to in
-  transit, with its new date. These steps back never happen:
+  the carrier's news late, so they never take these steps, and change
+  nothing else then: not the expected date or time window, nor the pickup
+  point, its code or the last day to collect. The one exception is a delay
+  notice, from anyone: it takes a parcel out for delivery back to in
+  transit, with its new date. Amazon's e-mails in Europe never name Amazon
+  Logistics, so while no carrier is known and none has sent news, a shop
+  with its own delivery service counts as the carrier. These steps back
+  never happen:
   - to ordered or shipped, such as on a shop's late order or shipping
     e-mail;
   - from delivered, except to returned to the sender, and from returned or
@@ -97,14 +101,33 @@ api.parcel.app, which Parcels contacts itself with your API key.
   An e-mail's news counts from when the e-mail was sent, unless it gives an
   earlier time. 17TRACK's news without a time goes on the day Parcels first
   read it, so it's from a later day only when Parcels read it on a later
-  day than the news that set the status.
+  day than the news that set the status. So does its news timed after the
+  moment Parcels read it, since 17TRACK may give a carrier's local time as
+  if it were UTC.
+
+  The expected date is the carrier's, or the one you typed, as soon as it
+  comes. A shop's estimate fills in only when there's none, when the one
+  there is a shop's too, or once it has passed, and never while the parcel
+  is at a pickup point. News that expects the parcel on the day it's already
+  expected, without a time window, keeps the window it has. "Out for
+  delivery" means that day, even without a date; a shop's, on one of the
+  days the carrier expects, keeps the carrier's time window. A delay
+  notice's new date counts, from anyone, unless the parcel is at a pickup
+  point.
 
   When newer news takes a parcel from its pickup point to in transit or out
   for delivery, also after a failed attempt or a problem there, its pickup
   point, pickup code and last day to collect no longer show, so the code
-  can't read as a delivery PIN. Only an e-mail about what happened since can
-  give new ones, and what you typed in the parcel's details stays. Back at a
-  pickup point, they show again.
+  can't read as a delivery PIN, and neither do those you typed in the
+  parcel's details while it was there. The days to collect it stop being its
+  expected date too, unless the news gives a date. Only news about what
+  happened since can give new ones: at a new pickup point, the code comes
+  from the news that named the point or said the parcel was there, or later
+  news, never from the point before. Nor does the PIN of a missed delivery
+  show as the code of the pickup point the parcel then goes to. A code you
+  typed while the parcel was out for delivery stays its delivery PIN. Back
+  at the point it left, without having gone out for delivery, they show
+  again, the last day to collect included.
 - **Parcels without a tracking number**: when a carrier delivers another
   parcel from the same shop around the expected day, and no e-mail says
   otherwise, the parcel is marked as probably delivered, unless that delivery
@@ -213,7 +236,8 @@ api.parcel.app, which Parcels contacts itself with your API key.
   and notifications, and the persistent notification.
 - **Delivery PINs**: delivery PINs, one-time codes and pickup codes found in
   e-mails are shown on the parcel's box until it's delivered, and in its
-  details. An option shows them in iPhones' Live Activities too (see
+  details. A pickup point's code shows only while the parcel is there. An
+  option shows them in iPhones' Live Activities too (see
   [Privacy and safety](#privacy-and-safety)).
 - **A Parcels page** with a Monday-to-Sunday calendar of your deliveries and
   return pickups, the parcels that don't have a date yet, and the e-mails
@@ -285,8 +309,9 @@ api.parcel.app, which Parcels contacts itself with your API key.
   notifications of iPads and Android phones, and reach iPhones only with the
   option below. Parcels hides a PIN once its parcel is delivered, returned
   or cancelled, and deletes it at the nightly cleanup or when the parcel is
-  archived. A delivery that Parcels only inferred keeps its PIN in the
-  details until the parcel is archived, in case it hasn't arrived.
+  archived. It hides a pickup code once the parcel leaves its pickup point.
+  A delivery that Parcels only inferred keeps its PIN in the details until
+  the parcel is archived, in case it hasn't arrived.
 - **Delivery PINs on the lock screen** are off by default. With **Show
   delivery PINs on the lock screen** on, the Live Activities of the iPhones
   that may show a parcel (only its owner's when it's private) show its PIN
@@ -880,11 +905,11 @@ How they behave:
   delivery PIN.
 - Updates are sent only when something changes, and silently unless the
   status changed, as when only the number of orders a package may hold
-  changes. A new activity's updates wait until the iPhone has told Home
-  Assistant that it holds the activity, usually within seconds, and then the
-  latest goes; sent earlier, an update would start a second activity. When
-  that hasn't happened after 5 minutes, the key news comes as notifications
-  meanwhile, as on an iPad.
+  changes, or the parcel flips back (see below). A new activity's updates
+  wait until the iPhone has told Home Assistant that it holds the activity,
+  usually within seconds, and then the latest goes; sent earlier, an update
+  would start a second activity. When that hasn't happened after 5 minutes,
+  the key news comes as notifications meanwhile, as on an iPad.
 - The text says what comes next. A pickup says where and until when, such as
   "Ready at Locker 12 · collect by Wed 24", with the pickup point's name up to
   its first comma. A missed delivery says when and what next: "Missed 11:20 ·
@@ -900,6 +925,15 @@ How they behave:
   alert, as on every change of status. On iPads and Android phones, a new
   notification with the same text replaces the one that said it was out for
   delivery or ready for pickup.
+- A parcel that flips back and forth alerts only for its first change: news
+  that brings back a status the parcel left less than 15 minutes before,
+  such as out for delivery again after a step back to in transit when the
+  carrier's e-mails and 17TRACK disagree, changes its activity silently
+  until its status changes again. Its notifications come as passive ones on
+  iPads and iPhones, and Android phones replace theirs without a sound while
+  it still shows. A shared activity changes silently when that's all that
+  changed. An activity's start, a delivery and undoing a delivery marked by
+  hand alert as usual.
 - With **Show delivery PINs on the lock screen** on, a parcel's activity
   shows its delivery PIN or pickup code while it's out for delivery or ready
   for pickup: the status takes the first line and the PIN leads the second,
@@ -950,11 +984,13 @@ How they behave:
   the rest of the day: Parcels sends it nothing more and doesn't start it
   again. Its parcels' key news (out for delivery, ready for pickup, delivered,
   delivery attempted, problem) then comes to that iPhone as notifications, as
-  on an iPad, except news the activity already showed. That includes the news
-  of a parcel moved to a later day, such as "Missed 12:30 · Expected tomorrow
-  · CTT", and a notification that no longer holds is replaced, as on an iPad
-  (see above). A shared activity works the same way for all its packages; a
-  return pickup's activity stays dismissed too, without notifications.
+  on an iPad, except news that one of the iPhone's activities already showed
+  that day. That includes the news of a parcel moved to a later day, such as
+  "Missed 12:30 · Expected tomorrow · CTT", unless an activity showed the
+  missed delivery: the move alone isn't news. A notification that no longer
+  holds is replaced, as on an iPad (see above). A shared activity works the
+  same way for all its packages; a return pickup's activity stays dismissed
+  too, without notifications.
   Turning the **Live Activities** switch off and on again brings dismissed
   activities back, as does an iPhone that stops being notified and is
   notified again.
@@ -1064,7 +1100,12 @@ own tracking in between.
   [What it does](#what-it-does)). News without a time goes on the day
   Parcels first read it, and the parcel's details say "Date not known". So
   does news whose time Parcels can't read, such as text that isn't a time
-  or a time before 2000.
+  or a time before 2000, and news timed after the moment Parcels read it.
+  17TRACK may give a carrier's local time as if it were UTC, since Home
+  Assistant's 17TRACK integration asks for no time zone, so a Spanish
+  carrier's time can read an hour later than it was. Parcels knows such
+  news again by the time 17TRACK gave, so reading it again, also once that
+  time has passed, isn't new news.
 - **What it doesn't add**: delivery dates. Home Assistant's 17TRACK integration
   gives no expected date, so a parcel without one stays under **No date yet**.
 - **What it leaves out**, so they don't take up places in your account:
@@ -1120,10 +1161,11 @@ a place frees up. The hub's diagnostics show how many numbers are waiting
 (`failed`), the last error, with 17TRACK's code when it gives one, and how
 many numbers 17TRACK can't find, by carrier (`not_found_by_carrier`). They
 also count, at the last refresh, the times Parcels couldn't read
-(`unreadable_times`) and the packages it couldn't read at all
-(`unreadable_packages`). A package Parcels can't read doesn't stop the
-others; Parcels reads it again at the next refresh, and Home Assistant's log
-says so once while it lasts, with the error's type only.
+(`unreadable_times`), the times after the refresh (`future_times`) and the
+packages it couldn't read at all (`unreadable_packages`). A package Parcels
+can't read doesn't stop the others; Parcels reads it again at the next
+refresh, and Home Assistant's log says so once while it lasts, with the
+error's type only.
 
 17TRACK also sells a tracking API for developers, with its own free
 allowance. That's a different product, and Parcels doesn't use it.
@@ -1450,7 +1492,7 @@ downloaded or read, headers included, doesn't turn it on.
 | `parcels.merge` | Merges parcels that are the same delivery. |
 | `parcels.split` | Moves e-mails or entries of a parcel to a new parcel. |
 | `parcels.undo_merge` | Splits a parcel that Parcels merged automatically. |
-| `parcels.undo_delivery` | Takes back a delivery marked by hand or kept, and the parcel's earlier status comes back; a parcel that only the mark was left of is removed. Or takes back a delivery that Parcels inferred, from another parcel of the same shop, from another package of the same shipment, from a return of its items or from three weeks without news, and doesn't infer it again. A delivery that a carrier, a shop, 17TRACK or the Parcel app reported can't be taken back. |
+| `parcels.undo_delivery` | Takes back a delivery marked by hand or kept, and the parcel's earlier status comes back. A parcel that only the mark was left of, after a re-read found that its e-mails weren't about a parcel, shows no owner or shop, and taking the mark back removes it. Or takes back a delivery that Parcels inferred, from another parcel of the same shop, from another package of the same shipment, from a return of its items or from three weeks without news, and doesn't infer it again. A delivery that a carrier, a shop, 17TRACK or the Parcel app reported can't be taken back. |
 | `parcels.mark_return_picked_up` | Marks a return picked up now (see [Return pickups](#return-pickups)). Its `return_id` is in the return's details on the Parcels page. |
 | `parcels.undo_return_picked_up` | Takes back marking a return picked up. |
 | `parcels.refresh` | Checks all mailboxes, and 17TRACK and the Parcel app when they're on, now. The Parcel app is read at most every 10 minutes. |
@@ -1479,9 +1521,9 @@ Parcel app, goes on the parcel's last known day (see
 [Parcel app](#parcel-app)). When that day is more than a day back, or isn't
 known, its event waits until dated news, such as an e-mail, gives it a time,
 and fires only if that time is less than a day old. 17TRACK's news without
-a time goes on when Parcels read it, so it fires when it's read. News with
-its day but no time Parcels can read fires until a day after that day ends.
-For example:
+a time, or timed after Parcels read it, goes on when Parcels read it, so it
+fires when it's read. News with its day but no time Parcels can read fires
+until a day after that day ends. For example:
 
 ```yaml
 triggers:
@@ -1776,6 +1818,52 @@ actions:
   Activity could show the locker's code as the delivery PIN. After the
   update, they no longer show once the parcel has left (see **Statuses** in
   [What it does](#what-it-does)).
+- **A shop's late e-mail moved a parcel to another day or dropped its time
+  window.** Before 0.1.23, a shop's e-mail sent after the carrier's news set
+  the parcel's expected date even when it couldn't change its status: the
+  Shop app's "on its way" with a later date moved a parcel out for delivery
+  today to that day, and a delay notice gave a parcel waiting in a locker a
+  new date. A shop's "out for delivery" without a time also dropped the
+  carrier's time window. After the update, a shop's estimate doesn't
+  replace the carrier's (see **Statuses** in [What it does](#what-it-does)),
+  and those parcels show the carrier's date and window again.
+- **A shop's code replaced the locker's code.** Before 0.1.23, a shop's
+  e-mail with a delivery code, such as Amazon's "out for delivery" with
+  "Código de entrega", sent while the carrier's locker held the parcel,
+  replaced the locker's code, and its Live Activity showed the shop's code
+  as the PIN. After the update, such an e-mail changes nothing at the
+  pickup point, and the locker's code shows again.
+- **A parcel at a new pickup point showed the code of the one before.**
+  Before 0.1.23, a parcel taken from a locker that then went to another
+  pickup point, such as the carrier's shop after a missed delivery, showed
+  the locker's code with the new place's name when the new place's e-mail
+  gave no code. After the update, the code comes only from the news that
+  named the new point or said the parcel was there, or later news. The PIN
+  of a missed delivery no longer shows as the code of the pickup point the
+  parcel then went to either.
+- **A code you typed for a pickup point showed as the delivery PIN.**
+  Before 0.1.23, a code you typed in a parcel's details while it waited at
+  a pickup point stayed its PIN once it left, such as when it went out for
+  delivery home. After the update, it no longer shows once the parcel
+  leaves that point. A code you type while the parcel is out for delivery
+  stays its delivery PIN.
+- **Back at its pickup point, a parcel showed no last day to collect.**
+  Before 0.1.23, a parcel that newer news took from a locker to in transit
+  and then back to ready for pickup showed the locker and its code again,
+  but not the last day to collect it. After the update, that day shows
+  again too.
+- **A parcel that left its pickup point showed as late.** Before 0.1.23,
+  when newer news without an expected date took a parcel from a pickup
+  point back to in transit, the days to collect it stayed its expected
+  date, so once the last of them had passed, the parcel showed as late.
+  After the update, those days stop being its expected date when it leaves.
+- **A parcel Amazon delivers itself stayed at its pickup point after
+  Amazon's "out for delivery".** Before 0.1.23, Amazon's e-mails counted as
+  the carrier's only with an Amazon Logistics tracking number, which
+  Amazon's e-mails in Europe don't give, so Amazon's newer news couldn't
+  take a parcel from an Amazon Locker. After the update, while no carrier
+  is known and none has sent news, a shop with its own delivery service
+  counts as the carrier.
 - **An iPad or Android phone still said "Out for delivery" after newer
   news.** In 0.1.21, when the carrier's newer news took a parcel out for
   delivery or ready for pickup back to in transit, iPads and Android phones
@@ -1784,15 +1872,39 @@ actions:
   a later day, such as after a missed delivery. After the update, a new
   notification replaces the old one with what holds now, such as "Expected
   tomorrow · CTT" (see [Live Activities](#live-activities)).
+- **An iPhone repeated news after its Live Activity was dismissed.** In
+  0.1.22, after you dismissed a shared Live Activity, the iPhone could get
+  notifications repeating news the activity had already shown, such as a
+  missed delivery, for a parcel moved to a later day, without saying it had
+  moved. After the update, news one of the iPhone's activities already
+  showed that day isn't sent again, and the move alone isn't news (see
+  [Live Activities](#live-activities)).
+- **Every device alerted each time a parcel went back and forth.** Before
+  0.1.23, a parcel whose news went back and forth, such as between out for
+  delivery and in transit when the carrier's e-mails and 17TRACK disagreed,
+  alerted every iPhone, iPad and Android phone at each change. After the
+  update, only its first change alerts: a status the parcel left less than
+  15 minutes before comes back silently (see
+  [Live Activities](#live-activities)).
 - **17TRACK's news without a time took a parcel back on its delivery day.**
   In 0.1.21, 17TRACK's news without a time counted as news from when
   Parcels read it, so on the day a parcel went out for delivery or reached
   a pickup point, such news took it back to in transit. After the update,
   it's news without a date Parcels can read (see **Statuses** in
   [What it does](#what-it-does)). Parcels changes the stored news once, so
-  those parcels show their status again, and the news's details say "Date
-  not known". The hub's diagnostics count the parcels that changed
-  (`seventeentrack_timeless_repaired`).
+  those parcels show their status again, without an event, and the news's
+  details say "Date not known". The hub's diagnostics count the parcels
+  whose news it changed (`seventeentrack_timeless_repaired`).
+- **17TRACK's news showed again at every refresh.** Before 0.1.23,
+  17TRACK's news timed after the moment Parcels read it was stored again at
+  each refresh, as new news, so its copies pushed the parcel's older
+  17TRACK news out of its details, and the latest copy could keep the
+  parcel from showing the carrier's newer news, such as out for delivery.
+  After the update, such news counts as news without a time, first read
+  when it came, and reading it again isn't new news (see
+  [17TRACK](#17track)). Parcels may store it once more after the update,
+  then no more. Copies stored before stay in the parcel's details, and
+  newer news sets its status as usual.
 - **17TRACK stopped updating every parcel.** In 0.1.21, a 17TRACK time at
   the very start or end of the calendar stopped 17TRACK's news for every
   parcel, and `parcels.refresh` failed, until 17TRACK's time changed. After
@@ -1869,7 +1981,8 @@ actions:
   17TRACK can't
   find, by carrier (`not_found_by_carrier`), and the last refresh's times
   and packages Parcels couldn't read (`unreadable_times`,
-  `unreadable_packages`); its Parcel app part
+  `unreadable_packages`) and its times after the refresh (`future_times`);
+  its Parcel app part
   (`parcelapp`) counts the deliveries read, matched, shown on their own and
   left out, with Amazon's by how they found their parcel: by shipment ID, by
   order number, as a parcel of their own, another way such as a guess, or

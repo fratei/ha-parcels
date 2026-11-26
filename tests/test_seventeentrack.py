@@ -1079,6 +1079,96 @@ async def test_news_without_a_time_read_on_a_later_day_is_newer(
     assert (later.undated, later.by) == (False, None)
 
 
+async def test_news_timed_ahead_of_the_clock_is_read_once(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """17TRACK's news timed in the future is news without a date Parcels can read.
+
+    It's placed when Parcels first read it. Read again, before or after its
+    time, it's the same news: it doesn't take back the carrier's newer e-mail,
+    and the history keeps one copy. Diagnostics count the times ahead.
+    """
+    parcel = add_parcel(engine, "ahead", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    ahead = "2026-11-17T12:00:00+00:00"
+    track.put(CTT, "In Transit", info="Em trânsito", timestamp=ahead)
+    await tracker.async_refresh()
+    assert status(engine, parcel.id) is ParcelStatus.IN_TRANSIT
+    assert tracker.diagnostics()["future_times"] == 1
+
+    freezer.tick(timedelta(seconds=14))
+    sent = dt_util.utcnow()
+    apply_contribution(
+        engine.data,
+        contribution(
+            "msg:out#0",
+            kind=MailKind.OUT_FOR_DELIVERY,
+            time=sent,
+            carrier="ctt",
+            number=CTT,
+            label="ctt.pt",
+        ),
+        sent,
+    )
+    engine.async_changed()
+    for _ in range(3):
+        freezer.tick(timedelta(minutes=5))
+        await tracker.async_refresh()
+        assert status(engine, parcel.id) is ParcelStatus.OUT_FOR_DELIVERY
+
+    freezer.move_to(datetime(2026, 11, 17, 12, 30, tzinfo=UTC))
+    await tracker.async_refresh()
+
+    assert status(engine, parcel.id) is ParcelStatus.OUT_FOR_DELIVERY
+    [event] = news(engine, parcel.id, CTT)
+    assert (event.undated, event.time, event.by) == (True, NOW_DT, NOW_DT)
+    assert records(engine)[CTT]["history"] == [
+        {
+            "status": "in_transit",
+            "info": "Em trânsito",
+            "at": None,
+            "time": NOW_ISO,
+            "raw": ahead,
+        }
+    ]
+    assert tracker.diagnostics()["future_times"] == 0
+
+
+async def test_news_timed_ahead_stored_by_an_earlier_release_gets_one_copy(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """An earlier release stored such news dated when it read it.
+
+    Reading it again after the update stores it once more, as news without a
+    date, and that copy then stays the only new one.
+    """
+    parcel = add_parcel(engine, "ahead", CTT, carrier="ctt")
+    await tracker.async_refresh()
+    ahead = "2026-11-17T12:00:00+00:00"
+    track.put(CTT, "In Transit", info="Em trânsito", timestamp=ahead)
+    earlier = dt_to_str(NOW_DT - timedelta(minutes=5))
+    records(engine)[CTT]["history"] = [
+        {"status": "in_transit", "info": "Em trânsito", "at": earlier, "time": earlier}
+    ]
+
+    for _ in range(3):
+        await tracker.async_refresh()
+        freezer.tick(timedelta(minutes=5))
+
+    history = records(engine)[CTT]["history"]
+    assert [(entry["at"], entry["time"]) for entry in history] == [
+        (earlier, earlier),
+        (None, NOW_ISO),
+    ]
+    assert status(engine, parcel.id) is ParcelStatus.IN_TRANSIT
+
+
 async def test_update_reads_stored_news_without_a_time_as_undated(
     hass: HomeAssistant, hass_storage: dict[str, Any], track: FakeSeventeenTrack
 ) -> None:
@@ -1632,6 +1722,7 @@ async def test_adds_the_numbers_of_active_parcels(
         "last_refresh": NOW_ISO,
         "last_error": None,
         "unreadable_times": 0,
+        "future_times": 0,
         "unreadable_packages": 0,
         "not_found_by_carrier": {},
     }
@@ -1884,10 +1975,9 @@ async def test_a_quiet_parcels_inferred_delivery_leaves_17track(
             None,
             "2026-11-17T09:00:00+00:00",
         ),
-        ({"timestamp": "2026-11-18T09:00:00+00:00"}, LISBON, None, NOW_ISO),
         ({"timestamp": "soon"}, LISBON, None, None),
     ],
-    ids=["location", "whitespace", "long", "timestamp", "naive", "future", "invalid"],
+    ids=["location", "whitespace", "long", "timestamp", "naive", "invalid"],
 )
 async def test_package_text_and_time(
     hass: HomeAssistant,
@@ -1899,7 +1989,7 @@ async def test_package_text_and_time(
     info: str | None,
     at: str | None,
 ) -> None:
-    """The carrier's text is tidied; times are local and never in the future."""
+    """The carrier's text is tidied; times without a zone are local."""
     await hass.config.async_set_time_zone(zone)
     add_parcel(engine, "ctt", CTT, carrier="ctt")
     await tracker.async_refresh()
@@ -2933,6 +3023,7 @@ async def test_nothing_without_the_integration(hass: HomeAssistant) -> None:
         "last_refresh": None,
         "last_error": None,
         "unreadable_times": 0,
+        "future_times": 0,
         "unreadable_packages": 0,
         "not_found_by_carrier": {},
     }

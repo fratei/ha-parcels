@@ -1701,6 +1701,16 @@ def test_update_parcel() -> None:
     update_parcel(data, a.parcel_id, {"eta_start": None}, at(hours=3))
     assert data.parcels[a.parcel_id].state.eta is None
 
+    # Each value keeps when it was typed, whatever is edited after it.
+    update_parcel(data, a.parcel_id, {"pickup_code": "2468"}, at(hours=3.5))
+    update_parcel(data, a.parcel_id, {"pickup_point": "Loja Exemplo"}, at(hours=3.75))
+    edit = data.parcels[a.parcel_id].origins[manual_origin_id(a.parcel_id)]
+    assert edit.typed_at == {
+        "merchant": at(hours=1),
+        "pickup_code": at(hours=3.5),
+        "pickup_point": at(hours=3.75),
+    }
+
     # Typing the number of another parcel merges the two.
     merged = update_parcel(
         data, a.parcel_id, {"tracking_number": "0521-2345-6789-01"}, at(hours=4)

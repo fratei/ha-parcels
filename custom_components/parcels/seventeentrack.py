@@ -417,7 +417,9 @@ def mark_timeless_news(data: ParcelsData, now: datetime) -> int:
 
     Before 0.1.22, its events were dated when Parcels read them, so they took
     the steps back that only newer news takes (see
-    :meth:`SeventeenTrackSync._apply`). Returns how many parcels changed.
+    :meth:`SeventeenTrackSync._apply`). Returns how many parcels had news
+    marked; their statuses change, without events, only where the news had
+    taken such a step.
     """
     packages = data.seventeentrack.get("packages")
     # The package events without a time, by their origin, text and stored time.
@@ -477,7 +479,7 @@ def clip_text(text: Any) -> str | None:
     return value if len(value) <= MAX_INFO_CHARS else value[: MAX_INFO_CHARS - 1] + "…"
 
 
-def _package_time(package: Mapping[str, Any], now: datetime) -> datetime | None:
+def _package_time(package: Mapping[str, Any]) -> datetime | None:
     """Return the time of a package's news; ValueError when it can't be read."""
     raw = package.get("timestamp")
     if not raw:
@@ -494,7 +496,26 @@ def _package_time(package: Mapping[str, Any], now: datetime) -> datetime | None:
         raise ValueError("impossible time") from err
     if time < _EARLIEST:
         raise ValueError("impossible time")
-    return min(time, now)
+    return time
+
+
+def _same_news(
+    last: Mapping[str, Any],
+    status: ParcelStatus,
+    info: str | None,
+    time: datetime | None,
+    given: str | None,
+) -> bool:
+    """Return whether a package's news is the news stored last for it.
+
+    News stored when its time was ahead of the clock is known by that time
+    as 17TRACK gave it; other news by its time.
+    """
+    if (last.get("status"), last.get("info")) != (status.value, info):
+        return False
+    if "raw" in last:
+        return last.get("raw") == given
+    return last.get("at") == dt_to_str(time)
 
 
 @dataclass(slots=True)
@@ -504,6 +525,8 @@ class _Stats:
     archived: int = 0
     # News whose time can't be read ("month 13"): read as news without a time.
     unreadable_times: int = 0
+    # News timed after the refresh: read as news without a time too.
+    future_times: int = 0
     # The errors of packages that couldn't be read at all, by type.
     unreadable_packages: list[str] = field(default_factory=list)
 
@@ -521,6 +544,7 @@ class SeventeenTrackSync:
         self.last_refresh: datetime | None = None
         self.last_error: str | None = None
         self.unreadable_times = 0
+        self.future_times = 0
         self.unreadable_packages = 0
         self._unreadable_state: tuple[int, tuple[str, ...]] = (0, ())
 
@@ -564,6 +588,7 @@ class SeventeenTrackSync:
             "last_refresh": dt_to_str(self.last_refresh),
             "last_error": self.last_error,
             "unreadable_times": self.unreadable_times,
+            "future_times": self.future_times,
             "unreadable_packages": self.unreadable_packages,
             "not_found_by_carrier": self._not_found_by_carrier(),
         }
@@ -671,6 +696,7 @@ class SeventeenTrackSync:
         changed |= await self._async_archive(entry_id, packages, now, stats)
         self.last_refresh = now
         self.unreadable_times = stats.unreadable_times
+        self.future_times = stats.future_times
         self._unreadable(stats.unreadable_packages)
         if stats.added or stats.updated or stats.archived:
             _LOGGER.debug(
@@ -896,21 +922,21 @@ class SeventeenTrackSync:
         if status is None:
             return False
         try:
-            time = _package_time(package, now)
+            time = _package_time(package)
         except ValueError:
             time = None
             stats.unreadable_times += 1
+        # A time ahead of the clock can't be right (17TRACK may give a
+        # carrier's local time as UTC): the news counts as news without a
+        # time, first read now. Its time as given tells it from new news,
+        # even once that time has passed.
+        given = str(package.get("timestamp") or "") or None
+        raw: str | None = None
+        if time is not None and time > now:
+            stats.future_times += 1
+            time, raw = None, given
         history: list[dict[str, Any]] = record.get("history") or []
-        key = (status.value, info, dt_to_str(time))
-        if (
-            history
-            and (
-                history[-1].get("status"),
-                history[-1].get("info"),
-                history[-1].get("at"),
-            )
-            == key
-        ):
+        if history and _same_news(history[-1], status, info, time, given):
             return False
         entry = {
             "status": status.value,
@@ -918,6 +944,8 @@ class SeventeenTrackSync:
             "at": dt_to_str(time),
             "time": dt_to_str(time or now),
         }
+        if raw is not None:
+            entry["raw"] = raw
         history = [*history, entry][-MAX_HISTORY:]
         self._apply(number, parcel, history, now)
         # Kept once applied, so news that failed is read again.

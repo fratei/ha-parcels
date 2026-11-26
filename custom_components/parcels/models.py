@@ -565,6 +565,9 @@ class Origin:
     name: str | None = None
     # The marketplace seller that a shop's e-mail names, besides the shop.
     seller: str | None = None
+    # When the user last typed or cleared each field of a manual origin, so
+    # that a pickup point or code he typed belongs to where the parcel was.
+    typed_at: dict[str, datetime] = field(default_factory=dict)
 
     @property
     def added_by_hand(self) -> bool:
@@ -597,6 +600,9 @@ class Origin:
                 "confirmed": self.confirmed,
                 "name": self.name,
                 "seller": self.seller,
+                "typed_at": {
+                    key: dt_to_str(value) for key, value in self.typed_at.items()
+                },
             }
         ) | {
             # Keep explicit clears of manual origins.
@@ -628,7 +634,23 @@ class Origin:
             confirmed=bool(data.get("confirmed", False)),
             name=data.get("name") or None,
             seller=data.get("seller") or None,
+            typed_at=_typed_at(data.get("typed_at")),
         )
+
+
+def _typed_at(value: Any) -> dict[str, datetime]:
+    """Read the stored times of a manual origin's edits, skipping bad ones."""
+    if not isinstance(value, Mapping):
+        return {}
+    typed: dict[str, datetime] = {}
+    for key, stored in value.items():
+        try:
+            when = stored_dt(stored)
+        except ValueError, TypeError:
+            continue
+        if when is not None:
+            typed[str(key)] = when
+    return typed
 
 
 # Why a delivery was only inferred: another parcel of the shop was delivered
@@ -1049,9 +1071,17 @@ def _best_carrier(ranked: list[Origin], number: str | None) -> str | None:
     )
 
 
-def _event_sort_key(event: ParcelEvent) -> tuple[datetime, int, str]:
+type _EventKey = tuple[datetime, int, str]
+
+
+def _event_sort_key(event: ParcelEvent) -> _EventKey:
     rank = STATUS_RANK.get(event.status, -1) if event.status else -1
     return (event.time, rank, event.id)
+
+
+# Where an e-mail without news, or an edit, falls among the events of its
+# time: after them.
+_AFTER_EVENTS = 99
 
 
 def day_known(event: ParcelEvent) -> bool:
@@ -1096,7 +1126,12 @@ _NEWS_ONLY_STEPS = frozenset(
 )
 
 
-def _carrier_news(parcel: Parcel, event: ParcelEvent, carrier: str | None) -> bool:
+def _carrier_news(
+    parcel: Parcel,
+    event: ParcelEvent,
+    carrier: str | None,
+    shop_carrier: bool = False,
+) -> bool:
     """Return True for news from the parcel's carrier.
 
     17TRACK and the Parcel app follow the carrier. An e-mail is the carrier's
@@ -1104,17 +1139,39 @@ def _carrier_news(parcel: Parcel, event: ParcelEvent, carrier: str | None) -> bo
     carriers' notices from its own (Leroy Merlin), or from a shop or platform
     whose own service delivers the parcel (Amazon, Vinted Go). Other shops
     pass on the carrier's news when they get round to it, in e-mails timed
-    when they were sent.
+    when they were sent. See :func:`_carrier_origin` for ``shop_carrier``.
     """
     if event.source in (Source.SEVENTEENTRACK, Source.PARCELAPP):
         return True
     origin = parcel.origins.get(event.origin) if event.origin else None
     if event.source not in _MAIL_SOURCES or origin is None:
         return False
+    return _carrier_mail(origin, carrier, shop_carrier)
+
+
+def _carrier_origin(origin: Origin, carrier: str | None, shop_carrier: bool) -> bool:
+    """Return True for an origin with the carrier's news: see _carrier_news.
+
+    With ``shop_carrier``, while no carrier is known and no carrier has sent
+    news, a shop or platform with its own delivery service counts as the
+    carrier: Amazon's e-mails in Europe don't name Amazon Logistics.
+    """
+    if origin.source in (Source.SEVENTEENTRACK, Source.PARCELAPP):
+        return True
+    return origin.source in _MAIL_SOURCES and _carrier_mail(
+        origin, carrier, shop_carrier
+    )
+
+
+def _carrier_mail(origin: Origin, carrier: str | None, shop_carrier: bool) -> bool:
     if is_carrier_mail(origin) or relays_carrier_mail(origin.label):
         return True
     info = lookup(origin.label)
-    return info is not None and info.carrier is not None and info.carrier == carrier
+    return (
+        info is not None
+        and info.carrier is not None
+        and (shop_carrier or info.carrier == carrier)
+    )
 
 
 def _may_step_back(
@@ -1122,13 +1179,14 @@ def _may_step_back(
     event: ParcelEvent,
     current: ParcelStatus | None,
     carrier: str | None,
+    shop_carrier: bool = False,
 ) -> bool:
     """Return whether an event may take one of the news-only steps back.
 
     The carrier's news may. So may a delay notice from anyone, for a parcel
     out for delivery: it comes with the parcel's new date.
     """
-    return _carrier_news(parcel, event, carrier) or (
+    return _carrier_news(parcel, event, carrier, shop_carrier) or (
         event.kind is MailKind.DELAYED and current is ParcelStatus.OUT_FOR_DELIVERY
     )
 
@@ -1270,37 +1328,70 @@ def derive_state(parcel: Parcel) -> ParcelState:
     delivered_undated = False
     delivered_timeless = False
     eta: Eta | None = None
-    eta_time: datetime | None = None
     eta_source: Source | None = None
+    # Whether the expected date is the carrier's or the user's, which a shop's
+    # doesn't replace, and whether it came while the parcel was at a pickup
+    # point: then it's the days to collect it, not when it's expected.
+    eta_strong = False
+    eta_pickup = False
+    # Whether it's a shop's "out for delivery" standing in for the carrier's,
+    # which a newer one replaces.
+    eta_relayed = False
     status_reported = False
     collect_by: date | None = None
     next_attempt: date | None = None
     left_at: LeftAt | None = None
-    # Whether the parcel is at a pickup point, and the news that took it away.
+    # While no carrier is known and none has sent news, a shop or platform
+    # with its own delivery service is the carrier.
+    shop_carrier = carrier is None and not any(
+        _carrier_news(parcel, event, None) for event in parcel.events
+    )
+    # The sources with news that couldn't take the step back it gave: their
+    # pickup details aren't the parcel's either.
+    refused: set[str] = set()
+    # Whether the parcel is at a pickup point. When it got to each point it
+    # went to, and whether it came back to the one it had left without going
+    # out; when it left each, with the date to collect it by there; and
+    # whether it went out for delivery or to an attempt since it last left one.
     at_pickup = False
-    left_pickup: ParcelEvent | None = None
+    visits: list[tuple[_EventKey, bool]] = []
+    leaves: list[tuple[_EventKey, date | None]] = []
+    went_out = False
     timeline: list[TimelineEntry] = []
     for event in sorted(parcel.events, key=_event_sort_key):
+        key = _event_sort_key(event)
         accepted, new_status = _accepts(status, event)
-        if (
+        refusal = (
             accepted
             and (status, new_status) in _NEWS_ONLY_STEPS
             and not (
-                _may_step_back(parcel, event, status, carrier)
+                _may_step_back(parcel, event, status, carrier, shop_carrier)
                 and _after_status(
                     event, status_time, status_undated, status_by, status_origin
                 )
             )
-        ):
+        )
+        if refusal:
             accepted, new_status = False, status
+            source_origin = parcel.origins.get(event.origin) if event.origin else None
+            if source_origin is not None and source_origin.source is not Source.MANUAL:
+                refused.add(source_origin.id)
+        leaving = to_pickup = False
         if accepted and new_status is not status:
             if event.inferred:
                 inferred_over = status or ParcelStatus.ORDERED
             if new_status is ParcelStatus.READY_FOR_PICKUP:
-                at_pickup, left_pickup = True, None
+                to_pickup = True
+                if not at_pickup:
+                    visits.append((key, bool(leaves) and not went_out))
+                    at_pickup = True
             elif new_status in _LEAVING_PICKUP and at_pickup:
                 # A failed attempt or a problem there doesn't take it away.
-                at_pickup, left_pickup = False, event
+                leaves.append((key, collect_by))
+                at_pickup, leaving = False, True
+                went_out = new_status is ParcelStatus.OUT_FOR_DELIVERY
+            elif new_status in _GOING_OUT:
+                went_out = True
             status = new_status
             status_time = None if event.dayless else event.time
             status_undated = event.undated
@@ -1362,22 +1453,76 @@ def derive_state(parcel: Parcel) -> ParcelState:
             collect_by, next_attempt, left_at = _details(
                 status, event, collect_by, next_attempt, left_at
             )
-        event_eta = event.eta
-        if (
-            event_eta is None
-            and accepted
-            and event.status is ParcelStatus.OUT_FOR_DELIVERY
-            and not event.clears_eta
-            and day_known(event)
-        ):
-            # Out for delivery means today, even when the e-mail gives no date.
-            today = local_date(event.time)
-            event_eta = Eta(start=today, end=today)
-        if (event_eta is not None or event.clears_eta) and (
-            eta_time is None or event.time >= eta_time
-        ):
-            eta, eta_time = (None if event.clears_eta else event_eta), event.time
-            eta_source = None if event.clears_eta else event.source
+        # The expected date. The user's is exact and the carrier's replaces
+        # any; a shop's fills in only for none, or for one that has passed.
+        # News that couldn't take its step back doesn't date the parcel.
+        if event.clears_eta:
+            eta, eta_source, eta_strong, eta_pickup = None, None, False, False
+            eta_relayed = False
+        elif not refusal:
+            if leaving and event.eta is None and eta_pickup:
+                # The days to collect it at the point it left.
+                eta, eta_source, eta_strong, eta_pickup = None, None, False, False
+                eta_relayed = False
+            event_eta = event.eta
+            if (
+                event_eta is None
+                and accepted
+                and event.status is ParcelStatus.OUT_FOR_DELIVERY
+                and day_known(event)
+            ):
+                # Out for delivery means today, even when the e-mail gives no
+                # date.
+                today = local_date(event.time)
+                event_eta = Eta(start=today, end=today)
+            if event_eta is not None:
+                strong = (
+                    _carrier_news(parcel, event, carrier, shop_carrier)
+                    or to_pickup
+                    or (event.kind is MailKind.DELAYED and not at_pickup)
+                )
+                apply = relayed = False
+                if event.source is Source.MANUAL:
+                    apply = strong = True
+                elif eta is not None and _same_day(eta, event_eta):
+                    # The day expected again, without a window: a window stays,
+                    # and without one, the newest news gave the day.
+                    eta_strong = eta_strong or strong
+                    if eta.window_start is None and eta.window_end is None:
+                        eta_source = event.source
+                        eta_relayed = eta_relayed and not strong
+                elif strong:
+                    apply = True
+                elif accepted and event.status is ParcelStatus.OUT_FOR_DELIVERY:
+                    # A shop's "out for delivery" picks its day from the
+                    # carrier's days, and keeps the carrier's window.
+                    day = local_date(event.time)
+                    if (
+                        eta is not None
+                        and eta_strong
+                        and not eta_relayed
+                        and day_known(event)
+                        and eta.start <= day <= eta.end
+                    ):
+                        eta = Eta(
+                            start=day,
+                            end=day,
+                            window_start=eta.window_start,
+                            window_end=eta.window_end,
+                        )
+                    else:
+                        apply = strong = relayed = True
+                elif not at_pickup and (
+                    eta is None or not eta_strong or eta.end < local_date(event.time)
+                ):
+                    apply = True
+                if apply:
+                    eta, eta_source, eta_strong = event_eta, event.source, strong
+                    eta_relayed, eta_pickup = relayed, at_pickup
+            if leaving:
+                eta_pickup = False
+            if to_pickup:
+                eta_pickup = True
         timeline.append(
             TimelineEntry(
                 time=event.time,
@@ -1396,34 +1541,94 @@ def derive_state(parcel: Parcel) -> ParcelState:
     if status is None:
         status = ParcelStatus.ORDERED
 
-    # The pickup point and its code: a manual edit wins, then the best
-    # source, latest first. Once the parcel left the point, only news from
-    # then on counts: the point's code would read as a delivery PIN. An
-    # e-mail with news counts by its news, one without by when it was sent.
-    among = ranked
-    if left_pickup is not None:
-        since = _event_sort_key(left_pickup)
-        after = {
-            e.origin for e in parcel.events if e.origin and _event_sort_key(e) >= since
-        }
-        with_news = {e.origin for e in parcel.events if e.origin}
-        among = [
-            o
-            for o in ranked
-            if o.id in after or (o.id not in with_news and o.time >= left_pickup.time)
-        ]
+    # The pickup point and its code. Only news since the parcel left the last
+    # point counts, so a point's code never reads as a delivery PIN; at a
+    # point it came back to without going out, so does the news from its
+    # first time there. The code comes from the news that named the point or,
+    # at the point, the news that it got there, or later news. A manual edit
+    # wins from when it was typed; then the carrier's news, then the best
+    # source, latest first. News that couldn't take its step back doesn't
+    # count. An e-mail with news counts from its latest, one without from
+    # when it was sent.
+    last_news: dict[str, _EventKey] = {}
+    for event in parcel.events:
+        if event.origin:
+            key = _event_sort_key(event)
+            if event.origin not in last_news or key > last_news[event.origin]:
+                last_news[event.origin] = key
 
-    def latest(attr: str) -> str | None:
-        found, value = manual_value(attr)
-        if found:
-            return value
-        return next((getattr(o, attr) for o in among if getattr(o, attr)), None)
+    def position(origin: Origin, attr: str) -> _EventKey:
+        if origin.source is Source.MANUAL:
+            return (origin.typed_at.get(attr) or origin.time, _AFTER_EVENTS, "")
+        return last_news.get(origin.id) or (origin.time, _AFTER_EVENTS, "")
 
-    pickup_point = latest("pickup_point")
-    pickup_code = latest("pickup_code")
+    left = len(leaves)
+    first = left
+    visit_start: _EventKey | None = None
+    if at_pickup:
+        while first and visits[first][1]:
+            first -= 1
+        start = leaves[first - 1][0] if first else None
+        visit_start = visits[first][0]
+    else:
+        start = leaves[-1][0] if leaves else None
+    usable = [o for o in ranked if o.id not in refused]
+    sources = [
+        *(o for o in usable if _carrier_origin(o, carrier, shop_carrier)),
+        *(o for o in usable if not _carrier_origin(o, carrier, shop_carrier)),
+    ]
+
+    def pick(attr: str, since: _EventKey | None) -> str | None:
+        for origin in sorted(manual, key=lambda o: position(o, attr), reverse=True):
+            value = getattr(origin, attr)
+            if value is not None and (since is None or position(origin, attr) >= since):
+                return value or None
+        return next(
+            (
+                getattr(o, attr)
+                for o in sources
+                if getattr(o, attr) and (since is None or position(o, attr) >= since)
+            ),
+            None,
+        )
+
+    pickup_point = pick("pickup_point", start)
+    anchor: _EventKey | None = None
+    if pickup_point:
+        named = _place_key(pickup_point)
+        anchor = min(
+            (
+                position(o, "pickup_point")
+                for o in usable
+                if o.pickup_point
+                and _place_key(o.pickup_point) == named
+                and (start is None or position(o, "pickup_point") >= start)
+            ),
+            default=None,
+        )
+    since = anchor
+    if since is None:
+        since = visit_start if at_pickup else start
+    if at_pickup:
+        # The news that it got there gives its code too, though a later
+        # e-mail may be the first to name the point, or name it in other words.
+        here = visits[-1][0]
+        since = here if since is None else min(since, here)
+    pickup_code = pick("pickup_code", since)
     if status in TERMINAL_STATUSES and not status_inferred:
         # A delivery code is no use once the parcel arrived or went back.
         pickup_code = None
+    if (
+        at_pickup
+        and first < left
+        and collect_by is None
+        and (anchor is None or anchor < leaves[-1][0])
+    ):
+        # Back at the point it left, without news naming it again: the date
+        # to collect it by there still holds.
+        collect_by = next(
+            (by for _, by in reversed(leaves[first:]) if by is not None), None
+        )
 
     if origins:
         source = min((o.source for o in origins), key=lambda s: SOURCE_PRIORITY[s])
@@ -1486,8 +1691,25 @@ def derive_state(parcel: Parcel) -> ParcelState:
 _COLLECT_STATUSES = frozenset({ParcelStatus.READY_FOR_PICKUP, ParcelStatus.ATTEMPTED})
 # The statuses that take a parcel from its pickup point to a new delivery.
 _LEAVING_PICKUP = frozenset({ParcelStatus.IN_TRANSIT, ParcelStatus.OUT_FOR_DELIVERY})
+# The statuses of a delivery attempt: a point the parcel goes to after one is
+# a new one.
+_GOING_OUT = frozenset({ParcelStatus.OUT_FOR_DELIVERY, ParcelStatus.ATTEMPTED})
 # Sources whose event times are an e-mail's when it didn't say when.
 _MAIL_SOURCES = frozenset({Source.PARSER, Source.AI})
+
+
+def _same_day(eta: Eta, new: Eta) -> bool:
+    """Return True when an estimate is only the single day already expected."""
+    return (
+        new.window_start is None
+        and new.window_end is None
+        and new.start == new.end == eta.start == eta.end
+    )
+
+
+def _place_key(name: str) -> str:
+    """Return a pickup point's name, compared without case or spacing."""
+    return " ".join(name.split()).casefold()
 
 
 def _reported(parcel: Parcel, event: ParcelEvent) -> bool:

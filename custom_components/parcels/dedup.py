@@ -1904,6 +1904,8 @@ def update_parcel(
             if key == "tracking_number":
                 text = normalize_tracking_number(text)
             setattr(origin, key, text)
+            # A pickup code typed at a point belongs to that point.
+            origin.typed_at[key] = now
         if any(key in changes for key in ETA_FIELDS):
             parcel.events.append(_eta_event(parcel, changes, origin.id, now))
     if "private" in changes:

@@ -367,16 +367,258 @@ def test_news_after_leaving_the_pickup_point_gives_new_details() -> None:
     )
 
 
-def test_back_at_a_pickup_point_its_details_show_again() -> None:
-    """Back at a pickup point, its newest details show again."""
-    track, out = _tracked(at(hours=2))
+def test_back_at_its_pickup_point_its_details_show_again() -> None:
+    """Back at the pickup point it left without going out, its details show.
+
+    Its collect-by date too, unless the news gives a new one. Out for delivery
+    and back, it may be at another point, such as a shop after a failed
+    attempt: only news from then on counts.
+    """
+    track = _origin("o2", source=Source.SEVENTEENTRACK, time=at(hours=2))
+    away = _event(S.IN_TRANSIT, at(hours=2), source=Source.SEVENTEENTRACK, origin="o2")
     ready = _event(
         S.READY_FOR_PICKUP, at(days=1), source=Source.SEVENTEENTRACK, origin="o2"
     )
-    state = _at_locker(out, ready, origins=(track,)).state
-    assert (state.status, state.pickup_point, state.pickup_code) == (
+    state = _at_locker(away, ready, origins=(track,)).state
+    assert (state.status, state.pickup_point, state.pickup_code, state.collect_by) == (
         S.READY_FOR_PICKUP,
         LOCKER,
+        "731905",
+        date(2026, 11, 9),
+    )
+
+    track, out = _tracked(at(hours=2))
+    state = _at_locker(out, ready, origins=(track,)).state
+    assert (state.status, state.pickup_point, state.pickup_code, state.collect_by) == (
+        S.READY_FOR_PICKUP,
+        None,
+        None,
+        None,
+    )
+
+
+def test_a_new_pickup_point_takes_only_its_own_details() -> None:
+    """At a new pickup point, the code comes from the news that names it.
+
+    Neither the last point's code nor a delivery code for the trip home
+    reads as the new point's.
+    """
+    first = _carrier(pickup_point="Locker 21", pickup_code="610003")
+    out = _carrier("o2", time=at(hours=2))
+    second = _carrier("o3", time=at(days=1), pickup_point="Locker 30")
+    parcel = _parcel(
+        _event(S.READY_FOR_PICKUP, at(), collect_by=date(2026, 11, 9)),
+        _event(S.OUT_FOR_DELIVERY, at(hours=2), origin="o2"),
+        _event(
+            S.READY_FOR_PICKUP, at(days=1), origin="o3", collect_by=date(2026, 11, 10)
+        ),
+        origins=(first, out, second),
+    )
+    state = parcel.state
+    assert (state.status, state.pickup_point, state.pickup_code, state.collect_by) == (
+        S.READY_FOR_PICKUP,
+        "Locker 30",
+        None,
+        date(2026, 11, 10),
+    )
+
+    # A shop after a failed attempt: the attempt names it, and the news that
+    # it's there has no code. Neither has the PIN for the trip home.
+    shop = "Loja Exemplo, Rua Fictícia 2"
+    parcel = _parcel(
+        _event(S.READY_FOR_PICKUP, at(), collect_by=date(2026, 11, 9)),
+        _event(S.OUT_FOR_DELIVERY, at(hours=2), origin="o2"),
+        _event(S.ATTEMPTED, at(hours=4), origin="o3"),
+        _event(S.READY_FOR_PICKUP, at(days=1), origin="o4"),
+        origins=(
+            _carrier(pickup_point="Locker 21", pickup_code="610004"),
+            _carrier("o2", time=at(hours=2), pickup_code="4826"),
+            _carrier("o3", time=at(hours=4), pickup_point=shop),
+            _carrier("o4", time=at(days=1)),
+        ),
+    )
+    state = parcel.state
+    assert (state.status, state.pickup_point, state.pickup_code) == (
+        S.READY_FOR_PICKUP,
+        shop,
+        None,
+    )
+
+    # The same at the first pickup point it goes to.
+    parcel = _parcel(
+        _event(S.OUT_FOR_DELIVERY, at()),
+        _event(S.ATTEMPTED, at(hours=4), origin="o3"),
+        _event(S.READY_FOR_PICKUP, at(days=1), origin="o4"),
+        origins=(
+            _carrier(pickup_code="4826"),
+            _carrier("o3", time=at(hours=4), pickup_point=shop),
+            _carrier("o4", time=at(days=1)),
+        ),
+    )
+    state = parcel.state
+    assert (state.status, state.pickup_point, state.pickup_code) == (
+        S.READY_FOR_PICKUP,
+        shop,
+        None,
+    )
+
+
+def test_a_rerouted_parcel_takes_only_the_new_points_details() -> None:
+    """Moved to another locker without going out, the old one's code stays."""
+    track = _origin("o2", source=Source.SEVENTEENTRACK, time=at(hours=2))
+    away = _event(S.IN_TRANSIT, at(hours=2), source=Source.SEVENTEENTRACK, origin="o2")
+    moved = _carrier("o3", time=at(days=1), pickup_point="Locker 30")
+    state = _at_locker(
+        away,
+        _event(S.READY_FOR_PICKUP, at(days=1), origin="o3"),
+        origins=(track, moved),
+    ).state
+    assert (state.status, state.pickup_point, state.pickup_code, state.collect_by) == (
+        S.READY_FOR_PICKUP,
+        "Locker 30",
+        None,
+        None,
+    )
+
+
+def test_the_news_that_a_parcel_is_at_its_point_gives_the_code() -> None:
+    """The code comes with the news that the parcel got to its pickup point.
+
+    Also when a later e-mail names the point in other words, or is the first
+    to name it, and at a point the parcel was moved to.
+    """
+    reminder = _carrier("o3", time=at(days=2), pickup_point="Locker 12")
+    state = _at_locker(
+        _event(S.READY_FOR_PICKUP, at(days=2), origin="o3"), origins=(reminder,)
+    ).state
+    assert (state.pickup_point, state.pickup_code) == ("Locker 12", "731905")
+
+    parcel = _parcel(
+        _event(S.READY_FOR_PICKUP, at()),
+        _event(S.READY_FOR_PICKUP, at(days=2), origin="o3"),
+        origins=(
+            _carrier(pickup_code="731905"),
+            _carrier("o3", time=at(days=2), pickup_point=LOCKER),
+        ),
+    )
+    assert (parcel.state.pickup_point, parcel.state.pickup_code) == (
+        LOCKER,
+        "731905",
+    )
+
+    track = _origin("o2", source=Source.SEVENTEENTRACK, time=at(hours=2))
+    away = _event(S.IN_TRANSIT, at(hours=2), source=Source.SEVENTEENTRACK, origin="o2")
+    state = _at_locker(
+        away,
+        _event(S.READY_FOR_PICKUP, at(days=1), origin="o3"),
+        _event(S.READY_FOR_PICKUP, at(days=2), origin="o4"),
+        origins=(
+            track,
+            _carrier("o3", time=at(days=1), pickup_code="640217"),
+            _carrier("o4", time=at(days=2), pickup_point="Locker 30"),
+        ),
+    ).state
+    assert (state.pickup_point, state.pickup_code, state.collect_by) == (
+        "Locker 30",
+        "640217",
+        None,
+    )
+
+
+def test_a_shops_news_it_cant_give_leaves_the_pickup_details() -> None:
+    """A shop's late "out for delivery" doesn't give a locker parcel its code.
+
+    The shop's e-mail can't take the parcel from the locker, so its code
+    isn't the locker's.
+    """
+    number = "RR123456785PT"
+    parcel = _parcel(
+        _event(S.SHIPPED, at(hours=-2)),
+        _event(
+            S.READY_FOR_PICKUP,
+            at(hours=-1),
+            origin="o2",
+            collect_by=date(2026, 11, 9),
+        ),
+        _event(S.OUT_FOR_DELIVERY, at(), origin="o3"),
+        origins=(
+            _origin(
+                label="amazon.es",
+                time=at(hours=-2),
+                carrier="ctt",
+                tracking_number=number,
+            ),
+            _carrier(
+                "o2",
+                time=at(hours=-1),
+                carrier="ctt",
+                tracking_number=number,
+                pickup_point="Locker 21",
+                pickup_code="482913",
+            ),
+            _origin("o3", label="amazon.es", pickup_code="4821"),
+        ),
+    )
+    state = parcel.state
+    assert (state.status, state.pickup_point, state.pickup_code, state.collect_by) == (
+        S.READY_FOR_PICKUP,
+        "Locker 21",
+        "482913",
+        date(2026, 11, 9),
+    )
+    assert state.eta is None
+
+
+@pytest.mark.parametrize("code", [None, "4821"])
+def test_a_shop_is_the_carrier_while_no_carrier_is_known(code: str | None) -> None:
+    """With no carrier known, Amazon's own e-mails are its delivery's news.
+
+    Its e-mails in Europe don't name Amazon Logistics. Its newer "out for
+    delivery" takes the parcel from its locker, with the code it gives.
+    """
+    parcel = _parcel(
+        _event(S.ORDERED, at(hours=-3)),
+        _event(S.SHIPPED, at(hours=-2)),
+        _event(
+            S.READY_FOR_PICKUP,
+            at(hours=-1),
+            origin="o2",
+            collect_by=date(2026, 11, 9),
+        ),
+        _event(S.OUT_FOR_DELIVERY, at(), origin="o3"),
+        origins=(
+            _origin(label="amazon.es", time=at(hours=-3)),
+            _origin(
+                "o2",
+                label="amazon.es",
+                time=at(hours=-1),
+                pickup_point="Amazon Locker - Exemplo",
+                pickup_code="551100",
+            ),
+            _origin("o3", label="amazon.es", pickup_code=code),
+        ),
+    )
+    state = parcel.state
+    assert (state.status, state.pickup_point, state.pickup_code, state.collect_by) == (
+        S.OUT_FOR_DELIVERY,
+        None,
+        code,
+        None,
+    )
+
+
+def test_a_shops_delay_notice_leaves_a_locker_parcel_as_it_is() -> None:
+    """A shop's delay notice can't take a parcel from its locker, or date it."""
+    late = Eta(start=date(2026, 11, 6), end=date(2026, 11, 6))
+    parcel = _at_locker(
+        _event(S.IN_TRANSIT, at(hours=2), origin="o2", kind=MailKind.DELAYED, eta=late),
+        origins=(_origin("o2", label="amazon.es", time=at(hours=2)),),
+    )
+    state = parcel.state
+    assert (state.status, state.eta, state.collect_by, state.pickup_code) == (
+        S.READY_FOR_PICKUP,
+        None,
+        date(2026, 11, 9),
         "731905",
     )
 
@@ -394,12 +636,29 @@ def test_heading_for_a_pickup_point_keeps_its_details() -> None:
     assert (state.status, state.pickup_point) == (S.OUT_FOR_DELIVERY, LOCKER)
 
 
-def test_typed_pickup_details_stay_after_leaving() -> None:
-    """What the user typed stays: it may be for the new delivery."""
+def test_typed_pickup_details_belong_to_their_pickup_point() -> None:
+    """A code typed while the parcel is at its pickup point is the point's.
+
+    Once the parcel leaves, it isn't a delivery PIN. One typed after that is
+    for the delivery. Each value counts from when it was typed, whatever
+    was edited later.
+    """
     track, out = _tracked(at(hours=2))
-    edit = _origin("man:p_test", source=Source.MANUAL, pickup_code="2468")
-    state = _at_locker(out, origins=(track, edit)).state
-    assert (state.pickup_point, state.pickup_code) == (None, "2468")
+
+    def code(typed) -> str | None:
+        edit = _origin(
+            "man:p_test",
+            source=Source.MANUAL,
+            time=at(hours=3),
+            pickup_code="2468",
+            typed_at={"pickup_code": typed},
+        )
+        state = _at_locker(out, origins=(track, edit)).state
+        assert state.pickup_point is None
+        return state.pickup_code
+
+    assert code(at(hours=1)) is None
+    assert code(at(hours=3)) == "2468"
 
 
 @pytest.mark.parametrize(
@@ -653,17 +912,25 @@ def test_latest_estimate_wins_and_can_be_cleared() -> None:
 
 
 def test_the_date_keeps_its_source() -> None:
-    """The expected date says which source gave it: the newest that did."""
+    """The expected date says which source gave it: the newest that may.
+
+    A shop's newer estimate doesn't replace the carrier's.
+    """
     early = Eta(start=date(2026, 11, 5), end=date(2026, 11, 5))
     late = Eta(start=date(2026, 11, 6), end=date(2026, 11, 6))
     parcel = _parcel(
         _event(None, at(days=1), eta=late, source=Source.PARCELAPP),
         _event(S.IN_TRANSIT, at(), eta=early),
+        origins=(_origin(), _carrier("o3")),
     )
     assert (parcel.state.eta, parcel.state.eta_source) == (late, Source.PARCELAPP)
 
     parcel.events.append(_event(None, at(days=2), eta=early))
     parcel.touch(at(days=2))
+    assert (parcel.state.eta, parcel.state.eta_source) == (late, Source.PARCELAPP)
+
+    parcel.events.append(_event(None, at(days=2, hours=1), eta=early, origin="o3"))
+    parcel.touch(at(days=2, hours=1))
     assert (parcel.state.eta, parcel.state.eta_source) == (early, Source.PARSER)
 
     # News without a date keeps the date and its source.
@@ -682,6 +949,183 @@ def test_the_date_keeps_its_source() -> None:
     parcel.events.append(_event(None, at(days=5), clears_eta=True))
     parcel.touch(at(days=5))
     assert (parcel.state.eta, parcel.state.eta_source) == (None, None)
+
+
+def _day(start: int, end: int | None = None) -> Eta:
+    """Return an estimate of days in November 2026."""
+    return Eta(start=date(2026, 11, start), end=date(2026, 11, end or start))
+
+
+def _window(day: int, start: int, end: int) -> Eta:
+    """Return an estimate of a day in November 2026, between two hours."""
+    return Eta(
+        start=date(2026, 11, day),
+        end=date(2026, 11, day),
+        window_start=time(start),
+        window_end=time(end),
+    )
+
+
+@pytest.mark.usefixtures("lisbon")
+def test_a_shops_news_it_cant_give_doesnt_date_the_parcel() -> None:
+    """A shop's late e-mail that can't take a step back doesn't date it either.
+
+    Out for delivery, the carrier's day and window stay. At a locker, the
+    parcel isn't expected anywhere.
+    """
+    parcel = _parcel(
+        _event(S.OUT_FOR_DELIVERY, at()),
+        _event(S.IN_TRANSIT, at(hours=1), origin="o2", eta=_day(5)),
+        origins=(
+            _origin(label="ups.com", carrier="ups"),
+            _origin("o2", label="shopify.com", time=at(hours=1)),
+        ),
+    )
+    assert (parcel.state.status, parcel.state.eta) == (S.OUT_FOR_DELIVERY, _day(2))
+
+    parcel = _parcel(
+        _event(S.OUT_FOR_DELIVERY, at(days=2, hours=-1.5), eta=_window(4, 13, 17)),
+        _event(S.IN_TRANSIT, at(days=2, hours=1.5), origin="o2", eta=_day(7)),
+        origins=(
+            _carrier(time=at(days=2, hours=-1.5)),
+            _origin("o2", label="shop.app", time=at(days=2, hours=1.5)),
+        ),
+    )
+    state = parcel.state
+    assert (state.status, state.eta, state.eta_source) == (
+        S.OUT_FOR_DELIVERY,
+        _window(4, 13, 17),
+        Source.PARSER,
+    )
+
+    parcel = _at_locker(
+        _event(S.OUT_FOR_DELIVERY, at(hours=2), origin="o2", eta=_day(4)),
+        origins=(_origin("o2", label="shop.app", time=at(hours=2)),),
+    )
+    assert (parcel.state.status, parcel.state.eta) == (S.READY_FOR_PICKUP, None)
+
+
+@pytest.mark.usefixtures("lisbon")
+def test_a_shops_estimate_doesnt_replace_the_carriers() -> None:
+    """Once the carrier has news, a shop's estimate doesn't replace its date.
+
+    A shop's day-only estimate for the carrier's day keeps its window. Nor
+    does the carrier's "out for delivery" without a window wipe the shop's
+    window for that day.
+    """
+    parcel = _parcel(
+        _event(S.OUT_FOR_DELIVERY, at(), eta=_window(2, 10, 12)),
+        _event(S.ORDERED, at(hours=1 / 60), origin="o2", eta=_day(2)),
+        origins=(
+            _origin(label="paack.co", carrier="paack"),
+            _origin("o2", label="amazon.es", time=at(hours=1 / 60)),
+        ),
+    )
+    assert parcel.state.eta == _window(2, 10, 12)
+
+    parcel = _parcel(
+        _event(S.SHIPPED, at(hours=-3), eta=_window(2, 14, 16)),
+        _event(S.OUT_FOR_DELIVERY, at(), origin="o2"),
+        _event(S.SHIPPED, at(hours=2), origin="o3", eta=_day(5)),
+        origins=(
+            _origin(label="lumenhaus.example", time=at(hours=-3)),
+            _carrier("o2"),
+            _origin("o3", label="lumenhaus.example", time=at(hours=2)),
+        ),
+    )
+    assert parcel.state.eta == _window(2, 14, 16)
+
+
+@pytest.mark.usefixtures("lisbon")
+def test_a_shops_out_for_delivery_falls_within_the_carriers_estimate() -> None:
+    """A shop's "out for delivery" picks its day from the carrier's days.
+
+    It keeps the carrier's window for that day. Once the carrier's estimate
+    has passed, a shop's newer one replaces it.
+    """
+    parcel = _parcel(
+        _event(S.IN_TRANSIT, at(), eta=_day(4, 6)),
+        _event(S.OUT_FOR_DELIVERY, at(days=3), origin="o2"),
+        origins=(_carrier(), _origin("o2", label="shop.app", time=at(days=3))),
+    )
+    assert parcel.state.eta == _day(5)
+
+    parcel = _parcel(
+        _event(S.IN_TRANSIT, at(), eta=_window(5, 13, 17)),
+        _event(S.OUT_FOR_DELIVERY, at(days=3, hours=-1), origin="o2"),
+        origins=(
+            _carrier(),
+            _origin("o2", label="shop.app", time=at(days=3, hours=-1)),
+        ),
+    )
+    assert parcel.state.eta == _window(5, 13, 17)
+
+    parcel = _parcel(
+        _event(S.IN_TRANSIT, at(), eta=_day(3)),
+        _event(S.IN_TRANSIT, at(days=3), origin="o2", eta=_day(6)),
+        origins=(
+            _carrier(),
+            _origin("o2", label="lumenhaus.example", time=at(days=3)),
+        ),
+    )
+    assert parcel.state.eta == _day(6)
+
+
+@pytest.mark.usefixtures("lisbon")
+def test_a_shops_newer_out_for_delivery_replaces_its_own_window() -> None:
+    """Without the carrier's news, a shop's newer window replaces its older one.
+
+    The carrier's window for the day still stays.
+    """
+    shop = (
+        _origin(label="lumenhaus.example"),
+        _origin("o2", label="lumenhaus.example", time=at(hours=1)),
+    )
+    parcel = _parcel(
+        _event(S.OUT_FOR_DELIVERY, at(), eta=_window(2, 13, 14)),
+        _event(S.OUT_FOR_DELIVERY, at(hours=1), origin="o2", eta=_window(2, 14, 15)),
+        origins=shop,
+    )
+    assert parcel.state.eta == _window(2, 14, 15)
+
+    parcel = _parcel(
+        _event(S.OUT_FOR_DELIVERY, at(), eta=_window(2, 13, 14)),
+        _event(S.OUT_FOR_DELIVERY, at(hours=1), origin="o2", eta=_window(2, 14, 15)),
+        origins=(_carrier(), shop[1]),
+    )
+    assert parcel.state.eta == _window(2, 13, 14)
+
+
+def test_a_delay_notice_moves_the_carriers_date() -> None:
+    """A shop's delay notice gives the parcel on its way its new date."""
+    parcel = _parcel(
+        _event(S.IN_TRANSIT, at(), eta=_day(4)),
+        _event(
+            S.IN_TRANSIT, at(hours=2), origin="o2", kind=MailKind.DELAYED, eta=_day(6)
+        ),
+        origins=(
+            _carrier(),
+            _origin("o2", label="lumenhaus.example", time=at(hours=2)),
+        ),
+    )
+    assert parcel.state.eta == _day(6)
+
+
+@pytest.mark.parametrize(
+    ("source", "label"), [(Source.PARSER, "ctt.pt"), (Source.SEVENTEENTRACK, "")]
+)
+def test_leaving_the_pickup_point_takes_its_days(source: Source, label: str) -> None:
+    """The days to collect a parcel aren't when it's expected once it leaves.
+
+    Unless the news that takes it away gives a date.
+    """
+    origins = (_carrier(), _origin("o2", source=source, label=label, time=at(hours=2)))
+    ready = _event(S.READY_FOR_PICKUP, at(), eta=_day(3, 9))
+    away = _event(S.IN_TRANSIT, at(hours=2), source=source, origin="o2")
+    assert _parcel(ready, away, origins=origins).state.eta is None
+
+    dated = _event(S.IN_TRANSIT, at(hours=2), source=source, origin="o2", eta=_day(5))
+    assert _parcel(ready, dated, origins=origins).state.eta == _day(5)
 
 
 def test_manual_origin_overrides_and_clears() -> None:
@@ -1149,7 +1593,14 @@ def _full_data() -> ParcelsData:
                 owners=("person.one",),
                 message="abc",
             ),
-            _origin("man:p_test", source=Source.MANUAL, time=at(), merchant=""),
+            _origin(
+                "man:p_test",
+                source=Source.MANUAL,
+                time=at(),
+                merchant="",
+                pickup_code="2468",
+                typed_at={"pickup_code": at(hours=1)},
+            ),
         ),
     )
     parcel.private = True
@@ -1215,11 +1666,25 @@ def test_round_trip() -> None:
     parcel = loaded.parcels["p_test"]
     assert parcel.state == data.parcels["p_test"].state
     assert parcel.origins["man:p_test"].merchant == ""
+    assert parcel.origins["man:p_test"].typed_at == {"pickup_code": at(hours=1)}
     assert loaded.review["r1"].suggestion == data.review["r1"].suggestion
     assert loaded.review["r1"].fill
     assert loaded.review["r1"].errors == ("tracking_invalid", "eta_not_in_text")
     assert loaded.review["r1"].notes == ("carrier_unproven", "eta_from_text")
     assert loaded.trusted_domains() == ("example.com",)
+
+
+def test_typed_times_that_cant_be_read_are_left_out() -> None:
+    """A stored time of an edit that can't be read is as if not known."""
+    stored = _origin("man:p_test", source=Source.MANUAL, pickup_code="2468").as_dict()
+    stored["typed_at"] = {
+        "pickup_code": "2026-13-45T00:00:00",
+        "pickup_point": None,
+        "merchant": "2026-11-02T10:00:00+00:00",
+    }
+    assert Origin.from_dict(stored).typed_at == {"merchant": at(hours=1)}
+    stored["typed_at"] = ["pickup_code"]
+    assert Origin.from_dict(stored).typed_at == {}
 
 
 def test_failed_emails_keep_their_tries() -> None:
