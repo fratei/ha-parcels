@@ -41,7 +41,8 @@ check and records an error code for every value it drops:
   the pickup code (a pickup code, delivery PIN or one-time code) must be
   written in the e-mail and can't be one of the tracking or order numbers.
   Items the e-mail lists only under a recommendations heading ("Buy again",
-  "Recommended for you") are dropped, and repeated items are merged. The
+  "Recommended for you") are dropped, as are generic placeholders ("Item 1")
+  that name no product, and repeated items are merged. The
   e-mail's carrier is never the merchant (unless it is also a shop, like
   Amazon), and a merchant given as a domain becomes the name the e-mail
   spells for it. Unless the parcel waits for pickup or missed its
@@ -86,7 +87,7 @@ from ..parsers.generic import (
     detect_kind,
     text_kinds,
 )
-from ..parsers.items import drop_recommended, unique_items
+from ..parsers.items import drop_recommended, is_placeholder_item, unique_items
 from ..parsers.lang import (
     MONTHS,
     WEEKDAY_ABBREVIATIONS,
@@ -141,6 +142,7 @@ NOTE_ADDED_BY_DETECTOR = "tracking_added_by_detector"
 NOTE_CODE_FROM_TEXT = "pickup_code_from_text"
 NOTE_ITEM_RECOMMENDED = "item_recommended"
 NOTE_ITEM_IS_NUMBER = "item_is_number"
+NOTE_ITEM_PLACEHOLDER = "item_placeholder"
 NOTE_KIND_FROM_TEXT = "kind_from_text"
 NOTE_NOT_OUT_TODAY = "out_for_delivery_not_today"
 NOTE_ETA_DROPPED_FOR_KIND = "eta_dropped_for_kind"
@@ -1208,10 +1210,15 @@ class _Checker:
             if len(text) > MAX_ITEM_CHARS:
                 text = text[: MAX_ITEM_CHARS - 1].rstrip() + "\u2026"
             items.append(text)
+        # "Item 1" names no product: the model's stand-in when the e-mail
+        # lists none.
+        named = [item for item in items if not is_placeholder_item(item)]
+        if len(named) < len(items):
+            self.notes.append(NOTE_ITEM_PLACEHOLDER)
         # Products the e-mail only lists under "Buy again" or "Recommended
         # for you" weren't ordered.
-        kept = drop_recommended(items, self.item_text, buttons=self.buttons)
-        if len(kept) < len(items):
+        kept = drop_recommended(named, self.item_text, buttons=self.buttons)
+        if len(kept) < len(named):
             self.notes.append(NOTE_ITEM_RECOMMENDED)
         return tuple(unique_items(kept))
 

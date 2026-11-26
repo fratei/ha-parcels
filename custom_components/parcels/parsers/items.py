@@ -69,6 +69,53 @@ def unique_items(items: Iterable[str]) -> list[str]:
     return kept
 
 
+# --- Placeholders ------------------------------------------------------------
+
+# What an AI writes for a product it can't name ("Item 1", "Artigo 2 de 3",
+# "Unknown item", "Product name"): no product, so never an item. Folded
+# words, as item_key() gives them.
+_PLACEHOLDER_NOUNS = (
+    "items?|itens|artigos?|articulos?|articles?|artikel(?:en)?|articol[oi]"
+    "|produtos?|productos?|products?|produits?|prodott[oi]|produkte?"
+    "|objetos?|objets?|oggett[oi]"
+    "|packages?|parcels?|encomendas?|pacotes?|paquetes?|pakete?|pakket(?:ten)?"
+    "|colis|pacc(?:o|hi)"
+)
+_PLACEHOLDER_UNKNOWN = (
+    "unknown|unnamed|unspecified|not specified|not available|undefined"
+    "|n a|na|none|null|nil"
+    "|desconhecid[oa]s?|nao especificad[oa]|sem nome"
+    "|desconocid[oa]s?|no especificad[oa]|sin nombre"
+    "|unbekannte[rs]?|inconnue?s?|sconosciut[oi]|onbekende?"
+)
+_PLACEHOLDER_NUMBER = (
+    r"(?:(?:no|n o|nr|n|num|number|numero|nummer|nro) )?(?:\d{1,3}|[a-z])"
+)
+_PLACEHOLDER_OF = r"(?:(?:of|out of|de|do|da|del|von|di|van|sur) )?\d{1,3}"
+_PLACEHOLDER_RE = re.compile(
+    rf"(?:\d{{1,3}} )?(?:(?:{_PLACEHOLDER_UNKNOWN}) )?(?:{_PLACEHOLDER_NOUNS})"
+    rf"(?: (?:{_PLACEHOLDER_UNKNOWN}|name|title|description))?"
+    rf"(?: {_PLACEHOLDER_NUMBER}(?: {_PLACEHOLDER_OF})?)?"
+    rf"|{_PLACEHOLDER_UNKNOWN}"
+    r"|(?:nome|descricao|titulo) d[oa] (?:produto|artigo|item)"
+    r"|(?:nombre|descripcion|titulo) del (?:producto|articulo)"
+    r"|(?:produkt|artikel)(?:name|bezeichnung)"
+    r"|(?:nom|description) (?:du produit|de l article)"
+    r"|(?:nome|descrizione) (?:del prodotto|dell articolo)"
+    r"|(?:product|artikel)naam"
+)
+
+
+def is_placeholder_item(title: str) -> bool:
+    """Return True for a title that stands for a product without naming it.
+
+    ``"Item 1"``, ``"Artigo #2 de 3"``, ``"2 items"``, ``"Unknown item"``,
+    ``"N/A"`` and ``"Product name"`` are; ``"Article de sport"`` and
+    ``"Item 1: Black dress"`` aren't.
+    """
+    return _PLACEHOLDER_RE.fullmatch(item_key(title)) is not None
+
+
 # --- Recommendations ---------------------------------------------------------
 
 # Headings of the products a shop recommends under the order ("Inspired by

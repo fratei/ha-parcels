@@ -24,6 +24,7 @@ from custom_components.parcels.dedup import (
     AMAZON_CATCH_UP,
     AMAZON_LINKS_KEY,
     AMAZON_REPAIR_KEY,
+    PLACEHOLDER_REPAIR_KEY,
     REASON_AMAZON_TRACKING,
     REASON_SAME_MERCHANT_DAY,
     REASON_SAME_MERCHANT_DOMAIN,
@@ -1825,6 +1826,209 @@ def test_repair_pairs_old_deliveries_with_their_orders() -> None:
     assert parcel.auto_merged is not None
     assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_DAY
     assert repair_store(data, _nov(22, 9)) == set()
+
+
+# Made up: a fashion shop's order, the sub-orders of its packages, and the
+# sub-orders its "shipped" e-mail named; the third package goes out first.
+FASHION = "Moda Exemplo"
+FASHION_DOMAIN = "moda-exemplo.example"
+FASHION_ORDER = "EXO0000000001"
+FASHION_SUBS = ("EXS000000001A", "EXS000000002B", "EXS000000003C", "EXS000000004D")
+FASHION_SHIPPED = (*(f"EXS{n:09d}X" for n in range(5, 13)), FASHION_SUBS[2])
+SWEATER = "Camisola Exemplo de malha, cinzenta"
+TROUSERS = "Calças Exemplo de perna larga"
+SCARF = "Cachecol Exemplo de lã"
+PLACEHOLDERS = ("item 1", "item 2")
+
+
+def _fashion(
+    origin_id: str,
+    kind: MailKind,
+    when: datetime,
+    *,
+    orders: tuple[str, ...] = (FASHION_SUBS[2],),
+    carrier: str | None = "ctt",
+    items: tuple[str, ...] = (),
+) -> Contribution:
+    """The fashion shop's e-mail about its third package, as the local AI read it."""
+    return contribution(
+        origin_id,
+        kind=kind,
+        time=when,
+        merchant=FASHION,
+        carrier=carrier,
+        orders=orders,
+        items=items,
+        source=Source.AI,
+        label=FASHION_DOMAIN,
+    )
+
+
+def _fashion_order(
+    data: ParcelsData, *, out: bool = True, items: tuple[str, ...] = ()
+) -> str:
+    """The order's e-mail, then "shipped" and "out for delivery": one parcel.
+
+    ``items`` are what the local AI read in the last two.
+    """
+    order = _apply(
+        data,
+        contribution(
+            "msg:o1#0",
+            kind=MailKind.ORDER,
+            time=_nov(10, 9),
+            merchant=FASHION,
+            orders=(FASHION_ORDER, *FASHION_SUBS),
+            items=(SWEATER, TROUSERS),
+            label=FASHION_DOMAIN,
+        ),
+    )
+    shipped = _fashion(
+        "msg:s1#0", MailKind.SHIPPED, _nov(12, 9), orders=FASHION_SHIPPED, items=items
+    )
+    assert _apply(data, shipped) == order
+    if out:
+        ofd = _fashion(
+            "msg:f1#0", MailKind.OUT_FOR_DELIVERY, _nov(14, 9, 10), items=items
+        )
+        assert _apply(data, ofd) == order
+    return order
+
+
+@pytest.mark.parametrize("everywhere", [False, True], ids=["delivered", "every"])
+def test_placeholder_items_never_split_an_order(everywhere: bool) -> None:
+    """Generic titles such as "item 1" aren't items, so they split nothing.
+
+    The local AI can give them for an e-mail that lists no items: the
+    delivery then seemed another package of the order, which stayed out for
+    delivery.
+    """
+    data = ParcelsData()
+    pid = _fashion_order(data, items=PLACEHOLDERS if everywhere else ())
+
+    delivered = _apply(
+        data,
+        _fashion("msg:d1#0", MailKind.DELIVERED, _nov(14, 13, 40), items=PLACEHOLDERS),
+    )
+
+    assert delivered == pid
+    assert list(data.parcels) == [pid]
+    parcel = data.parcels[pid]
+    assert parcel.state.status is ParcelStatus.DELIVERED
+    assert parcel.state.items == (SWEATER, TROUSERS)
+    assert parcel.auto_merged is None
+
+
+def test_delivery_of_the_package_out_for_delivery_joins_it() -> None:
+    """The shop's "delivered" for the sub-order out for delivery is that package.
+
+    It joins even when the local AI read other items, flagged so the user can
+    undo it.
+    """
+    data = ParcelsData()
+    pid = _fashion_order(data)
+
+    applied = apply_contribution(
+        data,
+        _fashion("msg:d1#0", MailKind.DELIVERED, _nov(14, 13, 40), items=(SCARF,)),
+        _nov(14, 13, 40),
+    )
+
+    assert applied.parcel_id == pid
+    assert applied.auto_merged == REASON_SAME_ORDER
+    parcel = data.parcels[pid]
+    assert parcel.state.status is ParcelStatus.DELIVERED
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_ORDER
+    split = undo_auto_merge(data, pid, _nov(14, 14))
+    assert split is not None
+    assert set(split.origins) == {"msg:d1#0"}
+    assert data.parcels[pid].state.status is ParcelStatus.OUT_FOR_DELIVERY
+
+
+@pytest.mark.parametrize(
+    ("out", "carrier", "sub_order"),
+    [
+        (False, "ctt", FASHION_SUBS[2]),
+        (True, "gls", FASHION_SUBS[2]),
+        (True, "ctt", FASHION_SUBS[0]),
+    ],
+    ids=["not-out", "other-carrier", "other-sub-order"],
+)
+def test_delivery_that_may_be_the_orders_package_is_suggested(
+    out: bool, carrier: str, sub_order: str
+) -> None:
+    """A delivery with other items that may be the order's package is suggested.
+
+    It joins by itself only when its sub-order's package is out for delivery
+    with the same carrier.
+    """
+    data = ParcelsData()
+    pid = _fashion_order(data, out=out)
+
+    delivered = _apply(
+        data,
+        _fashion(
+            "msg:d1#0",
+            MailKind.DELIVERED,
+            _nov(14, 13, 40),
+            orders=(sub_order,),
+            carrier=carrier,
+            items=(SCARF,),
+        ),
+    )
+
+    assert delivered != pid
+    result = reconcile(data, _nov(14, 14))
+    assert not result.removed
+    assert [(s.parcel_id, s.candidates, s.reason) for s in result.suggestions] == [
+        (pid, (delivered,), REASON_SAME_ORDER)
+    ]
+
+
+def test_repair_drops_placeholder_items_and_joins_the_delivery() -> None:
+    """Placeholders earlier versions kept go, so the delivery joins its order.
+
+    Answers under review lose them too; a fill that offered only them goes.
+    """
+    data = ParcelsData()
+    pid = _fashion_order(data)
+    alone = ParcelsData()
+    lone = _apply(alone, _fashion("msg:d1#0", MailKind.DELIVERED, _nov(14, 13, 40)))
+    data.parcels.update(alone.parcels)
+    data.parcels[lone].origins["msg:d1#0"].items = PLACEHOLDERS
+    data.parcels[lone].touch(_nov(14, 13, 40))
+    answer = Suggestion(
+        kind=MailKind.SHIPPED,
+        merchant=FASHION,
+        order_numbers=(FASHION_ORDER,),
+        items=("Item 1", SWEATER),
+    )
+    only_placeholders = Suggestion(kind=MailKind.SHIPPED, items=PLACEHOLDERS)
+    data.review = {
+        "r1": _answer("r1", answer),
+        "r2": _answer("r2", only_placeholders, fill=True),
+        "r3": _answer("r3", replace(only_placeholders, carrier="ctt"), fill=True),
+    }
+    assert not reconcile(data, _nov(14, 14)).removed
+
+    changed = repair_store(data, _nov(15, 8), since=4)
+
+    assert lone not in data.parcels
+    assert pid in changed
+    parcel = data.parcels[pid]
+    assert parcel.state.status is ParcelStatus.DELIVERED
+    assert parcel.state.items == (SWEATER, TROUSERS)
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_ORDER
+    assert set(data.review) == {"r1", "r3"}
+    assert data.review["r1"].suggestion == replace(answer, items=(SWEATER,))
+    assert data.review["r1"].notes == ("item_placeholder",)
+    assert data.review["r3"].suggestion == Suggestion(
+        kind=MailKind.SHIPPED, carrier="ctt"
+    )
+    assert data.engine[PLACEHOLDER_REPAIR_KEY] == {"parcels": 1, "answers": 3}
+    assert repair_store(data, _nov(15, 9), since=REPAIR_VERSION) == set()
 
 
 # Made up: the part of Paack's order IDs before "_", shared by the packages.

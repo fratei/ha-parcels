@@ -7,6 +7,7 @@ import pytest
 from custom_components.parcels.parsers.items import (
     before_recommendations,
     drop_recommended,
+    is_placeholder_item,
     recommendations_start,
     same_item,
     unique_items,
@@ -156,3 +157,54 @@ def test_drop_recommended_keeps_items_also_ordered() -> None:
     text = _order_text("Comprar de novo") + f"\n{ORDERED}"
 
     assert drop_recommended([ORDERED, *RECOMMENDED], text) == [ORDERED]
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "item 1",
+        "Item #2",
+        "[Item 1]",
+        "2 x Item 1",
+        "Item 1 of 2",
+        "Item 1/2",
+        "Item A",
+        "Item No. 3",
+        "2 items",
+        "Artigo 2 de 3",
+        "Produto N.º 3",
+        "Artículo nº 2",
+        "Article 1 sur 3",
+        "Artikel 1 von 2",
+        "Articolo 2 di 3",
+        "Pakket 2",
+        "Unknown item",
+        "Artigo desconhecido",
+        "Unbekannter Artikel",
+        "N/A",
+        "Product name",
+        "Nome do produto",
+        "Nombre del producto",
+    ],
+)
+def test_placeholder_items(title: str) -> None:
+    """A title that names no product, in any of the languages, is a placeholder."""
+    assert is_placeholder_item(title)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Knit sweater grey",
+        "Item 1: Knit sweater grey",
+        "Article de sport",
+        "Artikel 123456",
+        "Package of 3 socks",
+        "Produto de limpeza",
+        "Itemized receipt holder",
+        "Unknown Pleasures vinyl",
+    ],
+)
+def test_named_items_are_no_placeholders(title: str) -> None:
+    """A title with a product in it, or a long reference, is an item."""
+    assert not is_placeholder_item(title)

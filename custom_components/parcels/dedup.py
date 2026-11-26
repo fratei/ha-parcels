@@ -29,8 +29,14 @@ existing parcels:
 * heuristics, which flag the parcel "auto-merged" so the user can undo them:
   the same long tracking number from carriers of different families, the
   order's only open parcel with the same items (or, for a "delivered" e-mail
-  without items, the order's only open parcel), or the same merchant with
-  overlapping delivery dates when only one parcel fits.
+  without items, the order's only open parcel), the package that news of
+  the same order (sub-order) sent out for delivery with the same carrier,
+  for the local AI's "delivered" that lists other items, or the same
+  merchant with overlapping delivery dates when only one parcel fits.
+
+News without a number that closes a package (delivered or returned) but
+lists other items than the order's only open package, which nothing else
+takes, gets a parcel of its own and a merge suggestion with that package.
 
 After a sync, :func:`reconcile` looks at whole parcels again, because e-mails
 arrive in any order and a shop's e-mail rarely names the carrier's number:
@@ -52,7 +58,8 @@ arrive in any order and a shop's e-mail rarely names the carrier's number:
   delivery time Amazon's tracking contradicts never fits.
 
 Item titles never link different orders, and titles that unrelated orders
-share (a shop's recommendations read as items) don't count at all.
+share (a shop's recommendations read as items) don't count at all, nor do
+placeholders such as "item 1".
 
 When the Parcel app switches an Amazon delivery to the carrier's number, its
 sync joins the carrier's delivery to the order's parcel, flagged (see
@@ -91,7 +98,7 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from .ai.validate import NOTE_CARRIER_UNPROVEN
+from .ai.validate import NOTE_CARRIER_UNPROVEN, NOTE_ITEM_PLACEHOLDER
 from .const import MailKind, ParcelStatus
 from .models import (
     FILL_ORIGIN_SUFFIX,
@@ -123,7 +130,7 @@ from .parsers.base import Eta, shipment_base
 from .parsers.carriers import brand_carriers
 from .parsers.carriers._common import fold_text, phrase_regex
 from .parsers.carriers._phrases import KIND_PHRASES
-from .parsers.items import item_key, same_key
+from .parsers.items import is_placeholder_item, item_key, same_key
 from .parsers.senders import (
     is_free_mail,
     lookup,
@@ -199,8 +206,9 @@ _PROBLEMS = frozenset({ParcelStatus.ATTEMPTED, ParcelStatus.EXCEPTION})
 KEPT_APART = "kept_apart"
 HELD_GUESSES = "held_guesses"
 REPAIR_KEY = "repair"
-REPAIR_VERSION = 4
+REPAIR_VERSION = 5
 AMAZON_REPAIR_KEY = "amazon_carrier_repaired"
+PLACEHOLDER_REPAIR_KEY = "placeholder_items_repaired"
 AMAZON_LINKS_KEY = "amazon_links"
 ORDER_FOLD_KEY = "order_fold"
 # Where a carrier is read from the parcel's or someone else's say-so: the
@@ -921,6 +929,55 @@ def _order_pick(
     return _most_recent(data, untracked or parcels)
 
 
+def _order_package(
+    data: ParcelsData, origin: Origin, events: list[ParcelEvent]
+) -> tuple[str | None, str | None]:
+    """Return the order's open package that news with other items may be about.
+
+    It's for news without a number when no parcel of its order has its
+    items (see :func:`_order_pick`). The local AI may misread items, so its
+    "delivered" belongs to the package that the news of the same order
+    (sub-order) said was out for delivery, with the same carrier: the first
+    value, a guess to flag. Otherwise, news that closes a package
+    (delivered or returned) may still be about the order's only open
+    package: the second value, which the user decides on.
+    """
+    keys = origin_order_keys(origin)
+    candidates: dict[str, Parcel] = {}
+    for key in keys:
+        for parcel in order_parcels(data, key, include_archived=False):
+            if not _finished(parcel) and not _conflicts(parcel, origin):
+                candidates[parcel.id] = parcel
+    statuses = {event.status for event in events}
+    if origin.source is Source.AI and ParcelStatus.DELIVERED in statuses:
+        out = [
+            pid
+            for pid, parcel in candidates.items()
+            if parcel.state.status is ParcelStatus.OUT_FOR_DELIVERY
+            and _same_carrier(origin.carrier, parcel.state.carrier)
+            and _out_for(parcel, keys)
+        ]
+        if len(out) == 1:
+            return out[0], None
+    closing = bool(statuses & {ParcelStatus.DELIVERED, ParcelStatus.RETURNED})
+    if closing and len(candidates) == 1:
+        return None, next(iter(candidates))
+    return None, None
+
+
+def _out_for(parcel: Parcel, keys: Collection[str]) -> bool:
+    """Return whether news that named one of the orders ``keys`` sent it out."""
+    for event in parcel.events:
+        if event.status is not ParcelStatus.OUT_FOR_DELIVERY:
+            continue
+        origin = parcel.origins.get(event.origin) if event.origin else None
+        if origin is not None and not origin_order_keys(
+            origin, parcel.state.merchant
+        ).isdisjoint(keys):
+            return True
+    return False
+
+
 def _conflicts(parcel: Parcel, origin: Origin) -> bool:
     """Return True when a parcel and an origin can't be the same parcel."""
     state = parcel.state
@@ -1089,6 +1146,9 @@ def _normalise(origin: Origin) -> None:
         origin.amazon_shipment_id = origin.amazon_shipment_id.strip()
     if origin.reference:
         origin.reference = origin.reference.strip() or None
+    if origin.source is not Source.MANUAL and origin.items:
+        # "Item 1" names no item: it would make the parcel seem another one.
+        origin.items = tuple(i for i in origin.items if not is_placeholder_item(i))
 
 
 def _record_orders(
@@ -1184,6 +1244,9 @@ def apply_contribution(
     targets = set(strong)
     reason: str | None = None
     ambiguous = False
+    # The order's open package that news with other items may be about: the
+    # user decides when nothing else takes it (see _order_package()).
+    order_guess: str | None = None
     # Guesses not made because they would put a private parcel together with
     # someone else's: the user gets a suggestion instead (see hold_guess()).
     held: list[tuple[str, str]] = []
@@ -1244,6 +1307,13 @@ def apply_contribution(
                 # An order's e-mail about a parcel already put away joins it:
                 # the order is known, so it isn't a new parcel.
                 target = _order_only_target(data, origin, events, include_archived=True)
+            if target is None:
+                target, order_guess = _order_package(data, origin, events)
+                if target is not None:
+                    if allowed(target, REASON_SAME_ORDER):
+                        reason = REASON_SAME_ORDER
+                    else:
+                        target, ambiguous = None, True
         if target is not None:
             targets = {target}
     if not targets and contribution.home in data.parcels:
@@ -1257,6 +1327,8 @@ def apply_contribution(
     ):
         targets = {heuristic}
         reason = REASON_SAME_MERCHANT_ETA
+    if not targets and order_guess is not None:
+        held.append((order_guess, REASON_SAME_ORDER))
 
     created = False
     merged: tuple[str, ...] = ()
@@ -2162,12 +2234,13 @@ def hold_guess(
     second_ids: Collection[str],
     reason: str,
 ) -> None:
-    """Remember a guess not made because it would join a private parcel.
+    """Remember a guess not made, for the user to decide on.
 
     A guess never puts a private parcel together with someone else's e-mail
-    or parcel: they would see it. The two sides, stored by origin IDs, are
-    offered as a merge suggestion instead, which only people who may see
-    both get (see :func:`reconcile`).
+    or parcel: they would see it. Nor is news with other items joined to
+    the package it only may be about (see :func:`_order_package`). The two
+    sides, stored by origin IDs, are offered as a merge suggestion instead,
+    which only people who may see both get (see :func:`reconcile`).
     """
     left, right = frozenset(first_ids), frozenset(second_ids)
     if not left or not right or left & right:
@@ -4339,6 +4412,50 @@ def _drop_recommendations(data: ParcelsData, now: datetime) -> set[str]:
     return changed
 
 
+def _drop_placeholder_items(data: ParcelsData, now: datetime) -> tuple[set[str], int]:
+    """Drop the placeholders such as "item 1" that earlier versions kept as items.
+
+    The local AI gave them for e-mails that list no items. What the user
+    typed stays. Answers waiting in "Needs review" lose them too, with the
+    note the checks now give; a fill that offered nothing else is dropped,
+    as when the user dismisses it. Returns the changed parcel IDs and how
+    many answers changed.
+    """
+    changed: set[str] = set()
+    for parcel in data.parcels.values():
+        for origin in parcel.origins.values():
+            if origin.source is Source.MANUAL or not any(
+                is_placeholder_item(item) for item in origin.items
+            ):
+                continue
+            origin.items = tuple(i for i in origin.items if not is_placeholder_item(i))
+            parcel.touch(now)
+            changed.add(parcel.id)
+    answers = 0
+    for key, item in list(data.review.items()):
+        suggestion = item.suggestion
+        if suggestion is None or not any(
+            is_placeholder_item(title) for title in suggestion.items
+        ):
+            continue
+        answers += 1
+        suggestion = replace(
+            suggestion,
+            items=tuple(i for i in suggestion.items if not is_placeholder_item(i)),
+        )
+        if item.fill and not (
+            suggestion.eta_start
+            or suggestion.items
+            or suggestion.tracking_numbers
+            or suggestion.carrier
+        ):
+            del data.review[key]
+            continue
+        item.suggestion = suggestion
+        item.notes = check_codes((*item.notes, NOTE_ITEM_PLACEHOLDER))
+    return changed, answers
+
+
 def _forget_unproven_amazon_answers(data: ParcelsData) -> int:
     """Drop Amazon as the carrier of the local AI's answers under review.
 
@@ -4384,6 +4501,9 @@ def repair_store(data: ParcelsData, now: datetime, since: int = 0) -> set[str]:
       or 17TRACK gave without one of its numbers, nor the carrier learned
       for a sender or offered by an answer waiting in "Needs review". What
       a parser read ("Amazon Logistics") and the user's edits stay.
+    * (5) Placeholders such as "item 1" that the local AI gave as items are
+      dropped, here and in answers waiting in "Needs review"; a fill that
+      offered only them goes.
     * A shop's recommendations read as items are dropped.
     * Parcels of one order that are the same package are merged, undoably.
     * Orders are recorded again under the current order keys.
@@ -4392,7 +4512,8 @@ def repair_store(data: ParcelsData, now: datetime, since: int = 0) -> set[str]:
       merged, undoably, however old they are.
 
     The other steps can run again harmlessly. The fourth step's counts go to
-    the engine state under ``AMAZON_REPAIR_KEY``.
+    the engine state under ``AMAZON_REPAIR_KEY``, the fifth's under
+    ``PLACEHOLDER_REPAIR_KEY``.
     """
     unproven = {"origins": 0, "senders": 0, "answers": 0}
     for domain, prefs in data.senders.items():
@@ -4433,6 +4554,13 @@ def repair_store(data: ParcelsData, now: datetime, since: int = 0) -> set[str]:
     if since < 4:
         unproven["answers"] = _forget_unproven_amazon_answers(data)
         data.engine[AMAZON_REPAIR_KEY] = unproven
+    if since < 5:
+        dropped, answers = _drop_placeholder_items(data, now)
+        changed |= dropped
+        data.engine[PLACEHOLDER_REPAIR_KEY] = {
+            "parcels": len(dropped),
+            "answers": answers,
+        }
     changed |= _drop_recommendations(data, now)
     merged = Reconciled()
     apart = _apart_checker(data)

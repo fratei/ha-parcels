@@ -16,6 +16,7 @@ from custom_components.parcels.ai.validate import (
     NOTE_ETA_DROPPED_FOR_KIND,
     NOTE_ETA_FROM_TEXT,
     NOTE_ITEM_IS_NUMBER,
+    NOTE_ITEM_PLACEHOLDER,
     NOTE_ITEM_RECOMMENDED,
     NOTE_KIND_FROM_TEXT,
     NOTE_MERCHANT_FROM_SENDER,
@@ -1517,15 +1518,15 @@ def test_short_domain_name_is_not_read_from_text() -> None:
 
 def test_items_are_limited() -> None:
     """At most 10 plain-text items of at most 80 characters are kept."""
-    items = [f"Artigo {n}" for n in range(12)]
+    items = [f"Caneca {n}" for n in range(12)]
     items[0] = "x" * 100
-    items[1] = "<i>Artigo</i>"
+    items[1] = "<i>Caneca</i>"
     result = checked(answer(kind="order", items=items))
     assert "items_too_many" in result.notes
     assert "item_invalid" in result.notes
     assert len(result.items) == 9
     assert result.items[0] == "x" * 79 + "\u2026"
-    assert result.items[1:] == tuple(f"Artigo {n}" for n in range(2, 10))
+    assert result.items[1:] == tuple(f"Caneca {n}" for n in range(2, 10))
 
 
 CUT_TEXT = (
@@ -1674,6 +1675,38 @@ def test_items_that_are_numbers_or_codes_are_dropped() -> None:
     assert result.shipments[0].pickup_code == "739 215"
     assert NOTE_ITEM_IS_NUMBER in result.notes
     assert result.confidence == CONFIDENCE_HIGH
+
+
+def test_placeholder_items_are_dropped() -> None:
+    """A placeholder such as "Item 1" is no item; a named one stays."""
+    result = checked(
+        answer(
+            kind="delivered",
+            tracking_numbers=[S10],
+            order_numbers=["EXS000000003C"],
+            items=["Item 1", "Item 2", "Knit sweater grey"],
+        ),
+        f"A sua encomenda EXS000000003C foi entregue: objeto {S10}. Knit sweater grey",
+    )
+    assert result.items == ("Knit sweater grey",)
+    assert result.shipments[0].items == result.items
+    assert NOTE_ITEM_PLACEHOLDER in result.notes
+    assert result.confidence == CONFIDENCE_HIGH
+
+
+def test_only_placeholder_items_leave_none() -> None:
+    """An answer whose items are all placeholders has no items."""
+    result = checked(
+        answer(
+            kind="delivered",
+            order_numbers=["EXS000000003C"],
+            items=["item 1", "item 2"],
+        ),
+        "A sua encomenda EXS000000003C foi entregue.",
+    )
+    assert result.items == ()
+    assert result.shipments[0].items == ()
+    assert result.notes == (NOTE_ITEM_PLACEHOLDER,)
 
 
 def test_pickup_code_is_never_a_tracking_number() -> None:

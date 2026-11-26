@@ -903,6 +903,10 @@ async def test_start_forgets_an_unproven_amazon_carrier(
         "senders": 0,
         "answers": 0,
     }
+    assert engine.diagnostics()["placeholder_items_repaired"] == {
+        "parcels": 0,
+        "answers": 0,
+    }
 
 
 async def test_start_folds_late_order_mail_once(

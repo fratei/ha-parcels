@@ -323,6 +323,18 @@ checks: every e-mail gets the same input as with 0.1.10, byte for byte, and
 the same 656 variants give the same results. In **Needs review**,
 administrators now also see what each [failed check](#check-codes) means.
 
+### What changed in 0.1.24
+
+0.1.24 keeps the instructions, the answer's structure and the input: every
+e-mail gets the same input as with 0.1.23, byte for byte, and the same 656
+variants give the same results. None of this set's expected answers gives a
+placeholder as an item:
+
+| Answer | What Parcels does |
+|---|---|
+| A placeholder as an item, such as "Item 1", "Artigo 2 de 3" or "Unknown item" | It names no product, so it's dropped, with the note `item_placeholder`. It isn't a failed check: the rest of the answer is used. 0.1.23 kept it, so a delivery's items differed from those of its order's parcel, and the delivery looked like another package of the order. |
+| `delivered` without a tracking number, with other items than its order's parcel | As the model may misread items, the answer updates the order's package that the order's own news sent out for delivery, when only one fits and the carriers don't differ, marked as a guess the user can undo. Otherwise it gets a parcel of its own, and when the order has only one open parcel, **Needs review** suggests merging the two. 0.1.23 made a parcel of its own, without a suggestion. |
+
 ## Check codes
 
 An answer that fails a check waits in **Needs review**, as "The local AI's
@@ -384,6 +396,7 @@ the failed checks, as codes without values, each with its meaning:
 | `pickup_code_from_text` | The e-mail's only delivery or pickup code was used, as the answer gave none that the e-mail writes. |
 | `item_recommended` | Products the e-mail lists only under Buy again or Recommended for you were dropped. |
 | `item_is_number` | An item that was the parcel's tracking or order number, code or reference was dropped. |
+| `item_placeholder` | A generic placeholder given as an item, such as Item 1, was dropped. |
 | `kind_from_text` | The e-mail's words give a different status from the answer's, and theirs was used. |
 | `out_for_delivery_not_today` | Out for delivery, with a later delivery date and no such words in the e-mail, was read as in transit. |
 | `eta_dropped_for_kind` | A date was dropped, as no delivery is pending in e-mails of this kind. |

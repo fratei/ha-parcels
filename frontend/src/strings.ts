@@ -567,6 +567,7 @@ export const NOTE_MEANINGS: Readonly<Record<string, string>> = {
   pickup_code_from_text: "The e-mail's only delivery or pickup code was used, as the answer gave none that the e-mail writes.",
   item_recommended: "Products the e-mail lists only under Buy again or Recommended for you were dropped.",
   item_is_number: "An item that was the parcel's tracking or order number, code or reference was dropped.",
+  item_placeholder: "A generic placeholder given as an item, such as Item 1, was dropped.",
   kind_from_text: "The e-mail's words give a different status from the answer's, and theirs was used.",
   out_for_delivery_not_today: "Out for delivery, with a later delivery date and no such words in the e-mail, was read as in transit.",
   eta_dropped_for_kind: "A date was dropped, as no delivery is pending in e-mails of this kind.",

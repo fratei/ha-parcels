@@ -47,9 +47,16 @@ api.parcel.app, which Parcels contacts itself with your API key.
   later completes, also when the carrier's e-mail names only the shop. A
   later e-mail about the same order and items updates that order's parcel,
   and a delivery e-mail without items, or one saying the parcel went back to
-  its sender, updates the order's only open parcel. A late order e-mail
-  joins its order's parcel even once that parcel was delivered or archived,
-  without reopening it, unless the parcel holds other items. An e-mail that
+  its sender, updates the order's only open parcel. Placeholders such as
+  "item 1" aren't items. As the local AI may misread items, its reading of a
+  delivery with other items updates the order's package that the order's own
+  news sent out for delivery, when only one fits and their carriers don't
+  differ, marked as a guess. Another delivery or return without a tracking
+  number, whose items differ from those of the order's only open parcel,
+  gets a parcel of its own, and Parcels asks in **Needs review** whether to
+  merge the two. A late order e-mail joins its order's parcel even once that
+  parcel was delivered or archived, without reopening it, unless the parcel
+  holds other items. An e-mail that
   arrives late never moves a parcel back to an earlier status. An order's
   cancellation cancels its parcel while the parcel shows as ordered, or while
   no news says that it shipped: a tracking number, an Amazon shipment, or a
@@ -1423,7 +1430,8 @@ a parcel going back to its sender stays one, and a refund is dropped, as is a
 refund e-mail that the answer says with confidence isn't about a parcel.
 The last day to collect, the next attempt and where a parcel was left are
 read from the e-mail's own wording, as for the parsers, never from the
-answer.
+answer. Items that name no product, such as "Item 1" or "Unknown item", are
+dropped.
 Paack's order IDs are kept as the e-mail writes them, and in Paack's own
 e-mails the part before `_`, given alone as the order number, becomes the
 shipment reference. [docs/ai-benchmark.md](docs/ai-benchmark.md) lists the
@@ -1932,6 +1940,16 @@ actions:
   other (see [Add your mailboxes](#5-add-your-mailboxes)). An e-mail skipped
   before the update stays unread: if its parcel is missing, add it with
   `parcels.add`.
+- **A delivery read by the local AI showed as a parcel of its own.** Before
+  0.1.24, the local AI's placeholders for items it couldn't name, such as
+  "item 1", counted as items, so its reading of a delivery looked like
+  another package of the order, and the order's parcel stayed out for
+  delivery. After the update, Parcels drops them once, also from the answers
+  waiting in **Needs review**, and a delivery they kept apart joins its
+  order's parcel that is still open, marked so you can undo it (see **Each
+  parcel once** in [What it does](#what-it-does)). What you typed stays. The
+  hub's diagnostics count the parcels and answers that changed
+  (`placeholder_items_repaired`).
 - **Amazon shows as the carrier, but didn't deliver.** Before 0.1.8, Amazon
   became the carrier whenever the local AI, the Parcel app or 17TRACK named
   it, which kept Amazon's orders apart from their carrier's deliveries. After
@@ -1970,7 +1988,9 @@ actions:
   re-read, after the update to 0.1.15 or 0.1.16, changed
   (`seventeentrack_pickups_reread`), those whose 17TRACK news without a time
   the update to 0.1.22 made news without a date
-  (`seventeentrack_timeless_repaired`) and the parcels of late order e-mails
+  (`seventeentrack_timeless_repaired`), the parcels and the answers in
+  **Needs review** whose placeholder items the update to 0.1.24 dropped
+  (`placeholder_items_repaired`) and the parcels of late order e-mails
   that the update to 0.1.16 folded into their order's parcel
   (`order_fold`); its
   notifications part says whether delivery PINs show on the lock screen
