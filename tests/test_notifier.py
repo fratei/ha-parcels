@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from itertools import count
 import json
@@ -17,7 +18,7 @@ from homeassistant.components.persistent_notification.helpers import (
     _async_get_or_create_notifications,
 )
 from homeassistant.const import EVENT_CORE_CONFIG_UPDATE, MATCH_ALL
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.util import dt as dt_util, slugify
@@ -251,6 +252,22 @@ class Phone:
         return payloads
 
 
+@dataclass
+class Gate:
+    """Holds the next notify call until released, as a slow push relay does."""
+
+    entered: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def wait_entered(self) -> None:
+        """Let the loop run until a notify call is held."""
+        for _ in range(100):
+            if self.entered.is_set():
+                return
+            await asyncio.sleep(0)
+        raise AssertionError("No notify call was made")
+
+
 class FakePush:
     """mobile_app's notify service, as Parcels calls it directly."""
 
@@ -315,6 +332,8 @@ class Env:
         self.tokens: dict[str, dict[str, dict[str, Any]]] = {}
         # Whether iPhones report the token of each activity they start at once.
         self.auto_token = True
+        # Holds the next call to a phone's notify service while set.
+        self.gate: Gate | None = None
         self.push = FakePush(hass)
         hass.data["mobile_app"] = {
             "config_entries": self.entries,
@@ -364,8 +383,10 @@ class Env:
         phone = Phone(device.id, calls, f"mobile_app_{slug}", f"webhook-{slug}", error)
         if service:
 
-            @callback
-            def handle(call: ServiceCall) -> None:
+            async def handle(call: ServiceCall) -> None:
+                if (gate := self.gate) is not None and not gate.entered.is_set():
+                    gate.entered.set()
+                    await gate.release.wait()
                 calls.append(call)
                 if error is not None:
                     raise error
@@ -4048,6 +4069,222 @@ async def test_a_step_back_reversed_soon_after_is_quiet_when_shared(
     assert "silent" not in update["data"]
 
 
+@pytest.mark.parametrize("kind", ["ipad", "android"])
+async def test_a_devices_first_news_of_a_parcel_alerts_though_it_flips_back(
+    env: Env, hass: HomeAssistant, kind: str
+) -> None:
+    """A device's first notification about a parcel alerts, even mid-flip.
+
+    The flip is quiet for the devices told of the change it takes back. One
+    that becomes a recipient later wasn't, so its first news alerts; the
+    next flip comes quietly to it too.
+    """
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    other = env.phone("Sam Tablet", SAM, kind)
+    entry = env.hub(**{CONF_NOTIFY_PERSONS: [ALEX]})
+    parcel = env.parcel(eta=window(14, 18), merchant="Decathlon", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    await env.goto(at(9))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(9), eta=window(14, 18), label="ctt.pt"
+    )
+    await env.settle()
+    assert len(ipad.take()) == 1
+    await env.goto(at(11))
+    tomorrow = on(DAY + timedelta(days=1))
+    env.change(parcel, S.IN_TRANSIT, sent=at(11), eta=tomorrow, label="ctt.pt")
+    await env.settle()
+    assert len(ipad.take()) == 1
+    await env.goto(at(11, 1))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(11, 1), eta=window(15, 19), label="ctt.pt"
+    )
+    await env.settle()
+    (notification,) = ipad.take()
+    assert notification["data"]["push"] == {"interruption-level": "passive"}
+    assert other.take() == []
+
+    await env.goto(at(11, 5))
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_NOTIFY_PERSONS: [ALEX, SAM]}
+    )
+    env.changed()
+    await env.settle()
+    assert ipad.take() == []
+    (notification,) = other.take()
+    assert notification["message"] == f"Out for delivery 15:00{DASH}19:00{SEP}CTT"
+    assert "push" not in notification["data"]
+    assert "alert_once" not in notification["data"]
+
+    await env.goto(at(11, 10))
+    env.change(parcel, S.IN_TRANSIT, sent=at(11, 10), eta=tomorrow, label="ctt.pt")
+    await env.settle()
+    back = f"Expected tomorrow{SEP}CTT"
+    (notification,) = ipad.take()
+    assert notification["message"] == back
+    assert notification["data"]["push"] == {"interruption-level": "passive"}
+    (notification,) = other.take()
+    assert notification["message"] == back
+    if kind == "ipad":
+        assert notification["data"]["push"] == {"interruption-level": "passive"}
+    else:
+        assert notification["data"]["alert_once"] is True
+
+
+async def test_news_read_during_a_slow_evaluation_reaches_every_device(
+    env: Env, hass: HomeAssistant
+) -> None:
+    """News read while an evaluation still sends gets a round of its own.
+
+    Sending one parcel's news can take longer than the debouncer's cooldown.
+    A parcel that flips back meanwhile is quiet on every device, and no
+    device waits for a later evaluation to hear of it.
+    """
+    iphone = env.phone("Alex iPhone", ALEX)
+    ipad = env.phone("Alex iPad", ALEX, "ipad")
+    android = env.phone("Sam Pixel", SAM, "android")
+    phones = {"iphone": iphone, "ipad": ipad, "android": android}
+    parcel = env.parcel(eta=window(14, 18), merchant="Decathlon", carrier="ctt")
+    other = env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    await env.goto(at(9))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(9), eta=window(14, 18), label="ctt.pt"
+    )
+    await env.settle()
+    await env.goto(at(11))
+    tomorrow = on(DAY + timedelta(days=1))
+    env.change(parcel, S.IN_TRANSIT, sent=at(11), eta=tomorrow, label="ctt.pt")
+    await env.settle()
+    for phone in phones.values():
+        phone.take()
+
+    await env.goto(at(11, 2))
+    env.gate = gate = Gate()
+    env.change(other, S.DELIVERED, sent=at(11, 2), label="ctt.pt")
+    env.freezer.tick(timedelta(seconds=DEBOUNCE_COOLDOWN + 1))
+    async_fire_time_changed(hass)
+    await gate.wait_entered()
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(11, 2), eta=window(15, 19), label="ctt.pt"
+    )
+    env.freezer.tick(timedelta(seconds=DEBOUNCE_COOLDOWN + 1))
+    async_fire_time_changed(hass)
+    gate.release.set()
+    await hass.async_block_till_done()
+    out = f"Out for delivery 15:00{DASH}19:00{SEP}CTT"
+    delivered = f"Delivered {CHECK} 11:02{SEP}CTT"
+    quiet = {
+        "iphone": ("silent", True),
+        "ipad": ("push", {"interruption-level": "passive"}),
+        "android": ("alert_once", True),
+    }
+    for name, phone in phones.items():
+        payloads = phone.take()
+        tags = sorted(payload["data"]["tag"] for payload in payloads)
+        assert tags == sorted([tag_of(parcel), tag_of(other)]), name
+        by_tag = {payload["data"]["tag"]: payload for payload in payloads}
+        flip, news = by_tag[tag_of(parcel)], by_tag[tag_of(other)]
+        key, value = quiet[name]
+        assert (flip["message"], flip["data"].get(key)) == (out, value), name
+        assert (news["message"], key in news["data"]) == (delivered, False), name
+
+    await env.settle()
+    assert [phone.take() for phone in phones.values()] == [[], [], []]
+
+
+async def test_news_read_during_the_last_round_is_evaluated_soon_after(
+    env: Env, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """News read during an evaluation's last round gets one of its own.
+
+    The debouncer drops the call made while it still runs, so the notifier
+    follows up by itself.
+    """
+    monkeypatch.setattr("custom_components.parcels.notifier.EVALUATION_ROUNDS", 1)
+    phones = [
+        env.phone("Alex iPad", ALEX, "ipad"),
+        env.phone("Sam Pixel", SAM, "android"),
+    ]
+    other = env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(11))
+    env.gate = gate = Gate()
+    env.change(other, S.DELIVERED, sent=at(11), label="ctt.pt")
+    env.freezer.tick(timedelta(seconds=DEBOUNCE_COOLDOWN + 1))
+    async_fire_time_changed(hass)
+    await gate.wait_entered()
+    parcel = env.parcel(
+        S.OUT_FOR_DELIVERY, window(15, 19), merchant="Decathlon", carrier="ctt"
+    )
+    env.changed()
+    env.freezer.tick(timedelta(seconds=DEBOUNCE_COOLDOWN + 1))
+    async_fire_time_changed(hass)
+    gate.release.set()
+    await hass.async_block_till_done()
+    tags = [[payload["data"]["tag"] for payload in phone.take()] for phone in phones]
+    assert tags == [[tag_of(other)], [tag_of(other)]]
+
+    await env.settle()
+    tags = [[payload["data"]["tag"] for payload in phone.take()] for phone in phones]
+    assert tags == [[tag_of(parcel)], [tag_of(parcel)]]
+
+
+async def test_a_flipping_parcel_new_to_a_shared_activity_alerts(env: Env) -> None:
+    """A parcel joining a shared activity alerts, though it flips back.
+
+    That iPhone wasn't told of it before: it was someone else's private
+    parcel until then.
+    """
+    alex = env.phone("Alex iPhone", ALEX)
+    sam = env.phone("Sam iPhone", SAM)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: 1})
+    parcel = env.parcel(
+        eta=window(14, 18),
+        merchant="Decathlon",
+        carrier="ctt",
+        owners=(ALEX,),
+        private=True,
+    )
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    env.parcel(eta=on(), merchant="Fnac", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert [payload["data"]["tag"] for payload in alex.take()] == [COMBINED]
+    assert [payload["data"]["tag"] for payload in sam.take()] == [COMBINED]
+
+    await env.goto(at(9))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(9), eta=window(14, 18), label="ctt.pt"
+    )
+    await env.settle()
+    assert len(alex.take()) == 1
+    await env.goto(at(11))
+    tomorrow = on(DAY + timedelta(days=1))
+    env.change(parcel, S.IN_TRANSIT, sent=at(11), eta=tomorrow, label="ctt.pt")
+    await env.settle()
+    assert len(alex.take()) == 1
+    await env.goto(at(11, 1))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(11, 1), eta=window(15, 19), label="ctt.pt"
+    )
+    await env.settle()
+    (update,) = alex.take()
+    assert update["data"]["silent"] is True
+    assert sam.take() == []
+
+    await env.goto(at(11, 5))
+    parcel.private = False
+    env.changed()
+    await env.settle()
+    assert alex.take() == []
+    (update,) = sam.take()
+    assert update["message"].startswith("0 of 3 delivered")
+    assert "silent" not in update["data"]
+
+
 async def test_pin_waits_until_the_activity_can_be_updated(env: Env) -> None:
     """A PIN waits for the token of the running activity, and starts none.
 
@@ -4410,6 +4647,128 @@ async def test_shown_news_of_a_moved_parcel_is_not_sent_after_a_dismissal(
     env.change(parcel, S.OUT_FOR_DELIVERY, sent=at(15), label="ctt.pt")
     await env.settle()
     assert summary(phone.take()) == [(news_tag(parcel), f"Out for delivery{SEP}CTT")]
+
+
+@pytest.mark.parametrize("minute", [40, 50])
+@pytest.mark.parametrize("threshold", [1, 9])
+async def test_news_a_dismissed_activity_showed_comes_once_the_status_changed(
+    env: Env, threshold: int, minute: int
+) -> None:
+    """News a dismissed activity showed comes again once the status changed.
+
+    The activity showed the parcel out for delivery before the user dismissed
+    it. After a missed delivery, going out for delivery again comes as a
+    notification, quiet within 15 minutes, as on an iPad.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    env.hub(**{CONF_COLLAPSE_THRESHOLD: threshold})
+    parcel = env.parcel(eta=window(14, 18), merchant="Decathlon", carrier="ctt")
+    env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    started = phone.take()
+    assert len(started) == (1 if threshold == 1 else 2)
+
+    await env.goto(at(9))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(9), eta=window(14, 18), label="ctt.pt"
+    )
+    await env.settle()
+    assert phone.take()
+    await env.goto(at(9, 10))
+    for payload in started:
+        env.untoken(phone, payload["data"]["tag"])
+    env.changed()
+    await env.settle()
+    assert phone.take() == []
+
+    await env.goto(at(12, 30))
+    env.change(parcel, S.ATTEMPTED, sent=at(12, 30), label="ctt.pt")
+    await env.settle()
+    (missed,) = phone.take()
+    assert missed["data"]["tag"] == news_tag(parcel)
+    assert missed["message"].startswith("Missed")
+
+    await env.goto(at(12, minute))
+    env.change(
+        parcel,
+        S.OUT_FOR_DELIVERY,
+        sent=at(12, minute),
+        eta=window(14, 18),
+        label="ctt.pt",
+    )
+    await env.settle()
+    data = {"tag": news_tag(parcel), "url": link_of(parcel)}
+    if minute < 45:
+        data["push"] = {"interruption-level": "passive"}
+    assert phone.take() == [
+        {
+            "title": "Decathlon",
+            "message": f"Out for delivery 14:00{DASH}18:00{SEP}CTT",
+            "data": data,
+        }
+    ]
+    env.changed()
+    await env.settle()
+    assert phone.take() == []
+
+
+@pytest.mark.parametrize("how", ["restart", "upgrade"])
+async def test_a_flip_after_a_dismissal_is_quiet_when_the_activity_showed_it(
+    env: Env, how: str
+) -> None:
+    """The activity the user dismissed had told the iPhone of the parcel.
+
+    So news that flips the parcel back comes quietly, also after a restart,
+    and on the day of the update from a version that didn't keep this.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=window(14, 18), merchant="Decathlon", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    assert len(phone.take()) == 1
+    await env.goto(at(9))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(9), eta=window(14, 18), label="ctt.pt"
+    )
+    await env.settle()
+    assert len(phone.take()) == 1
+    await env.goto(at(9, 5))
+    env.untoken(phone, tag_of(parcel))
+    env.changed()
+    await env.settle()
+    assert phone.take() == []
+
+    assert env.notifier is not None
+    await env.notifier.async_stop()
+    if how == "upgrade":
+        for day in env.host.data.engine[STATE_KEY]["days"].values():
+            del day["told"]
+    env.host.data.engine = json.loads(json.dumps(env.host.data.engine))
+    await env.start()
+    assert phone.take() == []
+
+    await env.goto(at(9, 10))
+    tomorrow = on(DAY + timedelta(days=1))
+    env.change(parcel, S.IN_TRANSIT, sent=at(9, 10), eta=tomorrow, label="ctt.pt")
+    await env.settle()
+    assert phone.take() == []
+    await env.goto(at(9, 12))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(9, 12), eta=window(15, 19), label="ctt.pt"
+    )
+    await env.settle()
+    assert phone.take() == [
+        {
+            "title": "Decathlon",
+            "message": f"Out for delivery 15:00{DASH}19:00{SEP}CTT",
+            "data": {
+                "tag": news_tag(parcel),
+                "url": link_of(parcel),
+                "push": {"interruption-level": "passive"},
+            },
+        }
+    ]
 
 
 async def test_news_shown_before_a_collapse_is_not_sent_after_a_dismissal(

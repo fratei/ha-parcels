@@ -317,6 +317,47 @@ def test_pickup_deadline_warning_is_not_a_return() -> None:
     assert shipment.eta == eta("2026-11-17", until="2026-11-24")
 
 
+# Pickup sentences whose point is followed by another sentence: sender, subject,
+# body and the point.
+POINT_SENTENCES = {
+    "inpost": (
+        "notificacoes@inpost.pt",
+        "A sua encomenda está pronta para levantamento",
+        "Olá Alex Doe,\nA sua encomenda 620417393912 está disponível no Locker"
+        " PT-LIS-01. Levante-a no prazo de 3 dias.\n",
+        "Locker PT-LIS-01",
+    ),
+    "ctt": (
+        "notificacoes@ctt.pt",
+        "O seu objeto aguarda levantamento",
+        "Olá Alex Doe,\nO seu objeto RR123456785PT aguarda levantamento no Cacifo"
+        " CTT Av. Liberdade. Leve o código que lhe enviámos.\n",
+        "Cacifo CTT Av. Liberdade",
+    ),
+    "dhl": (
+        "noreply@dhl.de",
+        "Ihre Sendung liegt zur Abholung bereit",
+        "Hallo Alex Doe,\nIhre DHL Sendung 00340434618273591202 liegt in der"
+        " Packstation 123. Bitte holen Sie sie innerhalb von 7 Tagen ab.\n",
+        "Packstation 123",
+    ),
+}
+
+
+@pytest.mark.parametrize("parser", POINT_SENTENCES)
+def test_pickup_point_ends_with_its_sentence(parser: str) -> None:
+    """A point named in a sentence stops where the sentence ends."""
+    sender, subject, text, point = POINT_SENTENCES[parser]
+    message = _message(text, subject, sender=sender, sender_name=parser.upper())
+    domain = sender.partition("@")[2]
+    verdict = SenderVerdict(domain=domain, authenticated=True, known=True)
+    result = parse_carrier(message, verdict, LISBON, parser)
+    assert result is not None
+    assert result.kind is MailKind.READY_FOR_PICKUP
+    [shipment] = result.shipments
+    assert shipment.pickup_point == point
+
+
 def test_number_with_a_bad_check_digit_is_not_used() -> None:
     """A number that fails its check digit isn't reported or trusted."""
     result = parse_carrier(_out_for_delivery("RR123456784PT"), CTT, LISBON, "ctt")

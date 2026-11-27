@@ -76,12 +76,18 @@ export const baseStyles = css`
   .btn.primary:hover:not(:disabled, [aria-disabled="true"]) {
     background: color-mix(in srgb, var(--primary-color, #03a9f4) 85%, #000);
   }
+  /* Reds that keep 4.5:1: as text on the card, light or dark, and under white text. */
   .btn.danger {
     color: var(--error-color, #db4437);
+    color: color-mix(in srgb, var(--error-color, #db4437) 70%, var(--primary-text-color, #212121));
   }
   .btn.danger.primary {
     background: var(--error-color, #db4437);
+    background: color-mix(in srgb, var(--error-color, #db4437) 85%, #000);
     color: var(--text-primary-color, #fff);
+  }
+  .btn.danger.primary:hover:not(:disabled, [aria-disabled="true"]) {
+    background: color-mix(in srgb, var(--error-color, #db4437) 70%, #000);
   }
   .icon-btn {
     display: inline-flex;

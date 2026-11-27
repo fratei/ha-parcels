@@ -43,7 +43,7 @@ from .const import (
     MailKind,
     ParcelStatus,
 )
-from .dedup import Contribution, apply_contribution
+from .dedup import Contribution, apply_contribution, typed_order_key
 from .models import (
     Origin,
     Parcel,
@@ -460,6 +460,21 @@ def current_number(parcel: Parcel) -> str | None:
     return normalize_tracking_number(number) if number else None
 
 
+def _is_order_number(data: ParcelsData, parcel: Parcel) -> bool:
+    """Return whether a parcel's number is one e-mails name as an order's.
+
+    A number typed by hand that a shop's e-mail names as its order's isn't a
+    tracking number, even when its parcel stays apart from the order's.
+    """
+    typed = parcel.state.typed_number
+    return (
+        typed is not None
+        and normalize_tracking_number(typed) == current_number(parcel)
+        and (key := typed_order_key(parcel)) is not None
+        and key in data.orders
+    )
+
+
 def is_amazon(number: str, carrier: str | None) -> bool:
     """Return True for Amazon Logistics' numbers, which trackers can't follow."""
     return carrier == "amazon" or detect_carrier(number) == "amazon"
@@ -775,6 +790,8 @@ class SeventeenTrackSync:
                 continue
             if len(number) < MIN_NUMBER_CHARS or is_amazon(number, state.carrier):
                 continue
+            if _is_order_number(self.engine.data, parcel):
+                continue
             wanted.setdefault(number, parcel)
         return wanted
 
@@ -913,7 +930,9 @@ class SeventeenTrackSync:
         parcel = self._parcel_for(number, record)
         if parcel is None or parcel.archived is not None:
             return False
-        if current_number(parcel) != number:
+        if current_number(parcel) != number or _is_order_number(
+            self.engine.data, parcel
+        ):
             return False
         raw_status = slugify(str(package.get("status") or ""))
         record["status"] = raw_status
@@ -1007,7 +1026,11 @@ class SeventeenTrackSync:
         records = self._packages
         for number, record in list(records.items()):
             parcel = self._parcel_for(number, record)
-            stale = parcel is None or current_number(parcel) != number
+            stale = (
+                parcel is None
+                or current_number(parcel) != number
+                or _is_order_number(self.engine.data, parcel)
+            )
             if parcel is not None and stale and _drop_origin(parcel, number, now):
                 changed = True
             if record.get("archived"):

@@ -1123,6 +1123,9 @@ _POINT_PREP_RE = re.compile(
 )
 
 _ROW_GAP_RE = re.compile(r"[ ]*(?:[:\-][ ]*)?")
+# A word that ends its sentence: a number or a long word before a full stop.
+# Short words such as "Av." or "Lda." are abbreviations inside the name.
+_SENTENCE_END_RE = re.compile(r"(?:\d|[^\W\d_]{5})\.$")
 
 
 def _clean_point(value: str) -> str | None:
@@ -1172,6 +1175,8 @@ def _point_words(doc: _Doc, start: int, end: int) -> str:
         if not word or word.end() == pos:
             break
         pos = word.end()
+        if _SENTENCE_END_RE.search(word.group()):
+            break
     return doc.text[start:pos]
 
 

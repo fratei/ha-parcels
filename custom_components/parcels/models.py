@@ -571,6 +571,15 @@ class Origin:
     # that a pickup point or code he typed belongs to where the parcel was,
     # and TYPED_ORDER_MARK (see derive_state).
     typed_at: dict[str, datetime] = field(default_factory=dict)
+    # The status Parcels showed when he typed a pickup point or code: at the
+    # point, out for delivery, or ahead of the point (see derive_state).
+    typed_status: dict[str, ParcelStatus] = field(default_factory=dict)
+    # Only the shipment's reference put it in this package of the shipment:
+    # reconciling may move it to another package (see dedup._pair_by_reference).
+    by_reference: bool = False
+    # Only its order put it in this package of the order: reconciling may
+    # move it to another (see dedup._place_order_mail).
+    by_order: bool = False
 
     @property
     def added_by_hand(self) -> bool:
@@ -606,6 +615,11 @@ class Origin:
                 "typed_at": {
                     key: dt_to_str(value) for key, value in self.typed_at.items()
                 },
+                "typed_status": {
+                    key: value.value for key, value in self.typed_status.items()
+                },
+                "by_reference": self.by_reference,
+                "by_order": self.by_order,
             }
         ) | {
             # Keep explicit clears of manual origins.
@@ -638,6 +652,9 @@ class Origin:
             name=data.get("name") or None,
             seller=data.get("seller") or None,
             typed_at=_typed_at(data.get("typed_at")),
+            typed_status=_typed_status(data.get("typed_status")),
+            by_reference=bool(data.get("by_reference", False)),
+            by_order=bool(data.get("by_order", False)),
         )
 
 
@@ -653,6 +670,19 @@ def _typed_at(value: Any) -> dict[str, datetime]:
             continue
         if when is not None:
             typed[str(key)] = when
+    return typed
+
+
+def _typed_status(value: Any) -> dict[str, ParcelStatus]:
+    """Read the stored statuses of a manual origin's edits, skipping bad ones."""
+    if not isinstance(value, Mapping):
+        return {}
+    typed: dict[str, ParcelStatus] = {}
+    for key, stored in value.items():
+        try:
+            typed[str(key)] = ParcelStatus(stored)
+        except ValueError, TypeError:
+            continue
     return typed
 
 
@@ -937,12 +967,18 @@ class Parcel:
     # The user undid an inferred delivery: don't infer one again.
     delivery_rejected: bool = False
     _state: ParcelState | None = field(default=None, repr=False, compare=False)
+    _state_day: date | None = field(default=None, repr=False, compare=False)
 
     @property
     def state(self) -> ParcelState:
-        """Return the derived state, computed on first use after a change."""
-        if self._state is None:
-            self._state = derive_state(self)
+        """Return the derived state, computed on first use after a change.
+
+        And again on a new day, which can change the expected date.
+        """
+        today = local_date(dt_util.utcnow())
+        if self._state is None or self._state_day != today:
+            self._state = derive_state(self, today)
+            self._state_day = today
         return self._state
 
     def touch(self, now: datetime) -> None:
@@ -1082,7 +1118,7 @@ def _best_carrier(ranked: list[Origin], number: str | None) -> str | None:
     )
 
 
-def _plain_number(number: str | None) -> str:
+def plain_number(number: str | None) -> str:
     """Return a number's letters and digits, as order keys compare them."""
     return re.sub(r"[^0-9A-Z]", "", (number or "").upper())
 
@@ -1094,13 +1130,13 @@ def _may_be_order_number(
 
     Only 17TRACK, which Parcels gives the numbers to, may have it.
     """
-    plain = _plain_number(number)
+    plain = plain_number(number)
     return (
         carrier in (None, "other")
         and not detect_carrier(number)
         and not any(
             o.source is not Source.SEVENTEENTRACK
-            and _plain_number(o.tracking_number) == plain
+            and plain_number(o.tracking_number) == plain
             for o in ranked
         )
     )
@@ -1123,6 +1159,23 @@ def _carrier_for_order(carrier: Origin | None, number: Origin | None) -> bool:
     )
 
 
+def _carrier_typed_with(carrier: Origin | None, number: Origin | None) -> bool:
+    """Return whether the carrier the user typed may be the typed number's.
+
+    A carrier he typed for the order's parcel before adding the parcel
+    again under the order's number is the parcel's, not that number's.
+    """
+    if (
+        carrier is None
+        or number is None
+        or carrier is number
+        or not number.added_by_hand
+        or plain_number(carrier.tracking_number) == plain_number(number.tracking_number)
+    ):
+        return True
+    return carrier.typed_at.get("carrier", carrier.time) >= number.time
+
+
 def _number_typed_before(
     older: list[Origin], typed: str, ordered: set[str]
 ) -> tuple[bool, str | None]:
@@ -1138,8 +1191,8 @@ def _number_typed_before(
             continue
         if not origin.tracking_number:
             break
-        plain = _plain_number(origin.tracking_number)
-        if plain != _plain_number(typed) and plain not in ordered:
+        plain = plain_number(origin.tracking_number)
+        if plain != plain_number(typed) and plain not in ordered:
             return True, origin.tracking_number
     return False, None
 
@@ -1292,8 +1345,12 @@ def _after_status(
     )
 
 
-def derive_state(parcel: Parcel) -> ParcelState:
-    """Compute the current state of a parcel from its origins and events."""
+def derive_state(parcel: Parcel, today: date | None = None) -> ParcelState:
+    """Compute the current state of a parcel from its origins and events.
+
+    ``today``, by default the current date, decides whether the carrier's
+    expected date has passed.
+    """
     origins = sorted(parcel.origins.values(), key=lambda o: (o.time, o.id))
     manual = [o for o in reversed(origins) if o.source is Source.MANUAL]
     ranked = sorted(
@@ -1315,15 +1372,18 @@ def derive_state(parcel: Parcel) -> ParcelState:
     # nor is the guess 17TRACK made from it.
     number_set, number = manual_value("tracking_number")
     carrier_set, carrier = manual_value("carrier")
-    ordered = {_plain_number(order) for o in origins for order in o.order_numbers}
+    ordered = {plain_number(order) for o in origins for order in o.order_numbers}
+    own_carrier = _carrier_typed_with(
+        manual_origin("carrier"), manual_origin("tracking_number")
+    )
     typed_number = (
         number
         if number_set
         and number
         and (
-            _may_be_order_number(number, carrier, ranked)
+            _may_be_order_number(number, carrier if own_carrier else None, ranked)
             or (
-                _plain_number(number) in ordered
+                plain_number(number) in ordered
                 and _may_be_order_number(number, None, ranked)
                 and _carrier_for_order(
                     manual_origin("carrier"), manual_origin("tracking_number")
@@ -1332,14 +1392,14 @@ def derive_state(parcel: Parcel) -> ParcelState:
         )
         else None
     )
-    typed_order = typed_number is not None and _plain_number(typed_number) in ordered
+    typed_order = typed_number is not None and plain_number(typed_number) in ordered
     numbered = ranked
     if typed_order:
         number_set = False
         numbered = [
             o
             for o in ranked
-            if _plain_number(o.tracking_number) != _plain_number(typed_number)
+            if plain_number(o.tracking_number) != plain_number(typed_number)
         ]
         if (added := manual_origin("tracking_number")) and added.added_by_hand:
             number_set, number = _number_typed_before(
@@ -1443,6 +1503,9 @@ def derive_state(parcel: Parcel) -> ParcelState:
     # Whether it's a shop's "out for delivery" standing in for the carrier's,
     # which a newer one replaces.
     eta_relayed = False
+    # A shop's newer estimate the carrier's or the user's date held back, for
+    # once that date has passed, and its source.
+    held: tuple[Eta, Source] | None = None
     status_reported = False
     collect_by: date | None = None
     next_attempt: date | None = None
@@ -1457,12 +1520,17 @@ def derive_state(parcel: Parcel) -> ParcelState:
     refused: set[str] = set()
     # Whether the parcel is at a pickup point. When it got to each point it
     # went to, and whether it came back to the one it had left without going
-    # out; when it left each, with the date to collect it by there; and
-    # whether it went out for delivery or to an attempt since it last left one.
+    # out; when it left each, with the date to collect it by there and its
+    # days to collect it; and whether it went out for delivery or to an
+    # attempt since it last left one.
     at_pickup = False
     visits: list[tuple[_EventKey, bool]] = []
-    leaves: list[tuple[_EventKey, date | None]] = []
+    leaves: list[
+        tuple[_EventKey, date | None, tuple[Eta, Source | None, bool] | None]
+    ] = []
     went_out = False
+    # The days to collect it that came back with it, while they show.
+    restored: Eta | None = None
     timeline: list[TimelineEntry] = []
     for event in sorted(parcel.events, key=_event_sort_key):
         key = _event_sort_key(event)
@@ -1482,18 +1550,20 @@ def derive_state(parcel: Parcel) -> ParcelState:
             source_origin = parcel.origins.get(event.origin) if event.origin else None
             if source_origin is not None and source_origin.source is not Source.MANUAL:
                 refused.add(source_origin.id)
-        leaving = to_pickup = False
+        leaving = to_pickup = back = False
         if accepted and new_status is not status:
             if event.inferred:
                 inferred_over = status or ParcelStatus.ORDERED
             if new_status is ParcelStatus.READY_FOR_PICKUP:
                 to_pickup = True
                 if not at_pickup:
-                    visits.append((key, bool(leaves) and not went_out))
+                    back = bool(leaves) and not went_out
+                    visits.append((key, back))
                     at_pickup = True
             elif new_status in _LEAVING_PICKUP and at_pickup:
                 # A failed attempt or a problem there doesn't take it away.
-                leaves.append((key, collect_by))
+                days = (eta, eta_source, eta_strong) if eta and eta_pickup else None
+                leaves.append((key, collect_by, days))
                 at_pickup, leaving = False, True
                 went_out = new_status is ParcelStatus.OUT_FOR_DELIVERY
             elif new_status in _GOING_OUT:
@@ -1560,11 +1630,12 @@ def derive_state(parcel: Parcel) -> ParcelState:
                 status, event, collect_by, next_attempt, left_at
             )
         # The expected date. The user's is exact and the carrier's replaces
-        # any; a shop's fills in only for none, or for one that has passed.
-        # News that couldn't take its step back doesn't date the parcel.
+        # any; a shop's fills in only for none, or for one that has passed,
+        # by now (see below). News that couldn't take its step back doesn't
+        # date the parcel.
         if event.clears_eta:
             eta, eta_source, eta_strong, eta_pickup = None, None, False, False
-            eta_relayed = False
+            eta_relayed, held = False, None
         elif not refusal:
             if leaving and event.eta is None and eta_pickup:
                 # The days to collect it at the point it left.
@@ -1579,8 +1650,8 @@ def derive_state(parcel: Parcel) -> ParcelState:
             ):
                 # Out for delivery means today, even when the e-mail gives no
                 # date.
-                today = local_date(event.time)
-                event_eta = Eta(start=today, end=today)
+                sent_on = local_date(event.time)
+                event_eta = Eta(start=sent_on, end=sent_on)
             if event_eta is not None:
                 strong = (
                     _carrier_news(parcel, event, carrier, shop_carrier)
@@ -1594,6 +1665,7 @@ def derive_state(parcel: Parcel) -> ParcelState:
                     # The day expected again, without a window: a window stays,
                     # and without one, the newest news gave the day.
                     eta_strong = eta_strong or strong
+                    held = None
                     if eta.window_start is None and eta.window_end is None:
                         eta_source = event.source
                         eta_relayed = eta_relayed and not strong
@@ -1616,19 +1688,27 @@ def derive_state(parcel: Parcel) -> ParcelState:
                             window_start=eta.window_start,
                             window_end=eta.window_end,
                         )
+                        held = None
                     else:
                         apply = strong = relayed = True
                 elif not at_pickup and (
                     eta is None or not eta_strong or eta.end < local_date(event.time)
                 ):
                     apply = True
+                elif not at_pickup and status is not ParcelStatus.OUT_FOR_DELIVERY:
+                    held = (event_eta, event.source)
                 if apply:
                     eta, eta_source, eta_strong = event_eta, event.source, strong
-                    eta_relayed, eta_pickup = relayed, at_pickup
+                    eta_relayed, eta_pickup, held = relayed, at_pickup, None
             if leaving:
-                eta_pickup = False
+                eta_pickup, held = False, None
             if to_pickup:
-                eta_pickup = True
+                if back and eta is None and leaves[-1][2] is not None:
+                    # Back at the point it left: its days to collect it there,
+                    # unless it's a new point after all (see below).
+                    eta, eta_source, eta_strong = leaves[-1][2]
+                    eta_relayed, restored = False, eta
+                eta_pickup, held = True, None
         timeline.append(
             TimelineEntry(
                 time=event.time,
@@ -1646,6 +1726,18 @@ def derive_state(parcel: Parcel) -> ParcelState:
         )
     if status is None:
         status = ParcelStatus.ORDERED
+    if (
+        held is not None
+        and eta is not None
+        and not at_pickup
+        and status is not ParcelStatus.OUT_FOR_DELIVERY
+        and status not in TERMINAL_STATUSES
+        and eta.end < (today or local_date(dt_util.utcnow()))
+        and held[0].end > eta.end
+    ):
+        # The carrier's date passed: the shop's newer estimate is the best,
+        # unless it came while the parcel was out for delivery.
+        (eta, eta_source), eta_strong, eta_relayed = held, False, False
 
     # The pickup point and its code. Only news since the parcel left the last
     # point counts, so a point's code never reads as a delivery PIN; at a
@@ -1655,7 +1747,10 @@ def derive_state(parcel: Parcel) -> ParcelState:
     # wins from when it was typed; then the carrier's news, then the best
     # source, latest first. News that couldn't take its step back doesn't
     # count. An e-mail with news counts from its latest, one without from
-    # when it was sent.
+    # when it was sent. What he typed while Parcels showed the parcel at its
+    # point counts only there, and what he typed while it was out for
+    # delivery only away from a point, though the news came in late; what he
+    # typed ahead of the point, after the sources' news.
     last_news: dict[str, _EventKey] = {}
     for event in parcel.events:
         if event.origin:
@@ -1684,18 +1779,42 @@ def derive_state(parcel: Parcel) -> ParcelState:
         *(o for o in usable if not _carrier_origin(o, carrier, shop_carrier)),
     ]
 
+    def standing(origin: Origin, attr: str, since: _EventKey | None) -> int | None:
+        """Return 0 if his value counts first, 1 after the sources', or None."""
+        where = position(origin, attr)
+        shown = origin.typed_status.get(attr)
+        if shown is ParcelStatus.READY_FOR_PICKUP:
+            return 0 if visit_start is not None and where >= visit_start else None
+        if shown is ParcelStatus.OUT_FOR_DELIVERY and at_pickup:
+            return None
+        if since is None or where >= since:
+            return 0
+        if (
+            shown is not None
+            and shown is not ParcelStatus.OUT_FOR_DELIVERY
+            and (start is None or where >= start)
+        ):
+            return 1
+        return None
+
     def pick(attr: str, since: _EventKey | None) -> str | None:
+        ahead: str | None = None
         for origin in sorted(manual, key=lambda o: position(o, attr), reverse=True):
             value = getattr(origin, attr)
-            if value is not None and (since is None or position(origin, attr) >= since):
+            if value is None:
+                continue
+            rank = standing(origin, attr, since)
+            if rank == 0:
                 return value or None
+            if rank == 1 and ahead is None:
+                ahead = value
         return next(
             (
                 getattr(o, attr)
                 for o in sources
                 if getattr(o, attr) and (since is None or position(o, attr) >= since)
             ),
-            None,
+            ahead or None,
         )
 
     pickup_point = pick("pickup_point", start)
@@ -1733,8 +1852,17 @@ def derive_state(parcel: Parcel) -> ParcelState:
         # Back at the point it left, without news naming it again: the date
         # to collect it by there still holds.
         collect_by = next(
-            (by for _, by in reversed(leaves[first:]) if by is not None), None
+            (by for _, by, _ in reversed(leaves[first:]) if by is not None), None
         )
+    if (
+        at_pickup
+        and restored is not None
+        and eta is restored
+        and anchor is not None
+        and anchor >= leaves[-1][0]
+    ):
+        # Moved to a new point: the last one's days to collect aren't its.
+        eta = eta_source = None
 
     if origins:
         source = min((o.source for o in origins), key=lambda s: SOURCE_PRIORITY[s])
@@ -2170,6 +2298,17 @@ class ReviewItem:
     # A known sender's e-mail no parser read: once it turns out to be about a
     # parcel, it counts towards the repair saying the parser is outdated.
     unparsed: bool = False
+    # Signed by Shopify: the sender is a Shopify store, which Parcels knows.
+    shopify_store: bool = False
+
+    @property
+    def known_sender(self) -> bool:
+        """Return True when Parcels knows the sender and reads its e-mails.
+
+        Such a sender is never trusted or ignored for one e-mail: ignoring it
+        would stop them all.
+        """
+        return self.shopify_store or lookup(self.sender_domain) is not None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialise the item."""
@@ -2196,6 +2335,8 @@ class ReviewItem:
             data["notes"] = list(self.notes)
         if self.unparsed:
             data["unparsed"] = True
+        if self.shopify_store:
+            data["shopify_store"] = True
         return data
 
     @classmethod
@@ -2224,6 +2365,7 @@ class ReviewItem:
             errors=check_codes(data.get("errors")),
             notes=check_codes(data.get("notes")),
             unparsed=data.get("unparsed") is True,
+            shopify_store=data.get("shopify_store") is True,
         )
 
 

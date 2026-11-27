@@ -1,4 +1,7 @@
-/** parcels-review-card: e-mails that need an administrator's decision, and the filtered ones. */
+/**
+ * parcels-review-card: e-mails that need an administrator's decision, the
+ * filtered ones, and possible duplicates for whoever may decide them.
+ */
 import {
   css,
   html,
@@ -413,11 +416,12 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     if (!lists) {
       return 3;
     }
+    const tab = this._shownTab();
     const items =
-      this._tab === "review"
+      tab === "review"
         ? lists.review.length + lists.suggestions.length + (this._unreadEmails() ? 1 : 0)
         : lists.filtered.length;
-    const ignored = this._tab === "filtered" ? this._ignoredSenders().length : 0;
+    const ignored = tab === "filtered" ? this._ignoredSenders().length : 0;
     return 2 + 2 * Math.max(1, items) + (ignored ? 2 + ignored : 0);
   }
 
@@ -448,14 +452,33 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     this._tab = "review";
     this.scrollIntoView?.({ block: "start" });
     void this.updateComplete.then(() =>
-      this.renderRoot.querySelector<HTMLElement>("#tab-review")?.focus({ preventScroll: true }),
+      this.renderRoot
+        .querySelector<HTMLElement>("#tab-review, #panel-review")
+        ?.focus({ preventScroll: true }),
     );
   };
 
-  /** Only administrators see the card; before the first snapshot, their Home Assistant role decides. */
-  private _visible(): boolean {
+  /** Administrators get both lists; before the first snapshot, their Home Assistant role decides. */
+  private _admin(): boolean {
     const snapshot = this.snapshot;
     return snapshot ? snapshot.settings.user_is_admin : this.hass?.user?.is_admin === true;
+  }
+
+  /**
+   * Administrators always see the card. Anyone else sees it while a possible
+   * duplicate is theirs to decide, or while it says why their decision failed.
+   */
+  private _visible(): boolean {
+    const snapshot = this.snapshot;
+    return (
+      this._admin() ||
+      (snapshot !== null && (snapshot.merge_suggestions.length > 0 || this._actionError !== null))
+    );
+  }
+
+  /** The list on show: anyone but an administrator has only Needs review. */
+  private _shownTab(): Tab {
+    return this._admin() ? this._tab : "review";
   }
 
   private _syncVisibility(): void {
@@ -604,12 +627,13 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       return;
     }
     // The focused item was handled (or re-rendered): focus it, or the one now in its place.
-    const panel = this.renderRoot.querySelector<HTMLElement>(`#panel-${this._tab}`);
+    const tab = this._shownTab();
+    const panel = this.renderRoot.querySelector<HTMLElement>(`#panel-${tab}`);
     const items = [...(panel?.querySelectorAll<HTMLElement>("[data-item-id]") ?? [])];
     const target =
       items.find((element) => element.dataset.itemId === focused.id) ??
       items[Math.min(Math.max(focused.index, 0), items.length - 1)] ??
-      this.renderRoot.querySelector<HTMLElement>(`#tab-${this._tab}`);
+      this.renderRoot.querySelector<HTMLElement>(`#tab-${tab}, #panel-${tab}`);
     target?.focus();
   }
 
@@ -623,32 +647,49 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       ${title ? html`<div class="header"><h2 class="title">${title}</h2></div>` : nothing}
       ${this.renderBanners()}
       ${lists
-        ? html`${this._renderTabs(
-              lists.review.length + lists.suggestions.length + (this._unreadEmails() ? 1 : 0),
-              lists.filtered.length,
-            )}
-            <div
-              class="panel"
-              role="tabpanel"
-              id="panel-review"
-              aria-labelledby="tab-review"
-              tabindex="0"
-              ?hidden=${this._tab !== "review"}
-            >
-              ${this._renderReviewList(lists.review, lists.suggestions)}
-            </div>
-            <div
-              class="panel"
-              role="tabpanel"
-              id="panel-filtered"
-              aria-labelledby="tab-filtered"
-              tabindex="0"
-              ?hidden=${this._tab !== "filtered"}
-            >
-              ${this._renderFilteredList(lists.filtered)}
-            </div>`
+        ? this._renderLists(lists)
         : html`<div class="content">${this.renderLoading()}</div>`}
     </ha-card>`;
+  }
+
+  /** Needs review and Filtered as tabs for administrators; Needs review alone for anyone else. */
+  private _renderLists(lists: Lists): TemplateResult {
+    const review = this._renderReviewList(lists.review, lists.suggestions);
+    if (!this._admin()) {
+      return html`<div
+        class="panel"
+        role="region"
+        id="panel-review"
+        aria-label=${STRINGS.tabReview}
+        tabindex="0"
+      >
+        ${review}
+      </div>`;
+    }
+    return html`${this._renderTabs(
+        lists.review.length + lists.suggestions.length + (this._unreadEmails() ? 1 : 0),
+        lists.filtered.length,
+      )}
+      <div
+        class="panel"
+        role="tabpanel"
+        id="panel-review"
+        aria-labelledby="tab-review"
+        tabindex="0"
+        ?hidden=${this._tab !== "review"}
+      >
+        ${review}
+      </div>
+      <div
+        class="panel"
+        role="tabpanel"
+        id="panel-filtered"
+        aria-labelledby="tab-filtered"
+        tabindex="0"
+        ?hidden=${this._tab !== "filtered"}
+      >
+        ${this._renderFilteredList(lists.filtered)}
+      </div>`;
   }
 
   private _renderTabs(reviewCount: number, filteredCount: number): TemplateResult {
@@ -1088,8 +1129,14 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     const disabled = busy ? "true" : "false";
     const domain = senderOrg(item);
     const accept = acceptable(item);
-    // A sender Parcels already reads keeps being read: only this e-mail can go.
-    const known = item.known_sender;
+    // Only this e-mail can go: Parcels keeps reading a sender it knows, and
+    // anyone can send from a free mail domain.
+    const hint = item.known_sender
+      ? STRINGS.dismissKnownHint
+      : item.free_mail
+        ? STRINGS.dismissFreeMailHint
+        : null;
+    const hintId = `dismiss-hint-${item.id}`;
     return html`<div class="row-actions">
       ${accept
         ? html`<button
@@ -1113,13 +1160,13 @@ export class ParcelsReviewCard extends ParcelsCardBase {
       <button
         type="button"
         class="btn"
-        title=${known ? fmt(STRINGS.dismissKnownHint, { domain }) : nothing}
+        aria-describedby=${hint ? hintId : nothing}
         aria-disabled=${disabled}
         @click=${() => this._command(item.id, "review/dismiss", { review_id: item.id })}
       >
         ${STRINGS.dismiss}
       </button>
-      ${item.trusted_sender || item.fill || known
+      ${item.trusted_sender || item.fill || hint
         ? nothing
         : html`<button
             type="button"
@@ -1136,7 +1183,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
           >
             ${STRINGS.trustSender}
           </button>`}
-      ${known
+      ${hint
         ? nothing
         : html`<button
             type="button"
@@ -1150,6 +1197,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
             ${STRINGS.ignoreSender}
           </button>`}
     </div>
+    ${hint ? html`<p class="hint" id=${hintId}>${fmt(hint, { domain })}</p>` : nothing}
     ${this._confirmTrust === item.id ? this._renderTrustConfirm(item, domain, busy) : nothing}
     ${this._confirmIgnore === item.id ? this._renderIgnoreConfirm(item, domain, busy) : nothing}`;
   }

@@ -8,7 +8,7 @@ import { normalizeSnapshot } from "../src/normalize.ts";
 import type { WeekLayout } from "../src/placement.ts";
 import { SHOW_REVIEW_EVENT } from "../src/review-state.ts";
 import { STRINGS } from "../src/strings.ts";
-import type { Parcel, ReviewItem, Snapshot } from "../src/types.ts";
+import type { MergeSuggestion, Parcel, ReviewItem, Snapshot } from "../src/types.ts";
 import { ParcelsWeekCard } from "../src/week-card.ts";
 import { makeParcel } from "./helpers.ts";
 import { listener, renderText } from "./render.ts";
@@ -45,6 +45,7 @@ const NOT_LATE = [
 interface Options {
   admin?: boolean;
   review?: number;
+  suggestions?: number;
   filter?: ParcelFilter;
 }
 
@@ -55,6 +56,10 @@ function weekCard(parcels: readonly Parcel[], options: Options = {}): WeekHost {
     ...normalizeSnapshot({ settings }),
     parcels: [...parcels],
     review: Array.from({ length: options.review ?? 0 }, (_, index) => ({ id: `r${index}` }) as ReviewItem),
+    merge_suggestions: Array.from(
+      { length: options.suggestions ?? 0 },
+      (_, index) => ({ id: `m${index}` }) as MergeSuggestion,
+    ),
   };
   card._filter = options.filter ?? "all";
   return card;
@@ -85,6 +90,12 @@ describe("the week card's attention line", () => {
     assert.equal(plain(attention(weekCard(LATE, { review: 2 }))), "2 late · 2 to review");
     assert.equal(plain(attention(weekCard(LATE, { admin: false, review: 2 }))), "2 late");
     assert.equal(plain(attention(weekCard(NOT_LATE, { review: 1 }))), "1 to review");
+  });
+
+  test("tells everyone else about the possible duplicates theirs to decide", () => {
+    assert.equal(plain(attention(weekCard(NOT_LATE, { admin: false, suggestions: 1 }))), "1 to review");
+    const both = weekCard(LATE, { admin: false, review: 3, suggestions: 2 });
+    assert.equal(plain(attention(both)), "2 late · 2 to review");
   });
 
   test("is left out when nothing is late or to review", () => {

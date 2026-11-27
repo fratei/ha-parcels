@@ -23,6 +23,9 @@ from pytest_homeassistant.common import MockConfigEntry, get_scheduled_timer_han
 from custom_components.parcels.const import (
     CONF_OWNER,
     DOMAIN,
+    EVENT_DELIVERED,
+    EVENT_PARCEL_ADDED,
+    EVENT_STATUS_CHANGED,
     PERSISTENT_NOTIFICATION_ID,
     REASON_UNKNOWN_FORMAT,
     SIGNAL_DATA_UPDATED,
@@ -33,20 +36,29 @@ from custom_components.parcels.dedup import (
     ORDER_FOLD_KEY,
     REPAIR_KEY,
     REPAIR_VERSION,
+    TYPED_JOIN_KEY,
+    Contribution,
     apply_contribution,
     archive_parcel,
 )
-from custom_components.parcels.engine import ParcelsEngine, get_engine
+from custom_components.parcels.engine import (
+    RELIST_KEY,
+    UNIGNORE_REREAD_KEY,
+    ParcelsEngine,
+    get_engine,
+)
 from custom_components.parcels.mail.errors import MailServerError
 from custom_components.parcels.models import (
     MessageRecord,
     MessageState,
+    Origin,
+    ParcelEvent,
     ParcelsData,
     ReviewItem,
     Source,
 )
 from custom_components.parcels.notifier import Notifier
-from custom_components.parcels.parsers.base import Eta
+from custom_components.parcels.parsers.base import Eta, MailMessage
 from custom_components.parcels.store import ParcelsStore
 
 from .common import (
@@ -58,6 +70,7 @@ from .common import (
     add_mailbox,
     async_setup_parcels,
     async_wait_for_mail,
+    async_wait_reprocess,
     patch_mail_clients,
 )
 from .factories import at, contribution
@@ -65,6 +78,7 @@ from .factories import at, contribution
 NOW = "2026-11-17 10:00:00+00:00"
 CTT_MAIL = "carriers/ctt_in_transit_pt.eml"
 SHOP_MAIL = "common/small_shop_ctt.eml"
+SHOP = "loja-exemplo.example"
 THIRD_OWNER = "person.kim"
 
 
@@ -984,3 +998,160 @@ async def test_start_folds_late_order_mail_once(
         await hass.async_block_till_done()
 
     fold.assert_not_called()
+
+
+async def test_start_joins_a_typed_parcel_left_apart_quietly(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """A parcel an earlier release left apart joins the order's as it starts.
+
+    It's a change made once after the update: it fires no events, though the
+    status it gives the order's parcel is less than a day old.
+    """
+    now = datetime.fromisoformat(NOW)
+    order, shop = "001234567890", "Loja Exemplo"
+    data = ParcelsData()
+    data.engine[REPAIR_KEY] = REPAIR_VERSION
+    ordered = now - timedelta(hours=3)
+    parcel_id = apply_contribution(
+        data,
+        dataclasses.replace(
+            contribution(
+                "msg:shop#0",
+                kind=MailKind.ORDER,
+                time=ordered,
+                merchant=shop,
+                orders=[order],
+            ),
+            order_placed=ordered,
+        ),
+        ordered,
+    ).parcel_id
+    assert parcel_id is not None
+    # What releases before 0.1.26 made of the number typed an hour ago.
+    typed_at = now - timedelta(hours=1)
+    origin = Origin(
+        id="man:p_typed",
+        source=Source.MANUAL,
+        time=typed_at,
+        tracking_number=order,
+        merchant=shop,
+        owners=(OWNER,),
+        confirmed=True,
+    )
+    alone = ParcelsData()
+    typed_id = apply_contribution(
+        alone,
+        Contribution(
+            origin=origin,
+            events=[
+                ParcelEvent(
+                    time=typed_at,
+                    source=Source.MANUAL,
+                    origin=origin.id,
+                    status=ParcelStatus.SHIPPED,
+                    kind=MailKind.SHIPPED,
+                )
+            ],
+        ),
+        typed_at,
+    ).parcel_id
+    assert typed_id is not None
+    data.parcels[typed_id] = alone.parcels[typed_id]
+    hass_storage["parcels"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "parcels",
+        "data": data.as_dict(),
+    }
+    hub = add_hub(hass)
+    fired: list[str] = []
+    for event_type in (EVENT_PARCEL_ADDED, EVENT_STATUS_CHANGED, EVENT_DELIVERED):
+        hass.bus.async_listen(event_type, lambda event: fired.append(event.event_type))
+
+    engine = await async_setup_parcels(hass)
+    await hass.async_block_till_done()
+
+    assert list(engine.data.parcels) == [parcel_id]
+    parcel = engine.data.parcels[parcel_id]
+    assert parcel.state.status is ParcelStatus.SHIPPED
+    assert parcel.auto_merged is not None
+    assert fired == []
+    assert engine.data.engine[TYPED_JOIN_KEY] == 1
+    assert engine.diagnostics()["typed_join"] == 1
+
+    with patch("custom_components.parcels.engine.join_typed_parcels") as join:
+        assert await hass.config_entries.async_reload(hub.entry_id)
+        await hass.async_block_till_done()
+
+    join.assert_not_called()
+
+
+async def test_stop_ignoring_survives_a_restart(hass: HomeAssistant) -> None:
+    """E-mails still to read again when Home Assistant stops are read after.
+
+    Stop ignoring reads the sender's ignored e-mails again one by one. Those
+    it hadn't finished are read once the mailboxes were checked again.
+    """
+    client = FakeMailClient()
+    client.add(CTT_MAIL)
+    shop = client.add(SHOP_MAIL)
+    hub = add_hub(hass)
+    add_mailbox(hass)
+    fetch = client.async_fetch
+    stalled = asyncio.Event()
+
+    async def stall(provider_id: str) -> MailMessage:
+        if provider_id == shop.provider_id and not stalled.is_set():
+            stalled.set()
+            await asyncio.Event().wait()
+        return await fetch(provider_id)
+
+    with patch_mail_clients(client):
+        engine = await async_setup_parcels(hass)
+        (item,) = engine.data.review.values()
+        engine.ignore_domain(SHOP)
+        client.relist = True
+        with patch.object(client, "async_fetch", stall):
+            assert engine.unignore_domain(SHOP) == {"domain": SHOP, "rechecking": 1}
+            await stalled.wait()
+            assert engine.data.engine[UNIGNORE_REREAD_KEY] == [item.message]
+
+            assert await hass.config_entries.async_reload(hub.entry_id)
+            await async_wait_for_mail(hass)
+            await async_wait_reprocess(hass)
+        engine = get_engine(hass)
+
+    assert engine is not None
+    assert engine.data.messages[item.message].state is MessageState.REVIEW
+    assert [r.message for r in engine.data.review.values()] == [item.message]
+    assert UNIGNORE_REREAD_KEY not in engine.data.engine
+    assert client.syncs[-1] is None
+
+
+async def test_relist_survives_a_restart(hass: HomeAssistant) -> None:
+    """A mailbox being read when a sender stopped being ignored lists again.
+
+    It would have looked over its lookback period again once read, for the
+    e-mails skipped meanwhile: Home Assistant stopping first changes nothing.
+    """
+    client = FakeMailClient()
+    client.add(CTT_MAIL)
+    hub = add_hub(hass)
+    mailbox = add_mailbox(hass)
+
+    with patch_mail_clients(client):
+        engine = await async_setup_parcels(hass)
+        engine.ignore_domain(SHOP)
+        engine.begin_sync(mailbox.entry_id)
+        engine.unignore_domain(SHOP)
+        client.relist = True
+
+        assert await hass.config_entries.async_reload(hub.entry_id)
+        await async_wait_for_mail(hass)
+        engine = get_engine(hass)
+
+    assert engine is not None
+    assert client.syncs == [None, None]
+    assert RELIST_KEY not in engine.data.engine
+    assert len(engine.data.parcels) == 1

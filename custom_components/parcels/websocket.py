@@ -8,7 +8,11 @@ from typing import Any
 
 from homeassistant.components import websocket_api
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import (
+    HomeAssistantError,
+    ServiceValidationError,
+    Unauthorized,
+)
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_call_later
@@ -428,29 +432,36 @@ def ws_return_remove(
     connection.send_result(msg["id"])
 
 
-def _check_suggestion(
+def _decided_candidates(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     engine: ParcelsEngine,
     suggestion_id: str,
     parcel_id: str | None,
-) -> None:
-    """Refuse a suggestion with parcels the user may not see."""
+) -> tuple[str, ...]:
+    """Return the candidates of a suggestion the user decides about.
+
+    That's ``parcel_id``, or without it the candidates the user may decide
+    about (see ``Viewer.may_decide``); others decide about the rest.
+    """
     viewer = viewer_for(hass, connection.user)
-    for item in engine.suggestions:
-        if item.id != suggestion_id:
-            continue
-        for found in (item.parcel_id, parcel_id or item.parcel_id):
-            if not viewer.can_see(engine.parcel(found)):
-                raise validation_error("not_allowed")
-        if parcel_id is None and not all(
-            viewer.can_see(engine.parcel(candidate))
-            for candidate in item.candidates
-            if candidate in engine.data.parcels
-        ):
+    item = next(
+        (found for found in engine.suggestions if found.id == suggestion_id), None
+    )
+    if item is None:
+        raise validation_error("unknown_suggestion")
+    target = engine.parcel(item.parcel_id)
+    if parcel_id is not None:
+        wanted = [engine.parcel(parcel_id)]
+    else:
+        parcels = engine.data.parcels
+        wanted = [parcels[found] for found in item.candidates if found in parcels]
+    chosen = tuple(parcel.id for parcel in wanted if viewer.may_decide(target, parcel))
+    if not chosen:
+        if viewer.is_admin:
             raise validation_error("not_allowed")
-        return
-    raise validation_error("unknown_suggestion")
+        raise Unauthorized
+    return chosen
 
 
 @websocket_api.websocket_command(
@@ -460,7 +471,6 @@ def _check_suggestion(
         p.Required("parcel_id"): cv.string,
     }
 )
-@websocket_api.require_admin
 @_expected_errors
 @callback
 def ws_suggestion_accept(
@@ -470,7 +480,9 @@ def ws_suggestion_accept(
 ) -> None:
     """Merge a suggested parcel into the parcel it was suggested for."""
     engine = _engine(hass)
-    _check_suggestion(hass, connection, engine, msg["suggestion_id"], msg["parcel_id"])
+    _decided_candidates(
+        hass, connection, engine, msg["suggestion_id"], msg["parcel_id"]
+    )
     parcel_id = engine.accept_suggestion(msg["suggestion_id"], msg["parcel_id"])
     connection.send_result(msg["id"], {"parcel_id": parcel_id})
 
@@ -482,7 +494,6 @@ def ws_suggestion_accept(
         p.Optional("parcel_id"): cv.string,
     }
 )
-@websocket_api.require_admin
 @_expected_errors
 @callback
 def ws_suggestion_dismiss(
@@ -490,11 +501,13 @@ def ws_suggestion_dismiss(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Keep a suggested parcel, or all of a suggestion's parcels, apart."""
+    """Keep a suggested parcel, or the suggestion's parcels the user decides
+    about, apart."""
     engine = _engine(hass)
-    parcel_id = msg.get("parcel_id")
-    _check_suggestion(hass, connection, engine, msg["suggestion_id"], parcel_id)
-    engine.dismiss_suggestion(msg["suggestion_id"], parcel_id)
+    candidates = _decided_candidates(
+        hass, connection, engine, msg["suggestion_id"], msg.get("parcel_id")
+    )
+    engine.dismiss_suggestion(msg["suggestion_id"], candidates)
     connection.send_result(msg["id"])
 
 

@@ -18,6 +18,7 @@ from custom_components.parcels.dedup import (
     keep_apart,
     mark_delivered,
     reconcile,
+    split_parcel,
     undo_auto_merge,
     update_parcel,
 )
@@ -292,6 +293,85 @@ def test_typed_number_is_suggested_for_each_of_the_order_s_open_parcels() -> Non
     assert not reconcile(data, at(hours=5)).suggestions
 
 
+def chair_delivered(data: ParcelsData, time: datetime) -> None:
+    """Have the carrier deliver the order's numbered package."""
+    apply_contribution(
+        data,
+        contribution(
+            "msg:chair-done#0",
+            kind=MailKind.DELIVERED,
+            time=time,
+            carrier="ctt",
+            number=CTT_NUMBER,
+        ),
+        time,
+    )
+
+
+def test_typed_parcel_kept_apart_from_one_package_isn_t_the_other_s() -> None:
+    """Kept apart from one of two open packages, it stays apart (F32).
+
+    The order still has two open parcels, so the user says which. Once the
+    other is delivered, it's the order's only open parcel: a guess.
+    """
+    data = ParcelsData()
+    lamp = apply_contribution(data, order_package("lamp", "Candeeiro de mesa"), T0)
+    chair = apply_contribution(
+        data,
+        order_package(
+            "chair", "Cadeira de jardim", time=at(hours=1), number=CTT_NUMBER
+        ),
+        at(hours=1),
+    )
+    applied = apply_contribution(data, typed("a", time=at(hours=2)), at(hours=2))
+    typed_id = applied.parcel_id
+    assert applied.created
+    assert typed_id is not None
+    assert lamp.parcel_id is not None
+    assert chair.parcel_id is not None
+    keep_apart(data, data.parcels[chair.parcel_id], data.parcels[typed_id])
+
+    result = reconcile(data, at(hours=3))
+
+    assert set(data.parcels) == {lamp.parcel_id, chair.parcel_id, typed_id}
+    assert pairs(result.suggestions) == {(lamp.parcel_id, typed_id)}
+
+    chair_delivered(data, at(hours=4))
+    result = reconcile(data, at(hours=5))
+
+    assert set(data.parcels) == {lamp.parcel_id, chair.parcel_id}
+    assert typed_id in result.removed
+    merged = data.parcels[lamp.parcel_id].auto_merged
+    assert merged is not None
+    assert merged.reason == REASON_SAME_ORDER
+
+
+def test_number_edited_to_the_order_s_kept_apart_from_one_package_stays() -> None:
+    """An edit doesn't make it the other open package's either (F32)."""
+    data = ParcelsData()
+    lamp = apply_contribution(data, order_package("lamp", "Candeeiro de mesa"), T0)
+    chair = apply_contribution(
+        data,
+        order_package(
+            "chair", "Cadeira de jardim", time=at(hours=1), number=CTT_NUMBER
+        ),
+        at(hours=1),
+    )
+    typed_id = add_typed(data, number=LOOSE_NUMBER)
+    assert lamp.parcel_id is not None
+    assert chair.parcel_id is not None
+    assert len(data.parcels) == 3
+    keep_apart(data, data.parcels[chair.parcel_id], data.parcels[typed_id])
+
+    update_parcel(data, typed_id, {"tracking_number": ORDER}, at(hours=2))
+
+    assert set(data.parcels) == {lamp.parcel_id, chair.parcel_id, typed_id}
+    assert data.parcels[typed_id].state.tracking_number == ORDER
+    assert pairs(reconcile(data, at(hours=3)).suggestions) == {
+        (lamp.parcel_id, typed_id)
+    }
+
+
 def test_reconcile_joins_a_typed_parcel_left_apart_to_the_order_s() -> None:
     """A parcel typed before Parcels joined such numbers joins on upgrade.
 
@@ -341,6 +421,41 @@ def test_typed_parcel_kept_apart_from_the_order_s_is_left_alone() -> None:
 
     assert not reconcile(data, at(hours=2)).suggestions
     assert len(data.parcels) == 2
+
+
+@pytest.mark.parametrize("by", ["add", "edit"])
+def test_typed_parcel_split_off_stays_apart_from_the_next_mail(by: str) -> None:
+    """Split… moves a typed parcel and the order's apart for good.
+
+    The shop's next e-mail with the carrier's number joins the order's
+    parcel, not the typed one too.
+    """
+    data = ParcelsData()
+    apply_contribution(
+        data, shop_mail("ctt", time=T0, carrier="ctt", number=CTT_NUMBER), T0
+    )
+    if by == "add":
+        joined = apply_contribution(data, typed("a", time=at(hours=1)), at(hours=1))
+        parcel_id, moving = joined.parcel_id, ["man:p_a"]
+    else:
+        parcel_id, moving = add_typed(data, number=LOOSE_NUMBER), ["msg:ctt#0"]
+        update_parcel(data, parcel_id, {"tracking_number": ORDER}, at(hours=1))
+    assert parcel_id is not None
+    assert list(data.parcels) == [parcel_id]
+    new = split_parcel(data, parcel_id, moving, at(hours=2))
+    tracked, typed_id = (parcel_id, new.id) if by == "add" else (new.id, parcel_id)
+
+    later = apply_contribution(
+        data,
+        shop_mail("later", time=at(hours=3), carrier="ctt", number=CTT_NUMBER),
+        at(hours=3),
+    )
+
+    assert later.parcel_id == tracked
+    assert not later.merged
+    assert "msg:later#0" not in data.parcels[typed_id].origins
+    assert not reconcile(data, at(hours=4)).suggestions
+    assert set(data.parcels) == {tracked, typed_id}
 
 
 def test_private_typed_parcel_is_only_suggested_for_someone_else_s_order() -> None:
@@ -451,6 +566,52 @@ def test_order_number_typed_for_a_parcel_with_its_own_number_keeps_it() -> None:
     state = data.parcels[parcel_id].state
     assert state.typed_order
     assert state.tracking_number == LOOSE_NUMBER
+
+
+@pytest.mark.parametrize(
+    ("number", "carrier"),
+    [(CTT_NUMBER, "ctt"), (LOOSE_NUMBER, "dpd"), (None, "ctt")],
+)
+def test_order_number_added_keeps_what_was_typed_with_a_carrier(
+    number: str | None, carrier: str
+) -> None:
+    """Adding the order's number keeps the number and carrier the user typed
+    for the order's parcel (F29).
+
+    The carrier is that number's, or the parcel's, not the order number's.
+    """
+    data = ParcelsData()
+    parcel_id = apply_contribution(data, shop_mail("shop", time=T0), T0).parcel_id
+    assert parcel_id is not None
+    changes: dict[str, str] = {"carrier": carrier}
+    if number is not None:
+        changes["tracking_number"] = number
+    update_parcel(data, parcel_id, changes, at(hours=1))
+
+    applied = apply_contribution(data, typed("a", time=at(hours=2)), at(hours=2))
+
+    assert applied.parcel_id == parcel_id
+    state = data.parcels[parcel_id].state
+    assert state.typed_order
+    assert state.typed_number == ORDER
+    assert state.tracking_number == number
+    assert state.carrier == carrier
+
+
+def test_order_number_typed_again_with_its_carrier_stays_a_tracking_number() -> None:
+    """A number the user typed with a carrier stays a tracking number when he
+    adds it again without one."""
+    data = ParcelsData()
+    parcel_id = add_typed(data, carrier="dpd")
+    apply_contribution(data, shop_mail("shop", time=at(hours=1)), at(hours=1))
+
+    applied = apply_contribution(data, typed("b", time=at(hours=2)), at(hours=2))
+
+    assert applied.parcel_id == parcel_id
+    state = data.parcels[parcel_id].state
+    assert state.tracking_number == ORDER
+    assert state.carrier == "dpd"
+    assert state.typed_number is None
 
 
 @pytest.mark.parametrize("edited", [False, True])

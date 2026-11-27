@@ -422,6 +422,18 @@ class AIWorker:
         self.engine.drop_refund(record)
         self.engine.async_changed()
 
+    def _drop_not_parcel(
+        self, entry: dict[str, Any], record: MessageRecord, now: datetime
+    ) -> None:
+        """Drop an e-mail the parsers now know brings no parcel news.
+
+        A survey or an invoice, say: one read again leaves its parcels.
+        """
+        self._remove(entry)
+        self.engine.clear_outputs(record.hash, now)
+        record.state = MessageState.NOT_PARCEL
+        self.engine.async_changed()
+
     def _settle(self, record: MessageRecord) -> None:
         """Leave an e-mail the AI won't read as it was.
 
@@ -656,6 +668,16 @@ class AIWorker:
         org = organizational_domain(message.sender_domain)
         fill = bool(entry.get("fill"))
         gaps: set[str] = set()
+        if (
+            not entry.get("forced")
+            and parsed.kind is MailKind.NOT_PARCEL
+            and parsed.confidence >= CONFIDENCE_APPLY
+            and not is_refund(parsed)
+        ):
+            # The parsers now know it's no parcel news, e.g. a survey that an
+            # earlier release read as a delivery.
+            self._drop_not_parcel(entry, record, now)
+            return
         if fill:
             # Only for an e-mail a parser read and added; and only what's
             # still missing.

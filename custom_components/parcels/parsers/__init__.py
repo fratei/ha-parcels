@@ -16,14 +16,22 @@ is ``UNKNOWN`` with the ``known_sender_unparsed`` note, so the engine asks
 the AI and reports that the parser needs an update; the sender's other
 e-mails (marketing, account e-mails) become ``NOT_PARCEL``, and so do
 e-mails whose subject asks for feedback, or is an invoice or a service
-notice (``prefilter.not_shipping_topic``), even when they name an order.
-Parser errors never escape: only the parser's name and the exception type
-are logged, at debug level, never anything from the e-mail.
+notice (``prefilter.not_shipping_topic``), even when they name an order,
+and a carrier's receipt for a parcel handed in. An invoice whose body
+brings news ("A sua encomenda n.º 123456 foi enviada") still asks for an
+update. Parser errors never escape: only the parser's name and the
+exception type are logged, at debug level, never anything from the e-mail.
 
 Every result but a carrier's then goes through ``sort_returns``: a refund
 becomes ``NOT_PARCEL`` with the ``refund`` note (the engine drops it), and
 a customer return becomes ``CUSTOMER_RETURN``, apart from parcels going
 back to their sender.
+
+Then ``_gate`` checks the topic of what a parser read: surveys and review
+requests, a carrier's receipt for a parcel handed in and invoices name a
+parcel and its last status, but bring no news, so they become
+``NOT_PARCEL``. An invoice whose body brings news keeps its reading, at a
+confidence too low to apply unchecked.
 
 Last, ``add_details`` (``parsers.details``) adds what the e-mail says
 besides the status: the last day to collect a parcel at its pickup point,
@@ -34,6 +42,7 @@ parcel was left.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import tzinfo
 import logging
 import re
@@ -59,6 +68,8 @@ _LOGGER = logging.getLogger(__name__)
 
 NOTE_KNOWN_SENDER_UNPARSED = "known_sender_unparsed"
 NOT_PARCEL_CONFIDENCE = 0.9
+# Below CONFIDENCE_APPLY: an invoice's news goes to the AI or Needs review.
+INVOICE_CONFIDENCE = 0.6
 
 PARSER_AMAZON = "amazon"
 PARSER_SHOP = "shop"
@@ -99,7 +110,7 @@ def parse_message(
     except Exception as exc:
         _LOGGER.debug("Parser dispatch failed: %s", type(exc).__name__)
         return ParseResult(parser=PARSER_NONE, kind=MailKind.UNKNOWN, confidence=0.0)
-    return add_details(sort_returns(result, message, tz), message, tz)
+    return add_details(_gate(sort_returns(result, message, tz), message), message, tz)
 
 
 def sort_returns(
@@ -131,6 +142,49 @@ def sort_returns(
 def is_refund(result: ParseResult) -> bool:
     """Return True for a refund e-mail: never a parcel event."""
     return result.kind is MailKind.NOT_PARCEL and returns.NOTE_REFUND in result.notes
+
+
+def _gate(result: ParseResult, message: MailMessage) -> ParseResult:
+    """Keep surveys, a carrier's posting receipts and invoices from counting.
+
+    They name a parcel and its last status ("O objeto ... foi entregue.
+    Avalie a entrega"), but bring no news about it. An invoice whose body
+    brings news keeps its reading, capped below ``CONFIDENCE_APPLY``. A
+    parser's undated, attach-only confirmation, such as Leroy Merlin's
+    survey after a delivery, stands. Never raises: when the check fails,
+    the reading stands.
+    """
+    if result.kind is MailKind.NOT_PARCEL or not (
+        result.is_parcel or result.shipments or result.order_numbers
+    ):
+        return result
+    try:
+        if result.shipments and all(
+            shipment.attach_only and shipment.undated for shipment in result.shipments
+        ):
+            return result
+        subject = message.subject
+        if prefilter.feedback_topic(subject) or (
+            result.parser in carriers.CARRIER_PARSERS
+            and prefilter.sent_receipt(subject)
+        ):
+            return _not_parcel(result.parser)
+        if prefilter.invoice_topic(subject):
+            if not prefilter.has_news_words(message.text[: generic.SCAN_CHARS]):
+                return _not_parcel(result.parser)
+            return replace(
+                result, confidence=min(result.confidence, INVOICE_CONFIDENCE)
+            )
+    except Exception as exc:
+        _LOGGER.debug("Topic gate failed: %s", type(exc).__name__)
+    return result
+
+
+def _not_parcel(name: str) -> ParseResult:
+    """Result for an e-mail that isn't about a parcel."""
+    return ParseResult(
+        parser=name, kind=MailKind.NOT_PARCEL, confidence=NOT_PARCEL_CONFIDENCE
+    )
 
 
 def _dispatch(message: MailMessage, verdict: SenderVerdict, tz: tzinfo) -> ParseResult:
@@ -227,31 +281,44 @@ def _dedicated(
 
 def _unparsed(name: str, message: MailMessage) -> ParseResult:
     """Result for a known sender's e-mail that its parser couldn't read."""
-    if not _other_topic(message.subject) and (
-        _looks_like_shipping(message.subject)
+    subject = message.subject
+    if _other_topic(subject):
+        if _invoice(subject) and _numbered_shipping(message, news_only=True):
+            return _asks_for_update(name)
+        return _not_parcel(name)
+    if name in carriers.CARRIER_PARSERS and _sent_receipt(subject):
+        return _not_parcel(name)
+    if (
+        _looks_like_shipping(subject)
         or _numbered_shipping(message)
         or (name in _MERCHANT_PARSERS and _about_a_return(message))
     ):
-        return ParseResult(
-            parser=name,
-            kind=MailKind.UNKNOWN,
-            confidence=0.0,
-            notes=(NOTE_KNOWN_SENDER_UNPARSED,),
-        )
+        return _asks_for_update(name)
+    return _not_parcel(name)
+
+
+def _asks_for_update(name: str) -> ParseResult:
+    """Result for a shipping e-mail that a known sender's parser can't read."""
     return ParseResult(
-        parser=name, kind=MailKind.NOT_PARCEL, confidence=NOT_PARCEL_CONFIDENCE
+        parser=name,
+        kind=MailKind.UNKNOWN,
+        confidence=0.0,
+        notes=(NOTE_KNOWN_SENDER_UNPARSED,),
     )
 
 
-def _numbered_shipping(message: MailMessage) -> bool:
+def _numbered_shipping(message: MailMessage, *, news_only: bool = False) -> bool:
     """Return True when the body names an order or a parcel in shipping words.
 
     The subject can be plain ("Uma mensagem para si") while the body says
-    "A sua encomenda 001234567890 foi expedida".
+    "A sua encomenda 001234567890 foi expedida". With ``news_only``, the
+    words any invoice has (tracking-number labels, thanks for the order)
+    don't count.
     """
     try:
         text = message.text[: generic.SCAN_CHARS]
-        if not prefilter.has_shipping_words(text):
+        words = prefilter.has_news_words if news_only else prefilter.has_shipping_words
+        if not words(text):
             return False
         return bool(
             _BARE_NUMBER_RE.search(fold(text))
@@ -290,6 +357,24 @@ def _other_topic(subject: str) -> bool:
     """Return True when the subject asks for feedback, or is an invoice or a notice."""
     try:
         return prefilter.not_shipping_topic(subject)
+    except Exception as exc:
+        _LOGGER.debug("Topic check failed: %s", type(exc).__name__)
+        return False
+
+
+def _invoice(subject: str) -> bool:
+    """Return True when the subject is an invoice."""
+    try:
+        return prefilter.invoice_topic(subject)
+    except Exception as exc:
+        _LOGGER.debug("Topic check failed: %s", type(exc).__name__)
+        return False
+
+
+def _sent_receipt(subject: str) -> bool:
+    """Return True when the subject is a receipt for a parcel handed in."""
+    try:
+        return prefilter.sent_receipt(subject)
     except Exception as exc:
         _LOGGER.debug("Topic check failed: %s", type(exc).__name__)
         return False

@@ -35,7 +35,18 @@ requests for feedback and surveys (``FEEDBACK_TOPICS``), invoices
 (``INVOICE_TOPICS``), service notices such as opening hours, fraud
 warnings and terms (``NOTICE_TOPICS``), and the sender's app or offers to
 send parcels (``PROMOTION_TOPICS``), even when they name an order. A
-status in the same subject ("foi entregue: avalie a entrega") wins.
+status in the same subject ("foi entregue: avalie a entrega") wins, and a
+product's name in quotes ('Ordered: "Customer Feedback Board"') is no
+topic.
+
+The parser dispatcher gates what a parser read with ``feedback_topic``,
+``sent_receipt`` (a carrier's receipt for a parcel handed in,
+``SENT_RECEIPT_TOPICS``) and ``invoice_topic``: those e-mails name a
+parcel and its last status, but bring no news about it. An invoice can
+still bring news ("Your package is out for delivery today"):
+``has_news_words`` is ``has_shipping_words`` without the words any
+invoice has, such as tracking-number labels, links to follow the parcel,
+thanks for the order and refunds.
 """
 
 from __future__ import annotations
@@ -352,6 +363,9 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"(?:verzogert|verspatet|verspatung)",
         r"zoll(?:abfertigung|gebuhr\w*)",
         "einfuhrabgaben",
+        "einfuhrumsatzsteuer",
+        r"(?:zoll|import)(?:abgaben|gebuhren)",
+        r"(?:beim|im|vom|durch den) zoll",
         r"(?:rucksende|retouren)(?:etikett|schein)",
         r"(?:rucksendung|retoure) (?:eingegangen|erhalten)",
         r"(?:ruck)?erstattung",
@@ -738,6 +752,21 @@ INVOICE_TOPICS: tuple[str, ...] = (
     "creditnota",
 )
 
+# Subjects of a carrier's receipt for a parcel handed in at its counter:
+# the parcel's number and its first status, but no news.
+SENT_RECEIPT_TOPICS: tuple[str, ...] = (
+    r"comprovativo d[eo] (?:seu |teu )?envio",
+    r"talao de (?:envio|aceitacao)",
+    r"justificante de (?:envio|admision)",
+    "proof of postage",
+    "postage receipt",
+    "einlieferungsbeleg",
+    "einlieferungsquittung",
+    "preuve de depot",
+    r"ricevuta di (?:spedizione|accettazione)",
+    "verzendbewijs",
+)
+
 NOTICE_TOPICS: tuple[str, ...] = (
     # Opening hours.
     "horario especial",
@@ -844,6 +873,77 @@ _ACCOUNT_TRACKING = (
     r"(?:account|klantenaccount|app|mijn omgeving)",
 )
 
+# The strong keywords that any invoice or receipt has: tracking-number
+# labels and links, thanks for the order, and refunds. They aren't news.
+_TRACKING_LABELS = (
+    r"tracking (?:number|code|id|information|info|details|link)",
+    r"track (?:your|my) (?:order|parcel|package|shipment|delivery)",
+    r"track (?:order|parcel|package|shipment)",
+    r"(?:numero|codigo) (?:de|do) (?:seguimento|rastreio|objeto|objecto)",
+    r"(?:acompanhe|siga|seguir|rastrear|rastreie) (?:a sua |a tua |o seu |o teu )?"
+    r"(?:encomenda|pedido|envio|objeto)",
+    r"(?:numero|codigo) de seguimiento",
+    r"(?:sigue|rastrea|seguimiento de) (?:tu |su |el |del )?(?:pedido|envio|paquete)",
+    r"(?:sendungs|paket|tracking)nummer",
+    "sendungsverfolgung",
+    r"(?:sendung|paket) verfolgen",
+    r"verfolgen sie ihre sendung",
+    r"verfolge (?:dein|deine) (?:paket|sendung|bestellung)",
+    r"numero de suivi",
+    r"suivi de (?:colis|commande|livraison)",
+    r"suivre (?:mon|votre|le) (?:colis|commande)",
+    r"(?:codice|numero) di (?:tracciamento|spedizione|tracking)",
+    r"(?:traccia|segui) (?:il tuo ordine|la (?:tua )?spedizione|il tuo pacco)",
+    "zendingnummer",
+    r"track\s*(?:&|en)\s*trace",
+    r"volg (?:je|uw) (?:pakket|bestelling|zending)",
+    r"tracking(?:nummer|code)",
+)
+_ORDER_THANKS = (
+    r"order (?:confirmation|confirmed|received)",
+    r"thanks? (?:you )?for your (?:order|purchase)",
+    r"received your order",
+    r"confirmacao (?:de|da|do) (?:encomenda|pedido)",
+    r"(?:encomenda|pedido) (?:confirmad[oa]|recebid[oa])",
+    r"recebemos (?:a sua|a tua|o seu|o teu) (?:encomenda|pedido)",
+    r"obrigad[oa] (?:pela|pelo) (?:sua|tua|seu|teu) (?:encomenda|compra|pedido)",
+    r"confirmacion (?:de|del|de tu|de su) pedido",
+    r"pedido (?:confirmado|recibido)",
+    r"hemos recibido (?:tu|su) pedido",
+    r"gracias por (?:tu|su) (?:pedido|compra)",
+    r"(?:bestell|auftrags)bestatigung",
+    r"bestellung (?:bestatigt|eingegangen|erhalten)",
+    r"(?:vielen )?dank fur (?:ihre|deine) bestellung",
+    r"confirmation de (?:votre |la )?commande",
+    r"commande (?:confirmee|recue)",
+    r"merci (?:pour|de) votre (?:commande|achat)",
+    r"nous avons bien recu votre commande",
+    r"conferma (?:d'|dell')?ordine",
+    r"ordine (?:confermato|ricevuto)",
+    r"abbiamo ricevuto il tuo ordine",
+    r"grazie per (?:il tuo |l')(?:ordine|acquisto)",
+    r"(?:order|bestel)bevestiging",
+    r"bestelling (?:bevestigd|ontvangen)",
+    r"bedankt voor (?:je|uw) (?:bestelling|aankoop)",
+)
+_REFUND_LABELS = (
+    r"refund (?:issued|processed|confirmation)",
+    "your refund",
+    r"reembolso (?:emitido|processado|efetuado|procesado|realizado)",
+    r"o (?:seu|teu) reembolso",
+    r"(?:tu|su) reembolso",
+    r"(?:ruck)?erstattung",
+    r"remboursement effectue",
+    "votre remboursement",
+    "rimborso emesso",
+    r"il tuo rimborso",
+    r"terugbetaling",
+)
+# Quotes around a product's name ('Ordered: "Customer Feedback Board"'),
+# up to the subject's end when it was cut.
+_QUOTES = str.maketrans(dict.fromkeys("\u201c\u201d\u201e\u201f\u00ab\u00bb", '"'))
+_QUOTED_RE = re.compile(r'"[^"]*(?:"|$)')
+
 
 def _fragment(pattern: str) -> str:
     """Turn a keyword into a regex fragment (flexible spaces and apostrophes)."""
@@ -867,6 +967,12 @@ _ORDER_LABEL_RE = _compile([_ORDER_LABELS])
 _BODY_LABEL_RE = _compile([_ORDER_LABELS, _ACCOUNT_TRACKING])
 _TOPIC_RE = _compile(
     [*FEEDBACK_TOPICS.values(), INVOICE_TOPICS, NOTICE_TOPICS, PROMOTION_TOPICS]
+)
+_FEEDBACK_RE = _compile(FEEDBACK_TOPICS.values())
+_SENT_RECEIPT_RE = _compile([SENT_RECEIPT_TOPICS])
+_INVOICE_RE = _compile([INVOICE_TOPICS])
+_NEWS_LABEL_RE = _compile(
+    [_ORDER_LABELS, _ACCOUNT_TRACKING, _TRACKING_LABELS, _ORDER_THANKS, _REFUND_LABELS]
 )
 
 
@@ -900,14 +1006,62 @@ def has_shipping_words(text: str) -> bool:
     return _STRONG_RE.search(folded) is not None
 
 
+def has_news_words(text: str) -> bool:
+    """Return True when an e-mail body brings news about a parcel.
+
+    Like ``has_shipping_words``, but the strong keywords that any invoice
+    or receipt has don't count either: tracking-number labels and links
+    to follow the parcel, thanks for the order, and refunds.
+    """
+    folded = _NEWS_LABEL_RE.sub(" | ", _clean(text[:BODY_CHARS]))
+    return _STRONG_RE.search(folded) is not None
+
+
+def _subject_text(subject: str) -> str:
+    """Fold a subject without order-number labels."""
+    return _ORDER_LABEL_RE.sub(" | ", _prepare(subject, ""))
+
+
+def _topic_text(subject: str) -> str:
+    """Fold a subject without order-number labels and quoted names."""
+    return _subject_text(_QUOTED_RE.sub(" | ", subject[:MAX_CHARS].translate(_QUOTES)))
+
+
+def _no_status(subject: str) -> bool:
+    """Return True when a subject has no status or other strong keyword."""
+    return _STRONG_RE.search(_subject_text(subject)) is None
+
+
 def not_shipping_topic(subject: str) -> bool:
     """Return True when a subject is about feedback, an invoice or a notice.
 
     Those subjects can name an order ("Fatura da encomenda #1912"); a
-    status in the same subject ("foi entregue: avalie a entrega") wins.
+    status in the same subject ("foi entregue: avalie a entrega") wins,
+    and a product's name in quotes is no topic.
     """
-    text = _ORDER_LABEL_RE.sub(" | ", _prepare(subject, ""))
-    return _TOPIC_RE.search(text) is not None and _STRONG_RE.search(text) is None
+    return _TOPIC_RE.search(_topic_text(subject)) is not None and _no_status(subject)
+
+
+def feedback_topic(subject: str) -> bool:
+    """Return True when a subject asks for feedback or a review, no status."""
+    return _FEEDBACK_RE.search(_topic_text(subject)) is not None and _no_status(subject)
+
+
+def sent_receipt(subject: str) -> bool:
+    """Return True for a receipt for a parcel handed in, no status."""
+    return _SENT_RECEIPT_RE.search(_topic_text(subject)) is not None and _no_status(
+        subject
+    )
+
+
+def invoice_topic(subject: str) -> bool:
+    """Return True when a subject is an invoice, no status nor feedback."""
+    text = _topic_text(subject)
+    return (
+        _INVOICE_RE.search(text) is not None
+        and _FEEDBACK_RE.search(text) is None
+        and _no_status(subject)
+    )
 
 
 def known_sender_subject(subject: str) -> bool:

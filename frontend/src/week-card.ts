@@ -452,10 +452,15 @@ export class ParcelsWeekCard extends ParcelsChipCard {
       ></parcels-add-dialog>`;
   }
 
-  /** "2 late · 1 to review" under the title, each a link; nothing when there's neither. */
+  /**
+   * "2 late · 1 to review" under the title, each a link; nothing when there's
+   * neither. Anyone but an administrator reviews only possible duplicates.
+   */
   private _renderAttention(snapshot: Snapshot): TemplateResult | typeof nothing {
     const late = this._lateCount(snapshot);
-    const review = snapshot.settings.user_is_admin ? reviewCount(snapshot) : 0;
+    const review = snapshot.settings.user_is_admin
+      ? reviewCount(snapshot)
+      : snapshot.merge_suggestions.length;
     if (late === 0 && review === 0) {
       return nothing;
     }

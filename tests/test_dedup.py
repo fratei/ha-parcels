@@ -991,17 +991,37 @@ def test_heuristic_needs_one_compatible_candidate(
 
 
 def test_cancellations() -> None:
-    """Cancelling applies to orders that haven't shipped."""
+    """Cancelling applies to orders that haven't shipped.
+
+    A cancellation read before its order's e-mail is kept, and that e-mail
+    joins it; one that names no order is dropped.
+    """
     data = ParcelsData()
     nothing = apply_contribution(
         data,
-        contribution(
-            "msg:c#0", kind=MailKind.CANCELLED, merchant="Example Shop", orders=["#1"]
-        ),
+        contribution("msg:c#0", kind=MailKind.CANCELLED, merchant="Example Shop"),
         T0,
     )
     assert nothing.parcel_id is None
     assert not data.parcels
+
+    early = apply_contribution(
+        data,
+        contribution(
+            "msg:e#0",
+            kind=MailKind.CANCELLED,
+            time=at(hours=1),
+            merchant="Example Shop",
+            orders=["#1"],
+        ),
+        at(hours=1),
+    )
+    order = contribution(
+        "msg:f#0", kind=MailKind.ORDER, merchant="Example Shop", orders=["#1"]
+    )
+    order.order_placed = T0
+    assert apply_contribution(data, order, at(hours=2)).parcel_id == early.parcel_id
+    assert data.parcels[early.parcel_id].state.status is S.CANCELLED
 
     ordered = apply_contribution(
         data,
@@ -1668,6 +1688,42 @@ def test_merge_and_split() -> None:
     assert data.parcels[a.parcel_id].state.tracking_number == DPD
 
 
+@pytest.mark.parametrize("again", [False, True])
+def test_order_mail_split_off_stays_apart_from_the_next_mail(again: bool) -> None:
+    """The carrier's next e-mail doesn't take back what the user split off.
+
+    Without the split, the order's tracked parcel absorbs its e-mail without
+    a number. The same holds for the shipping e-mail read again.
+    """
+    data = ParcelsData()
+    shop = {"merchant": "Example Shop", "orders": ("ORD-55501",)}
+    order = apply_contribution(
+        data, contribution("msg:order#0", kind=MailKind.ORDER, **shop), T0
+    )
+    shipped = contribution(
+        "msg:ship#0", time=at(hours=1), carrier="dpd", number=DPD, **shop
+    )
+    assert apply_contribution(data, shipped, at(hours=1)).parcel_id == order.parcel_id
+    assert order.parcel_id is not None
+    new = split_parcel(data, order.parcel_id, ["msg:order#0"], at(hours=2))
+    news = contribution(
+        "msg:ofd#0",
+        kind=MailKind.OUT_FOR_DELIVERY,
+        time=at(hours=3),
+        carrier="dpd",
+        number=DPD,
+        **shop,
+    )
+
+    later = apply_contribution(data, shipped if again else news, at(hours=3))
+
+    assert later.parcel_id == order.parcel_id
+    assert not later.merged
+    assert set(data.parcels[new.id].origins) == {"msg:order#0"}
+    reconcile(data, at(hours=4))
+    assert set(data.parcels) == {order.parcel_id, new.id}
+
+
 def test_update_parcel() -> None:
     """Edits are kept apart from the e-mails, so they survive reprocessing."""
     data = ParcelsData()
@@ -1709,6 +1765,11 @@ def test_update_parcel() -> None:
         "merchant": at(hours=1),
         "pickup_code": at(hours=3.5),
         "pickup_point": at(hours=3.75),
+    }
+    # And the status Parcels showed then: where the parcel was.
+    assert edit.typed_status == {
+        "pickup_code": S.ORDERED,
+        "pickup_point": S.ORDERED,
     }
 
     # Typing the number of another parcel merges the two.

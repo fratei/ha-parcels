@@ -240,7 +240,8 @@ def verify_sender(message: MailMessage, trusted: Iterable[str] = ()) -> SenderVe
     check = replace(check, used=0, dkim=auth.dkim, dmarc=auth.dmarc, spf=auth.spf)
 
     dkim_orgs = {organizational_domain(d) for d in auth.dkim_pass_domains}
-    if dkim_orgs & SHOPIFY_DKIM_DOMAINS:
+    signed = bool(dkim_orgs & SHOPIFY_DKIM_DOMAINS)
+    if signed:
         shopify = True
         known = known or bool(org)
     method = "none"
@@ -262,6 +263,7 @@ def verify_sender(message: MailMessage, trusted: Iterable[str] = ()) -> SenderVe
             method="none",
             reason="not_aligned",
             check=check,
+            shopify_signed=signed,
         )
     return SenderVerdict(
         domain,
@@ -271,4 +273,5 @@ def verify_sender(message: MailMessage, trusted: Iterable[str] = ()) -> SenderVe
         method=method,
         reason="ok" if known else "unknown_sender",
         check=check,
+        shopify_signed=signed,
     )

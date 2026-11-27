@@ -50,6 +50,7 @@ from custom_components.parcels.dedup import (
     archive_parcel,
     mark_delivered,
     merge_parcels,
+    split_parcel,
     update_parcel,
 )
 from custom_components.parcels.engine import ParcelsEngine
@@ -2942,6 +2943,117 @@ async def test_carrier_typed_later_keeps_the_order_s_number_away(
     state = engine.data.parcels[parcel_id].state
     assert state.tracking_number is None
     assert state.carrier == "dpd"
+
+
+def order_mails(engine: ParcelsEngine, order: str, *numbers: str | None) -> list[str]:
+    """Record a shop's e-mails about its order's packages, one per number."""
+    now = dt_util.utcnow()
+    parcel_ids: list[str] = []
+    for index, number in enumerate(numbers):
+        applied = apply_contribution(
+            engine.data,
+            contribution(
+                f"msg:shop{index}#0",
+                time=now,
+                carrier="ctt" if number else None,
+                number=number,
+                merchant="Loja Exemplo",
+                orders=(order,),
+            ),
+            now,
+        )
+        assert applied.parcel_id is not None
+        parcel_ids.append(applied.parcel_id)
+    engine.async_changed()
+    return parcel_ids
+
+
+async def test_order_number_typed_apart_isn_t_followed(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """A number e-mails name as the order's isn't sent to 17TRACK, though the
+    parcel added under it stays apart from the order's two packages (Z1)."""
+    order = "001234567890"
+    order_mails(engine, order, CTT, OTHER)
+
+    parcel_id = engine.add_parcel(order, merchant="Loja Exemplo")
+    await tracker.async_refresh()
+
+    assert len(engine.data.parcels) == 3
+    assert sorted(track.numbers("add_package")) == sorted([CTT, OTHER])
+    assert set(records(engine)) == {CTT, OTHER}
+    assert news(engine, parcel_id, order) == []
+
+
+async def test_order_number_followed_before_goes(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """A number an earlier release followed goes once known as the order's,
+    with 17TRACK's news, though its parcel stays apart (Z1)."""
+    order = "001234567890"
+    order_mails(engine, order, CTT, OTHER)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(seventeentrack, "_is_order_number", lambda data, parcel: False)
+        parcel_id = engine.add_parcel(order, merchant="Loja Exemplo")
+        await tracker.async_refresh()
+        track.put(order)
+        await tracker.async_refresh()
+    assert news(engine, parcel_id, order)
+
+    track.calls.clear()
+    await tracker.async_refresh()
+
+    assert archive_call(track, order) in track.calls
+    assert set(records(engine)) == {CTT, OTHER}
+    assert news(engine, parcel_id, order) == []
+    assert origin_id(order) not in engine.data.parcels[parcel_id].origins
+    assert len(engine.data.parcels) == 3
+
+
+async def test_order_number_split_off_isn_t_followed(
+    engine: ParcelsEngine, tracker: SeventeenTrackSync, track: FakeSeventeenTrack
+) -> None:
+    """Split off the order's parcel again, a number known as the order's
+    still isn't followed (Z1)."""
+    order = "001234567890"
+    [parcel_id] = order_mails(engine, order, CTT)
+    assert engine.add_parcel(order, merchant="Loja Exemplo") == parcel_id
+    parcel = engine.data.parcels[parcel_id]
+    typed = next(o.id for o in parcel.origins.values() if o.added_by_hand)
+
+    split_parcel(engine.data, parcel_id, [typed], dt_util.utcnow())
+    engine.async_changed()
+    await tracker.async_refresh()
+
+    assert len(engine.data.parcels) == 2
+    assert track.numbers("add_package") == [CTT]
+    assert set(records(engine)) == {CTT}
+
+
+async def test_order_number_added_over_a_number_typed_with_a_carrier(
+    engine: ParcelsEngine,
+    tracker: SeventeenTrackSync,
+    track: FakeSeventeenTrack,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Adding the order's number to the order's parcel keeps following the
+    number the user typed for it with a carrier (F29)."""
+    order = "001234567890"
+    [parcel_id] = order_mails(engine, order, None)
+    update_parcel(
+        engine.data,
+        parcel_id,
+        {"tracking_number": CTT, "carrier": "ctt"},
+        dt_util.utcnow(),
+    )
+    engine.async_changed()
+    freezer.tick(timedelta(minutes=5))
+
+    assert engine.add_parcel(order, merchant="Loja Exemplo") == parcel_id
+    await tracker.async_refresh()
+
+    assert track.numbers("add_package") == [CTT]
+    assert set(records(engine)) == {CTT}
 
 
 async def test_merged_parcels_keep_their_current_number(

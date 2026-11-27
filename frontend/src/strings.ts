@@ -10,7 +10,8 @@ export const STRINGS = {
   listCardDescription: "Active parcels that don't have a delivery date yet.",
   reviewCardName: "Parcels review",
   reviewCardDescription:
-    "E-mails that need a decision before Parcels uses them. Only shown to administrators.",
+    "E-mails and possible duplicates that need a decision. Shown to administrators, " +
+    "and to others while one of their private parcels may be a duplicate.",
 
   defaultWeekTitle: "Parcels",
   defaultListTitle: "No date yet",
@@ -229,6 +230,7 @@ export const STRINGS = {
     "Ignore every e-mail from {domain}? Parcels stops reading its e-mails, including news about parcels already added, and removes its e-mails from Needs review and Filtered. You can stop ignoring it under Filtered.",
   ignoreConfirm: "Ignore {domain}",
   dismissKnownHint: "Remove only this e-mail. Parcels keeps reading the other e-mails from {domain}.",
+  dismissFreeMailHint: "Remove only this e-mail. Anyone can send e-mail from {domain}, so Parcels can't trust or ignore it.",
   ignoredSenders: "Ignored senders",
   ignoredSendersHint:
     "Parcels doesn't read e-mails from these senders. Stop ignoring one to read its recent e-mails again.",
@@ -319,6 +321,10 @@ export const STRINGS = {
   confirmFilledLabel: "Confirm the details the local AI filled in",
   mergedNotice: "Merged automatically ({reason}). Check that it's one parcel.",
   mergedNoticeNoReason: "Merged automatically. Check that it's one parcel.",
+  mergedNoticeItems:
+    "Merged automatically ({reason}), though its e-mails list different items. Check that it's one parcel.",
+  mergedNoticeNoReasonItems:
+    "Merged automatically, though its e-mails list different items. Check that it's one parcel.",
   inferredNotice:
     "Probably delivered: another parcel from this shop was delivered around the expected day. Undo if it hasn't arrived.",
   inferredQuietNotice: "Probably delivered: no news for three weeks. Undo if it hasn't arrived.",

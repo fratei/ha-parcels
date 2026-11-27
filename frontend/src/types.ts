@@ -211,6 +211,8 @@ export interface ReviewItem {
   trusted_sender: boolean;
   /** Parcels has a parser for the sender or lists it, so it can't be trusted or ignored from here. */
   known_sender: boolean;
+  /** A free mail domain, such as gmail.com: anyone can send from it, so it's neither trusted nor ignored. */
+  free_mail: boolean;
   checks: SenderChecks | null;
   /** The local AI fills in details the parser missed, for a parcel the e-mail already updated. */
   fill: boolean;
@@ -289,7 +291,11 @@ export interface Settings {
   today: string;
 }
 
-/** Parcels that are probably one: `candidates` may belong to `parcel` (administrators only). */
+/**
+ * Parcels that are probably one: `candidates` may belong to `parcel`. Each
+ * user gets those theirs to decide: administrators, and the owners of a
+ * private parcel in them.
+ */
 export interface MergeSuggestion {
   id: string;
   reason: string;
@@ -439,6 +445,8 @@ export interface ParcelDetails {
    * other packages, not theirs. None of them is in `contradicted`.
    */
   elsewhere: string[];
+  /** The e-mails an automatic merge joined list other items than the rest of the parcel's. */
+  merged_items_differ: boolean;
 }
 
 export interface HassMessage {

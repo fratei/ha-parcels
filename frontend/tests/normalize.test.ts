@@ -519,14 +519,22 @@ describe("normalizeDetails", () => {
       origins: [{ id: "m1", label: "E-mail from Example Shop", source: "parser", time: null }, { label: "No id" }],
       contradicted: ["p2", 3, "", null, "p3"],
       elsewhere: ["p4", {}, "", "p5"],
+      merged_items_differ: true,
     });
     assert.ok(details);
     assert.equal(details.parcel.status, "delivered");
     assert.deepEqual(details.contradicted, ["p2", "p3"]);
     assert.deepEqual(details.elsewhere, ["p4", "p5"]);
-    const flat = normalizeDetails({ parcel: { id: "p1" }, contradicted: "p2", elsewhere: "p4" });
+    assert.equal(details.merged_items_differ, true);
+    const flat = normalizeDetails({
+      parcel: { id: "p1" },
+      contradicted: "p2",
+      elsewhere: "p4",
+      merged_items_differ: "yes",
+    });
     assert.deepEqual(flat?.contradicted, []);
     assert.deepEqual(flat?.elsewhere, []);
+    assert.equal(flat?.merged_items_differ, false);
     assert.deepEqual(details.timeline, [
       { time: "2026-07-14T08:00:00Z", status: "delivered", source: "ai", label: "Delivered", undated: false, timeless: false },
       { time: "2026-07-15T08:00:00Z", status: "delivered", source: "inferred", label: "", undated: false, timeless: false },

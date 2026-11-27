@@ -5,9 +5,10 @@ Also how e-mails about one of an order's packages find that package.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Collection, Generator, Iterable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from itertools import permutations
 from types import SimpleNamespace
 from typing import Any
 
@@ -20,10 +21,12 @@ from custom_components.parcels.const import (
     MailKind,
     ParcelStatus,
 )
+from custom_components.parcels.convert import fill_contribution
 from custom_components.parcels.dedup import (
     AMAZON_CATCH_UP,
     AMAZON_LINKS_KEY,
     AMAZON_REPAIR_KEY,
+    KEPT_APART,
     PLACEHOLDER_REPAIR_KEY,
     REASON_AMAZON_TRACKING,
     REASON_SAME_MERCHANT_DAY,
@@ -37,6 +40,7 @@ from custom_components.parcels.dedup import (
     Applied,
     Contribution,
     DedupError,
+    Reconciled,
     accept_suggestion,
     amazon_contradicts,
     amazon_disagree,
@@ -50,6 +54,7 @@ from custom_components.parcels.dedup import (
     keep_apart,
     manual_origin_id,
     mark_delivered,
+    merge_by_hand,
     merge_parcels,
     order_parcels,
     reconcile,
@@ -124,6 +129,7 @@ def _nov(day: int, hour: int = 0, minute: int = 0) -> datetime:
 
 
 _DAYS_40 = timedelta(days=40)
+_SECONDS_30 = timedelta(seconds=30)
 
 # The first sync of a mailbox reads every e-mail at once.
 SYNC = _nov(9, 13)
@@ -1523,7 +1529,10 @@ def test_guesses_on_one_parcel_undo_together() -> None:
 
 @pytest.mark.parametrize(("elsewhere", "merged"), [(False, True), (True, False)])
 def test_items_of_unrelated_orders_link_nothing(elsewhere: bool, merged: bool) -> None:
-    """A title that unrelated orders share, e.g. a recommendation, links nothing."""
+    """A title that unrelated orders share, e.g. a recommendation, links nothing.
+
+    The order has two packages, so only the return's items could say which.
+    """
     data = ParcelsData()
     if elsewhere:
         _apply(
@@ -1542,18 +1551,22 @@ def test_items_of_unrelated_orders_link_nothing(elsewhere: bool, merged: bool) -
         ),
         _nov(15, 16),
     )
-    _apply(
-        data,
-        _amazon(
-            "msg:s1#0",
-            ORDER_2,
-            _nov(14, 8),
-            _eta(15),
-            shipment_id="DkSHIP0001",
-            items=[LAMP, SHARED],
-        ),
-        _nov(15, 16),
-    )
+    for origin_id, hour, shipment, items in (
+        ("msg:s1#0", 8, "DkSHIP0001", [LAMP, SHARED]),
+        ("msg:s2#0", 9, "DkSHIP0002", [MUG]),
+    ):
+        _apply(
+            data,
+            _amazon(
+                origin_id,
+                ORDER_2,
+                _nov(14, hour),
+                _eta(15),
+                shipment_id=shipment,
+                items=items,
+            ),
+            _nov(15, 16),
+        )
 
     result = reconcile(data, _nov(15, 16))
 
@@ -1946,6 +1959,56 @@ def test_delivery_of_the_package_out_for_delivery_joins_it() -> None:
     assert data.parcels[pid].state.status is ParcelStatus.OUT_FOR_DELIVERY
 
 
+def test_details_say_when_a_guess_lists_other_items() -> None:
+    """The details say when the e-mails a guess joined list other items.
+
+    Not when one side lists none, nor once the user kept the merge.
+    """
+    data = ParcelsData()
+    engine: Any = SimpleNamespace(data=data)
+    pid = _fashion_order(data)
+
+    def differ(parcel_id: str) -> bool:
+        return details(engine, data.parcels[parcel_id], SYSTEM_VIEWER)[
+            "merged_items_differ"
+        ]
+
+    assert differ(pid) is False
+    apply_contribution(
+        data,
+        _fashion("msg:d1#0", MailKind.DELIVERED, _nov(14, 13, 40), items=(SCARF,)),
+        _nov(14, 13, 40),
+    )
+    assert data.parcels[pid].auto_merged is not None
+    assert differ(pid) is True
+    update_parcel(data, pid, {"confirm_merge": True}, _nov(14, 14))
+    assert data.parcels[pid].auto_merged is None
+    assert differ(pid) is False
+
+    data = ParcelsData()
+    engine.data = data
+    _apply(
+        data,
+        _amazon("msg:d1#0", ORDER_1, _nov(15, 15), None, kind=MailKind.DELIVERED),
+        _nov(15, 16),
+    )
+    shipped = _apply(
+        data,
+        _amazon(
+            "msg:s1#0",
+            ORDER_1,
+            _nov(13, 9),
+            _eta(15),
+            shipment_id="DkSHIP0001",
+            items=[POT],
+        ),
+        _nov(15, 16),
+    )
+    reconcile(data, _nov(15, 16))
+    assert data.parcels[shipped].auto_merged is not None
+    assert differ(shipped) is False
+
+
 @pytest.mark.parametrize(
     ("out", "carrier", "sub_order"),
     [
@@ -2031,6 +2094,58 @@ def test_repair_drops_placeholder_items_and_joins_the_delivery() -> None:
     assert repair_store(data, _nov(15, 9), since=REPAIR_VERSION) == set()
 
 
+def test_repair_joins_the_delivery_to_the_package_open_then() -> None:
+    """A package already delivered doesn't keep the delivery apart.
+
+    The first package's delivery closed the order's parcel and the second
+    package got its own; the second's delivery joins the parcel still open
+    when it was sent.
+    """
+    data = ParcelsData()
+    pid = _fashion_order(data, out=False)
+    first = _fashion(
+        "msg:d1#0",
+        MailKind.DELIVERED,
+        _nov(12, 13),
+        orders=(FASHION_SUBS[2],),
+        items=(SWEATER,),
+    )
+    assert _apply(data, first) == pid
+    second = _apply(
+        data,
+        _fashion(
+            "msg:s2#0",
+            MailKind.SHIPPED,
+            _nov(13, 9),
+            orders=(FASHION_SUBS[0],),
+            items=(SCARF,),
+        ),
+    )
+    assert second != pid
+    alone = ParcelsData()
+    lone = _apply(
+        alone,
+        _fashion(
+            "msg:d2#0", MailKind.DELIVERED, _nov(14, 13), orders=(FASHION_SUBS[0],)
+        ),
+    )
+    data.parcels.update(alone.parcels)
+    data.parcels[lone].origins["msg:d2#0"].items = PLACEHOLDERS
+    data.parcels[lone].touch(_nov(14, 13))
+    assert data.parcels[pid].state.status is ParcelStatus.DELIVERED
+    assert not reconcile(data, _nov(14, 14)).removed
+
+    repair_store(data, _nov(15, 8), since=4)
+
+    assert lone not in data.parcels
+    parcel = data.parcels[second]
+    assert set(parcel.origins) == {"msg:s2#0", "msg:d2#0"}
+    assert parcel.state.status is ParcelStatus.DELIVERED
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_ORDER
+    assert data.parcels[pid].state.status is ParcelStatus.DELIVERED
+
+
 # Made up: the part of Paack's order IDs before "_", shared by the packages.
 PAACK_STEM = "Rb5Lq2Vm7"
 
@@ -2093,6 +2208,802 @@ def test_paack_stem_is_suggested_for_each_package() -> None:
     assert parcel.auto_merged is not None
     assert parcel.auto_merged.reason == REASON_SAME_REFERENCE
     assert parcel.state.status is ParcelStatus.OUT_FOR_DELIVERY
+
+
+def test_a_reference_of_another_order_s_package_leaves_the_order_join() -> None:
+    """Paack's e-mail joins its order's parcel when the stem's package is
+    another order's: that package can't be the one, so nothing is unclear."""
+    data = ParcelsData()
+    order = _apply(
+        data,
+        contribution(
+            "msg:o1#0",
+            time=_nov(9, 8),
+            merchant="Outra Loja",
+            orders=["5180002002"],
+            label="outra-loja.example",
+        ),
+    )
+    other = _apply(
+        data,
+        contribution(
+            "msg:o2#0",
+            kind=MailKind.IN_TRANSIT,
+            time=_nov(9, 9),
+            carrier="paack",
+            number=f"{PAACK_STEM}_1",
+            merchant="Outra Loja",
+            orders=["5180002001"],
+            label="paack.co",
+        ),
+    )
+    stem = _apply(
+        data,
+        contribution(
+            "msg:o3#0",
+            kind=MailKind.OUT_FOR_DELIVERY,
+            time=_nov(10, 8),
+            carrier="paack",
+            reference=PAACK_STEM,
+            merchant="Outra Loja",
+            orders=["5180002002"],
+            label="paack.co",
+        ),
+    )
+
+    assert stem == order != other
+    assert data.parcels[order].state.status is ParcelStatus.OUT_FOR_DELIVERY
+
+
+def test_one_reconcile_joins_an_order_s_e_mail_after_pairing_by_day() -> None:
+    """Pairing two of an order's parcels by day leaves one for its e-mail
+    known only from the order to join in the same reconcile, as when the
+    e-mails are read in time order; a second reconcile has nothing to do."""
+    data = ParcelsData()
+    first = _apply(
+        data,
+        contribution(
+            "msg:j1#0",
+            kind=MailKind.IN_TRANSIT,
+            time=_nov(9, 4),
+            orders=[ORDER_1],
+            items=(LAMP,),
+            reference="ENV0001",
+            label="amazon.es",
+        ),
+        _nov(14, 9, 1),
+    )
+    late = _apply(
+        data,
+        contribution(
+            "msg:j3#0",
+            kind=MailKind.DELAYED,
+            time=_nov(11, 20),
+            merchant="Outra Loja",
+            orders=[ORDER_1],
+            items=(POT,),
+            eta=_eta(14),
+            label="dpd.pt",
+        ),
+        _nov(14, 9, 2),
+    )
+    box = _apply(
+        data,
+        contribution(
+            "msg:j2#0",
+            kind=MailKind.OUT_FOR_DELIVERY,
+            time=_nov(10, 4),
+            carrier="paack",
+            number=f"{PAACK_STEM}_1",
+            merchant="Outra Loja",
+            orders=[ORDER_1],
+            items=(LAMP, POT),
+            reference="ENV0001",
+            eta=_eta(13),
+            owner="person.two",
+            label="dpd.pt",
+        ),
+        _nov(14, 9, 3),
+    )
+    assert len({first, late, box}) == 3
+    mark_delivered(data, box, _nov(14, 9, 4))
+
+    reconcile(data, _nov(15, 9))
+
+    assert list(data.parcels) == [box]
+    assert not reconcile(data, _nov(15, 9)).removed
+
+
+def test_one_reconcile_places_an_order_s_e_mail_again_after_a_merge() -> None:
+    """An e-mail naming two orders goes to the order's parcel without a
+    number; when that parcel then joins its order's parcel with one, the
+    e-mail is placed again in the same reconcile, so a second has nothing
+    to do."""
+    data = ParcelsData()
+    sent = _nov(9, 4)
+    mails = [
+        (
+            "msg:o0#0",
+            {"number": f"{PAACK_STEM}_1", "merchant": "Amazon", "orders": ["#1002"]},
+        ),
+        ("msg:o1#0", {"number": f"{PAACK_STEM}_2", "items": (LAMP,)}),
+        ("msg:o2#0", {"orders": ["#1001"], "reference": PAACK_STEM, "items": (LAMP,)}),
+        ("msg:o3#0", {"orders": ["#1001"]}),
+        ("msg:o4#0", {"orders": ["#1001", "#1002"]}),
+    ]
+    for minute, (origin_id, fields) in enumerate(mails, 1):
+        carrier = "paack" if "number" in fields or "reference" in fields else None
+        _apply(
+            data,
+            contribution(
+                origin_id,
+                kind=MailKind.ORDER,
+                time=sent,
+                carrier=carrier,
+                label="loja-exemplo.example",
+                **fields,
+            ),
+            _nov(14, 9, minute),
+        )
+
+    reconcile(data, _nov(15, 9))
+    parcels = {frozenset(p.origins): p.auto_merged for p in data.parcels.values()}
+
+    assert not reconcile(data, _nov(15, 9)).removed
+    assert {frozenset(p.origins): p.auto_merged for p in data.parcels.values()} == (
+        parcels
+    )
+
+
+def test_one_reconcile_weighs_a_stem_again_after_the_order_s_e_mails_move() -> None:
+    """An e-mail placed by the shipment's stem is weighed again once the
+    order's e-mails have moved, in the same reconcile, so a second has
+    nothing to do."""
+    data = ParcelsData()
+    mails = [
+        (
+            "msg:s0#0",
+            MailKind.ORDER,
+            _nov(10, 11),
+            {"number": f"{PAACK_STEM}_1", "orders": ["#1002"]},
+        ),
+        (
+            "msg:s1#0",
+            MailKind.ORDER,
+            _nov(10, 16),
+            {"number": f"{PAACK_STEM}_2", "orders": ["#1001"]},
+        ),
+        (
+            "msg:s2#0",
+            MailKind.ORDER,
+            _nov(12, 22),
+            {"merchant": "Loja Exemplo", "orders": ["#1001", "#1002"]},
+        ),
+        (
+            "msg:s3#0",
+            MailKind.ORDER,
+            _nov(10, 1),
+            {"reference": PAACK_STEM, "orders": ["#1001"]},
+        ),
+        ("msg:s4#0", MailKind.DELIVERED, _nov(10, 21), {"number": f"{PAACK_STEM}_2"}),
+    ]
+    for minute, (origin_id, kind, sent, fields) in enumerate(mails, 1):
+        carrier = "paack" if "number" in fields or "reference" in fields else None
+        _apply(
+            data,
+            contribution(
+                origin_id,
+                kind=kind,
+                time=sent,
+                carrier=carrier,
+                label=SELLER_SHOP,
+                **fields,
+            ),
+            _nov(14, 9, minute),
+        )
+
+    reconcile(data, _nov(17, 9))
+    parcels = {
+        frozenset(p.origins): (p.state.status, p.auto_merged)
+        for p in data.parcels.values()
+    }
+
+    assert not reconcile(data, _nov(17, 9)).removed
+    assert {
+        frozenset(p.origins): (p.state.status, p.auto_merged)
+        for p in data.parcels.values()
+    } == parcels
+
+
+# Two packages of a Paack shipment, and e-mails with only its stem, by hour.
+PAACK_MAILS = {
+    "one": ("msg:q1#0", 8, {"number": f"{PAACK_STEM}_1"}),
+    "stem": ("msg:q2#0", 9, {"reference": PAACK_STEM}),
+    "two": ("msg:q3#0", 10, {"number": f"{PAACK_STEM}_2"}),
+    "stem2": ("msg:q4#0", 11, {"reference": PAACK_STEM}),
+}
+
+
+def _read_paack(
+    order: Iterable[str], delivered: Collection[str] = ()
+) -> tuple[ParcelsData, Reconciled]:
+    """Read the e-mails in this order, a minute apart, then reconcile.
+
+    The store is saved and loaded in between, as after a restart.
+    """
+    data = ParcelsData()
+    for step, name in enumerate(order):
+        origin_id, hour, fields = PAACK_MAILS[name]
+        kind = MailKind.DELIVERED if name in delivered else MailKind.IN_TRANSIT
+        _apply(
+            data,
+            _paack(origin_id, _nov(10, hour), kind=kind, **fields),
+            _nov(10, 12, step),
+        )
+    data = ParcelsData.from_dict(data.as_dict())
+    return data, reconcile(data, _nov(10, 13))
+
+
+def _partition(data: ParcelsData) -> set[frozenset[str]]:
+    return {frozenset(parcel.origins) for parcel in data.parcels.values()}
+
+
+def _holder(data: ParcelsData, origin_id: str) -> Parcel:
+    return next(p for p in data.parcels.values() if origin_id in p.origins)
+
+
+def _same_reference_suggestions(
+    result: Reconciled,
+) -> list[tuple[str, tuple[str, ...]]]:
+    assert {s.reason for s in result.suggestions} <= {REASON_SAME_REFERENCE}
+    return sorted((s.parcel_id, s.candidates) for s in result.suggestions)
+
+
+@pytest.mark.parametrize("order", list(permutations(("one", "stem", "two"))))
+def test_paack_stem_ends_the_same_in_any_reading_order(order: tuple[str, ...]) -> None:
+    """Which package a stem's e-mail joins doesn't depend on the reading order.
+
+    Both packages were on their way when it was sent: each gets a suggestion.
+    """
+    data, result = _read_paack(order)
+
+    assert _partition(data) == {
+        frozenset({"msg:q1#0"}),
+        frozenset({"msg:q2#0"}),
+        frozenset({"msg:q3#0"}),
+    }
+    one, stem, two = (_holder(data, f"msg:q{n}#0").id for n in (1, 2, 3))
+    expected = sorted([(one, (stem,)), (two, (stem,))])
+    assert _same_reference_suggestions(result) == expected
+    assert all(parcel.auto_merged is None for parcel in data.parcels.values())
+
+    again = reconcile(data, _nov(10, 14))
+    assert not again.removed
+    assert len(data.parcels) == 3
+    assert _same_reference_suggestions(again) == expected
+
+
+@pytest.mark.parametrize("order", list(permutations(("one", "stem", "two"))))
+def test_paack_stem_joins_the_package_open_when_sent(order: tuple[str, ...]) -> None:
+    """Package one was delivered before the stem's e-mail: it's about two.
+
+    In any reading order, as a guess the user can undo.
+    """
+    data, _ = _read_paack(order, delivered={"one"})
+
+    assert _partition(data) == {
+        frozenset({"msg:q1#0"}),
+        frozenset({"msg:q2#0", "msg:q3#0"}),
+    }
+    two = _holder(data, "msg:q3#0")
+    assert two.auto_merged is not None
+    assert two.auto_merged.reason == REASON_SAME_REFERENCE
+    assert two.auto_merged.all_origins == {"msg:q2#0"}
+    assert not reconcile(data, _nov(10, 14)).removed
+    assert two.auto_merged.all_origins == {"msg:q2#0"}
+
+    undo_auto_merge(data, two.id, _nov(10, 15))
+    result = reconcile(data, _nov(10, 16))
+
+    # Not this one: the stem doesn't fall to the package delivered before.
+    assert len(data.parcels) == 3
+    one, stem = _holder(data, "msg:q1#0").id, _holder(data, "msg:q2#0").id
+    assert _same_reference_suggestions(result) == [(one, (stem,))]
+
+
+@pytest.mark.parametrize("order", list(permutations(PAACK_MAILS)))
+def test_paack_stems_stay_together_in_any_reading_order(
+    order: tuple[str, ...],
+) -> None:
+    """E-mails with only the stem stay together, whichever was read first."""
+    data, _ = _read_paack(order)
+
+    assert _partition(data) == {
+        frozenset({"msg:q1#0"}),
+        frozenset({"msg:q3#0"}),
+        frozenset({"msg:q2#0", "msg:q4#0"}),
+    }
+
+
+@pytest.mark.parametrize("order", [("one", "stem", "two"), ("stem", "one", "two")])
+def test_paack_stem_merged_by_the_user_stays(order: tuple[str, ...]) -> None:
+    """A suggestion the user accepted isn't taken back when reconciling."""
+    data, _ = _read_paack(order)
+    one, stem = _holder(data, "msg:q1#0").id, _holder(data, "msg:q2#0").id
+
+    accept_suggestion(data, one, stem, _nov(10, 14))
+    result = reconcile(data, _nov(10, 15))
+
+    assert not result.removed
+    assert result.suggestions == []
+    assert _holder(data, "msg:q2#0").id == one
+    assert data.parcels[one].auto_merged is None
+
+
+def test_paack_stem_stays_in_a_package_the_user_merged_into() -> None:
+    """Accepting a merge into a package keeps the stem's e-mail it holds.
+
+    Even once a second package with the stem shows up.
+    """
+    data = ParcelsData()
+    one = _apply(
+        data, _paack("msg:q1#0", _nov(10, 8), number=f"{PAACK_STEM}_1"), _nov(10, 12)
+    )
+    stem = _paack("msg:q2#0", _nov(10, 9), reference=PAACK_STEM)
+    assert _apply(data, stem, _nov(10, 12, 1)) == one
+    order = _apply(
+        data,
+        contribution(
+            "msg:o1#0",
+            kind=MailKind.ORDER,
+            time=_nov(10, 7),
+            merchant="Amazon",
+            orders=(ORDER_1,),
+            label="amazon.es",
+        ),
+        _nov(10, 12, 2),
+    )
+
+    accept_suggestion(data, one, order, _nov(10, 12, 3))
+    _apply(
+        data,
+        _paack("msg:q3#0", _nov(10, 10), number=f"{PAACK_STEM}_2"),
+        _nov(10, 12, 4),
+    )
+    result = reconcile(data, _nov(10, 13))
+
+    assert _holder(data, "msg:q2#0").id == one
+    assert result.suggestions == []
+
+
+@pytest.mark.parametrize("order", [("one", "stem", "two"), ("stem", "one", "two")])
+def test_paack_stem_guess_the_user_kept_stays(order: tuple[str, ...]) -> None:
+    """Once the user keeps the guess, reconciling doesn't flag it again."""
+    data, _ = _read_paack(order, delivered={"one"})
+    two = _holder(data, "msg:q3#0")
+
+    update_parcel(data, two.id, {"confirm_merge": True}, _nov(10, 14))
+    reconcile(data, _nov(10, 15))
+
+    assert two.auto_merged is None
+    assert _holder(data, "msg:q2#0") is two
+
+
+def test_paack_stem_parcel_the_user_merged_stays() -> None:
+    """Parcels the user merged stay merged, the stem's e-mails included."""
+    data, _ = _read_paack(("one", "stem", "two"), delivered={"one"})
+    two = _holder(data, "msg:q3#0")
+    other = _apply(
+        data,
+        _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(10, 8, 30)),
+        _nov(10, 14),
+    )
+
+    merge_by_hand(data, other, [two.id], _nov(10, 14))
+    reconcile(data, _nov(10, 15))
+
+    assert _partition(data) == {
+        frozenset({"msg:q1#0"}),
+        frozenset({"msg:c1#0", "msg:q2#0", "msg:q3#0"}),
+    }
+
+
+@pytest.mark.parametrize("accept", [False, True], ids=["by-hand", "suggestion"])
+def test_merging_parcels_kept_apart_forgets_the_pair(accept: bool) -> None:
+    """The user's merge undoes their "keep apart", once and for all.
+
+    Even when an e-mail of one side has since gone to a parcel of its own.
+    """
+    data = ParcelsData()
+    box = _apply(data, _ctt("msg:a1#0", CTT_1, MailKind.SHIPPED, _nov(10, 9)))
+    other = _apply(data, _ctt("msg:a2#0", CTT_2, MailKind.SHIPPED, _nov(10, 10)))
+    order = _apply(data, _amazon("msg:b1#0", ORDER_1, _nov(10, 8), None))
+    data.engine[KEPT_APART] = [[["msg:a1#0", "msg:a2#0"], ["msg:b1#0"]]]
+
+    if accept:
+        accept_suggestion(data, box, order, _nov(10, 12))
+    else:
+        merge_by_hand(data, box, [order], _nov(10, 12))
+    reconcile(data, _nov(10, 13))
+
+    assert _partition(data) == {
+        frozenset({"msg:a1#0", "msg:b1#0"}),
+        frozenset({"msg:a2#0"}),
+    }
+    assert other in data.parcels
+    assert KEPT_APART not in data.engine
+
+
+@pytest.mark.parametrize("order", list(permutations(range(3))))
+def test_paack_stem_from_a_shop_ends_the_same_in_any_reading_order(
+    order: tuple[int, ...],
+) -> None:
+    """A shop that relays Paack's notices: its rule holds in any order.
+
+    The shop's e-mail with only the stem came before both packages' notices,
+    so its parcel joins the first shipment that followed, as a guess.
+    """
+    mails = [
+        contribution(
+            "msg:s1#0",
+            kind=MailKind.ORDER,
+            time=_nov(10, 8),
+            carrier="paack",
+            number=f"{PAACK_STEM}_1",
+            label=SHOP,
+        ),
+        contribution(
+            "msg:s2#0",
+            kind=MailKind.ORDER,
+            time=_nov(9, 18),
+            carrier="paack",
+            reference=PAACK_STEM,
+            label=SHOP,
+        ),
+        contribution(
+            "msg:s3#0",
+            kind=MailKind.ORDER,
+            time=_nov(13, 2),
+            carrier="paack",
+            number=f"{PAACK_STEM}_2",
+            label=SHOP,
+        ),
+    ]
+    data = ParcelsData()
+    for step, index in enumerate(order):
+        _apply(data, mails[index], _nov(13, 9, step))
+
+    reconcile(data, _nov(13, 10))
+
+    assert _partition(data) == {
+        frozenset({"msg:s1#0", "msg:s2#0"}),
+        frozenset({"msg:s3#0"}),
+    }
+    first = _holder(data, "msg:s1#0")
+    assert first.auto_merged is not None
+    assert first.auto_merged.reason == REASON_SAME_MERCHANT_DOMAIN
+    assert first.auto_merged.all_origins == {"msg:s2#0"}
+
+
+S10 = "RR482915732PT"
+S10_OTHER = "RR123456785PT"
+DPD = "05212345678901"
+SELLER_NAME = "Loja Exemplo"
+
+# A shop's e-mails about one order: (kind, hour on 10 November, details).
+Mail = tuple[MailKind, int, dict[str, Any]]
+
+
+def _in_any_order(mails: list[Mail]) -> list[tuple[int, ...]]:
+    return list(permutations(range(len(mails))))
+
+
+def _read_into(mails: list[Mail], order: tuple[int, ...]) -> ParcelsData:
+    """Read the e-mails in ``order``, then look at the parcels again."""
+    data = ParcelsData()
+    for step, index in enumerate(order):
+        kind, hour, details = mails[index]
+        apply_contribution(
+            data,
+            contribution(
+                f"msg:t{index}#0",
+                kind=kind,
+                time=_nov(10, hour),
+                label=SELLER_SHOP,
+                **details,
+            ),
+            _nov(13, 9, step),
+        )
+    reconcile(data, _nov(13, 10))
+    return data
+
+
+def _outcome(data: ParcelsData) -> dict[frozenset[int], str]:
+    """Return each parcel's e-mails and status."""
+    return {
+        frozenset(int(oid.removeprefix("msg:t")[:-2]) for oid in parcel.origins): (
+            parcel.state.status
+        )
+        for parcel in data.parcels.values()
+    }
+
+
+def _read(mails: list[Mail], order: tuple[int, ...]) -> dict[frozenset[int], str]:
+    """Read the e-mails in ``order``; return each parcel's e-mails and status."""
+    return _outcome(_read_into(mails, order))
+
+
+CANCELLED_ORDER: list[Mail] = [
+    (MailKind.ORDER, 8, {"orders": (ORDER_1,)}),
+    (MailKind.CANCELLED, 13, {"orders": (ORDER_1,)}),
+]
+CANCELLED_ITEM: list[Mail] = [
+    (MailKind.ORDER, 8, {"orders": (ORDER_1,), "items": (LAMP,)}),
+    (MailKind.ORDER, 9, {"orders": (ORDER_1,), "items": (POT,)}),
+    (MailKind.CANCELLED, 13, {"orders": (ORDER_1,), "items": (POT,)}),
+]
+CANCELLED_SHIPMENT: list[Mail] = [
+    (MailKind.CANCELLED, 8, {"carrier": "paack", "reference": PAACK_STEM}),
+    (MailKind.ORDER, 10, {"carrier": "paack", "number": f"{PAACK_STEM}_1"}),
+]
+CANCELLED_SHIPMENT_LATER: list[Mail] = [
+    (MailKind.ORDER, 8, {"carrier": "paack", "number": f"{PAACK_STEM}_1"}),
+    (MailKind.CANCELLED, 10, {"carrier": "paack", "reference": PAACK_STEM}),
+]
+
+
+@pytest.mark.parametrize(
+    ("mails", "expected"),
+    [
+        (CANCELLED_ORDER, {frozenset({0, 1}): ParcelStatus.CANCELLED}),
+        (
+            CANCELLED_ITEM,
+            {
+                frozenset({0}): ParcelStatus.ORDERED,
+                frozenset({1, 2}): ParcelStatus.CANCELLED,
+            },
+        ),
+        (CANCELLED_SHIPMENT, {frozenset({0, 1}): ParcelStatus.CANCELLED}),
+        (CANCELLED_SHIPMENT_LATER, {frozenset({0, 1}): ParcelStatus.CANCELLED}),
+    ],
+    ids=["order", "item", "shipment", "shipment-later"],
+)
+def test_a_cancellation_cancels_its_order_in_any_reading_order(
+    mails: list[Mail], expected: dict[frozenset[int], str]
+) -> None:
+    """A cancellation read before its order isn't lost: the order joins it."""
+    for order in _in_any_order(mails):
+        assert _read(mails, order) == expected, order
+
+
+DELIVERED_FIRST: list[Mail] = [
+    (MailKind.DELIVERED, 8, {"orders": (ORDER_1,)}),
+    (MailKind.ORDER, 11, {"carrier": "ctt", "number": S10, "orders": (ORDER_1,)}),
+]
+DELIVERED_ITEM: list[Mail] = [
+    (MailKind.ORDER, 8, {"carrier": "ctt", "number": S10, "orders": (ORDER_1,)}),
+    (MailKind.DELIVERED, 11, {"orders": (ORDER_1,), "items": (LAMP,)}),
+]
+DELIVERED_TWICE: list[Mail] = [
+    (MailKind.DELIVERED, 8, {"carrier": "ctt", "number": S10, "orders": (ORDER_1,)}),
+    (MailKind.DELIVERED, 9, {"orders": (ORDER_1,)}),
+]
+
+
+@pytest.mark.parametrize(
+    ("mails", "expected"),
+    [
+        (
+            DELIVERED_FIRST,
+            {
+                frozenset({0}): ParcelStatus.DELIVERED,
+                frozenset({1}): ParcelStatus.ORDERED,
+            },
+        ),
+        (DELIVERED_ITEM, {frozenset({0, 1}): ParcelStatus.DELIVERED}),
+        (DELIVERED_TWICE, {frozenset({0, 1}): ParcelStatus.DELIVERED}),
+    ],
+    ids=["before-its-package", "with-items", "twice"],
+)
+def test_a_delivery_without_a_number_ends_the_same_in_any_reading_order(
+    mails: list[Mail], expected: dict[frozenset[int], str]
+) -> None:
+    """A shop's "delivered" e-mail joins the order's only package, even one
+    already delivered, but never a package first heard of after it."""
+    for order in _in_any_order(mails):
+        assert _read(mails, order) == expected, order
+
+
+@pytest.mark.parametrize(
+    "key",
+    [{"orders": ("#1002",)}, {"reference": "ENV0001"}],
+    ids=["order-number", "shipment-reference"],
+)
+def test_a_shop_named_in_a_later_email_ends_the_same_in_any_reading_order(
+    key: dict[str, Any],
+) -> None:
+    """A short number is the shop's: its e-mails join once one names it."""
+    mails: list[Mail] = [
+        (MailKind.ORDER, 8, {"merchant": SELLER_NAME, **key}),
+        (MailKind.ORDER, 9, key),
+    ]
+    for order in _in_any_order(mails):
+        assert _read(mails, order) == {frozenset({0, 1}): ParcelStatus.ORDERED}, order
+
+
+ORDER_THEN_PACKAGES: list[Mail] = [
+    (MailKind.ORDER, 8, {"orders": (ORDER_1,)}),
+    (
+        MailKind.ORDER,
+        9,
+        {"carrier": "ctt", "number": S10, "orders": (ORDER_1,), "items": (LAMP,)},
+    ),
+    (
+        MailKind.ORDER,
+        10,
+        {"carrier": "dpd", "number": DPD, "orders": (ORDER_1,), "items": (POT,)},
+    ),
+]
+ORDER_BETWEEN_ITEMS: list[Mail] = [
+    (MailKind.ORDER, 9, {"orders": (ORDER_1,), "items": (LAMP,)}),
+    (MailKind.ORDER, 10, {"orders": (ORDER_1,)}),
+    (MailKind.ORDER, 11, {"orders": (ORDER_1,), "items": (POT,)}),
+]
+ORDER_BETWEEN_PACKAGES: list[Mail] = [
+    (MailKind.ORDER, 8, {"carrier": "dpd", "number": DPD, "orders": (ORDER_1,)}),
+    (MailKind.ORDER, 9, {"orders": (ORDER_1,)}),
+    (MailKind.ORDER, 10, {"carrier": "ctt", "number": S10, "orders": (ORDER_1,)}),
+]
+
+
+@pytest.mark.parametrize(
+    "mails",
+    [ORDER_THEN_PACKAGES, ORDER_BETWEEN_ITEMS, ORDER_BETWEEN_PACKAGES],
+    ids=["then-packages", "between-items", "between-packages"],
+)
+def test_an_order_email_joins_the_same_package_in_any_reading_order(
+    mails: list[Mail],
+) -> None:
+    """An order's e-mail that fits several of its packages joins the one last
+    heard of before it was sent, or the first heard of after it."""
+    expected = {
+        frozenset({0, 1}): ParcelStatus.ORDERED,
+        frozenset({2}): ParcelStatus.ORDERED,
+    }
+    for order in _in_any_order(mails):
+        assert _read(mails, order) == expected, order
+
+
+def test_an_order_email_takes_the_local_ai_s_fill_along() -> None:
+    """The date the local AI filled in for an order's e-mail goes with it."""
+    fill = fill_contribution(
+        Suggestion(kind=MailKind.ORDER, eta_start=date(2026, 11, 12)),
+        message_hash="t0",
+        time=_nov(10, 8),
+        label=SELLER_SHOP,
+    )
+    assert fill is not None
+    mails = ORDER_THEN_PACKAGES
+    for order in _in_any_order(mails):
+        data = ParcelsData()
+        for step, index in enumerate(order):
+            kind, hour, details = mails[index]
+            mail = contribution(
+                f"msg:t{index}#0",
+                kind=kind,
+                time=_nov(10, hour),
+                label=SELLER_SHOP,
+                **details,
+            )
+            apply_contribution(data, mail, _nov(13, 9, step))
+            if index == 0:
+                apply_contribution(data, fill, _nov(13, 9, step) + _SECONDS_30)
+        reconcile(data, _nov(13, 10))
+
+        assert _partition(data) == {
+            frozenset({"msg:t0#0", "msg:t0#ai", "msg:t1#0"}),
+            frozenset({"msg:t2#0"}),
+        }, order
+
+
+def test_a_shipment_reference_joins_its_order_in_any_reading_order() -> None:
+    """An e-mail with an order and Paack's shipment joins them both."""
+    mails: list[Mail] = [
+        (MailKind.ORDER, 8, {"orders": (ORDER_1,)}),
+        (MailKind.ORDER, 8, {"carrier": "paack", "number": f"{PAACK_STEM}_1"}),
+        (
+            MailKind.ORDER,
+            8,
+            {"carrier": "paack", "reference": PAACK_STEM, "orders": (ORDER_1,)},
+        ),
+    ]
+    for order in _in_any_order(mails):
+        assert _read(mails, order) == {frozenset({0, 1, 2}): ParcelStatus.ORDERED}, (
+            order
+        )
+
+
+def _two_packages(out_hour: int, delivered_hour: int) -> list[Mail]:
+    """Return an order's e-mails: its lamp's package is delivered and its
+    pot's is out for delivery when the shop says the order was delivered."""
+    return [
+        (MailKind.ORDER, 8, {"orders": (ORDER_1,), "items": (LAMP, POT)}),
+        (
+            MailKind.SHIPPED,
+            9,
+            {"carrier": "ctt", "number": S10, "orders": (ORDER_1,), "items": (LAMP,)},
+        ),
+        (
+            MailKind.SHIPPED,
+            10,
+            {
+                "carrier": "ctt",
+                "number": S10_OTHER,
+                "orders": (ORDER_1,),
+                "items": (POT,),
+            },
+        ),
+        (
+            MailKind.OUT_FOR_DELIVERY,
+            out_hour,
+            {"carrier": "ctt", "number": S10_OTHER, "orders": (ORDER_1,)},
+        ),
+        (MailKind.DELIVERED, delivered_hour, {"carrier": "ctt", "number": S10}),
+        (
+            MailKind.DELIVERED,
+            13,
+            {"orders": (ORDER_1,), "carrier": "ctt", "source": Source.AI},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("out_hour", "delivered_hour"),
+    [(11, 12), (12, 11)],
+    ids=["out-first", "delivered-first"],
+)
+def test_a_delivery_without_a_number_closes_the_open_package_in_any_reading_order(
+    out_hour: int, delivered_hour: int
+) -> None:
+    """A shop's "delivered" e-mail naming only the order ends with the
+    package still on its way when it was sent, not with one delivered
+    before, and looking again doesn't move it."""
+    mails = _two_packages(out_hour, delivered_hour)
+    for order in _in_any_order(mails):
+        data = _read_into(mails, order)
+        outcome = _outcome(data)
+        holder = next(origins for origins in outcome if 5 in origins)
+        assert len(outcome) == 2, order
+        assert set(outcome.values()) == {ParcelStatus.DELIVERED}, order
+        assert {2, 3} <= holder, order
+        assert not holder & {1, 4}, order
+        assert not reconcile(data, _nov(13, 11)).changed, order
+
+
+def test_a_delivery_without_a_number_stays_put_when_two_packages_are_open() -> None:
+    """With both packages on their way, the shop's "delivered" e-mail stays
+    where it was read into, looking again doesn't move it, and one left on
+    its own is suggested for each package."""
+    packages = _two_packages(11, 12)
+    mails = [*packages[:3], packages[5]]
+    for order in _in_any_order(mails):
+        data = _read_into(mails, order)
+        again = reconcile(data, _nov(13, 11))
+        delivery = _holder(data, "msg:t3#0")
+        packages = [_holder(data, f"msg:t{index}#0") for index in (1, 2)]
+        assert not again.changed, order
+        assert packages[0] is not packages[1], order
+        assert delivery.state.status is ParcelStatus.DELIVERED, order
+        suggested = {
+            (suggestion.parcel_id, suggestion.candidates, suggestion.reason)
+            for suggestion in again.suggestions
+        }
+        if all(delivery is not package for package in packages):
+            assert suggested == {
+                (package.id, (delivery.id,), REASON_SAME_ORDER) for package in packages
+            }, order
+        else:
+            assert not suggested, order
 
 
 DAY_20 = date(2026, 11, 20)

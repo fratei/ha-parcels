@@ -6,8 +6,8 @@ import "./dom.ts";
 import type { TemplateResult } from "lit";
 
 import { ParcelsDetailsDialog } from "../src/details-dialog.ts";
-import { normalizeSnapshot } from "../src/normalize.ts";
-import type { Parcel, Snapshot } from "../src/types.ts";
+import { normalizeDetails, normalizeSnapshot } from "../src/normalize.ts";
+import type { Parcel, ParcelDetails, Snapshot } from "../src/types.ts";
 import { makeParcel } from "./helpers.ts";
 import { listener, renderText } from "./render.ts";
 
@@ -17,6 +17,7 @@ interface DetailsHost {
   _open: boolean;
   _busy: boolean;
   _parcelId: string | null;
+  _details: ParcelDetails | null;
   _renderView(parcel: Parcel): TemplateResult;
   _renderActions(parcel: Parcel): TemplateResult;
   _undoDelivery(): void;
@@ -90,6 +91,43 @@ describe("a delivery marked by hand", () => {
     const view = host._renderView(inferred);
     assert.equal(listener(view, "Undo the inferred delivery of Example Shop"), host._undoDelivery);
     assert.equal(listener(view, "Keep the inferred delivery of Example Shop"), host._keepInferred);
+  });
+});
+
+describe("an automatic merge", () => {
+  const merged = makeParcel({
+    id: "p2",
+    merchant: "Example Shop",
+    status: "delivered",
+    auto_merged: { origin: "o2", at: "2030-03-04T10:42:00+00:00", reason: "same_order" },
+  });
+
+  function loaded(parcelId: string, differ: boolean): ParcelDetails | null {
+    return normalizeDetails({ parcel: { id: parcelId }, merged_items_differ: differ });
+  }
+
+  test("says when its e-mails list different items", () => {
+    const host = dialog(merged);
+    const plain = /Merged automatically \(same order\)\. Check that it's one parcel\./;
+    assert.match(renderText(host._renderView(merged)), plain);
+    host._details = loaded("p2", false);
+    assert.match(renderText(host._renderView(merged)), plain);
+    host._details = loaded("p2", true);
+    assert.match(
+      renderText(host._renderView(merged)),
+      /Merged automatically \(same order\), though its e-mails list different items\. Check that it's one parcel\./,
+    );
+    const unknown = { ...merged, auto_merged: { origin: "o2", at: "2030-03-04T10:42:00+00:00", reason: "" } };
+    assert.match(
+      renderText(host._renderView(unknown)),
+      /Merged automatically, though its e-mails list different items\. Check that it's one parcel\./,
+    );
+  });
+
+  test("goes by the details of the parcel shown", () => {
+    const host = dialog(merged);
+    host._details = loaded("p1", true);
+    assert.doesNotMatch(renderText(host._renderView(merged)), /different items/);
   });
 });
 

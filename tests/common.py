@@ -238,6 +238,18 @@ async def async_wait_for_mail(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
 
+async def async_wait_reprocess(hass: HomeAssistant) -> None:
+    """Wait for the e-mails of a trusted sender to be read again."""
+    await asyncio.gather(
+        *(
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name().startswith("parcels reprocess")
+        )
+    )
+    await hass.async_block_till_done()
+
+
 async def async_setup_parcels(hass: HomeAssistant) -> ParcelsEngine:
     """Load every Parcels entry and read the mail; return the hub's engine.
 

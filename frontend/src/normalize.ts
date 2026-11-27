@@ -239,6 +239,7 @@ export function normalizeReviewItem(raw: unknown): ReviewItem | null {
     authenticated: raw.authenticated === true,
     trusted_sender: raw.trusted_sender === true,
     known_sender: raw.known_sender === true,
+    free_mail: raw.free_mail === true,
     checks: senderChecks(raw.checks),
     fill: raw.fill === true,
     errors: checkCodes(raw.errors),
@@ -535,5 +536,6 @@ export function normalizeDetails(raw: unknown): ParcelDetails | null {
     origins: list(raw.origins, originInfo),
     contradicted: list(raw.contradicted, id),
     elsewhere: list(raw.elsewhere, id),
+    merged_items_differ: raw.merged_items_differ === true,
   };
 }

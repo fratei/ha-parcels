@@ -35,6 +35,7 @@ from .dedup import (
     first_news,
     hand_delivery_events,
     is_shop_sender,
+    items_differ,
     manual_origin_id,
     order_parcels,
     ordered_at,
@@ -58,7 +59,7 @@ from .models import (
     merchant_key,
     time_to_str,
 )
-from .parsers.senders import lookup, organizational_domain
+from .parsers.senders import is_free_mail, lookup, organizational_domain
 from .parsers.tracking import tracking_url
 
 if TYPE_CHECKING:
@@ -91,6 +92,22 @@ class Viewer:
         if owners:
             return not self.persons.isdisjoint(owners)
         return self.is_admin
+
+    def owns_private(self, parcel: Parcel) -> bool:
+        """Return True when a parcel is private to the user, among others."""
+        return parcel.private and not self.persons.isdisjoint(parcel.state.owners)
+
+    def may_decide(self, first: Parcel, second: Parcel) -> bool:
+        """Return True when the user may merge two parcels or keep them apart.
+
+        Administrators decide about the parcels they see; the owners of a
+        private parcel decide about it too.
+        """
+        return (
+            self.can_see(first)
+            and self.can_see(second)
+            and (self.is_admin or self.owns_private(first) or self.owns_private(second))
+        )
 
     def can_see_return(self, entry: ReturnEntry, linked: Iterable[Parcel]) -> bool:
         """Return True when the user may see a return's details.
@@ -496,7 +513,9 @@ def review_json(
         "authenticated": item.authenticated,
         "trusted_sender": not item.authenticated
         and organizational_domain(item.sender_domain) in trusted,
-        "known_sender": lookup(item.sender_domain) is not None,
+        "known_sender": item.known_sender,
+        # Neither trusted nor ignored: anyone can write from there.
+        "free_mail": is_free_mail(item.sender_domain),
         "checks": item.checks,
         "fill": item.fill,
         "errors": list(item.errors),
@@ -525,8 +544,8 @@ def suggestion_json(
 ) -> dict[str, Any] | None:
     """Return a merge suggestion with its parcels, or None to leave it out.
 
-    The parcels are included because they may be archived, and only the
-    parcels the user may see are.
+    The parcels are included because they may be archived. Only the
+    candidates the user may decide about are, see ``Viewer.may_decide``.
     """
     parcels = engine.data.parcels
     target = parcels.get(item.parcel_id)
@@ -535,7 +554,7 @@ def suggestion_json(
     candidates = [
         parcels[parcel_id]
         for parcel_id in item.candidates
-        if parcel_id in parcels and viewer.can_see(parcels[parcel_id])
+        if parcel_id in parcels and viewer.may_decide(target, parcels[parcel_id])
     ]
     if not candidates:
         return None
@@ -610,18 +629,17 @@ def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
     hass = engine.hass
     review: list[dict[str, Any]] = []
     filtered: list[dict[str, Any]] = []
-    suggestions: list[dict[str, Any]] = []
     ignored: list[dict[str, Any]] = []
+    suggestions = [
+        found
+        for item in engine.suggestions
+        if (found := suggestion_json(engine, item, viewer)) is not None
+    ]
     if viewer.is_admin:
         ignored = [
             {"domain": prefs.domain, "updated": dt_to_str(prefs.updated)}
             for prefs in sorted(data.senders.values(), key=lambda p: p.domain)
             if prefs.ignored
-        ]
-        suggestions = [
-            found
-            for item in engine.suggestions
-            if (found := suggestion_json(engine, item, viewer)) is not None
         ]
         trusted = frozenset(data.trusted_domains())
         review = [
@@ -674,6 +692,8 @@ def _timeline_source(entry: TimelineEntry) -> str:
 def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, Any]:
     """Return a parcel with its timeline, orders and origins.
 
+    "merged_items_differ" says that the e-mails an automatic merge joined
+    list other items than the rest of the parcel's e-mails.
     "contradicted" lists the parcels the viewer may see that Amazon's
     tracking rules out as the same package: one is an Amazon shipment and
     the other a carrier's package delivered at another time. "elsewhere"
@@ -735,6 +755,7 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
         "timeline": timeline,
         "orders": orders,
         "origins": origin_rows(engine, parcel, viewer),
+        "merged_items_differ": _merged_items_differ(engine, parcel),
         "contradicted": contradicted,
         "elsewhere": sorted(
             amazon_elsewhere(data, parcel, viewer.can_see).difference(
@@ -742,6 +763,23 @@ def details(engine: ParcelsEngine, parcel: Parcel, viewer: Viewer) -> dict[str, 
             )
         ),
     }
+
+
+def _merged_items_differ(engine: ParcelsEngine, parcel: Parcel) -> bool:
+    """Return True when an automatic merge's e-mails list other items.
+
+    What the local AI filled in for an e-mail goes with that e-mail.
+    """
+    if (flag := parcel.auto_merged) is None:
+        return False
+    merged = flag.all_origins
+    parts = _email_parts(parcel)
+    joined: list[str] = []
+    rest: list[str] = []
+    for origin_id, origin in parcel.origins.items():
+        lead = parts.get(origin_id, origin_id)
+        (joined if lead in merged or origin_id in merged else rest).extend(origin.items)
+    return items_differ(joined, rest, engine.data.parcels.values())
 
 
 def _origin_news(

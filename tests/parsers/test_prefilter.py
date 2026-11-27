@@ -11,10 +11,14 @@ from custom_components.parcels.parsers.prefilter import (
     MARKETING_PHRASES,
     STRONG_KEYWORDS,
     WEAK_KEYWORDS,
+    feedback_topic,
+    has_news_words,
     has_shipping_words,
+    invoice_topic,
     is_candidate,
     known_sender_subject,
     not_shipping_topic,
+    sent_receipt,
 )
 
 UNKNOWN = "news@store.example"
@@ -486,6 +490,160 @@ def test_known_sender_subject_about_a_parcel(subject: str) -> None:
 def test_reviewing_a_delivery_choice_is_no_feedback(subject: str) -> None:
     """Reviewing an address or options, or a review of a return, isn't feedback."""
     assert not not_shipping_topic(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Como correu a sua entrega?",
+        "Diga-nos o que achou",
+        "A sua opinião é importante",
+        "Avalie a entrega do objeto RR123456785PT",
+        "Tu opinión nos importa",
+        "How did we do?",
+        "Wie zufrieden waren Sie mit uns?",
+        "Votre avis compte",
+        "Com'è andata la consegna?",
+        "Hoe was je bezorging?",
+        # A product's name in quotes doesn't hide the request.
+        'Avalie a sua compra "Candeeiro Lua"',
+    ],
+)
+def test_feedback_topic(subject: str) -> None:
+    """Requests for feedback, even naming the parcel, in each language."""
+    assert feedback_topic(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        # A status beats a request for feedback.
+        "A sua encomenda foi entregue: avalie a entrega",
+        "Your order has shipped \u2013 rate your experience",
+        # A product's name in quotes isn't the e-mail's topic.
+        'Ordered: "Customer Feedback Board" and 1 more item',
+        'Ordered: "Customer Feedback Board Deluxe Edition wit...',
+        "Bestellt: \u201eBewertungsbogen A4\u201c",
+        "Commande : \u00ab Livre d'or avis clients \u00bb",
+        "Comprovativo de entrega",
+        "Your parcel is on its way",
+        "Fatura eletrónica FT 2026A/100001",
+    ],
+)
+def test_no_feedback_topic(subject: str) -> None:
+    """A status, a quoted product name or an invoice is no request for feedback."""
+    assert not feedback_topic(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        'Ordered: "Customer Feedback Board" and 1 more item',
+        "Bestellt: \u201eUmfrage\u201c",
+    ],
+)
+def test_quoted_product_name_is_no_topic(subject: str) -> None:
+    """An order of a product named like a topic is still about the order."""
+    assert not not_shipping_topic(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Comprovativo do seu envio",
+        "Comprovativo de envio RR123456785PT",
+        "Talão de aceitação",
+        "Justificante de admisión de tu envío",
+        "Proof of postage",
+        "Ihr Einlieferungsbeleg",
+        "Preuve de dépôt de votre colis",
+        "Ricevuta di accettazione",
+        "Je verzendbewijs",
+    ],
+)
+def test_sent_receipt(subject: str) -> None:
+    """A carrier's receipt for a parcel handed in, in each language."""
+    assert sent_receipt(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Comprovativo de entrega",
+        "Comprovativo de pagamento",
+        "Your proof of delivery",
+        "Your parcel is on its way",
+        # A status beats the receipt.
+        "Comprovativo de envio: a sua encomenda foi entregue",
+    ],
+)
+def test_no_sent_receipt(subject: str) -> None:
+    """Proof of delivery or of payment isn't a receipt for a parcel handed in."""
+    assert not sent_receipt(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Fatura eletrónica FT 2026A/100001",
+        "Fatura da encomenda #1912",
+        "Your UPS invoice is ready",
+        "Ihre Rechnung zur Bestellung #100234",
+        "Votre facture pour la commande 123456",
+        "La tua fattura per l'ordine 123456",
+    ],
+)
+def test_invoice_topic(subject: str) -> None:
+    """Invoices, in each language."""
+    assert invoice_topic(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        # Customs news beats the invoice.
+        "Fatura de desalfandegamento",
+        "Invoice for customs clearance",
+        "Avalie a sua experiência com a fatura eletrónica",
+        "Your parcel is on its way",
+    ],
+)
+def test_no_invoice_topic(subject: str) -> None:
+    """Customs news and requests for feedback aren't invoices."""
+    assert not invoice_topic(subject)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A sua encomenda foi enviada.",
+        "Ihre Sendung wurde zugestellt.",
+        "O objeto aguarda o pagamento dos direitos aduaneiros.",
+        "Your package is out for delivery today.",
+        "Your order has been cancelled.",
+        "Hello Alex,\n" + "Invoice details. " * 150 + "Your parcel was delivered.",
+    ],
+)
+def test_news_words(text: str) -> None:
+    """Statuses, customs and cancellations are news about a parcel."""
+    assert has_news_words(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Sendungsnummer: 00340434618273591202\nBetrag: 6,99 EUR",
+        "Invoice for shipment 1Z999AA10123456784. Tracking number: 1Z999AA10123456784",
+        "Número de seguimento: RR123456785PT. Acompanhe o seu envio em ctt.pt.",
+        "Order number: 10045. Your invoice is attached.",
+        "Thank you for your order. Your invoice is attached.",
+        "Obrigado pela sua compra. Segue em anexo a fatura.",
+        "Your refund has been issued.",
+    ],
+)
+def test_no_news_words(text: str) -> None:
+    """Numbers' labels, links to follow a parcel, thanks and refunds aren't news."""
+    assert not has_news_words(text)
 
 
 # Subjects of e-mails that only give a delivery or pickup code, and of

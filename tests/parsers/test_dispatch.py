@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from custom_components.parcels import parsers
-from custom_components.parcels.const import MailKind
+from custom_components.parcels.const import CONFIDENCE_APPLY, MailKind
 from custom_components.parcels.parsers import (
     NOTE_KNOWN_SENDER_UNPARSED,
     parse_message,
@@ -450,6 +450,317 @@ def test_body_check_error_is_not_a_silent_skip(
     assert result.kind is MailKind.UNKNOWN
     assert result.notes == UNPARSED_NOTES
     _assert_no_content_logged(caplog, "Body check failed: RuntimeError")
+
+
+# E-mails the parsers read as news, though they're about something else:
+# surveys, review requests, a carrier's posting receipt, invoices.
+GATED = [
+    pytest.param(
+        "inqueritos@ctt.pt",
+        "ctt",
+        "Como correu a sua entrega?",
+        "Olá Alex,\n\nO objeto RR123456785PT foi entregue a 4 de novembro. "
+        "Responda a 3 perguntas sobre a entrega e ajude-nos a melhorar.\n",
+        id="ctt-survey",
+    ),
+    pytest.param(
+        "kundenservice@dhl.de",
+        "dhl",
+        "Wie zufrieden waren Sie mit uns?",
+        "Hallo Alex,\n\nIhre Sendung 00340434618273591202 wurde am 4. November "
+        "zugestellt.\nBitte nehmen Sie sich eine Minute Zeit für unsere Umfrage.\n",
+        id="dhl-survey",
+    ),
+    pytest.param(
+        "survey@ups.com",
+        "ups",
+        "How did we do?",
+        "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered on Friday. "
+        "Tell us how we did in 2 minutes.\n",
+        id="ups-survey",
+    ),
+    pytest.param(
+        "inquerito@inpost.pt",
+        "inpost",
+        "A sua opinião é importante",
+        "Olá Alex,\n\nA sua encomenda 620417393912 foi entregue no Locker "
+        "PT-LIS-01. Avalie a sua experiência em 1 minuto.\n",
+        id="inpost-survey",
+    ),
+    pytest.param(
+        "opiniao@leroymerlin.pt",
+        "leroymerlin",
+        "A sua opinião conta",
+        "Olá Alex,\n\nA sua encomenda 009919100001 foi entregue. Avalie o "
+        "Berbequim sem fios e ganhe pontos no cartão.\n",
+        id="lm-review",
+    ),
+    pytest.param(
+        "opiniao@mailing.leroymerlin.pt",
+        "leroymerlin",
+        "Diga-nos o que achou",
+        "Olá Alex,\n\nA sua encomenda 009919100001 foi entregue. Avalie o "
+        "Berbequim sem fios.\n",
+        id="lm-review-mailing",
+    ),
+    pytest.param(
+        "naoresponder@ctt.pt",
+        "ctt",
+        "Comprovativo do seu envio",
+        "Olá Alex Doe,\n\nO seu envio RR123456785PT foi aceite na Loja CTT "
+        "Exemplo a 12/11/2026.\nAcompanhe o seu envio em ctt.pt.\n\n"
+        "Obrigado por escolher os CTT.\n",
+        id="ctt-receipt",
+    ),
+    pytest.param(
+        "faturacao@ctt.pt",
+        "ctt",
+        "Fatura eletrónica FT 2026A/100001",
+        "Exmo(a). Sr(a). Alex Doe,\n\nEnviamos a fatura n.º FT 2026A/100001 "
+        "referente ao serviço de envio do objeto RR123456785PT, no valor de "
+        "4,50 €.\n",
+        id="ctt-invoice",
+    ),
+    pytest.param(
+        "rechnung@dhl.de",
+        "dhl",
+        "Ihre Rechnung zur Online-Frankierung",
+        "Hallo Alex,\n\nvielen Dank für Ihren Kauf. Rechnungsnummer "
+        "7012345678.\nSendungsnummer: 00340434618273591202\nBetrag: 6,99 EUR\n",
+        id="dhl-invoice",
+    ),
+    pytest.param(
+        "billing@ups.com",
+        "ups",
+        "Your UPS invoice is ready",
+        "Hello Alex,\n\nInvoice 0000A12B34 for shipment 1Z999AA10123456784. "
+        "Amount due: 12.40 EUR by 10 January.\n",
+        id="ups-invoice",
+    ),
+]
+
+
+@pytest.mark.parametrize(("sender", "parser", "subject", "text"), GATED)
+def test_parsed_mail_about_something_else(
+    tz: ZoneInfo, sender: str, parser: str, subject: str, text: str
+) -> None:
+    """What the parsers read from it sets no status, nor adds a parcel."""
+    message = _message(sender, subject, text=text)
+    assert parse_message(message, _verdict(message), tz) == ParseResult(
+        parser=parser, kind=MailKind.NOT_PARCEL, confidence=0.9
+    )
+
+
+def test_shop_survey_from_an_unknown_sender(tz: ZoneInfo) -> None:
+    """A shop's survey naming its delivery is no news either."""
+    message = _message(
+        "loja@store.example",
+        "Como correu a sua entrega?",
+        text=(
+            "Olá Alex,\n\nA sua encomenda #1001 foi entregue pelos CTT. Número "
+            "de seguimento: RR123456785PT. Avalie a entrega.\n"
+        ),
+    )
+    verdict = replace(_verdict(message), known=False)
+    assert parse_message(message, verdict, tz) == ParseResult(
+        parser="generic", kind=MailKind.NOT_PARCEL, confidence=0.9
+    )
+
+
+@pytest.mark.parametrize(
+    ("sender", "subject", "text", "kind"),
+    [
+        pytest.param(
+            "info@ctt.pt",
+            "Fatura de desalfandegamento",
+            "Olá Alex,\n\nO objeto RR123456785PT aguarda o pagamento dos "
+            "direitos aduaneiros.\n",
+            MailKind.CUSTOMS,
+            id="customs-invoice",
+        ),
+        pytest.param(
+            "info@ctt.pt",
+            "A sua encomenda foi entregue: avalie a entrega",
+            "Olá Alex,\n\nO objeto RR123456785PT foi entregue.\n",
+            MailKind.DELIVERED,
+            id="status-and-feedback",
+        ),
+        pytest.param(
+            "auto-confirm@amazon.com",
+            'Ordered: "Customer Feedback Board" and 1 more item',
+            "Hello Alex,\nThank you for your order. We'll send a confirmation "
+            "when your items ship.\nOrder #112-1234567-1234567\n"
+            "Arriving Friday, November 20\n",
+            MailKind.ORDER,
+            id="product-named-feedback",
+        ),
+        pytest.param(
+            "auto-confirm@amazon.com",
+            'Ordered: "Customer Feedback Board Deluxe Edition wit...',
+            "Hello Alex,\nThank you for your order. We'll send a confirmation "
+            "when your items ship.\nOrder #112-1234567-1234567\n"
+            "Arriving Friday, November 20\n",
+            MailKind.ORDER,
+            id="product-name-cut",
+        ),
+        pytest.param(
+            "auto-confirm@amazon.de",
+            "Bestellt: „Bewertungsbogen A4“",
+            "Hallo Alex,\nVielen Dank für Ihre Bestellung.\n"
+            "Bestellnr. 302-1234567-1234567\nZustellung: Freitag, 20. November\n",
+            MailKind.ORDER,
+            id="product-named-review",
+        ),
+    ],
+)
+def test_parsed_news_stays(
+    tz: ZoneInfo, sender: str, subject: str, text: str, kind: MailKind
+) -> None:
+    """Customs invoices, a status in the subject and product names stay news."""
+    message = _message(sender, subject, text=text)
+    result = parse_message(message, _verdict(message), tz)
+    assert result.kind is kind
+    assert result.confidence >= CONFIDENCE_APPLY
+
+
+@pytest.mark.parametrize(
+    ("sender", "subject", "text"),
+    [
+        pytest.param(
+            "encomendas@leroymerlin.pt",
+            "Comprovativo de envio da encomenda 001234567890",
+            "Olá Alex,\n\nA sua encomenda 001234567890 foi expedida do nosso "
+            "armazém.\n",
+            id="shop",
+        ),
+        pytest.param(
+            "loja@store.example",
+            "Comprovativo de envio da encomenda #1001",
+            "Olá Alex,\n\nA sua encomenda #1001 foi enviada pelos CTT. Número "
+            "de seguimento: RR123456785PT.\n",
+            id="unknown-shop",
+        ),
+    ],
+)
+def test_shop_proof_of_shipping_is_news(
+    tz: ZoneInfo, sender: str, subject: str, text: str
+) -> None:
+    """Only a carrier's posting receipt is about a parcel the user sends."""
+    message = _message(sender, subject, text=text)
+    result = parse_message(message, _verdict(message), tz)
+    assert result.kind is MailKind.SHIPPED
+
+
+def test_invoice_with_news_is_checked(tz: ZoneInfo) -> None:
+    """An invoice that also brings news is read, but not applied unchecked."""
+    message = _message(
+        "billing@ups.com",
+        "Your UPS invoice is ready",
+        text=(
+            "Hello Alex,\n\nInvoice 0000A12B34 for shipment 1Z999AA10123456784. "
+            "Your package is out for delivery today.\n"
+        ),
+    )
+    result = parse_message(message, _verdict(message), tz)
+    assert result.kind is MailKind.OUT_FOR_DELIVERY
+    assert [shipment.tracking_number for shipment in result.shipments] == [
+        "1Z999AA10123456784"
+    ]
+    assert result.confidence < CONFIDENCE_APPLY
+
+
+@pytest.mark.parametrize(
+    ("sender", "subject", "text", "parser"),
+    [
+        pytest.param(
+            "noreply@dpd.pt",
+            "Fatura e envio da encomenda n.º 123456",
+            "Olá Alex,\n\nA sua encomenda n.º 123456 foi enviada. Segue em anexo "
+            "a fatura.\n",
+            "dpd",
+            id="shipped",
+        ),
+        pytest.param(
+            "noreply@dpd.pt",
+            "Fatura e envio da encomenda n.º 44550123",
+            "A sua encomenda n.º 44550123 foi enviada hoje. Segue a fatura em anexo.",
+            "dpd",
+            id="shipped-today",
+        ),
+        pytest.param(
+            "noreply@dhl.de",
+            "Ihre Rechnung 4711",
+            "Hallo Alex,\nIhre Bestellung Nr. 44550123 wird beim Zoll festgehalten. "
+            "Anbei die Rechnung.\n",
+            "dhl",
+            id="held-at-customs-de",
+        ),
+        pytest.param(
+            "noreply@dhl.de",
+            "Ihre Rechnung 4711",
+            "Hallo Alex,\nFür Ihre Bestellung Nr. 44550123 ist die "
+            "Einfuhrumsatzsteuer offen. Anbei die Rechnung.\n",
+            "dhl",
+            id="import-vat-de",
+        ),
+        pytest.param(
+            "noreply@dpd.fr",
+            "Votre facture 4711",
+            "Bonjour Alex,\nVotre commande n° 44550123 est retenue en douane. "
+            "Votre facture est jointe.\n",
+            "dpd",
+            id="held-at-customs-fr",
+        ),
+    ],
+)
+def test_unread_invoice_with_news_asks_for_an_update(
+    sender: str, subject: str, text: str, parser: str, tz: ZoneInfo
+) -> None:
+    """An invoice and shipping e-mail in one, unread, goes to the AI or review."""
+    message = _message(sender, subject, text=text)
+    assert parse_message(message, _verdict(message), tz) == ParseResult(
+        parser=parser, kind=MailKind.UNKNOWN, confidence=0.0, notes=UNPARSED_NOTES
+    )
+
+
+def test_unread_posting_receipt_is_skipped(calls: Calls, tz: ZoneInfo) -> None:
+    """A carrier's posting receipt its parser can't read isn't asked about."""
+    message = _message(
+        "info@ctt.pt",
+        "Comprovativo de envio RR123456785PT",
+        text="Olá Alex,\nO seu envio RR123456785PT foi aceite. Acompanhe o seu envio.\n",
+    )
+    assert parse_message(message, _verdict(message), tz) == ParseResult(
+        parser="ctt", kind=MailKind.NOT_PARCEL, confidence=0.9
+    )
+
+
+def test_gate_error_keeps_the_reading(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tz: ZoneInfo
+) -> None:
+    """If the topic can't be checked, the parsers' reading stands."""
+
+    def explode(*args: object, **kwargs: object) -> bool:
+        raise RuntimeError(SECRET)
+
+    monkeypatch.setattr(parsers.prefilter, "feedback_topic", explode)
+    caplog.set_level(logging.DEBUG)
+    subject = "Como correu a sua entrega?"
+    message = _message(
+        "inqueritos@ctt.pt",
+        subject,
+        text=f"Olá Alex, {SECRET}.\nO objeto RR123456785PT foi entregue.\n",
+    )
+    result = parse_message(message, _verdict(message), tz)
+    assert result.kind is MailKind.DELIVERED
+    assert "Topic gate failed: RuntimeError" in [
+        record.getMessage() for record in caplog.records
+    ]
+    for record in caplog.records:
+        logged = f"{record.getMessage()} {record.args!r} {record.exc_text or ''}"
+        assert SECRET not in logged
+        assert subject not in logged
+        assert "RR123456785PT" not in logged
 
 
 @pytest.mark.parametrize(

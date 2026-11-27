@@ -932,7 +932,7 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
   }
 
   /**
-   * The parcels a merge suggestion says this one may be (administrators only):
+   * The parcels a merge suggestion the user may decide says this one may be:
    * shown as uncertain, with Merge or "Not this one" for each.
    */
   private _renderPossible(parcel: Parcel): TemplateResult | typeof nothing {
@@ -984,11 +984,15 @@ export class ParcelsDetailsDialog extends ParcelsDialogBase {
     const reason = mergeReasonLabel(parcel.auto_merged?.reason);
     const busy = this._busy ? "true" : "false";
     const title = parcelTitle(parcel);
+    const differ = this._details?.parcel.id === parcel.id && this._details.merged_items_differ;
+    const notice = reason
+      ? fmt(differ ? STRINGS.mergedNoticeItems : STRINGS.mergedNotice, { reason })
+      : differ
+        ? STRINGS.mergedNoticeNoReasonItems
+        : STRINGS.mergedNoticeNoReason;
     return html`<div class="alert warning">
       <ha-icon icon="mdi:call-merge" aria-hidden="true"></ha-icon>
-      <span class="grow">
-        ${reason ? fmt(STRINGS.mergedNotice, { reason }) : STRINGS.mergedNoticeNoReason}
-      </span>
+      <span class="grow">${notice}</span>
       <button
         type="button"
         class="btn"

@@ -15,6 +15,7 @@ import asyncio
 from collections.abc import (
     AsyncIterator,
     Callable,
+    Collection,
     Coroutine,
     Iterable,
     Mapping,
@@ -97,6 +98,7 @@ from .dedup import (
     PLACEHOLDER_REPAIR_KEY,
     REPAIR_KEY,
     REPAIR_VERSION,
+    TYPED_JOIN_KEY,
     Contribution,
     DedupError,
     JoinKey,
@@ -112,9 +114,10 @@ from .dedup import (
     fold_known_orders,
     infer_deliveries,
     join_keys,
+    join_typed_parcels,
     manual_origin_id,
     mark_delivered,
-    merge_parcels,
+    merge_by_hand,
     message_outputs,
     message_shells,
     number_key_text,
@@ -145,6 +148,7 @@ from .models import (
     ParcelEvent,
     ParcelsData,
     ReviewItem,
+    SenderPrefs,
     Source,
     Suggestion,
     carrier_like,
@@ -316,11 +320,24 @@ LEROYMERLIN_MAILING_CHECK_MAX = 50
 UNIGNORE_REREAD_WINDOW = timedelta(days=30)
 # ... at most this many, newest first.
 UNIGNORE_REREAD_MAX = 50
+# The hashes of those e-mails still to read again, oldest first: kept in the
+# store, so that a restart doesn't skip them.
+UNIGNORE_REREAD_KEY = "unignore_reread"
+# Set while every mailbox waits to list its lookback period again until none
+# is being read: kept in the store, so that a restart doesn't skip it.
+RELIST_KEY = "relist"
 # Set once what releases before 0.1.26 counted towards the repair "Shipping
 # e-mails from … aren't understood" was dropped, with those repairs: they
 # counted every e-mail of a known sender no parser read, surveys and invoices
 # too, and now only those that turn out to be about a parcel count.
 UNPARSED_RULE_KEY = "unparsed_rule"
+# Set when the store of an earlier release is loaded. Once the mailboxes were
+# read, the e-mails waiting in review are read again by the parsers: releases
+# before 0.1.27 took surveys, review requests, carriers' receipts and invoices
+# for shipping news. Then it holds what the check found.
+TOPIC_CHECK_KEY = "topic_check"
+# The check reads at most this many e-mails, newest first.
+TOPIC_CHECK_MAX = 50
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -521,8 +538,8 @@ class ParcelsEngine:
         # Parcels are reconciled once all of them are done.
         self._syncing: set[str] = set()
         self._more: set[str] = set()
-        # Mailboxes list their lookback period again once none is being read.
-        self._relist_pending = False
+        # E-mails of senders no longer ignored are being read again.
+        self._rereading = False
         self._reconciling = False
         self._suggestions: dict[str, MergeSuggestion] = {}
         # Parcels whose delivery the user is taking back.
@@ -618,9 +635,16 @@ class ParcelsEngine:
         if ORDER_FOLD_KEY not in data.engine:
             data.engine[ORDER_FOLD_KEY] = fold_known_orders(data, now)
             self.store.async_schedule_save()
+        if TYPED_JOIN_KEY not in data.engine:
+            data.engine[TYPED_JOIN_KEY] = join_typed_parcels(data, now)
+            self.store.async_schedule_save()
         if UNPARSED_RULE_KEY not in data.engine:
             self._drop_unparsed_counts()
             data.engine[UNPARSED_RULE_KEY] = {"done": dt_to_str(now)}
+            self.store.async_schedule_save()
+        if data.engine.pop(RELIST_KEY, None):
+            # No mailbox is being read yet.
+            self._relist()
             self.store.async_schedule_save()
         if not (data.parcels or data.review):
             # Nothing stored by an earlier release to check after the update.
@@ -631,6 +655,7 @@ class ParcelsEngine:
             AMAZON_AI_CHECK_KEY,
             AMAZON_ACCEPTED_CHECK_KEY,
             LEROYMERLIN_MAILING_CHECK_KEY,
+            TOPIC_CHECK_KEY,
         ):
             data.engine.setdefault(
                 key,
@@ -719,10 +744,11 @@ class ParcelsEngine:
             self._more.discard(entry_id)
         if self._reconcile(dt_util.utcnow()):
             self.async_changed(reconcile=False)
-        if self._relist_pending and not self._syncing:
+        if self.data.engine.get(RELIST_KEY) and not self._syncing:
             # After the sync stores its cursor and notes the mailbox as read.
             self.hass.loop.call_soon(self._relist_when_idle)
         if ok and self._started and not (self._syncing or self._more):
+            self._reread_unignored()
             self._start_checks()
 
     @callback
@@ -762,6 +788,13 @@ class ParcelsEngine:
             and not {"started", "done"} & mailing_check.keys()
         ):
             mailing = dt_from_str(mailing_check.get("before"))
+        topic_check = engine.get(TOPIC_CHECK_KEY)
+        topics = None
+        if (
+            isinstance(topic_check, dict)
+            and not {"started", "done"} & topic_check.keys()
+        ):
+            topics = dt_from_str(topic_check.get("before"))
         fill = not engine.get(FILL_CHECK_KEY)
         paack = not engine.get(PAACK_CHECK_KEY)
         leroymerlin = not engine.get(LEROYMERLIN_CHECK_KEY)
@@ -771,6 +804,7 @@ class ParcelsEngine:
             and amazon_ai is None
             and accepted is None
             and mailing is None
+            and topics is None
             and not (fill or paack or leroymerlin)
         ):
             return
@@ -785,6 +819,8 @@ class ParcelsEngine:
             accepted_check["started"] = dt_to_str(dt_util.utcnow())
         if mailing is not None:
             mailing_check["started"] = dt_to_str(dt_util.utcnow())
+        if topics is not None:
+            topic_check["started"] = dt_to_str(dt_util.utcnow())
         engine[FILL_CHECK_KEY] = True
         engine[PAACK_CHECK_KEY] = True
         engine[LEROYMERLIN_CHECK_KEY] = True
@@ -799,6 +835,7 @@ class ParcelsEngine:
                 paack=paack,
                 leroymerlin=leroymerlin,
                 leroymerlin_mailing=mailing,
+                topics=topics,
             ),
             "parcels checks",
         )
@@ -808,13 +845,14 @@ class ParcelsEngine:
         """Have every mailbox read its lookback period again on its next sync.
 
         A mailbox being read would store its cursor afterwards: then every
-        mailbox does so once none is being read.
+        mailbox does so once none is being read, even after a restart.
         """
+        engine = self.data.engine
         if self._syncing:
-            self._relist_pending = True
-            return
-        self._relist_pending = False
-        self._relist()
+            engine[RELIST_KEY] = True
+        else:
+            engine.pop(RELIST_KEY, None)
+            self._relist()
         self.async_schedule_save()
 
     @callback
@@ -2209,6 +2247,7 @@ class ParcelsEngine:
             suggestion=suggestion,
             checks=verdict.check.as_dict() if verdict.check is not None else None,
             unparsed=unparsed,
+            shopify_store=verdict.shopify_signed,
         )
 
     def add_review(self, item: ReviewItem, record: MessageRecord | None) -> None:
@@ -2469,7 +2508,7 @@ class ParcelsEngine:
         trusted. Returns the trusted domain and how many e-mails were added,
         are being read again and still need review.
         """
-        org = self._trust(self._sender_to_judge(review_id))
+        org, rereading = self._trust(self._sender_to_judge(review_id))
         data = self.data
         added = kept = 0
         hashes: list[str] = []
@@ -2486,7 +2525,12 @@ class ParcelsEngine:
             else:
                 added += 1
         self._async_reprocess_later(hashes)
-        return {"domain": org, "added": added, "rechecking": len(hashes), "kept": kept}
+        return {
+            "domain": org,
+            "added": added,
+            "rechecking": len(hashes) + rereading,
+            "kept": kept,
+        }
 
     def review_ignore_sender(self, review_id: str) -> str:
         """Ignore the sender of a reviewed e-mail; returns its domain."""
@@ -2495,21 +2539,26 @@ class ParcelsEngine:
     def _sender_to_judge(self, review_id: str) -> str:
         """Return the sender of a reviewed e-mail, to trust or ignore it.
 
-        Never a sender Parcels knows: its e-mails are read already, and
-        ignoring it for one e-mail Parcels couldn't read would stop them all.
-        Only its domain can be trusted or ignored, on purpose.
+        Never a sender Parcels knows, Shopify stores included: its e-mails
+        are read already, and ignoring it for one e-mail Parcels couldn't read
+        would stop them all. Only its domain can be trusted or ignored, on
+        purpose.
         """
-        domain = self._review(review_id).sender_domain
-        if lookup(domain) is not None:
-            raise validation_error("known_sender", domain=organizational_domain(domain))
-        return domain
+        item = self._review(review_id)
+        if item.known_sender:
+            raise validation_error(
+                "known_sender", domain=organizational_domain(item.sender_domain)
+            )
+        return item.sender_domain
 
     def trust_domain(self, domain: str) -> str:
         """Trust a sender organisation and re-read its e-mails under review.
 
-        Returns the organisational domain that is now trusted.
+        One that was ignored also has its recent ignored e-mails read again,
+        as when it is no longer ignored. Returns the organisational domain
+        that is now trusted.
         """
-        org = self._trust(domain)
+        org, _rereading = self._trust(domain)
         self._async_reprocess_later(
             [
                 item.message
@@ -2519,16 +2568,34 @@ class ParcelsEngine:
         )
         return org
 
-    def _trust(self, domain: str) -> str:
+    def _trust(self, domain: str) -> tuple[str, int]:
+        """Trust a sender organisation, ignored or not.
+
+        Returns it, and how many of its ignored e-mails are read again.
+        """
         org = organizational_domain(domain)
         if is_free_mail(org):
             raise validation_error("cannot_trust_free_mail", domain=org)
+        now = dt_util.utcnow()
+        ignored = [prefs for prefs in self._sender_prefs(org) if prefs.ignored]
+        for prefs in ignored:
+            prefs.ignored = False
+            prefs.updated = now
         prefs = self.data.sender(org)
         prefs.trusted = True
         prefs.ignored = False
-        prefs.updated = dt_util.utcnow()
+        prefs.updated = now
+        rereading = self._reread_ignored(org, now) if ignored else 0
         self.async_changed()
-        return org
+        return org, rereading
+
+    def _sender_prefs(self, org: str) -> list[SenderPrefs]:
+        """Return the choices stored for a sender organisation's domains."""
+        return [
+            prefs
+            for key, prefs in self.data.senders.items()
+            if organizational_domain(key) == org
+        ]
 
     def _async_reprocess_later(self, hashes: list[str]) -> None:
         if hashes:
@@ -2584,18 +2651,25 @@ class ParcelsEngine:
         domain and how many e-mails are being read again.
         """
         org = organizational_domain(domain)
-        data = self.data
-        found = [
-            prefs
-            for key, prefs in data.senders.items()
-            if prefs.ignored and organizational_domain(key) == org
-        ]
+        found = [prefs for prefs in self._sender_prefs(org) if prefs.ignored]
         if not found:
             raise validation_error("not_ignored", domain=org)
         now = dt_util.utcnow()
         for prefs in found:
             prefs.ignored = False
             prefs.updated = now
+        rechecking = self._reread_ignored(org, now)
+        self.async_changed()
+        return {"domain": org, "rechecking": rechecking}
+
+    def _reread_ignored(self, org: str, now: datetime) -> int:
+        """Read again the recent ignored e-mails of a sender no longer ignored.
+
+        The newest, oldest first, after any still waiting. Every mailbox also
+        lists its lookback period again, for those skipped meanwhile. Returns
+        how many e-mails are read again.
+        """
+        data = self.data
         since = now - UNIGNORE_REREAD_WINDOW
 
         def received(key: str) -> datetime:
@@ -2613,57 +2687,84 @@ class ParcelsEngine:
             key=received,
             reverse=True,
         )[:UNIGNORE_REREAD_MAX]
-        self._relist_when_idle()
         if keys:
-            self.async_create_task(
-                self._async_reread_ignored(keys[::-1]),
-                "parcels reprocess unignored sender",
-            )
-        self.async_changed()
-        return {"domain": org, "rechecking": len(keys)}
+            pending = data.engine.setdefault(UNIGNORE_REREAD_KEY, [])
+            queued = set(pending)
+            pending.extend(key for key in reversed(keys) if key not in queued)
+        self._relist_when_idle()
+        self._reread_unignored()
+        return len(keys)
 
-    async def _async_reread_ignored(self, keys: list[str]) -> None:
-        """Read again, in order, e-mails of a sender no longer ignored.
+    @callback
+    def _reread_unignored(self) -> None:
+        """Read again the e-mails waiting since their sender was ignored."""
+        if self._rereading or not self.data.engine.get(UNIGNORE_REREAD_KEY):
+            return
+        self._rereading = True
+        self.async_create_task(
+            self._async_reread_ignored(), "parcels reprocess unignored sender"
+        )
+
+    async def _async_reread_ignored(self) -> None:
+        """Read again, in turn, the e-mails waiting since their sender was ignored.
+
+        Each is tried once. One being read when Home Assistant stops, and
+        those after it, are read after the next sync that works.
+        """
+        data = self.data
+        decided = False
+        try:
+            while self._started and (pending := data.engine.get(UNIGNORE_REREAD_KEY)):
+                key = pending[0]
+                if await self._async_reread_ignored_one(key):
+                    decided = True
+                pending = data.engine.get(UNIGNORE_REREAD_KEY) or []
+                if key in pending:
+                    pending.remove(key)
+                if not pending:
+                    data.engine.pop(UNIGNORE_REREAD_KEY, None)
+                self.async_schedule_save()
+        finally:
+            self._rereading = False
+        if decided and self._started:
+            self.async_changed()
+
+    async def _async_reread_ignored_one(self, key: str) -> bool:
+        """Read again an e-mail whose sender was ignored; True when decided.
 
         Nothing changes for an e-mail that changed state meanwhile, or whose
         sender is ignored again. A parcel put away stays so.
         """
         data = self.data
-        decided = False
-        for key in keys:
-            record = data.messages.get(key)
-            if record is None or record.state is not MessageState.IGNORED:
-                continue
-            fetched = await self.async_refetch(record)
-            message, mailbox = fetched.message, fetched.mailbox
-            if message is None or mailbox is None:
-                continue
-            if (read := await self.async_read(message)) is None:
-                continue
-            if (
-                data.messages.get(key) is not record
-                or record.state is not MessageState.IGNORED
-                or self.is_ignored(record.sender_domain)
-            ):
-                continue
-            verdict, result = read
-            self._decide(
-                message,
-                verdict,
-                result,
-                record,
-                mailbox=mailbox.entry_id,
-                owner=record.owners[0] if record.owners else mailbox.owner,
-                first_sync=True,
-                now=dt_util.utcnow(),
-                reread=True,
-                keep_closed=True,
-            )
-            decided = True
-        if decided:
-            self.async_changed()
-        else:
-            self.async_schedule_save()
+        record = data.messages.get(key)
+        if record is None or record.state is not MessageState.IGNORED:
+            return False
+        fetched = await self.async_refetch(record)
+        message, mailbox = fetched.message, fetched.mailbox
+        if message is None or mailbox is None:
+            return False
+        if (read := await self.async_read(message)) is None:
+            return False
+        if (
+            data.messages.get(key) is not record
+            or record.state is not MessageState.IGNORED
+            or self.is_ignored(record.sender_domain)
+        ):
+            return False
+        verdict, result = read
+        self._decide(
+            message,
+            verdict,
+            result,
+            record,
+            mailbox=mailbox.entry_id,
+            owner=record.owners[0] if record.owners else mailbox.owner,
+            first_sync=True,
+            now=dt_util.utcnow(),
+            reread=True,
+            keep_closed=True,
+        )
+        return True
 
     def filtered_restore(self, filtered_id: str) -> str:
         """Move a filtered e-mail to the review list; returns the review ID."""
@@ -3031,6 +3132,7 @@ class ParcelsEngine:
         paack: bool,
         leroymerlin: bool,
         leroymerlin_mailing: datetime | None = None,
+        topics: datetime | None = None,
     ) -> None:
         """Run the one-time checks in turn.
 
@@ -3038,9 +3140,10 @@ class ParcelsEngine:
         (both checks) and then Amazon's e-mails last, so that what the
         parsers read then isn't filled in by the local AI: first those only
         the AI read, then those whose AI answer the user accepted, so that
-        Amazon's cancellations are judged on the parsers' reading. The shops
-        of Paack's parcels at the very end, once the e-mails under review
-        were read.
+        Amazon's cancellations are judged on the parsers' reading. Then the
+        other e-mails waiting in review: those the checks before sent there
+        are new, so each e-mail is read once. The shops of Paack's parcels at
+        the very end, once the e-mails under review were read.
         """
         if before is not None:
             await self._async_returns_check(before)
@@ -3056,6 +3159,8 @@ class ParcelsEngine:
             await self._async_amazon_ai_check(amazon_ai)
         if accepted is not None:
             await self._async_amazon_accepted_check(accepted)
+        if topics is not None:
+            await self._async_topic_check(topics)
         if shops is not None:
             await self._async_paack_shop_check(shops)
 
@@ -3273,6 +3378,91 @@ class ParcelsEngine:
         else:
             self.async_schedule_save()
         _LOGGER.debug("Leroy Merlin's e-mails read again: %s", counts)
+
+    def _topic_check_keys(self, before: datetime) -> list[str]:
+        """Return the e-mails waiting in review since before ``before``.
+
+        Newest first, and only those that added nothing yet: what an earlier
+        release applied stays as it was.
+        """
+        data = self.data
+        keys = {
+            item.message
+            for item in data.review.values()
+            if item.created < before
+            and not is_unread_key(item.message)
+            and (record := data.messages.get(item.message)) is not None
+            and record.state is MessageState.REVIEW
+        }
+
+        def received(key: str) -> tuple[datetime, str]:
+            record = data.messages[key]
+            return record.received or record.seen, key
+
+        return sorted(keys, key=received, reverse=True)
+
+    async def _async_topic_check(self, before: datetime) -> None:
+        """Read the e-mails waiting in review again, once.
+
+        Releases before 0.1.27 took surveys, review requests, carriers'
+        receipts and invoices for shipping news. Each e-mail is downloaded and
+        read again by the parsers, never the AI: those they now know as no
+        parcel news leave the list. The others wait there as they were, and
+        nothing changes when the e-mail changed state while it was read. A
+        Shopify store's e-mails are marked as a store's: earlier releases
+        didn't keep it.
+        """
+        data = self.data
+        keys = self._topic_check_keys(before)
+        counts = dict.fromkeys(("read", "settled", "kept", "gone", "failed"), 0)
+        counts["skipped"] = max(0, len(keys) - TOPIC_CHECK_MAX)
+        marked = False
+        for key in keys[:TOPIC_CHECK_MAX]:
+            if (record := data.messages.get(key)) is None:
+                continue
+            fetched = await self.async_refetch(record)
+            message, mailbox = fetched.message, fetched.mailbox
+            if message is None or mailbox is None:
+                counts["gone" if fetched.gone else "failed"] += 1
+                continue
+            if (read := await self.async_read(message)) is None:
+                counts["failed"] += 1
+                continue
+            counts["read"] += 1
+            verdict, result = read
+            if verdict.shopify_signed:
+                for item in data.review.values():
+                    if item.message == key and not item.shopify_store:
+                        item.shopify_store = marked = True
+            if (
+                data.messages.get(key) is not record
+                or record.state is not MessageState.REVIEW
+                or result.kind is not MailKind.NOT_PARCEL
+                or result.confidence < CONFIDENCE_APPLY
+            ):
+                counts["kept"] += 1
+                continue
+            self._decide(
+                message,
+                verdict,
+                result,
+                record,
+                mailbox=mailbox.entry_id,
+                owner=record.owners[0] if record.owners else mailbox.owner,
+                first_sync=False,
+                now=dt_util.utcnow(),
+                reread=True,
+                use_ai=False,
+            )
+            counts["settled"] += 1
+        check = data.engine.setdefault(TOPIC_CHECK_KEY, {})
+        check["done"] = dt_to_str(dt_util.utcnow())
+        check["counts"] = counts
+        if counts["settled"] or marked:
+            self.async_changed()
+        else:
+            self.async_schedule_save()
+        _LOGGER.debug("E-mails in review read again: %s", counts)
 
     def _amazon_check_messages(self, before: datetime, now: datetime) -> list[str]:
         """Return Amazon's e-mails of the last 30 days read before ``before``.
@@ -3876,7 +4066,7 @@ class ParcelsEngine:
             raise validation_error("merge_needs_two")
         for parcel_id in ids:
             self.parcel(parcel_id)
-        return self._run(merge_parcels, ids[0], ids[1:], dt_util.utcnow()).id
+        return self._run(merge_by_hand, ids[0], ids[1:], dt_util.utcnow()).id
 
     def split(self, parcel_id: str, origin_ids: Sequence[str]) -> str:
         """Move origins of a parcel to a new parcel; returns its ID."""
@@ -3953,13 +4143,15 @@ class ParcelsEngine:
         return merged.id
 
     def dismiss_suggestion(
-        self, suggestion_id: str, candidate_id: str | None = None
+        self, suggestion_id: str, candidates: Collection[str] = ()
     ) -> None:
-        """Keep one suggested parcel, or all of them, apart."""
-        item = self._suggestion(suggestion_id, candidate_id)
-        candidates = (candidate_id,) if candidate_id else item.candidates
-        self._drop_candidates(item, set(candidates))
-        self._run(dismiss_suggestion, item.parcel_id, candidates)
+        """Keep some suggested parcels, or all of them, apart."""
+        item = self._suggestion(suggestion_id, None)
+        if not set(candidates) <= set(item.candidates):
+            raise validation_error("unknown_suggestion")
+        chosen = tuple(candidates) or item.candidates
+        self._drop_candidates(item, set(chosen))
+        self._run(dismiss_suggestion, item.parcel_id, chosen)
 
     def archive(self, parcel_id: str) -> None:
         """Archive a parcel."""
@@ -4039,11 +4231,13 @@ class ParcelsEngine:
             "amazon_ai_check": data.engine.get(AMAZON_AI_CHECK_KEY),
             "amazon_accepted_check": data.engine.get(AMAZON_ACCEPTED_CHECK_KEY),
             "leroymerlin_mailing_check": data.engine.get(LEROYMERLIN_MAILING_CHECK_KEY),
+            "topic_check": data.engine.get(TOPIC_CHECK_KEY),
             "recent_emails": self._recent_emails(dt_util.utcnow()),
             "working_days": self.workdays.source,
             "amazon_shipment_ids": amazon_shipment_id_counts(data, dt_util.utcnow()),
             "amazon_links": data.engine.get(AMAZON_LINKS_KEY),
             "order_fold": data.engine.get(ORDER_FOLD_KEY),
+            "typed_join": data.engine.get(TYPED_JOIN_KEY),
             "repair": data.engine.get(REPAIR_KEY),
             "amazon_carrier_repaired": data.engine.get(AMAZON_REPAIR_KEY),
             "placeholder_items_repaired": data.engine.get(PLACEHOLDER_REPAIR_KEY),

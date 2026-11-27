@@ -1044,6 +1044,30 @@ async def test_email_a_parser_now_reads_skips_the_ai(
     assert [o.source for o in parcel.origins.values()] == [Source.PARSER]
 
 
+async def test_email_now_known_as_no_parcel_skips_the_ai(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """A queued e-mail the parsers now know is no parcel news is left out."""
+    message = ctt_message()
+    engine = await async_setup(hass, client, message)
+    # The download is a survey naming a delivered parcel.
+    client.add(
+        ctt_message(
+            f"Olá Alex,\nO objeto {TRACKING} foi entregue a 4 de novembro. "
+            "Responda a 3 perguntas sobre a entrega.\n",
+            subject="Como correu a sua entrega?",
+        )
+    )
+
+    await engine.ai._async_step()
+
+    generate.assert_not_awaited()
+    assert engine.ai.queue_size == 0
+    assert engine.data.messages[message.hash].state is MessageState.NOT_PARCEL
+    assert engine.data.parcels == {}
+    assert engine.data.review == {}
+
+
 async def test_reprocess_with_the_ai_reads_a_parsed_email(
     hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
 ) -> None:
@@ -1560,6 +1584,36 @@ async def test_failed_fill_is_dropped_after_the_retry(
     assert engine.ai.queue_size == 0
     assert not engine.data.review
     assert engine.data.messages[message.hash].state is MessageState.APPLIED
+
+
+async def test_fill_of_an_email_now_known_as_no_parcel_drops_its_reading(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """A fill whose e-mail the parsers now know is no parcel news undoes it.
+
+    An earlier release read it, e.g. a survey, as news: its parcel goes.
+    """
+    message = ctt_message(NO_DATE)
+    engine = await async_setup(hass, client, message)
+    assert engine.data.parcels
+    (entry,) = engine.ai.queue
+    assert entry["fill"]
+    client.add(
+        ctt_message(
+            f"Olá Alex,\nO objeto {TRACKING} foi entregue a 4 de novembro. "
+            "Responda a 3 perguntas sobre a entrega.\n",
+            subject="Como correu a sua entrega?",
+        )
+    )
+
+    await engine.ai._async_step()
+
+    generate.assert_not_awaited()
+    assert engine.ai.queue_size == 0
+    assert engine.ai.today()["fills"] == 0
+    assert engine.data.messages[message.hash].state is MessageState.NOT_PARCEL
+    assert engine.data.parcels == {}
+    assert engine.data.review == {}
 
 
 async def test_fill_waits_for_unread_emails(

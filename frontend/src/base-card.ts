@@ -241,7 +241,7 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
 
   /**
    * "Possibly: …" for a box whose items aren't known, from the merge
-   * suggestions about its packages (only administrators get suggestions).
+   * suggestions about its packages (the user's to decide).
    */
   protected possiblyFor(members: readonly Parcel[]): string | null {
     const snapshot = this.snapshot;

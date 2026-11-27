@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 from datetime import date, time, timedelta
 from typing import Any
@@ -65,6 +64,7 @@ from .common import (
     add_hub,
     add_mailbox,
     async_setup_parcels,
+    async_wait_reprocess,
     patch_mail_clients,
 )
 from .factories import contribution
@@ -182,18 +182,6 @@ async def refused(
     assert err.value.translation_domain == DOMAIN
     assert err.value.translation_key == key
     return err.value
-
-
-async def async_wait_reprocess(hass: HomeAssistant) -> None:
-    """Wait for the e-mails of a trusted sender to be read again."""
-    await asyncio.gather(
-        *(
-            task
-            for task in asyncio.all_tasks()
-            if task.get_name().startswith("parcels reprocess")
-        )
-    )
-    await hass.async_block_till_done()
 
 
 def origin_with(parcel: Parcel, number: str) -> str:
@@ -1268,6 +1256,33 @@ async def test_unignore_sender(hass: HomeAssistant, mail: Mail) -> None:
     assert engine.data.messages[review.message].state is MessageState.REVIEW
     err = await refused(hass, "unignore_sender", {"domain": SHOP}, "not_ignored")
     assert err.translation_placeholders == {"domain": SHOP}
+
+
+async def test_trust_ignored_sender(hass: HomeAssistant, mail: Mail) -> None:
+    """Trusting an ignored sender reads its ignored e-mails again, as trusted.
+
+    Every mailbox also looks over its lookback period again, as when the
+    sender is no longer ignored.
+    """
+    engine, client = mail
+    (review,) = engine.data.review.values()
+    await call(hass, "ignore_sender", {"review_id": review.id})
+    client.relist = True
+
+    result = await call(hass, "trust_sender", {"domain": SHOP}, response=True)
+    await async_wait_reprocess(hass)
+
+    assert result == {"domain": SHOP}
+    prefs = engine.data.senders[SHOP]
+    assert prefs.trusted
+    assert not prefs.ignored
+    assert engine.data.messages[review.message].state is MessageState.APPLIED
+    numbers = {p.state.tracking_number for p in engine.data.parcels.values()}
+    assert numbers == {CTT_NUMBER, "RR123456785PT"}
+    (mailbox,) = engine.mailboxes.values()
+    assert mailbox.coordinator is not None
+    await mailbox.coordinator.async_refresh()
+    assert client.syncs[-1] is None
 
 
 @pytest.mark.parametrize("service", ["trust_sender", "ignore_sender"])

@@ -266,6 +266,7 @@ def test_verify_shopify_store_by_dkim() -> None:
     assert verdict.authenticated
     assert verdict.known
     assert verdict.shopify
+    assert verdict.shopify_signed
     assert verdict.reason == "ok"
 
 
@@ -284,6 +285,7 @@ def test_verify_shopify_links_alone_are_not_known() -> None:
     verdict = verify_sender(message)
     assert verdict.authenticated
     assert verdict.shopify
+    assert not verdict.shopify_signed
     assert not verdict.known
     assert verdict.reason == "unknown_sender"
 

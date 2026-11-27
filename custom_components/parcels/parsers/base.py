@@ -122,6 +122,8 @@ class SenderVerdict:
     method: str = "none"
     reason: str = ""
     check: AuthCheck | None = None
+    # Shopify's DKIM signature passed: the sender is a Shopify store.
+    shopify_signed: bool = False
 
     @property
     def verified(self) -> bool:

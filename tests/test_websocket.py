@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
@@ -40,11 +39,13 @@ from custom_components.parcels.const import (
 )
 from custom_components.parcels.convert import fill_contribution
 from custom_components.parcels.dedup import (
+    KEPT_APART,
     REASON_SAME_MERCHANT_DAY,
+    REASON_SAME_ORDER,
     Contribution,
     apply_contribution,
 )
-from custom_components.parcels.engine import ParcelsEngine
+from custom_components.parcels.engine import RELIST_KEY, ParcelsEngine
 from custom_components.parcels.mail.errors import MailError, MailServerError
 from custom_components.parcels.models import (
     FINAL_ATTEMPTS,
@@ -58,6 +59,7 @@ from custom_components.parcels.models import (
     PickupRule,
     ReturnEntry,
     ReturnOrigin,
+    ReviewItem,
     Source,
     Suggestion,
     order_key,
@@ -82,6 +84,7 @@ from .common import (
     add_hub,
     add_mailbox,
     async_setup_parcels,
+    async_wait_reprocess,
     load_message,
     patch_mail_clients,
 )
@@ -278,18 +281,6 @@ async def async_wait_update(
     """Let the time for a burst of changes to reach the page pass."""
     freezer.tick(timedelta(seconds=UPDATE_DELAY))
     async_fire_time_changed(hass)
-    await hass.async_block_till_done()
-
-
-async def async_wait_reprocess(hass: HomeAssistant) -> None:
-    """Wait for the e-mails of a trusted sender to be read again."""
-    await asyncio.gather(
-        *(
-            task
-            for task in asyncio.all_tasks()
-            if task.get_name().startswith("parcels reprocess")
-        )
-    )
     await hass.async_block_till_done()
 
 
@@ -2003,6 +1994,55 @@ async def test_review_lists_known_senders(
     assert listed[review[UPS]]["sender_org"] == "ups.com"
 
 
+async def test_review_knows_shopify_stores(
+    engine: ParcelsEngine, client: FakeMailClient, ws: MockHAClientWebSocket
+) -> None:
+    """A Shopify store is a sender Parcels knows, though not by its domain.
+
+    Shopify's signature tells its e-mails apart: one Parcels couldn't read
+    can only be dismissed, as for the senders it lists.
+    """
+    data = engine.data
+    (mailbox,) = engine.mailboxes.values()
+    assert mailbox.coordinator is not None
+    unread = replace(
+        load_message("shopify/shipped_pt.eml", mailbox=ADDRESS),
+        provider_id="store-unread",
+        message_id="<store-unread@shopifyemail.com>",
+        subject="Uma mensagem para si",
+        text="Olá Alex,\n\nA sua encomenda #1002 foi expedida hoje.\n",
+        links=(),
+    )
+    client.add(unread)
+    await mailbox.coordinator.async_refresh()
+    (item,) = [r for r in data.review.values() if r.message == unread.hash]
+
+    listed = {r["id"]: r for r in (await result(ws, "parcels/list"))["review"]}
+    for command in ("trust_sender", "ignore_sender"):
+        err = await refused(
+            ws, f"parcels/review/{command}", "known_sender", review_id=item.id
+        )
+        assert err["translation_placeholders"] == {"domain": "loja-exemplo.pt"}
+
+    assert listed[item.id]["known_sender"] is True
+    assert item.id in data.review
+    assert "loja-exemplo.pt" not in data.senders
+    # Kept as the store keeps it, and in the local AI's queue.
+    assert ReviewItem.from_dict(item.as_dict()).known_sender
+
+
+async def test_review_lists_free_mail_senders(
+    engine: ParcelsEngine, ws: MockHAClientWebSocket, review: dict[str, str]
+) -> None:
+    """The page knows which senders can't be trusted or ignored: free mail."""
+    engine.data.review[review[SHOP]].sender_domain = "gmail.com"
+
+    listed = {r["id"]: r for r in (await result(ws, "parcels/list"))["review"]}
+
+    assert listed[review[SHOP]]["free_mail"] is True
+    assert listed[review[UPS]]["free_mail"] is False
+
+
 async def test_stop_ignoring_sender(
     hass: HomeAssistant,
     engine: ParcelsEngine,
@@ -2073,6 +2113,8 @@ async def test_stop_ignoring_during_a_sync(
 
     assert data.cursors[mailbox.entry_id] == cursor
     assert engine.is_synced(mailbox.entry_id)
+    # Kept in the store, should Home Assistant stop first.
+    assert data.engine[RELIST_KEY] is True
 
     engine.end_sync(mailbox.entry_id, more=False)
     engine.mark_synced(mailbox.entry_id)
@@ -2080,6 +2122,7 @@ async def test_stop_ignoring_during_a_sync(
 
     assert mailbox.entry_id not in data.cursors
     assert not engine.is_synced(mailbox.entry_id)
+    assert RELIST_KEY not in data.engine
 
 
 async def test_stop_ignoring_refused(
@@ -2357,6 +2400,157 @@ async def test_merge_suggestions(
             suggestion_id=item["id"],
             **extra,
         )
+
+
+async def suggested(client: MockHAClientWebSocket) -> dict[str, tuple[str, list[str]]]:
+    """Return the suggestions a user gets: ID and candidates, by parcel."""
+    return {
+        item["parcel"]["id"]: (item["id"], [p["id"] for p in item["candidates"]])
+        for item in (await result(client, "parcels/list"))["merge_suggestions"]
+    }
+
+
+@pytest.mark.parametrize("decision", ["accept", "dismiss"])
+async def test_private_parcel_s_owner_decides_its_suggestion(
+    hass: HomeAssistant,
+    hass_ws_client: WebSocketGenerator,
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    sam_ws: MockHAClientWebSocket,
+    sam: User,
+    decision: str,
+) -> None:
+    """The owner of a private parcel decides its suggestions (W18).
+
+    Sam, who isn't an administrator, adds the order number of Alex's parcel
+    as a private parcel: it stays apart for him to decide. Alex may not see
+    Sam's parcel, so neither he nor Kim gets the suggestion.
+    """
+    order, shop = "001234567890", "Loja Exemplo"
+    alex_parcel = apply_contribution(
+        engine.data,
+        contribution("msg:alexmail#0", merchant=shop, orders=(order,), owner=OWNER),
+        dt_util.utcnow(),
+    ).parcel_id
+    engine.async_changed()
+    sam_parcel = await add(hass, order, user=sam, merchant=shop, private=True)
+    kim = await hass.auth.async_create_user("Kim")
+    refresh = await hass.auth.async_create_refresh_token(kim, CLIENT_ID)
+    kim_ws = await hass_ws_client(
+        hass, access_token=hass.auth.async_create_access_token(refresh)
+    )
+
+    assert sam_parcel != alex_parcel
+    ((suggestion_id, _),) = (await suggested(sam_ws)).values()
+    assert await suggested(sam_ws) == {alex_parcel: (suggestion_id, [sam_parcel])}
+    (item,) = (await result(sam_ws, "parcels/list"))["merge_suggestions"]
+    assert item["reason"] == REASON_SAME_ORDER
+    assert await suggested(ws) == {}
+    assert await suggested(kim_ws) == {}
+    for command, extra in (
+        ("accept", {"parcel_id": sam_parcel}),
+        ("dismiss", {"parcel_id": sam_parcel}),
+        ("dismiss", {}),
+    ):
+        command = f"parcels/suggestion/{command}"
+        err = await error(kim_ws, command, suggestion_id=suggestion_id, **extra)
+        assert err["code"] == "unauthorized"
+        await refused(ws, command, "not_allowed", suggestion_id=suggestion_id, **extra)
+    assert {alex_parcel, sam_parcel} <= set(engine.data.parcels)
+
+    if decision == "accept":
+        assert await result(
+            sam_ws,
+            "parcels/suggestion/accept",
+            suggestion_id=suggestion_id,
+            parcel_id=sam_parcel,
+        ) == {"parcel_id": alex_parcel}
+        assert sam_parcel not in engine.data.parcels
+        assert set(engine.data.parcels[alex_parcel].state.owners) == {
+            OWNER,
+            OTHER_OWNER,
+        }
+    else:
+        assert (
+            await result(
+                sam_ws, "parcels/suggestion/dismiss", suggestion_id=suggestion_id
+            )
+            is None
+        )
+        assert {alex_parcel, sam_parcel} <= set(engine.data.parcels)
+    engine.async_changed()
+    assert await suggested(sam_ws) == {}
+    assert await suggested(ws) == {}
+
+
+async def test_each_user_decides_their_own_candidates(
+    engine: ParcelsEngine,
+    ws: MockHAClientWebSocket,
+    sam_ws: MockHAClientWebSocket,
+) -> None:
+    """A suggestion's pairs are decided by whoever may decide each (W18).
+
+    Of two Amazon orders due today, one is Sam's private order: he decides
+    whether the deliveries were it, the administrator about the other.
+    Keeping them apart without naming a parcel keeps apart only the user's.
+    """
+    data = engine.data
+    now = dt_util.utcnow()
+    first, second = (
+        apply_contribution(
+            data,
+            contribution(
+                f"msg:carrier{n}#0",
+                kind=MailKind.DELIVERED,
+                time=datetime(2026, 11, 17, 7 + n, tzinfo=UTC),
+                carrier="ctt_expresso",
+                number=f"EX00000000000{n}",
+                merchant="Amazon",
+                label="cttexpresso.pt",
+            ),
+            now,
+        ).parcel_id
+        for n in (1, 2)
+    )
+    public, sams = (
+        apply_contribution(
+            data,
+            contribution(
+                f"msg:order{n}#0",
+                time=datetime(2026, 11, 15, 20 + n, tzinfo=UTC),
+                merchant="Amazon.es",
+                orders=[f"171-000000{n}-000000{n}"],
+                eta=Eta(start=date(2026, 11, 17), end=date(2026, 11, 17)),
+                label="amazon.es",
+                owner=OTHER_OWNER if n == 2 else "person.one",
+                private=n == 2,
+            ),
+            now,
+        ).parcel_id
+        for n in (1, 2)
+    )
+    engine.async_changed()
+
+    def candidates(found: dict[str, tuple[str, list[str]]]) -> dict[str, list[str]]:
+        return {parcel_id: pair[1] for parcel_id, pair in found.items()}
+
+    assert candidates(await suggested(ws)) == {first: [public], second: [public]}
+    sam_view = await suggested(sam_ws)
+    assert candidates(sam_view) == {first: [sams], second: [sams]}
+
+    await result(sam_ws, "parcels/suggestion/dismiss", suggestion_id=sam_view[first][0])
+    assert data.engine[KEPT_APART] == [[["msg:carrier1#0"], ["msg:order2#0"]]]
+    assert candidates(await suggested(sam_ws)) == {second: [sams]}
+    alex_view = await suggested(ws)
+    assert candidates(alex_view) == {first: [public], second: [public]}
+
+    await result(ws, "parcels/suggestion/dismiss", suggestion_id=alex_view[second][0])
+    assert data.engine[KEPT_APART] == [
+        [["msg:carrier1#0"], ["msg:order2#0"]],
+        [["msg:carrier2#0"], ["msg:order1#0"]],
+    ]
+    assert candidates(await suggested(sam_ws)) == {second: [sams]}
+    assert second not in await suggested(ws)
 
 
 async def test_mailbox_owner(
