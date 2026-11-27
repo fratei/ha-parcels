@@ -10,6 +10,7 @@ pickup point and code, and the shop that sent the parcel.
 from __future__ import annotations
 
 from datetime import tzinfo
+from functools import lru_cache
 import logging
 import re
 from typing import Final
@@ -57,6 +58,7 @@ _BRAND_REGEXES: Final[dict[str, re.Pattern[str]]] = {
 }
 
 
+@lru_cache(maxsize=4096)
 def brand_carriers(name: str | None) -> tuple[str, ...]:
     """Return the carriers whose brand a name contains, e.g. "GLS PT Informa".
 

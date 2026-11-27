@@ -25,12 +25,13 @@ Device kinds
     notifications too for the parcels of an activity the user dismissed (tag
     ``parcel-<id>-news``; see Live Activities), also once they moved to a
     later day, except news that iPhone's activities already showed that day.
-    When newer news takes a parcel from out for delivery or ready for pickup
-    back to transit, its notification is replaced with what holds now, since
-    the old one would no longer be true. News that brings back what a parcel
-    held less than ``FLIP_QUIET`` ago comes quietly (passive on iOS,
-    ``alert_once`` on Android), except a delivery and its undo, and a
-    device's first news of the parcel that day.
+    When newer news takes a parcel from out for delivery, ready for pickup or
+    delivered back to transit, its notification is replaced with what holds
+    now, since the old one would no longer be true. News that brings back what
+    a parcel held less than ``FLIP_QUIET`` ago comes quietly (passive on iOS,
+    ``alert_once`` on Android), except a delivery and a device's first news of
+    the parcel that day; so does news taking back a delivery the device was
+    told of, as when the user undoes one marked by hand.
     Macs, watches and unknown systems get nothing; they mirror the iPhone.
     The Live Activities switch covers these notifications too.
 
@@ -55,7 +56,8 @@ Live Activities
     status didn't change or the news brings back what the parcel held less than
     ``FLIP_QUIET`` ago; a shared activity's, when every package that changed
     did that and the iPhone was told of each before. A start, a delivery and
-    its undo always alert. A delivered parcel shows its delivery time at 4/4
+    its undo always alert on an activity that shows. A delivered parcel shows
+    its delivery time at 4/4
     and ends 30 minutes later; a parcel moved to a later day says so and ends
     30 minutes later. Apple ends activities after 8 hours, so an undelivered
     parcel's activity is ended and restarted with a ``-2`` (``-3`` ...) tag
@@ -275,7 +277,7 @@ PICKUP_DAYS = 7
 # Return pickups set before the start time join only this soon after it.
 RETURN_GRACE = timedelta(minutes=15)
 # News that brings back what a parcel held this recently is quiet; a delivery
-# and its undo always alert.
+# always alerts, and so does its undo on an activity that shows.
 FLIP_QUIET = timedelta(minutes=15)
 LATER = ":later"
 
@@ -325,7 +327,9 @@ PROBLEMS = frozenset({S.ATTEMPTED, S.EXCEPTION})
 GONE = frozenset({S.RETURNED, S.CANCELLED})
 PIN_STATUSES = frozenset({S.OUT_FOR_DELIVERY, S.READY_FOR_PICKUP})
 # What a notification said that newer news can take back (see _taken_back).
-TAKEN_BACK_FROM = frozenset({S.OUT_FOR_DELIVERY.value, S.READY_FOR_PICKUP.value})
+TAKEN_BACK_FROM = frozenset(
+    {S.OUT_FOR_DELIVERY.value, S.READY_FOR_PICKUP.value, S.DELIVERED.value}
+)
 
 ICONS: dict[ParcelStatus, str] = {
     S.ORDERED: "mdi:cart-outline",
@@ -1886,11 +1890,27 @@ def _key_news(
 def _taken_back(day: dict[str, Any], device_id: str, parcel: Parcel) -> bool:
     """Return whether a device's notification of a parcel no longer holds.
 
-    That is a notification that it was out for delivery or ready for pickup,
-    once newer news took it back to transit.
+    That is a notification that it was out for delivery, ready for pickup or
+    delivered, once newer news took it back to transit, as an undo can.
     """
     told = day["notified"].get(device_id, {}).get(parcel.id)
     return told in TAKEN_BACK_FROM and parcel.state.status not in KEY_STATUSES
+
+
+def _undone(day: dict[str, Any], device_id: str, parcel: Parcel) -> bool:
+    """Return whether news takes back a delivery the device was told of.
+
+    The last a notification told the device of the parcel, or else one of its
+    activities, was the delivery, which an undo or a correction has since
+    taken back: a delivered parcel moves to nothing else that a device hears
+    of. The earlier status then replaces the delivery quietly.
+    """
+    if parcel.state.status is S.DELIVERED:
+        return False
+    told = day["notified"].get(device_id, {}).get(parcel.id) or day["told"].get(
+        device_id, {}
+    ).get(parcel.id)
+    return told == S.DELIVERED.value
 
 
 def _told(day: dict[str, Any], device_id: str, parcel_id: str) -> bool:
@@ -2229,8 +2249,9 @@ class Notifier:
         Sending can take longer than the debouncer waits. News read while a
         round sends starts the round over from the new data, so that no device
         gets a mix of old and new, and a flip back is quiet on every device.
-        The last of EVALUATION_ROUNDS finishes, and news read during it gets
-        an evaluation of its own soon after.
+        The last of EVALUATION_ROUNDS finishes from today's parcels as they
+        were when it began, and news read during it gets an evaluation of its
+        own soon after, for every device alike.
         """
         async with self._lock:
             if self._stopped:
@@ -2273,7 +2294,11 @@ class Notifier:
         """Evaluate everything; the caller holds the lock.
 
         Unless the round is ``final``, it stops before its next device once
-        the parcels changed, and the next round does the rest.
+        the parcels changed, and the next round does the rest. Every device
+        gets today's parcels with the state _update_held saw, so that news
+        read while sending doesn't reach the devices after it with the round's
+        damping (a flip back as an alert). Return pickups and the persistent
+        notification read the data as it is then.
         """
         self._devices = self._discover_devices()
         self._recipients = self._recipients_for(ctx.options)
@@ -2298,13 +2323,18 @@ class Notifier:
             day = days.get(ctx.key)
             self._flipping = set()
         if day is not None:
+            seen = parcels | {
+                parcel_id: parcel.snapshot()
+                for parcel_id in day["board"]
+                if (parcel := parcels.get(parcel_id)) is not None
+            }
             devices = sorted(set(self._recipients) | set(day["activities"]))
             self._restartable = not final
             try:
                 for device_id in devices:
                     if self._restartable and self._changed:
                         return
-                    await self._async_device(ctx, day, device_id, parcels, returns)
+                    await self._async_device(ctx, day, device_id, seen, returns)
             finally:
                 self._restartable = False
         self._update_persistent(ctx, parcels)
@@ -2481,10 +2511,11 @@ class Notifier:
         News that brings back a status, with its day, that a parcel left
         within FLIP_QUIET is quiet until the parcel changes again, on devices
         told of the parcel before: carriers and 17TRACK that disagree then
-        don't alert every device at each flip. A delivery and its undo still
-        alert, as they always did. A new status also clears what the device's
-        activities showed of the parcel, so a dismissal doesn't take it for
-        news already shown.
+        don't alert every device at each flip. A delivery still alerts, as
+        does its undo on an activity that shows; a notification of the
+        delivery is replaced quietly (see _undone). A new status also clears
+        what the device's activities showed of the parcel, so a dismissal
+        doesn't take it for news already shown.
         """
         held: dict[str, dict[str, Any]] = day["held"]
         since = ctx.now - FLIP_QUIET
@@ -3279,9 +3310,13 @@ class Notifier:
         """Notify a device of a parcel's key news; return True when it was sent.
 
         News that brings back what the parcel held a moment ago comes quietly,
-        unless it's the first the device hears of the parcel today.
+        unless it's the first the device hears of the parcel today, and so
+        does news taking back a delivery the device was told of: it replaces
+        that notification (see _undone).
         """
-        quiet = parcel.id in self._flipping and _told(day, device.device_id, parcel.id)
+        quiet = (
+            parcel.id in self._flipping and _told(day, device.device_id, parcel.id)
+        ) or _undone(day, device.device_id, parcel)
         payload = _key_payload(content, tag, device.kind, quiet=quiet)
         result = await self._async_send(device.service, device.kind, payload)
         if result is _Result.SENT:

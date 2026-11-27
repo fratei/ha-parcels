@@ -1255,6 +1255,151 @@ async def test_a_delivery_marked_by_hand_taken_back(env: Env) -> None:
     assert shown() == [(tag_of(parcel, 2), f"Out for delivery{SEP}DPD", None)]
 
 
+@pytest.mark.parametrize("kind", ["ipad", "android", "dismissed"])
+async def test_undoing_a_delivery_replaces_its_notification_quietly(
+    env: Env, kind: str
+) -> None:
+    """The earlier status replaces a delivery taken back, without an alert.
+
+    So on iPads, Android phones and iPhones whose activity the user
+    dismissed. The news after it alerts again, as does marking the parcel
+    delivered again.
+    """
+    device = env.phone("Alex Device", ALEX, "iphone" if kind == "dismissed" else kind)
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    if kind == "dismissed":
+        (started,) = device.take()
+        await env.goto(at(8, 10))
+        env.untoken(device, started["data"]["tag"])
+    tag = news_tag(parcel) if kind == "dismissed" else tag_of(parcel)
+    quiet = "alert_once" if kind == "android" else "push"
+
+    def heard() -> list[tuple[str, str, Any]]:
+        return [
+            (payload["data"]["tag"], payload["message"], payload["data"].get(quiet))
+            for payload in device.take()
+        ]
+
+    def hand(action: Any) -> None:
+        action(env.host.data, parcel.id, dt_util.utcnow())
+        env.changed()
+
+    await env.goto(at(9))
+    env.change(parcel, S.OUT_FOR_DELIVERY)
+    await env.settle()
+    assert heard() == [(tag, f"Out for delivery{SEP}DPD", None)]
+    await env.goto(at(10, 42))
+    hand(mark_delivered)
+    await env.settle()
+    assert heard() == [(tag, f"Delivered {CHECK} 10:42{SEP}DPD", None)]
+    await env.goto(at(10, 50))
+    hand(undo_delivery)
+    await env.settle()
+    passive = True if kind == "android" else {"interruption-level": "passive"}
+    assert heard() == [(tag, f"Out for delivery{SEP}DPD", passive)]
+    env.changed()
+    await env.settle()
+    assert heard() == []
+
+    await env.goto(at(11, 30))
+    env.change(parcel, S.ATTEMPTED)
+    await env.settle()
+    ((sent_tag, message, level),) = heard()
+    assert (sent_tag, message.startswith("Missed"), level) == (tag, True, None)
+    await env.goto(at(12))
+    hand(mark_delivered)
+    await env.settle()
+    assert heard() == [(tag, f"Delivered {CHECK} 12:00{SEP}DPD", None)]
+
+
+async def test_undoing_a_delivery_a_dismissed_activity_showed_is_quiet(
+    env: Env,
+) -> None:
+    """News taking back a delivery that a dismissed activity showed is quiet.
+
+    The iPhone heard of the delivery from its activity before the user
+    dismissed it, so the earlier status comes as a passive notification.
+    """
+    phone = env.phone("Alex iPhone", ALEX)
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    await env.goto(at(9))
+    env.change(parcel, S.OUT_FOR_DELIVERY)
+    await env.settle()
+    await env.goto(at(10, 42))
+    mark_delivered(env.host.data, parcel.id, dt_util.utcnow())
+    env.changed()
+    await env.settle()
+    messages = [payload["message"] for payload in phone.take()]
+    assert messages[-1] == f"Delivered {CHECK} 10:42{SEP}DPD"
+    await env.goto(at(10, 45))
+    env.untoken(phone, tag_of(parcel))
+
+    await env.goto(at(10, 50))
+    undo_delivery(env.host.data, parcel.id, dt_util.utcnow())
+    env.changed()
+    await env.settle()
+    assert phone.take() == [
+        {
+            "title": "Amazon",
+            "message": f"Out for delivery{SEP}DPD",
+            "data": {
+                "tag": news_tag(parcel),
+                "url": link_of(parcel),
+                "push": {"interruption-level": "passive"},
+            },
+        }
+    ]
+    await env.goto(at(11, 30))
+    env.change(parcel, S.ATTEMPTED)
+    await env.settle()
+    (missed,) = phone.take()
+    assert missed["data"]["tag"] == news_tag(parcel)
+    assert "push" not in missed["data"]
+
+
+@pytest.mark.parametrize("kind", ["ipad", "android"])
+async def test_undoing_a_delivery_back_to_transit_replaces_it_quietly(
+    env: Env, kind: str
+) -> None:
+    """A delivery taken back to in transit is replaced too, without an alert.
+
+    The notification saying the parcel was delivered no longer holds, so
+    one saying what holds now replaces it, once.
+    """
+    device = env.phone("Alex Device", ALEX, kind)
+    parcel = env.parcel(eta=on())
+    await env.start()
+    await env.goto(at(8))
+    assert device.take() == []
+    await env.goto(at(10, 42))
+    mark_delivered(env.host.data, parcel.id, dt_util.utcnow())
+    env.changed()
+    await env.settle()
+    (delivered,) = device.take()
+    assert delivered["message"] == f"Delivered {CHECK} 10:42{SEP}DPD"
+
+    await env.goto(at(10, 50))
+    undo_delivery(env.host.data, parcel.id, dt_util.utcnow())
+    env.changed()
+    await env.settle()
+    (back,) = device.take()
+    assert back["data"]["tag"] == tag_of(parcel)
+    assert back["message"] == f"Expected today{SEP}DPD"
+    quiet = (
+        ("alert_once", True)
+        if kind == "android"
+        else ("push", {"interruption-level": "passive"})
+    )
+    assert back["data"][quiet[0]] == quiet[1]
+    env.changed()
+    await env.settle()
+    assert device.take() == []
+
+
 async def test_probably_delivered_in_the_combined_activity(env: Env) -> None:
     """An inferred delivery counts apart in the combined activity, quietly.
 
@@ -4230,6 +4375,69 @@ async def test_news_read_during_the_last_round_is_evaluated_soon_after(
     await env.settle()
     tags = [[payload["data"]["tag"] for payload in phone.take()] for phone in phones]
     assert tags == [[tag_of(parcel)], [tag_of(parcel)]]
+
+
+async def test_a_flip_read_during_the_last_round_is_quiet_on_every_device(
+    env: Env, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """News read during an evaluation's last round waits for the next one.
+
+    The round sends today's parcels as they were when it began, so the
+    devices after the news don't get a flip back as an alert: every device
+    gets it quietly from the evaluation soon after.
+    """
+    monkeypatch.setattr("custom_components.parcels.notifier.EVALUATION_ROUNDS", 1)
+    phones = {
+        "iphone": env.phone("Alex iPhone", ALEX),
+        "ipad": env.phone("Alex iPad", ALEX, "ipad"),
+        "android": env.phone("Sam Pixel", SAM, "android"),
+    }
+    parcel = env.parcel(eta=window(14, 18), merchant="Decathlon", carrier="ctt")
+    other = env.parcel(eta=on(), merchant="Zalando", carrier="ctt")
+    await env.start()
+    await env.goto(at(8))
+    await env.goto(at(9))
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(9), eta=window(14, 18), label="ctt.pt"
+    )
+    await env.settle()
+    await env.goto(at(11))
+    tomorrow = on(DAY + timedelta(days=1))
+    env.change(parcel, S.IN_TRANSIT, sent=at(11), eta=tomorrow, label="ctt.pt")
+    await env.settle()
+    for phone in phones.values():
+        phone.take()
+
+    await env.goto(at(11, 2))
+    env.gate = gate = Gate()
+    env.change(other, S.DELIVERED, sent=at(11, 2), label="ctt.pt")
+    env.freezer.tick(timedelta(seconds=DEBOUNCE_COOLDOWN + 1))
+    async_fire_time_changed(hass)
+    await gate.wait_entered()
+    env.change(
+        parcel, S.OUT_FOR_DELIVERY, sent=at(11, 2), eta=window(15, 19), label="ctt.pt"
+    )
+    env.freezer.tick(timedelta(seconds=DEBOUNCE_COOLDOWN + 1))
+    async_fire_time_changed(hass)
+    gate.release.set()
+    await hass.async_block_till_done()
+    delivered = f"Delivered {CHECK} 11:02{SEP}CTT"
+    for name, phone in phones.items():
+        sent = [(item["data"]["tag"], item["message"]) for item in phone.take()]
+        assert sent == [(tag_of(other), delivered)], name
+
+    await env.settle()
+    out = f"Out for delivery 15:00{DASH}19:00{SEP}CTT"
+    quiet = {
+        "iphone": ("silent", True),
+        "ipad": ("push", {"interruption-level": "passive"}),
+        "android": ("alert_once", True),
+    }
+    for name, phone in phones.items():
+        (flip,) = phone.take()
+        key, value = quiet[name]
+        assert (flip["data"]["tag"], flip["message"]) == (tag_of(parcel), out), name
+        assert flip["data"].get(key) == value, name
 
 
 async def test_a_flipping_parcel_new_to_a_shared_activity_alerts(env: Env) -> None:

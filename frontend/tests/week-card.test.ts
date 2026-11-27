@@ -4,9 +4,10 @@ import { describe, test } from "node:test";
 import "./dom.ts";
 
 import type { ParcelFilter } from "../src/filter.ts";
+import { ParcelsListCard } from "../src/list-card.ts";
 import { normalizeSnapshot } from "../src/normalize.ts";
 import type { WeekLayout } from "../src/placement.ts";
-import { SHOW_REVIEW_EVENT } from "../src/review-state.ts";
+import { REVIEW_DONE_EVENT, SHOW_REVIEW_EVENT, type ReviewDone } from "../src/review-state.ts";
 import { STRINGS } from "../src/strings.ts";
 import type { MergeSuggestion, Parcel, ReviewItem, Snapshot } from "../src/types.ts";
 import { ParcelsWeekCard } from "../src/week-card.ts";
@@ -24,6 +25,11 @@ interface WeekHost {
   _showLate(): void;
   _showReview(): void;
   showActionError(message: string): void;
+  render(): unknown;
+  _onReviewDone(event: Event): void;
+  announce(message: string): void;
+  renderRoot: unknown;
+  hidden: boolean;
 }
 
 /** Wednesday 6 March 2030. */
@@ -184,5 +190,145 @@ describe("the stacked week on a narrow card", () => {
 
   test("has no Late group when nothing is late", () => {
     assert.equal(stacked(NOT_LATE).includes("late-group"), false);
+  });
+});
+
+describe("after the last review decision hides the review card", () => {
+  const CHIP = '.chip[data-parcels~="p2"] button.chip-main';
+  const HEADING = "h2.title";
+  const MERGED: ReviewDone = { parcels: ["p2"], message: "Merged. Nothing else to review." };
+
+  interface Fake {
+    readonly name: string;
+    focus(): void;
+  }
+
+  interface Page {
+    readonly card: WeekHost;
+    readonly announced: string[];
+    focused(): string | null;
+  }
+
+  /**
+   * A connected week card that shows `elements`. Focusing one makes it the
+   * card's focused element, unless the browser refuses (`refuses`).
+   */
+  function page(elements: readonly string[], refuses = false): Page {
+    const card = weekCard([]);
+    const root: { activeElement: Fake | null } = { activeElement: null };
+    const shown = new Map<string, Fake>();
+    for (const name of elements) {
+      const element: Fake = {
+        name,
+        focus: () => {
+          if (!refuses) {
+            root.activeElement = element;
+          }
+        },
+      };
+      shown.set(name, element);
+    }
+    card.renderRoot = { querySelector: (selector: string) => shown.get(selector) ?? null };
+    card.hidden = false;
+    Object.defineProperty(card, "shadowRoot", { value: root });
+    Object.defineProperty(card, "isConnected", { value: true });
+    const announced: string[] = [];
+    card.announce = (message) => announced.push(message);
+    return { card, announced, focused: () => root.activeElement?.name ?? null };
+  }
+
+  function done(detail: ReviewDone): CustomEvent<ReviewDone> {
+    return new CustomEvent(REVIEW_DONE_EVENT, { detail, cancelable: true });
+  }
+
+  /** Node has no CSS.escape, which chip selectors use. */
+  function withCss(body: () => void): void {
+    const host = globalThis as { CSS?: unknown };
+    host.CSS = { escape: (value: string) => value };
+    try {
+      body();
+    } finally {
+      delete host.CSS;
+    }
+  }
+
+  test("both cards have a status region and a heading that can take focus", () => {
+    const week = renderText(weekCard([]).render());
+    assert.match(week, /<h2 class="title" tabindex="-1">Parcels<\/h2>/);
+    assert.match(week, /<div class="sr-only" role="status"><\/div> <\/ha-card>/);
+
+    const list = new ParcelsListCard() as unknown as WeekHost;
+    list._snapshots.snapshot = normalizeSnapshot({ settings: { today: TODAY, time_zone: "Europe/Lisbon" } });
+    const html = renderText(list.render());
+    assert.match(html, /<h2 class="title" tabindex="-1">No date yet<\/h2>/);
+    assert.match(html, /<div class="sr-only" role="status"><\/div> <\/ha-card>/);
+  });
+
+  test("focus goes to the decided parcel's chip, and the card says what happened", () => {
+    withCss(() => {
+      const { card, announced, focused } = page([CHIP, HEADING]);
+      const event = done(MERGED);
+      card._onReviewDone(event);
+      assert.equal(event.defaultPrevented, true);
+      assert.equal(focused(), CHIP);
+      assert.deepEqual(announced, [MERGED.message]);
+    });
+  });
+
+  test("a card without the parcel's chip leaves it to another card", () => {
+    withCss(() => {
+      const { card, announced, focused } = page([HEADING]);
+      const event = done(MERGED);
+      card._onReviewDone(event);
+      assert.equal(event.defaultPrevented, false);
+      assert.equal(focused(), null);
+      assert.deepEqual(announced, []);
+    });
+  });
+
+  test("without parcels, focus goes to the card's heading, else to its Add button", () => {
+    const { card, announced, focused } = page([HEADING, "[data-focus-fallback]"]);
+    const event = done({ parcels: [], message: "Kept apart. Nothing else to review." });
+    card._onReviewDone(event);
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(focused(), HEADING);
+    assert.deepEqual(announced, ["Kept apart. Nothing else to review."]);
+
+    const untitled = page(["[data-focus-fallback]"]);
+    const quiet = done({ parcels: [], message: "" });
+    untitled.card._onReviewDone(quiet);
+    assert.equal(quiet.defaultPrevented, true);
+    assert.equal(untitled.focused(), "[data-focus-fallback]");
+    assert.deepEqual(untitled.announced, []);
+  });
+
+  test("isn't taken by a hidden card, a card without parcels yet, or once another took it", () => {
+    const hidden = page([HEADING]);
+    hidden.card.hidden = true;
+    const first = done({ parcels: [], message: "x" });
+    hidden.card._onReviewDone(first);
+    assert.equal(first.defaultPrevented, false);
+    assert.equal(hidden.focused(), null);
+
+    const loading = page([HEADING]);
+    loading.card._snapshots.snapshot = null;
+    loading.card._onReviewDone(first);
+    assert.equal(first.defaultPrevented, false);
+    assert.equal(loading.focused(), null);
+
+    const taken = done({ parcels: [], message: "x" });
+    taken.preventDefault();
+    const late = page([HEADING]);
+    late.card._onReviewDone(taken);
+    assert.equal(late.focused(), null);
+    assert.deepEqual(late.announced, []);
+  });
+
+  test("isn't taken when focus didn't move", () => {
+    const { card, announced } = page([HEADING], true);
+    const event = done({ parcels: [], message: "x" });
+    card._onReviewDone(event);
+    assert.equal(event.defaultPrevented, false);
+    assert.deepEqual(announced, []);
   });
 });

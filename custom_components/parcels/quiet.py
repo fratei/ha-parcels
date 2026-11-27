@@ -15,7 +15,7 @@ from typing import Final
 from homeassistant.util import dt as dt_util
 
 from .const import ParcelStatus
-from .models import Parcel, ParcelEvent, ParcelsData, Source, local_date
+from .models import Parcel, ParcelEvent, ParcelsData, Source, local_date, one_day
 
 QUIET_AFTER: Final = timedelta(days=21)
 # Statuses a parcel can be delivered from without anyone saying so.
@@ -69,6 +69,7 @@ def _probable_delivery(parcel: Parcel) -> datetime:
     return max(news, dt_util.as_utc(midday))
 
 
+@one_day()
 def infer_quiet_deliveries(data: ParcelsData, now: datetime) -> set[str]:
     """Close tracked parcels on their way that had no news for three weeks.
 

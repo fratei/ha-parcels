@@ -29,11 +29,13 @@ from custom_components.parcels.const import (
     PERSISTENT_NOTIFICATION_ID,
     REASON_UNKNOWN_FORMAT,
     SIGNAL_DATA_UPDATED,
+    VERSION,
     MailKind,
     ParcelStatus,
 )
 from custom_components.parcels.dedup import (
     ORDER_FOLD_KEY,
+    REASON_SAME_ORDER,
     REPAIR_KEY,
     REPAIR_VERSION,
     TYPED_JOIN_KEY,
@@ -42,6 +44,7 @@ from custom_components.parcels.dedup import (
     archive_parcel,
 )
 from custom_components.parcels.engine import (
+    RELEASE_KEY,
     RELIST_KEY,
     UNIGNORE_REREAD_KEY,
     ParcelsEngine,
@@ -1085,6 +1088,193 @@ async def test_start_joins_a_typed_parcel_left_apart_quietly(
         await hass.async_block_till_done()
 
     join.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("repaired", "joined"),
+    [(4, True), (REPAIR_VERSION, False)],
+    ids=["0.1.23", "0.1.24"],
+)
+async def test_start_joins_an_old_delivery_to_the_package_open_then(
+    hass: HomeAssistant, hass_storage: dict[str, Any], repaired: int, joined: bool
+) -> None:
+    """The repair of a 0.1.23 store joins a delivery it left apart, quietly.
+
+    The order's first package was already delivered when the shop's
+    "delivered" e-mail, which names only the order, came: it's the second
+    package's. Reconciling looks at the last 30 days only; the repair looks
+    at every order, once, so a store 0.1.24 repaired keeps it apart.
+    """
+    now = datetime.fromisoformat(NOW)
+    order, shop = "001234567890", "Loja Exemplo"
+    data = ParcelsData()
+    data.engine[REPAIR_KEY] = repaired
+    mails = [
+        contribution(
+            "msg:one#0",
+            time=now - timedelta(days=45),
+            carrier="ctt",
+            number="RR482915732PT",
+            merchant=shop,
+            orders=[order],
+        ),
+        contribution(
+            "msg:one-done#0",
+            kind=MailKind.DELIVERED,
+            time=now - timedelta(days=43),
+            carrier="ctt",
+            number="RR482915732PT",
+            merchant=shop,
+            orders=[order],
+        ),
+        contribution(
+            "msg:two#0",
+            time=now - timedelta(days=42),
+            carrier="ctt",
+            number="RR123456785PT",
+            merchant=shop,
+            orders=[order],
+        ),
+    ]
+    ids = [apply_contribution(data, mail, mail.origin.time).parcel_id for mail in mails]
+    first, second = ids[0], ids[2]
+    assert ids[1] == first
+    assert second not in (None, first)
+    # What 0.1.23 made of the shop's "delivered" e-mail.
+    delivered = now - timedelta(days=40)
+    alone = ParcelsData()
+    apart = apply_contribution(
+        alone,
+        contribution(
+            "msg:done#0",
+            kind=MailKind.DELIVERED,
+            time=delivered,
+            merchant=shop,
+            orders=[order],
+        ),
+        delivered,
+    ).parcel_id
+    assert apart is not None
+    data.parcels[apart] = alone.parcels[apart]
+    hass_storage["parcels"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "parcels",
+        "data": data.as_dict(),
+    }
+    add_hub(hass)
+    fired: list[str] = []
+    for event_type in (EVENT_PARCEL_ADDED, EVENT_STATUS_CHANGED, EVENT_DELIVERED):
+        hass.bus.async_listen(event_type, lambda event: fired.append(event.event_type))
+
+    engine = await async_setup_parcels(hass)
+    await hass.async_block_till_done()
+
+    parcels = engine.data.parcels
+    assert parcels[first].state.status is ParcelStatus.DELIVERED
+    assert "msg:done#0" not in parcels[first].origins
+    if joined:
+        assert apart not in parcels
+        parcel = parcels[second]
+        assert "msg:done#0" in parcel.origins
+        assert parcel.state.status is ParcelStatus.DELIVERED
+        assert not parcel.state.inferred
+        assert parcel.auto_merged is not None
+        assert parcel.auto_merged.reason == REASON_SAME_ORDER
+    else:
+        assert set(parcels) == {first, second, apart}
+        # Only three weeks without news say it was delivered.
+        assert parcels[second].state.inferred_reason == "quiet"
+    assert fired == []
+    assert engine.data.engine[REPAIR_KEY] == REPAIR_VERSION
+
+
+@pytest.mark.parametrize(
+    ("release", "events"),
+    [
+        (None, set()),
+        (
+            {"version": VERSION},
+            {EVENT_STATUS_CHANGED, EVENT_PARCEL_ADDED, EVENT_DELIVERED},
+        ),
+    ],
+    ids=["after-an-update", "same-release"],
+)
+async def test_start_reconciles_quietly_once_after_an_update(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    release: dict[str, Any] | None,
+    events: set[str],
+) -> None:
+    """A new release reconciles once as it starts, before it tells statuses
+    apart: what its rules change then fires no events.
+
+    0.1.27 put the shop's "delivered" e-mail, which names only the order, in
+    one of two packages on their way an hour ago. Now it gets a parcel of
+    its own, suggested for each package.
+    """
+    now = datetime.fromisoformat(NOW)
+    order, shop = "001234567890", "Loja Exemplo"
+    data = ParcelsData()
+    data.engine[REPAIR_KEY] = REPAIR_VERSION
+    if release is not None:
+        data.engine[RELEASE_KEY] = release
+    mails = [
+        contribution(
+            "msg:one#0",
+            time=now - timedelta(hours=5),
+            carrier="ctt",
+            number="RR482915732PT",
+            merchant=shop,
+            orders=[order],
+        ),
+        contribution(
+            "msg:done#0",
+            kind=MailKind.DELIVERED,
+            time=now - timedelta(hours=1),
+            merchant=shop,
+            orders=[order],
+        ),
+        contribution(
+            "msg:two#0",
+            time=now - timedelta(hours=4),
+            carrier="ctt",
+            number="RR123456785PT",
+            merchant=shop,
+            orders=[order],
+        ),
+    ]
+    ids = [apply_contribution(data, mail, mail.origin.time).parcel_id for mail in mails]
+    first, second = ids[0], ids[2]
+    assert ids[1] == first
+    assert data.parcels[first].state.status is ParcelStatus.DELIVERED
+    hass_storage["parcels"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "parcels",
+        "data": data.as_dict(),
+    }
+    add_hub(hass)
+    fired: list[str] = []
+    for event_type in (EVENT_PARCEL_ADDED, EVENT_STATUS_CHANGED, EVENT_DELIVERED):
+        hass.bus.async_listen(event_type, lambda event: fired.append(event.event_type))
+
+    engine = await async_setup_parcels(hass)
+    await hass.async_block_till_done()
+
+    parcels = engine.data.parcels
+    delivery = next(p for p in parcels.values() if "msg:done#0" in p.origins)
+    assert delivery.id not in (first, second)
+    assert delivery.state.status is ParcelStatus.DELIVERED
+    assert parcels[first].state.status is ParcelStatus.SHIPPED
+    assert parcels[second].state.status is ParcelStatus.SHIPPED
+    assert {(s.parcel_id, s.candidates) for s in engine.suggestions} == {
+        (first, (delivery.id,)),
+        (second, (delivery.id,)),
+    }
+    assert set(fired) == events
+    assert engine.data.engine[RELEASE_KEY]["version"] == VERSION
+    assert engine.diagnostics()["release"]["version"] == VERSION
 
 
 async def test_stop_ignoring_survives_a_restart(hass: HomeAssistant) -> None:

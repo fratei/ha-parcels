@@ -32,6 +32,7 @@ from custom_components.parcels.models import (
     known_merchant_name,
     merchant_display,
     merchant_key,
+    one_day,
     order_key,
 )
 from custom_components.parcels.parsers.base import Eta
@@ -1371,6 +1372,43 @@ def test_a_shops_later_estimate_counts_once_the_carriers_date_passed(
     assert stale.state.eta == _day(4)
     freezer.move_to("2026-11-04 12:00:00+00:00")
     assert missed.state.eta == _day(4)
+
+
+@pytest.mark.usefixtures("lisbon")
+def test_a_pass_keeps_the_day_it_started(freezer: FrozenDateTimeFactory) -> None:
+    """A pass reads every parcel's state for the day it started.
+
+    Midnight during the pass changes nothing until it ends, and a pass within
+    it keeps that day. After the pass, or an error that ended it, each read
+    checks the day again.
+    """
+    parcel = _parcel(
+        _event(S.IN_TRANSIT, at(), eta=_day(4)),
+        _event(S.IN_TRANSIT, at(days=1), origin="o2", eta=_day(7)),
+        origins=(
+            _carrier(),
+            _origin("o2", label="lumenhaus.example", time=at(days=1)),
+        ),
+    )
+    freezer.move_to("2026-11-04 23:30:00+00:00")
+    with one_day():
+        assert parcel.state.eta == _day(4)
+        freezer.move_to("2026-11-05 00:30:00+00:00")
+        with one_day():
+            assert parcel.state.eta == _day(4)
+        assert parcel.state.eta == _day(4)
+    assert parcel.state.eta == _day(7)
+
+    @one_day()
+    def failing_pass() -> None:
+        assert parcel.state.eta == _day(4)
+        raise RuntimeError
+
+    freezer.move_to("2026-11-04 23:30:00+00:00")
+    with pytest.raises(RuntimeError):
+        failing_pass()
+    freezer.move_to("2026-11-05 00:30:00+00:00")
+    assert parcel.state.eta == _day(7)
 
 
 @pytest.mark.usefixtures("lisbon")

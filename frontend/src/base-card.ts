@@ -27,6 +27,7 @@ import { localeOptions, type LocaleOptions } from "./format.ts";
 import { suggestedCandidates } from "./parcels.ts";
 import "./return-dialog.ts";
 import type { ParcelsReturnDialog } from "./return-dialog.ts";
+import { REVIEW_DONE_EVENT, type ReviewDone } from "./review-state.ts";
 import { SnapshotController } from "./snapshot-controller.ts";
 import { STRINGS, fmt } from "./strings.ts";
 import type { CustomerReturn, HomeAssistant, Parcel, Snapshot } from "./types.ts";
@@ -174,11 +175,14 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
   static override properties: PropertyDeclarations = {
     _busyParcels: { state: true },
     _filter: { state: true },
+    _announcement: { state: true },
   };
 
   /** Parcels with an Undo or Keep running. */
   declare protected _busyParcels: ReadonlySet<string>;
   declare protected _filter: ParcelFilter;
+  /** What the card's status region says, e.g. after taking focus from the review card. */
+  declare private _announcement: string;
 
   /** The parcel whose chip had focus before the current render. */
   private _focusedParcel: string | null = null;
@@ -189,6 +193,7 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
     super();
     this._busyParcels = new Set();
     this._filter = readFilter();
+    this._announcement = "";
   }
 
   override connectedCallback(): void {
@@ -198,6 +203,7 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
     window.addEventListener("storage", this._onStorage);
     window.addEventListener("location-changed", this._onLocationChanged);
     window.addEventListener("popstate", this._onLocationChanged);
+    window.addEventListener(REVIEW_DONE_EVENT, this._onReviewDone);
   }
 
   override disconnectedCallback(): void {
@@ -206,6 +212,7 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
     window.removeEventListener("storage", this._onStorage);
     window.removeEventListener("location-changed", this._onLocationChanged);
     window.removeEventListener("popstate", this._onLocationChanged);
+    window.removeEventListener(REVIEW_DONE_EVENT, this._onReviewDone);
   }
 
   /** Chooses the filter for every card on this device. */
@@ -347,6 +354,53 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
   /** Where focus goes when the parcel of a closed dialog is gone. */
   protected focusFallback(): HTMLElement | null {
     return this.renderRoot.querySelector<HTMLElement>("[data-focus-fallback], button.chip-main");
+  }
+
+  /**
+   * After the last review decision hid the review card: focus goes to the
+   * decided parcel's chip, or, when asked without parcels, to the card's
+   * heading. Taken only once focus is there; the card then says what happened.
+   */
+  private readonly _onReviewDone = (event: Event): void => {
+    const done = (event as CustomEvent<ReviewDone | null | undefined>).detail;
+    if (event.defaultPrevented || this.hidden || !this.isConnected || !this.snapshot || !done) {
+      return;
+    }
+    let target: HTMLElement | null = null;
+    if (done.parcels.length) {
+      for (const parcelId of done.parcels) {
+        target = this.renderRoot.querySelector<HTMLElement>(chipSelector(parcelId));
+        if (target) {
+          break;
+        }
+      }
+    } else {
+      target = this.renderRoot.querySelector<HTMLElement>("h2.title") ?? this.focusFallback();
+    }
+    if (!target) {
+      return;
+    }
+    target.focus();
+    if (this.shadowRoot?.activeElement !== target) {
+      return;
+    }
+    event.preventDefault();
+    if (done.message) {
+      this.announce(done.message);
+    }
+  };
+
+  /** Says `message` in the card's status region, also when it said the same before. */
+  protected announce(message: string): void {
+    this._announcement = "";
+    void this.updateComplete.then(() => {
+      this._announcement = message;
+    });
+  }
+
+  /** The card's status region, for what `announce` says. */
+  protected renderAnnouncement(): TemplateResult {
+    return html`<div class="sr-only" role="status">${this._announcement}</div>`;
   }
 
   /** Opens a parcel's details; focus goes back to `opener`, else to the parcel's chip. */

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  REVIEW_DONE_EVENT,
   SHOW_REVIEW_EVENT,
   aiQueueText,
   filteredTitle,
+  handOffReview,
   hideHandled,
   hidePending,
   isHidden,
@@ -18,6 +20,7 @@ import {
   unreadRetryText,
   withoutHidden,
   type HiddenItems,
+  type ReviewDone,
 } from "../src/review-state.ts";
 import type { MergeSuggestion, ReviewItem } from "../src/types.ts";
 
@@ -251,5 +254,45 @@ describe("the week card's link to Needs review", () => {
     assert.equal(showReview(page), true);
     assert.equal((seen as Event | null)?.cancelable, true);
     assert.equal(showReview(null), false);
+  });
+});
+
+describe("handing focus on after the last decision hides the review card", () => {
+  const MERGED: ReviewDone = { parcels: ["p2"], message: "Merged." };
+
+  /** A page whose cards take the hand-off when `take` says so; what each asked about. */
+  function page(take: (done: ReviewDone) => boolean): { target: EventTarget; asked: ReviewDone[] } {
+    const target = new EventTarget();
+    const asked: ReviewDone[] = [];
+    target.addEventListener(REVIEW_DONE_EVENT, (event) => {
+      const done = (event as CustomEvent<ReviewDone>).detail;
+      asked.push(done);
+      assert.equal(event.cancelable, true);
+      if (take(done)) {
+        event.preventDefault();
+      }
+    });
+    return { target, asked };
+  }
+
+  test("goes to a card that shows the decided parcel", () => {
+    const { target, asked } = page((done) => done.parcels.includes("p2"));
+    assert.equal(handOffReview(MERGED, target), true);
+    assert.deepEqual(asked, [MERGED]);
+  });
+
+  test("else to any card that can take focus, with the same message", () => {
+    const { target, asked } = page((done) => done.parcels.length === 0);
+    assert.equal(handOffReview(MERGED, target), true);
+    assert.deepEqual(asked, [MERGED, { parcels: [], message: "Merged." }]);
+  });
+
+  test("asks once without parcels, and is false when no card takes it", () => {
+    const { target, asked } = page(() => false);
+    assert.equal(handOffReview(MERGED, target), false);
+    assert.equal(asked.length, 2);
+    assert.equal(handOffReview({ parcels: [], message: "" }, target), false);
+    assert.equal(asked.length, 3);
+    assert.equal(handOffReview(MERGED, null), false);
   });
 });

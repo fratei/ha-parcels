@@ -112,11 +112,14 @@ export class ParcelsListCard extends ParcelsChipCard {
     const list = this._list();
     const title = cardTitle(this._config.title, STRINGS.defaultListTitle);
     return html`<ha-card>
-        ${title ? html`<div class="header"><h2 class="title">${title}</h2></div>` : nothing}
+        ${title
+          ? html`<div class="header"><h2 class="title" tabindex="-1">${title}</h2></div>`
+          : nothing}
         ${this.renderBanners()}
         <div class="content" tabindex="-1">
           ${list ? this._renderList(list.boxes, list.hidden) : this.renderLoading()}
         </div>
+        ${this.renderAnnouncement()}
       </ha-card>
       ${this.renderDetailsDialog()} ${this.renderReturnDialog()}`;
   }

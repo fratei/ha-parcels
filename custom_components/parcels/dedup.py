@@ -131,6 +131,7 @@ from .models import (
     local_date,
     merchant_key,
     new_id,
+    one_day,
     order_key,
     plain_number,
     time_from_str,
@@ -1017,15 +1018,7 @@ def _order_only_target(
     ``include_archived``: see _order_pick(). A parcel whose number was typed
     as the order's is one of them.
     """
-    closed = _closed_at(events)
-    parcels: dict[str, Parcel] = {}
-    for key in origin_order_keys(origin):
-        for parcel in order_parcels(
-            data, key, include_archived=include_archived, typed=True
-        ):
-            if not _conflicts(parcel, origin) and not _heard_after(parcel, closed):
-                parcels[parcel.id] = parcel
-    if not parcels:
+    if not (parcels := _order_candidates(data, origin, events, include_archived)):
         return None
     items = _item_keys(origin.items)
     if _cancels(events):
@@ -1049,6 +1042,28 @@ def _order_only_target(
             if event.status is ParcelStatus.CANCELLED:
                 event.status = None
     return _order_pick(data, parcels, items, origin)
+
+
+def _order_candidates(
+    data: ParcelsData,
+    origin: Origin,
+    events: list[ParcelEvent],
+    include_archived: bool = False,
+) -> dict[str, Parcel]:
+    """Return the order's parcels that order-level news may be about.
+
+    Not one that can't be the same parcel, nor one first heard of after
+    news that the parcel was delivered or returned (see _heard_after()).
+    """
+    closed = _closed_at(events)
+    parcels: dict[str, Parcel] = {}
+    for key in origin_order_keys(origin):
+        for parcel in order_parcels(
+            data, key, include_archived=include_archived, typed=True
+        ):
+            if not _conflicts(parcel, origin) and not _heard_after(parcel, closed):
+                parcels[parcel.id] = parcel
+    return parcels
 
 
 def _cancels(events: Iterable[ParcelEvent]) -> bool:
@@ -1246,15 +1261,18 @@ def _open_then(parcel: Parcel, fixed: Collection[str], when: datetime) -> bool:
     )
 
 
-def _untracked_then(parcel: Parcel, fixed: Iterable[Origin], when: datetime) -> bool:
-    """Return True when no origin among ``fixed`` had numbered a parcel by ``when``.
+def _untracked_then(
+    parcel: Parcel, fixed: Iterable[Origin], when: datetime | None = None
+) -> bool:
+    """Return True when no origin among ``fixed`` had numbered a parcel by
+    ``when``, or at all with None.
 
     A number typed as the order's isn't a tracking number.
     """
     state = parcel.state
     typed = plain_number(state.typed_number) if state.typed_order else None
     return not any(
-        origin.time <= when
+        (when is None or origin.time <= when)
         and (
             bool(origin.amazon_shipment_id)
             or (
@@ -1266,6 +1284,40 @@ def _untracked_then(parcel: Parcel, fixed: Iterable[Origin], when: datetime) -> 
             )
         )
         for origin in fixed
+    )
+
+
+def _open_when_sent(parcels: Mapping[str, Parcel], origin: Origin) -> list[str]:
+    """Return the parcels Parcels knew of, still open, when ``origin`` was sent.
+
+    Only what didn't join by its order counts (see :func:`_fixed`), so the
+    answer doesn't depend on the order e-mails were read in.
+    """
+    found: list[str] = []
+    for pid, parcel in parcels.items():
+        fixed = _fixed(parcel, origin)
+        if any(anchor.time <= origin.time for anchor in _anchors(fixed)) and _open_then(
+            parcel, {other.id for other in fixed}, origin.time
+        ):
+            found.append(pid)
+    return found
+
+
+def _a_package(parcel: Parcel, fixed: Sequence[Origin]) -> bool:
+    """Return True when ``fixed`` (see :func:`_fixed`) tells that a parcel is
+    one of its order's packages, not only the order.
+
+    That's a number or shipment, not a number typed as the order's, or news
+    that it shipped. A delay notice isn't such news.
+    """
+    if not _untracked_then(parcel, fixed):
+        return True
+    ids = {origin.id for origin in fixed}
+    return any(
+        event.origin in ids
+        and event.status in _SHIPPED_STATUSES
+        and event.kind is not MailKind.DELAYED
+        for event in parcel.events
     )
 
 
@@ -1733,6 +1785,7 @@ def _record_orders(
                 order.merchant = merchant
 
 
+@one_day()
 def apply_contribution(
     data: ParcelsData,
     contribution: Contribution,
@@ -1869,6 +1922,16 @@ def apply_contribution(
         target, reason, ambiguous, marked = _reference_target(data, origin)
         if target is not None and reason is not None and not allowed(target, reason):
             target, reason, ambiguous, marked = None, None, True, False
+        if (
+            target is None
+            and not ambiguous
+            and _order_closing(origin, events)
+            and len(_open_when_sent(_order_candidates(data, origin, events), origin))
+            > 1
+        ):
+            # Of several packages on their way, which one was delivered or
+            # returned: the user says (see _merge_by_order()).
+            ambiguous = True
         if target is None and not ambiguous:
             target = _order_only_target(data, origin, events)
             if target is None and (
@@ -3530,12 +3593,12 @@ def _merge_by_order(
     "delivered" or "returned" e-mail without a number belongs to the order's
     only other parcel, open or not, when Parcels heard of that one first and
     their items don't differ; with several, to the only one still open when
-    it was sent. With several open then, the user gets a suggestion for
-    each. An open parcel known only from its order belongs to the
-    order's only other open parcel when that one has a tracking number or
-    shipment and their items don't differ: read in time order, its e-mails
-    would have joined it. Orders without news since ``since`` are left
-    alone; None looks at every order.
+    it was sent, of those Parcels heard of before it. With several open
+    then, the user gets a suggestion for each. An open parcel known only
+    from its order belongs to the order's only other open parcel when that
+    one has a tracking number or shipment and their items don't differ:
+    read in time order, its e-mails would have joined it. Orders without
+    news since ``since`` are left alone; None looks at every order.
     """
     noise = _noise_items(data.parcels.values())
     several: list[tuple[Parcel, list[Parcel]]] = []
@@ -3603,7 +3666,8 @@ def _merge_one_by_order(
             others = {
                 pid: other
                 for pid, other in others.items()
-                if _open_then(other, other.origins.keys(), when)
+                if not _heard_after(other, when)
+                and _open_then(other, other.origins.keys(), when)
             }
         fitting = [
             other
@@ -4987,9 +5051,10 @@ def _place_order_mail(
     flagged. The user's edits never stay behind alone.
 
     News without a package that it was delivered or returned moves only
-    from a parcel its own news had closed by then, to the order's only
-    other parcel still open then (see :func:`_closing_target`). Returns how
-    many e-mails moved.
+    from a parcel its own news had closed by then: to the order's only
+    other parcel still open then or, when several packages were open then,
+    to a parcel of its own, suggested for each (see :func:`_closing_target`).
+    Returns how many e-mails moved.
     """
     pending = sorted(
         (parcel.origins[oid].time, oid, parcel.id)
@@ -5037,6 +5102,13 @@ def _place_order_mail(
             target_id = _closing_target(candidates, origin, parcel.id)
         else:
             target_id = _pick_by_time(candidates, origin)
+        if target_id == _TAKE_OUT:
+            moved = _take_out(data, parcel, _companions(parcel, origin), now)
+            moves += 1
+            for changed in (parcel, moved):
+                add(changed)
+                result.changed.add(changed.id)
+            continue
         if target_id is None or target_id == parcel.id:
             continue
         target = candidates[target_id]
@@ -5088,6 +5160,9 @@ def _settle(
     return moved_out
 
 
+_TAKE_OUT = ""
+
+
 def _closing_target(
     candidates: Mapping[str, Parcel], origin: Origin, home: str
 ) -> str | None:
@@ -5095,21 +5170,21 @@ def _closing_target(
     or returned, is about, when it isn't the parcel ``home`` it's in.
 
     That's the order's only parcel that Parcels knew of and that was still
-    open when the news was sent, and only when its own news had closed
-    ``home`` by then. With several open, it stays where it is.
+    open when the news was sent. With several, the user says which, so it
+    leaves (:data:`_TAKE_OUT`), unless ``home`` is one of them and only the
+    order's: then it stays, so the order's e-mails don't stay behind alone,
+    never shipping. With none, it stays.
     """
-    when = origin.time
-
-    def open_then(pid: str) -> bool:
-        fixed = _fixed(candidates[pid], origin)
-        return any(anchor.time <= when for anchor in _anchors(fixed)) and _open_then(
-            candidates[pid], {other.id for other in fixed}, when
-        )
-
-    if open_then(home):
+    found = _open_when_sent(candidates, origin)
+    if home in found:
+        if len(found) > 1 and _a_package(
+            candidates[home], _fixed(candidates[home], origin)
+        ):
+            return _TAKE_OUT
         return None
-    found = [pid for pid in candidates if open_then(pid)]
-    return found[0] if len(found) == 1 else None
+    if len(found) == 1:
+        return found[0]
+    return _TAKE_OUT if found else None
 
 
 def _pair_by_reference(
@@ -5221,6 +5296,7 @@ def _shrunk(flag: AutoMerge | None, parcel: Parcel) -> AutoMerge | None:
     )
 
 
+@one_day()
 def reconcile(
     data: ParcelsData, now: datetime, *, since: datetime | None = None
 ) -> Reconciled:
@@ -5338,6 +5414,7 @@ def _may_hold(
     return True
 
 
+@one_day()
 def infer_deliveries(data: ParcelsData, now: datetime) -> set[str]:
     """Close parcels without a tracking number that were probably delivered.
 

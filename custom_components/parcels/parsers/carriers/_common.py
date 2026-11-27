@@ -48,6 +48,7 @@ from ._phrases import (
     ADDRESS_LABELS,
     AUX_CHECKED_KINDS,
     COLLECTED_PHRASES,
+    COMPANY_INITIALS,
     CONDITIONAL_PHRASES,
     DEADLINE_WORDS,
     ETA_LABELS,
@@ -72,6 +73,7 @@ from ._phrases import (
     PICKUP_HINTS,
     PICKUP_NAME_LABELS,
     PICKUP_POINT_LABELS,
+    POINT_ABBREVIATIONS,
     SENDER_SIDE_WORDS,
     STATUS_LABELS,
     TIME_LABELS,
@@ -1123,9 +1125,28 @@ _POINT_PREP_RE = re.compile(
 )
 
 _ROW_GAP_RE = re.compile(r"[ ]*(?:[:\-][ ]*)?")
-# A word that ends its sentence: a number or a long word before a full stop.
-# Short words such as "Av." or "Lda." are abbreviations inside the name.
-_SENTENCE_END_RE = re.compile(r"(?:\d|[^\W\d_]{5})\.$")
+_NAME_ABBREVIATIONS = frozenset(POINT_ABBREVIATIONS)
+_COMPANY_SUFFIXES = frozenset(COMPANY_INITIALS)
+_INITIALS_RE = re.compile(r"(?:[^\W\d_]\.)*[^\W\d_]")
+
+
+def _ends_sentence(word: str) -> bool:
+    """Tell whether a point's word ends its sentence with a full stop.
+
+    A number or a word before a full stop ends it, as in "Cacifo CTT Sol." A
+    name goes on after an initial, as in "J. Silva" or "C.C. Colombo", and
+    after an abbreviation such as "Av." or "Sta.", but a company's "S.A."
+    ends it.
+    """
+    word = word.strip()
+    if not word.endswith("."):
+        return False
+    stem = fold_text(word[:-1])
+    if stem[-1:].isdigit():
+        return True
+    if _INITIALS_RE.fullmatch(stem):
+        return stem in _COMPANY_SUFFIXES
+    return stem not in _NAME_ABBREVIATIONS
 
 
 def _clean_point(value: str) -> str | None:
@@ -1175,7 +1196,7 @@ def _point_words(doc: _Doc, start: int, end: int) -> str:
         if not word or word.end() == pos:
             break
         pos = word.end()
-        if _SENTENCE_END_RE.search(word.group()):
+        if _ends_sentence(word.group()):
             break
     return doc.text[start:pos]
 

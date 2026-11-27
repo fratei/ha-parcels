@@ -391,7 +391,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
     return html`<ha-card>
         <div class="header">
           <div class="heading">
-            ${title ? html`<h2 class="title">${title}</h2>` : nothing}
+            ${title ? html`<h2 class="title" tabindex="-1">${title}</h2>` : nothing}
             ${range ? html`<p class="range" aria-live="polite">${range}</p>` : nothing}
             ${snapshot ? this._renderAttention(snapshot) : nothing}
           </div>
@@ -444,6 +444,7 @@ export class ParcelsWeekCard extends ParcelsChipCard {
             ? this._renderStacked(snapshot, layout, range)
             : this._renderGrid(snapshot, layout, range)
           : html`<div class="content">${this.renderLoading()}</div>`}
+        ${this.renderAnnouncement()}
       </ha-card>
       ${this.renderDetailsDialog()} ${this.renderReturnDialog()}
       <parcels-add-dialog

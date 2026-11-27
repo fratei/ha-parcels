@@ -8,8 +8,11 @@ import pytest
 
 from custom_components.parcels.parsers.base import MailMessage
 from custom_components.parcels.parsers.prefilter import (
+    FEEDBACK_TOPICS,
     MARKETING_PHRASES,
+    MESSAGE_TOPICS,
     STRONG_KEYWORDS,
+    SURVEY_ACTIONS,
     WEAK_KEYWORDS,
     feedback_topic,
     has_news_words,
@@ -17,8 +20,10 @@ from custom_components.parcels.parsers.prefilter import (
     invoice_topic,
     is_candidate,
     known_sender_subject,
+    message_topic,
     not_shipping_topic,
     sent_receipt,
+    survey_request,
 )
 
 UNKNOWN = "news@store.example"
@@ -471,6 +476,10 @@ def test_known_sender_subject_without_shipping_words(subject: str) -> None:
         # A status beats a request for feedback.
         "Your order has shipped \u2013 rate your experience",
         "A sua encomenda foi entregue: avalie a entrega",
+        "Entrega concluída: avalie o nosso serviço",
+        "Entregámos o seu objeto. Como correu?",
+        "Delivery complete \u2013 how did we do?",
+        "Your parcel is here! Rate your delivery",
     ],
 )
 def test_known_sender_subject_about_a_parcel(subject: str) -> None:
@@ -495,6 +504,21 @@ def test_reviewing_a_delivery_choice_is_no_feedback(subject: str) -> None:
 @pytest.mark.parametrize(
     "subject",
     [
+        "Votre avis de passage",
+        "Votre avis d'expédition",
+        "Classificação pautal do seu envio",
+        "Tell us how you'd like your parcel delivered",
+        "Helfen Sie uns bei der Zustellung",
+    ],
+)
+def test_delivery_notices_are_no_feedback(subject: str) -> None:
+    """Notices and questions about the delivery itself aren't requests for feedback."""
+    assert not not_shipping_topic(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
         "Como correu a sua entrega?",
         "Diga-nos o que achou",
         "A sua opinião é importante",
@@ -507,6 +531,59 @@ def test_reviewing_a_delivery_choice_is_no_feedback(subject: str) -> None:
         "Hoe was je bezorging?",
         # A product's name in quotes doesn't hide the request.
         'Avalie a sua compra "Candeeiro Lua"',
+        "Alex, como classificaria o Tapete Exemplo?",
+        "Alex, como avaliaria o Tapete Exemplo?",
+        "Ajude-nos a melhorar",
+        "Classifique a entrega do seu objeto",
+        "A sua experiência com os CTT",
+        "Como foi a sua entrega?",
+        # A question about the delivery is no status.
+        "Já recebeu o seu objeto? Avalie a entrega",
+        "Alex, ¿cómo valorarías Alfombra Ejemplo?",
+        "Ayúdanos a mejorar",
+        "Tu experiencia con Tienda Ejemplo",
+        "¿Cómo fue tu entrega?",
+        "Alex, how would you rate Ceramic Mug Example?",
+        "Tell us about your delivery",
+        "Help us improve",
+        "Your experience with Example Store",
+        "How did it go?",
+        "Schreiben Sie eine Rezension",
+        "Helfen Sie uns, besser zu werden",
+        "Wie war Ihre Zustellung?",
+        "Alex, comment évalueriez-vous Tasse Exemple ?",
+        "Aidez-nous à nous améliorer",
+        "Alex, votre avis ?",
+        "Qu'avez-vous pensé de votre livraison ?",
+        "Comment s'est passée votre livraison ?",
+        "Alex, come valuteresti Tazza Esempio?",
+        "Valutaci",
+        "Aiutaci a migliorare",
+        "Come è andata la consegna?",
+        "Alex, wat vind je van Mok Voorbeeld?",
+        "Hoe vond je je bezorging?",
+        "Help ons verbeteren",
+        "Wat vond u van onze service?",
+        # A survey's opening question, or its wish to hear from you.
+        "Tem um minuto?",
+        "Tem um minuto, Alex?",
+        "Alex, tens um minutinho?",
+        "Queremos ouvi-lo",
+        "¿Tienes un minuto?",
+        "Queremos escucharte",
+        "Got a minute?",
+        "Do you have a moment?",
+        "We'd love to hear from you",
+        "We want to hear from you",
+        "Haben Sie eine Minute?",
+        "Wir möchten von Ihnen hören",
+        "Avez-vous une minute ?",
+        "Nous aimerions connaître votre expérience",
+        "Hai un minuto?",
+        "Ci piacerebbe sentirti",
+        "Dicci il tuo parere",
+        "Heb je even een minuutje?",
+        "We horen graag van je",
     ],
 )
 def test_feedback_topic(subject: str) -> None:
@@ -520,6 +597,16 @@ def test_feedback_topic(subject: str) -> None:
         # A status beats a request for feedback.
         "A sua encomenda foi entregue: avalie a entrega",
         "Your order has shipped \u2013 rate your experience",
+        "Entrega concluída: avalie o nosso serviço",
+        "Entregámos o seu objeto. Como correu?",
+        "A sua encomenda chegou: avalie a entrega",
+        "Tu paquete ha llegado: valora la entrega",
+        "Delivery complete \u2013 how did we do?",
+        "Your parcel is here! Rate your delivery",
+        "Ihr Paket ist da: wie zufrieden waren Sie?",
+        "Votre colis est arrivé : donnez votre avis",
+        "Il tuo pacco è arrivato: com'è andata?",
+        "Je pakket is er: hoe was je bezorging?",
         # A product's name in quotes isn't the e-mail's topic.
         'Ordered: "Customer Feedback Board" and 1 more item',
         'Ordered: "Customer Feedback Board Deluxe Edition wit...',
@@ -528,11 +615,150 @@ def test_feedback_topic(subject: str) -> None:
         "Comprovativo de entrega",
         "Your parcel is on its way",
         "Fatura eletrónica FT 2026A/100001",
+        "Entregue: tem um minuto para avaliar?",
+        "Delivered: got a minute?",
+        # A question that leads to the news isn't the topic.
+        "Tem um minuto? Levante a sua encomenda",
+        "Got a minute? Your parcel is waiting for you",
+        "Hast du kurz Zeit? Dein Paket liegt bereit",
+        "Heb je tijd om je pakket op te halen?",
+        # A carrier may ask a real question about a delivery.
+        "A quick question about your delivery",
+        "Nous aimerions connaître votre disponibilité",
     ],
 )
 def test_no_feedback_topic(subject: str) -> None:
     """A status, a quoted product name or an invoice is no request for feedback."""
     assert not feedback_topic(subject)
+
+
+@pytest.mark.parametrize(
+    ("subject", "text"),
+    [
+        (
+            "A sua entrega de 4 de novembro",
+            "O objeto foi entregue. Responda a 3 perguntas sobre a entrega.",
+        ),
+        ("Informação", "Participe no nosso inquérito de satisfação."),
+        ("Tu entrega", "Responde a 3 preguntas sobre la entrega."),
+        ("Tu entrega", "Participa en nuestra breve encuesta."),
+        ("A quick question about your delivery", "Tell us how we did in 2 minutes."),
+        ("Your delivery", "Take our short survey."),
+        ("Ihre Sendung", "Bitte nehmen Sie an unserer Umfrage teil."),
+        ("Ihre Sendung", "Beantworten Sie 3 kurze Fragen."),
+        ("Votre livraison", "Répondez à notre enquête en 2 minutes."),
+        ("La tua consegna", "Rispondi a 3 domande sulla consegna."),
+        ("Je bezorging", "Vul onze korte enquête in."),
+    ],
+)
+def test_survey_request(subject: str, text: str) -> None:
+    """An invitation to answer a survey, under a subject without a status."""
+    assert survey_request(subject, text)
+
+
+@pytest.mark.parametrize(
+    ("subject", "text"),
+    [
+        # A status in the subject wins.
+        (
+            "Entregue: tem um minuto para avaliar?",
+            "Responda a 3 perguntas sobre a entrega.",
+        ),
+        ("Your package was delivered", "Take our short survey."),
+        # A delivery's footer asking for a rating is no survey.
+        ("A sua entrega", "O objeto foi entregue. Avalie a entrega."),
+        ("A sua entrega", "Dê-nos a sua opinião. Diga-nos como correu."),
+        ("Your delivery", "Rate your delivery. How did we do?"),
+        ("Ihre Sendung", "Wie zufrieden waren Sie? Bewerten Sie uns."),
+        ("Votre livraison", "Donnez votre avis."),
+        ("La tua consegna", "Com'è andata? Lascia una recensione."),
+        ("Je bezorging", "Hoe was je bezorging? Beoordeel ons."),
+    ],
+)
+def test_no_survey_request(subject: str, text: str) -> None:
+    """A status in the subject, or only a request for a rating, isn't a survey."""
+    assert not survey_request(subject, text)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Recebeu uma mensagem referente à encomenda nº 1234567890123-A",
+        "Leroy Merlin Marketplace - Abrir reclamação sobre o pedido 1234567890123-A",
+        "Tem uma nova mensagem do vendedor",
+        "Tens uma nova mensagem de alex_doe",
+        "Recebeste 2 mensagens novas",
+        "Nova mensagem da Loja Exemplo",
+        "Mensagem do vendedor sobre a encomenda 1001",
+        "Abra uma disputa",
+        "Has recibido un mensaje del vendedor",
+        "Tienes un nuevo mensaje",
+        "Nuevo mensaje de Tienda Ejemplo",
+        "Abrir una reclamación sobre el pedido 1234567890123-A",
+        "You've received a new message",
+        "You have a new message from Example Store",
+        "Message from the seller about order 1001",
+        "Open a dispute",
+        "File a claim for order 1001",
+        "Sie haben eine neue Nachricht",
+        "Neue Nachricht vom Verkäufer",
+        "Reklamation eröffnen",
+        "Vous avez reçu un nouveau message",
+        "Nouveau message de Boutique Exemple",
+        "Ouvrir un litige",
+        "Hai ricevuto un nuovo messaggio",
+        "Nuovo messaggio da Negozio Esempio",
+        "Aprire un reclamo",
+        "Je hebt een nieuw bericht",
+        "Nieuw bericht van Winkel Voorbeeld",
+        "Een klacht indienen",
+    ],
+)
+def test_message_topic(subject: str) -> None:
+    """A seller's message or a prompt to complain, in each language."""
+    assert message_topic(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        # A status beats the message.
+        "Recebeu uma mensagem: a sua encomenda foi entregue",
+        "New message: your parcel is out for delivery",
+        # A message from whoever delivers it may be news.
+        "Tem uma nova mensagem do seu estafeta",
+        "You have a new message from your driver",
+        "Neue Nachricht von Ihrem Zusteller",
+        "Nouveau message de votre livreur",
+        # Shops' and carriers' own words about a parcel.
+        "Uma mensagem para si",
+        "Mensagem importante sobre a sua encomenda",
+        "A message about your order",
+        "A sua encomenda tem uma nova data de entrega",
+        "Tem uma encomenda à sua espera",
+        "Tienes un paquete en camino",
+        "Your parcel is on its way",
+        "Sie haben ein Paket erhalten",
+        "Vous avez un colis",
+        "Hai un pacco in arrivo",
+        "Je hebt een pakket",
+    ],
+)
+def test_no_message_topic(subject: str) -> None:
+    """A status, or a parcel's own news, is no seller's message."""
+    assert not message_topic(subject)
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Recebeu uma mensagem referente à encomenda nº 1234567890123-A",
+        "Abrir reclamação sobre o pedido 1234567890123-A",
+    ],
+)
+def test_message_topic_is_left_to_the_dispatcher(subject: str) -> None:
+    """A carrier's own message may be news, so the subject alone decides nothing."""
+    assert not not_shipping_topic(subject)
 
 
 @pytest.mark.parametrize(
@@ -552,11 +778,18 @@ def test_quoted_product_name_is_no_topic(subject: str) -> None:
     [
         "Comprovativo do seu envio",
         "Comprovativo de envio RR123456785PT",
+        "Recibo do seu envio",
+        "O seu envio foi aceite",
+        "O seu envio RR123456785PT foi aceite",
         "Talão de aceitação",
         "Justificante de admisión de tu envío",
+        "Recibo de envío",
         "Proof of postage",
+        "Your UPS shipment receipt",
         "Ihr Einlieferungsbeleg",
+        "Ihre Einlieferungsbestätigung",
         "Preuve de dépôt de votre colis",
+        "Reçu de dépôt",
         "Ricevuta di accettazione",
         "Je verzendbewijs",
     ],
@@ -571,10 +804,13 @@ def test_sent_receipt(subject: str) -> None:
     [
         "Comprovativo de entrega",
         "Comprovativo de pagamento",
+        "Recibo do pagamento de encargos",
         "Your proof of delivery",
         "Your parcel is on its way",
         # A status beats the receipt.
         "Comprovativo de envio: a sua encomenda foi entregue",
+        # How carriers and shops confirm a shipment to whoever waits for it.
+        "Confirmação de envio",
     ],
 )
 def test_no_sent_receipt(subject: str) -> None:
@@ -711,5 +947,12 @@ def test_shipping_fixtures(load_eml: Callable[..., MailMessage]) -> None:
 
 def test_keyword_tables_cover_all_languages() -> None:
     """Every supported language has keyword lists."""
-    for table in (STRONG_KEYWORDS, WEAK_KEYWORDS, MARKETING_PHRASES):
+    for table in (
+        STRONG_KEYWORDS,
+        WEAK_KEYWORDS,
+        MARKETING_PHRASES,
+        FEEDBACK_TOPICS,
+        MESSAGE_TOPICS,
+        SURVEY_ACTIONS,
+    ):
         assert set(table) == {"pt", "es", "en", "de", "fr", "it", "nl"}

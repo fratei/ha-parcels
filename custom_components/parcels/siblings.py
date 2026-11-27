@@ -30,6 +30,7 @@ from .models import (
     ParcelsData,
     Source,
     local_date,
+    one_day,
 )
 from .quiet import ON_THE_WAY, last_news
 from .views import shipment_groups
@@ -88,6 +89,7 @@ def _closing(parcel: Parcel, deliveries: Iterable[ParcelEvent]) -> ParcelEvent |
     )
 
 
+@one_day()
 def infer_shipment_deliveries(data: ParcelsData, now: datetime) -> set[str]:
     """Close the packages of a shipment once another of its packages was delivered.
 

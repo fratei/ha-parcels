@@ -77,6 +77,8 @@ from custom_components.parcels.models import (
 )
 from custom_components.parcels.parsers.base import Eta
 from custom_components.parcels.parsers.tracking import tracking_url
+from custom_components.parcels.quiet import infer_quiet_deliveries
+from custom_components.parcels.siblings import infer_shipment_deliveries
 from custom_components.parcels.views import (
     SYSTEM_VIEWER,
     Viewer,
@@ -928,6 +930,49 @@ def test_inferred_delivery_margin(eta_day: int, inferred: bool) -> None:
     order = _apply(data, _amazon("msg:a1#0", ORDER_1, _nov(6, 8), _eta(eta_day)))
     _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)))
     assert infer_deliveries(data, _nov(15, 8)) == ({order} if inferred else set())
+
+
+def _in_transit(data: ParcelsData, now: datetime) -> object:
+    return apply_contribution(
+        data, _ctt("msg:c3#0", CTT_2, MailKind.IN_TRANSIT, now), now
+    )
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        reconcile,
+        infer_shipment_deliveries,
+        infer_deliveries,
+        infer_quiet_deliveries,
+        _in_transit,
+    ],
+)
+def test_a_pass_reads_the_clock_once(
+    run: Callable[[ParcelsData, datetime], object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pass reads the clock once, not on each parcel's state it reads.
+
+    Each read checked the day: with thousands of parcels that took longer
+    than the pass itself.
+    """
+    data = ParcelsData()
+    for day, order in enumerate((ORDER_1, ORDER_2, ORDER_3), start=6):
+        _apply(data, _amazon(f"msg:a{day}#0", order, _nov(day, 8), _eta(9)))
+        _apply(data, _shop_order(f"msg:s{day}#0", _nov(day, 9), f"518000{day}"))
+    _apply(data, _ctt("msg:c1#0", CTT_1, MailKind.OUT_FOR_DELIVERY, _nov(9, 9)))
+    _apply(data, _ctt("msg:c2#0", CTT_1, MailKind.DELIVERED, _nov(9, 10, 40)))
+    calls = 0
+    utcnow = dt_util.utcnow
+
+    def counted() -> datetime:
+        nonlocal calls
+        calls += 1
+        return utcnow()
+
+    monkeypatch.setattr(dt_util, "utcnow", counted)
+    run(data, _nov(10, 8))
+    assert calls <= 1
 
 
 def test_tracked_parcels_arent_inferred() -> None:
@@ -2742,6 +2787,40 @@ CANCELLED_ITEM: list[Mail] = [
     (MailKind.ORDER, 9, {"orders": (ORDER_1,), "items": (POT,)}),
     (MailKind.CANCELLED, 13, {"orders": (ORDER_1,), "items": (POT,)}),
 ]
+BOTTLE = "Garrafa Exemplo térmica em aço inoxidável, 750 ml, parede dupla"
+LID = "Tampa Exemplo com palhinha de silicone, pack de 2"
+CHAIR = "Cadeira Exemplo de escritório com apoio lombar, preta"
+# Order and cancellation e-mails cut long titles at different points.
+CANCELLED_CUT_TITLES: list[Mail] = [
+    (MailKind.ORDER, 8, {"orders": (ORDER_1,), "items": (BOTTLE, LID)}),
+    (
+        MailKind.CANCELLED,
+        13,
+        {
+            "orders": (ORDER_1,),
+            "items": ("Garrafa Exemplo térmica em aço…", "1 x Tampa Exemplo com palh"),
+        },
+    ),
+]
+CANCELLED_FULL_TITLES: list[Mail] = [
+    (
+        MailKind.ORDER,
+        8,
+        {
+            "orders": (ORDER_1,),
+            "items": (
+                "Garrafa Exemplo térmica em aço inoxidável, 750...",
+                "Tampa Exemplo com palhinha de silicone, pack",
+            ),
+        },
+    ),
+    (MailKind.CANCELLED, 13, {"orders": (ORDER_1,), "items": (BOTTLE, LID)}),
+]
+# A cancellation of the same order that lists another item.
+CANCELLED_OTHER_ITEMS: list[Mail] = [
+    (MailKind.ORDER, 8, {"orders": (ORDER_1,), "items": (BOTTLE, LID)}),
+    (MailKind.CANCELLED, 13, {"orders": (ORDER_1,), "items": (CHAIR,)}),
+]
 CANCELLED_SHIPMENT: list[Mail] = [
     (MailKind.CANCELLED, 8, {"carrier": "paack", "reference": PAACK_STEM}),
     (MailKind.ORDER, 10, {"carrier": "paack", "number": f"{PAACK_STEM}_1"}),
@@ -2763,10 +2842,27 @@ CANCELLED_SHIPMENT_LATER: list[Mail] = [
                 frozenset({1, 2}): ParcelStatus.CANCELLED,
             },
         ),
+        (CANCELLED_CUT_TITLES, {frozenset({0, 1}): ParcelStatus.CANCELLED}),
+        (CANCELLED_FULL_TITLES, {frozenset({0, 1}): ParcelStatus.CANCELLED}),
+        (
+            CANCELLED_OTHER_ITEMS,
+            {
+                frozenset({0}): ParcelStatus.ORDERED,
+                frozenset({1}): ParcelStatus.CANCELLED,
+            },
+        ),
         (CANCELLED_SHIPMENT, {frozenset({0, 1}): ParcelStatus.CANCELLED}),
         (CANCELLED_SHIPMENT_LATER, {frozenset({0, 1}): ParcelStatus.CANCELLED}),
     ],
-    ids=["order", "item", "shipment", "shipment-later"],
+    ids=[
+        "order",
+        "item",
+        "cut-titles",
+        "full-titles",
+        "other-items",
+        "shipment",
+        "shipment-later",
+    ],
 )
 def test_a_cancellation_cancels_its_order_in_any_reading_order(
     mails: list[Mail], expected: dict[frozenset[int], str]
@@ -2774,6 +2870,28 @@ def test_a_cancellation_cancels_its_order_in_any_reading_order(
     """A cancellation read before its order isn't lost: the order joins it."""
     for order in _in_any_order(mails):
         assert _read(mails, order) == expected, order
+
+
+def test_a_cancellation_of_other_items_suggests_no_merge() -> None:
+    """A cancellation that lists other items is another package of the order:
+    it stays a parcel of its own, and no suggestion offers to merge them."""
+    for order in _in_any_order(CANCELLED_OTHER_ITEMS):
+        data = ParcelsData()
+        for step, index in enumerate(order):
+            kind, hour, details = CANCELLED_OTHER_ITEMS[index]
+            apply_contribution(
+                data,
+                contribution(
+                    f"msg:t{index}#0",
+                    kind=kind,
+                    time=_nov(10, hour),
+                    label=SELLER_SHOP,
+                    **details,
+                ),
+                _nov(13, 9, step),
+            )
+        assert reconcile(data, _nov(13, 10)).suggestions == [], order
+        assert len(data.parcels) == 2, order
 
 
 DELIVERED_FIRST: list[Mail] = [
@@ -2980,12 +3098,21 @@ def test_a_delivery_without_a_number_closes_the_open_package_in_any_reading_orde
         assert not reconcile(data, _nov(13, 11)).changed, order
 
 
-def test_a_delivery_without_a_number_stays_put_when_two_packages_are_open() -> None:
-    """With both packages on their way, the shop's "delivered" e-mail stays
-    where it was read into, looking again doesn't move it, and one left on
-    its own is suggested for each package."""
-    packages = _two_packages(11, 12)
-    mails = [*packages[:3], packages[5]]
+SHOP_DELIVERED: Mail = (MailKind.DELIVERED, 13, {"orders": (ORDER_1,)})
+
+
+@pytest.mark.parametrize(
+    "delivered",
+    [_two_packages(11, 12)[5], SHOP_DELIVERED],
+    ids=["ai-with-carrier", "shop"],
+)
+def test_a_delivery_without_a_number_closes_neither_of_two_open_packages(
+    delivered: Mail,
+) -> None:
+    """With both packages on their way when it was sent, the shop's
+    "delivered" e-mail naming only the order is suggested for each, in any
+    reading order: it closes neither, and looking again doesn't move it."""
+    mails = [*_two_packages(11, 12)[:3], delivered]
     for order in _in_any_order(mails):
         data = _read_into(mails, order)
         again = reconcile(data, _nov(13, 11))
@@ -2993,17 +3120,83 @@ def test_a_delivery_without_a_number_stays_put_when_two_packages_are_open() -> N
         packages = [_holder(data, f"msg:t{index}#0") for index in (1, 2)]
         assert not again.changed, order
         assert packages[0] is not packages[1], order
+        assert all(package is not delivery for package in packages), order
         assert delivery.state.status is ParcelStatus.DELIVERED, order
-        suggested = {
+        assert {package.state.status for package in packages} == {
+            ParcelStatus.SHIPPED
+        }, order
+        assert {
             (suggestion.parcel_id, suggestion.candidates, suggestion.reason)
             for suggestion in again.suggestions
-        }
-        if all(delivery is not package for package in packages):
-            assert suggested == {
-                (package.id, (delivery.id,), REASON_SAME_ORDER) for package in packages
-            }, order
-        else:
-            assert not suggested, order
+        } == {
+            (package.id, (delivery.id,), REASON_SAME_ORDER) for package in packages
+        }, order
+
+
+def test_a_delivery_naming_only_the_order_ends_the_same_in_any_reading_order() -> None:
+    """Two packages on their way and the shop's "delivered" e-mail naming
+    only the order end as three parcels, whatever order they're read in."""
+    packages = _two_packages(11, 12)
+    mails = [packages[1], packages[2], SHOP_DELIVERED]
+    for order in _in_any_order(mails):
+        data = _read_into(mails, order)
+        again = reconcile(data, _nov(13, 11))
+        assert _outcome(data) == {
+            frozenset({0}): ParcelStatus.SHIPPED,
+            frozenset({1}): ParcelStatus.SHIPPED,
+            frozenset({2}): ParcelStatus.DELIVERED,
+        }, order
+        assert not again.changed, order
+        assert len(again.suggestions) == 2, order
+
+
+def test_a_delivery_the_user_put_with_one_of_two_packages_stays_there() -> None:
+    """Accepting the suggestion for one package puts the shop's "delivered"
+    e-mail there for good."""
+    mails = [*_two_packages(11, 12)[:3], SHOP_DELIVERED]
+    data = _read_into(mails, (0, 1, 2, 3))
+    delivery = _holder(data, "msg:t3#0")
+    package = _holder(data, "msg:t2#0")
+    accept_suggestion(data, package.id, delivery.id, _nov(13, 11))
+    again = reconcile(data, _nov(13, 12))
+    assert _holder(data, "msg:t3#0") is package
+    assert package.state.status is ParcelStatus.DELIVERED
+    assert _holder(data, "msg:t1#0").state.status is ParcelStatus.SHIPPED
+    assert not again.changed
+    assert not again.suggestions
+
+
+def test_a_delivery_without_a_number_skips_a_package_heard_of_after_it() -> None:
+    """A shop's "delivered" e-mail naming only the order closes the package
+    on its way when it was sent, also when the order's next package, first
+    heard of after it, was read before either: it's no candidate."""
+    mails: list[Mail] = [
+        (
+            MailKind.SHIPPED,
+            8,
+            {"carrier": "ctt", "number": S10, "orders": (ORDER_1,), "items": (LAMP,)},
+        ),
+        (MailKind.DELIVERED, 9, {"orders": (ORDER_1,)}),
+        (
+            MailKind.SHIPPED,
+            10,
+            {
+                "carrier": "ctt",
+                "number": S10_OTHER,
+                "orders": (ORDER_1,),
+                "items": (POT,),
+            },
+        ),
+    ]
+    for order in _in_any_order(mails):
+        data = _read_into(mails, order)
+        again = reconcile(data, _nov(13, 11))
+        assert _outcome(data) == {
+            frozenset({0, 1}): ParcelStatus.DELIVERED,
+            frozenset({2}): ParcelStatus.SHIPPED,
+        }, order
+        assert not again.changed, order
+        assert not again.suggestions, order
 
 
 DAY_20 = date(2026, 11, 20)

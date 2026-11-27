@@ -36,6 +36,7 @@ import {
   SHOW_REVIEW_EVENT,
   aiQueueText,
   filteredTitle,
+  handOffReview,
   hideHandled,
   hidePending,
   isHidden,
@@ -47,6 +48,7 @@ import {
   unreadRetryText,
   withoutHidden,
   type HiddenItems,
+  type ReviewDone,
 } from "./review-state.ts";
 import { KIND_LABELS, STRINGS, fmt } from "./strings.ts";
 import { baseStyles } from "./styles.ts";
@@ -155,6 +157,15 @@ function withoutKey<K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> {
   return copy;
 }
 
+/** The parcel a merge kept, as its reply says; else the parcels it merged. */
+function mergedParcels(reply: unknown, merged: readonly string[]): readonly string[] {
+  const kept =
+    typeof reply === "object" && reply !== null
+      ? (reply as { parcel_id?: unknown }).parcel_id
+      : undefined;
+  return typeof kept === "string" ? [kept] : merged;
+}
+
 export class ParcelsReviewCard extends ParcelsCardBase {
   static override properties: PropertyDeclarations = {
     _config: { state: true },
@@ -169,6 +180,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     _confirmTrust: { state: true },
     _confirmIgnore: { state: true },
     _status: { state: true },
+    _handingOff: { state: true },
   };
 
   static override styles: CSSResultGroup = [
@@ -374,8 +386,17 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   declare private _confirmTrust: string | null;
   /** The review item whose "Ignore this sender" waits for its confirmation. */
   declare private _confirmIgnore: string | null;
-  /** What the last "Trust this sender", "Ignore", "Try again" or "Stop ignoring" did. */
+  /**
+   * What the last "Trust this sender", "Ignore", "Try again" or "Stop
+   * ignoring" did, or a non-administrator's last decision, when no other card
+   * took focus after it.
+   */
   declare private _status: ActionStatus | null;
+  /**
+   * True while the card stays, after its last suggestion went, until another
+   * card has taken focus from it.
+   */
+  declare private _handingOff: boolean;
 
   /** The focused item before the current render, to move focus on when it's gone. */
   private _focusedItem: { id: string; index: number } | null = null;
@@ -383,6 +404,12 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   private _visibleCache: { lists: Lists; hidden: HiddenItems<Snapshot>; visible: Lists } | null =
     null;
   private _clearingAll = false;
+  /** The last Merge or Keep apart, and where focus goes and what to say once it's done. */
+  private _decision: { suggestionId: string; done: Promise<ReviewDone | null> } | null = null;
+  /** Set when an update started handing focus on; `updated` does it. */
+  private _handOffPending = false;
+  /** Set when no card took focus; the card then hides without trying again. */
+  private _letGo = false;
 
   constructor() {
     super();
@@ -398,6 +425,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     this._confirmTrust = null;
     this._confirmIgnore = null;
     this._status = null;
+    this._handingOff = false;
   }
 
   static getStubConfig(): Record<string, unknown> {
@@ -466,14 +494,23 @@ export class ParcelsReviewCard extends ParcelsCardBase {
 
   /**
    * Administrators always see the card. Anyone else sees it while a possible
-   * duplicate is theirs to decide, or while it says why their decision failed.
+   * duplicate is theirs to decide, or while it says why their decision failed
+   * or what it did.
    */
-  private _visible(): boolean {
+  private _hasContent(): boolean {
     const snapshot = this.snapshot;
     return (
       this._admin() ||
-      (snapshot !== null && (snapshot.merge_suggestions.length > 0 || this._actionError !== null))
+      (snapshot !== null &&
+        (snapshot.merge_suggestions.length > 0 ||
+          this._actionError !== null ||
+          this._status !== null))
     );
+  }
+
+  /** Also shown while it hands focus on, so that focus isn't lost when it hides. */
+  private _visible(): boolean {
+    return this._handingOff || this._hasContent();
   }
 
   /** The list on show: anyone but an administrator has only Needs review. */
@@ -616,11 +653,21 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         }
       }
     }
+    this._settleDecision();
+    if (this._startsHandOff()) {
+      this._handingOff = true;
+      this._handOffPending = true;
+    }
+    this._letGo = false;
   }
 
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
     this._syncVisibility();
+    if (this._handOffPending) {
+      this._handOffPending = false;
+      void this._handOff();
+    }
     const focused = this._focusedItem;
     this._focusedItem = null;
     if (!focused || this.shadowRoot?.activeElement || !focusIsLost()) {
@@ -836,10 +883,15 @@ export class ParcelsReviewCard extends ParcelsCardBase {
               aria-label=${fmt(STRINGS.mergeSuggestedLabel, { candidate: label, title })}
               aria-disabled=${disabled}
               @click=${() =>
-                this._command(suggestion.id, "suggestion/accept", {
-                  suggestion_id: suggestion.id,
-                  parcel_id: candidate.id,
-                })}
+                this._decide(
+                  suggestion,
+                  "suggestion/accept",
+                  { suggestion_id: suggestion.id, parcel_id: candidate.id },
+                  (reply) => ({
+                    parcels: mergedParcels(reply, [candidate.id, suggestion.parcel.id]),
+                    message: STRINGS.reviewDoneMerged,
+                  }),
+                )}
             >
               ${STRINGS.mergeSuggested}
             </button>
@@ -854,7 +906,12 @@ export class ParcelsReviewCard extends ParcelsCardBase {
           aria-label=${fmt(STRINGS.keepApartLabel, { title })}
           aria-disabled=${disabled}
           @click=${() =>
-            this._command(suggestion.id, "suggestion/dismiss", { suggestion_id: suggestion.id })}
+            this._decide(
+              suggestion,
+              "suggestion/dismiss",
+              { suggestion_id: suggestion.id },
+              () => ({ parcels: [suggestion.parcel.id], message: STRINGS.reviewDoneKeptApart }),
+            )}
         >
           ${STRINGS.keepApart}
         </button>
@@ -1719,6 +1776,88 @@ export class ParcelsReviewCard extends ParcelsCardBase {
 
   private _dismissStatus(): void {
     this._status = null;
+  }
+
+  /**
+   * Merge or Keep apart. Remembers where focus goes and what to say, for when
+   * it was a non-administrator's last suggestion and the card hides.
+   */
+  private _decide(
+    suggestion: MergeSuggestion,
+    command: string,
+    data: Record<string, unknown>,
+    outcome: (reply: unknown) => ReviewDone,
+  ): void {
+    if (!this.hass || this._busyItems.has(suggestion.id) || this._hidden.has(suggestion.id)) {
+      return;
+    }
+    if (!this._admin()) {
+      this._status = null;
+    }
+    let recorded: ReviewDone | null = null;
+    const done = this._command(suggestion.id, command, data, {
+      onSuccess: (reply) => {
+        recorded = outcome(reply);
+      },
+    }).then(() => recorded);
+    this._decision = { suggestionId: suggestion.id, done };
+  }
+
+  /** Forgets the last decision once its suggestion is gone while others are still to decide. */
+  private _settleDecision(): void {
+    const decision = this._decision;
+    if (
+      decision &&
+      this._hasContent() &&
+      !this.snapshot?.merge_suggestions.some((suggestion) => suggestion.id === decision.suggestionId)
+    ) {
+      this._decision = null;
+    }
+  }
+
+  /**
+   * True when the card is about to hide with focus in it, or with focus lost
+   * after a decision in it: another card should take focus first.
+   */
+  private _startsHandOff(): boolean {
+    return (
+      !this._handingOff &&
+      !this.hidden &&
+      !this._hasContent() &&
+      !this._letGo &&
+      Boolean(this.shadowRoot?.activeElement || (this._decision !== null && focusIsLost()))
+    );
+  }
+
+  /**
+   * Once the decision is done and the other cards show the new snapshot,
+   * focus goes to the decided parcel's chip, else to another card, which says
+   * what happened. Without such a card, this one says it and stays.
+   */
+  private async _handOff(): Promise<void> {
+    const decision = this._decision;
+    const done = decision ? await decision.done : null;
+    if (this._decision === decision) {
+      this._decision = null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (
+      !this.isConnected ||
+      this._hasContent() ||
+      (!this.shadowRoot?.activeElement && !focusIsLost())
+    ) {
+      this._handingOff = false;
+      return;
+    }
+    const message = done?.message ?? STRINGS.reviewDoneNothing;
+    if (!handOffReview({ parcels: done?.parcels ?? [], message })) {
+      if (done) {
+        this._status = { icon: "mdi:check", text: done.message, tab: "review" };
+      } else {
+        this._letGo = true;
+      }
+    }
+    this._handingOff = false;
   }
 
   /**

@@ -317,10 +317,23 @@ def test_pickup_deadline_warning_is_not_a_return() -> None:
     assert shipment.eta == eta("2026-11-17", until="2026-11-24")
 
 
-# Pickup sentences whose point is followed by another sentence: sender, subject,
-# body and the point.
+def _ctt_point(point: str) -> tuple[str, str, str, str, str]:
+    """Return a CTT pickup sentence naming ``point``, then another sentence."""
+    return (
+        "ctt",
+        "notificacoes@ctt.pt",
+        "O seu objeto aguarda levantamento",
+        f"Olá Alex Doe,\nO seu objeto RR123456785PT foi depositado no {point}."
+        " Levante-o até 24-11-2026.\n",
+        point,
+    )
+
+
+# Pickup sentences whose point is followed by another sentence: the parser,
+# sender, subject, body and the point.
 POINT_SENTENCES = {
     "inpost": (
+        "inpost",
         "notificacoes@inpost.pt",
         "A sua encomenda está pronta para levantamento",
         "Olá Alex Doe,\nA sua encomenda 620417393912 está disponível no Locker"
@@ -328,6 +341,7 @@ POINT_SENTENCES = {
         "Locker PT-LIS-01",
     ),
     "ctt": (
+        "ctt",
         "notificacoes@ctt.pt",
         "O seu objeto aguarda levantamento",
         "Olá Alex Doe,\nO seu objeto RR123456785PT aguarda levantamento no Cacifo"
@@ -335,19 +349,35 @@ POINT_SENTENCES = {
         "Cacifo CTT Av. Liberdade",
     ),
     "dhl": (
+        "dhl",
         "noreply@dhl.de",
         "Ihre Sendung liegt zur Abholung bereit",
         "Hallo Alex Doe,\nIhre DHL Sendung 00340434618273591202 liegt in der"
         " Packstation 123. Bitte holen Sie sie innerhalb von 7 Tagen ab.\n",
         "Packstation 123",
     ),
+    "ctt-long-word": _ctt_point("Cacifo CTT Saldanha"),
+    "ctt-short-word": _ctt_point("Cacifo CTT Sol"),
+    "ctt-four-letters": _ctt_point("Loja CTT Lapa"),
+    "ctt-company": _ctt_point("Ponto CTT Papelaria Exemplo, Lda"),
+    "ctt-company-initials": _ctt_point("Ponto CTT Quiosque Exemplo, S.A"),
+    "ctt-title": _ctt_point("Ponto CTT Farmácia Dr. Sá"),
+    "ctt-initial": _ctt_point("Ponto CTT Papelaria J. Silva"),
+    "ctt-initials": _ctt_point("Ponto CTT Quiosque C.C. Colombo"),
+    "ctt-street": _ctt_point("Loja CTT R. Augusta"),
+    "ctt-saint": _ctt_point("Ponto CTT Quiosque Sta. Apolónia"),
+    "ctt-number": _ctt_point("Cacifo CTT 1234"),
 }
 
 
-@pytest.mark.parametrize("parser", POINT_SENTENCES)
-def test_pickup_point_ends_with_its_sentence(parser: str) -> None:
-    """A point named in a sentence stops where the sentence ends."""
-    sender, subject, text, point = POINT_SENTENCES[parser]
+@pytest.mark.parametrize("case", POINT_SENTENCES)
+def test_pickup_point_ends_with_its_sentence(case: str) -> None:
+    """A point named in a sentence stops where the sentence ends.
+
+    A full stop ends the name, except after an initial or an abbreviation that
+    a name goes on after, as in "Av. Liberdade".
+    """
+    parser, sender, subject, text, point = POINT_SENTENCES[case]
     message = _message(text, subject, sender=sender, sender_name=parser.upper())
     domain = sender.partition("@")[2]
     verdict = SenderVerdict(domain=domain, authenticated=True, known=True)

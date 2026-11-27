@@ -64,6 +64,7 @@ from custom_components.parcels.engine import (
     LEROYMERLIN_CHECK_KEY,
     PAACK_CHECK_KEY,
     ParcelsEngine,
+    get_engine,
 )
 from custom_components.parcels.mail.errors import MailError
 from custom_components.parcels.models import (
@@ -87,6 +88,7 @@ from ..common import (
     add_hub,
     add_mailbox,
     async_setup_parcels,
+    async_wait_for_mail,
     load_message,
     patch_mail_clients,
 )
@@ -1066,6 +1068,53 @@ async def test_email_now_known_as_no_parcel_skips_the_ai(
     assert engine.data.messages[message.hash].state is MessageState.NOT_PARCEL
     assert engine.data.parcels == {}
     assert engine.data.review == {}
+
+
+async def test_email_kept_for_a_retry_over_an_update_skips_the_ai(
+    hass: HomeAssistant,
+    client: FakeMailClient,
+    generate: AsyncMock,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """An e-mail kept for a retry is left out if the update knows it as no news.
+
+    The AI failed before the update, so the e-mail waits 30 minutes in the
+    stored queue. After the restart, the parsers read it as a survey, and the
+    retry leaves it out without asking the AI.
+    """
+    message = ctt_message()
+    engine = await async_setup(hass, client, message)
+    generate.side_effect = RuntimeError(SECRET)
+    await engine.ai._async_step()
+    (entry,) = engine.ai.queue
+    assert entry["not_before"] == IN_30_MINUTES
+
+    assert await hass.config_entries.async_reload(engine.entry.entry_id)
+    await async_wait_for_mail(hass)
+    engine = get_engine(hass)
+    assert engine is not None
+    (entry,) = engine.ai.queue
+    assert entry["not_before"] == IN_30_MINUTES
+    assert engine.data.messages[message.hash].state is MessageState.QUEUED
+    # The update's parsers read the download as a survey.
+    client.add(
+        ctt_message(
+            f"Olá Alex,\nO objeto {TRACKING} foi entregue a 4 de novembro. "
+            "Responda a 3 perguntas sobre a entrega.\n",
+            subject="Como correu a sua entrega?",
+        )
+    )
+    assert await engine.ai._async_step() == 1800
+
+    freezer.tick(timedelta(minutes=30))
+    await engine.ai._async_step()
+
+    assert generate.await_count == 1
+    assert engine.ai.queue_size == 0
+    assert engine.data.messages[message.hash].state is MessageState.NOT_PARCEL
+    assert engine.data.parcels == {}
+    assert engine.data.review == {}
+    assert engine.ai.today()["calls"] == 1
 
 
 async def test_reprocess_with_the_ai_reads_a_parsed_email(

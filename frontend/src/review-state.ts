@@ -221,6 +221,40 @@ export function showReview(target: EventTarget | null = globalThis.window ?? nul
   return event.defaultPrevented;
 }
 
+/**
+ * Asks the page's other cards to take focus once the last review decision
+ * has hidden the review card; the card that took it cancels the event.
+ */
+export const REVIEW_DONE_EVENT = "parcels-review-done";
+
+/** The decided parcels (focus goes to the first one a card shows) and what to say. */
+export interface ReviewDone {
+  readonly parcels: readonly string[];
+  readonly message: string;
+}
+
+/**
+ * Hands focus to a card that shows a decided parcel, else to any card that
+ * can take it, with the same message. False when no card took it.
+ */
+export function handOffReview(
+  done: ReviewDone,
+  target: EventTarget | null = globalThis.window ?? null,
+): boolean {
+  if (!target) {
+    return false;
+  }
+  const asks = done.parcels.length ? [done, { ...done, parcels: [] }] : [done];
+  for (const detail of asks) {
+    const event = new CustomEvent(REVIEW_DONE_EVENT, { detail, cancelable: true });
+    target.dispatchEvent(event);
+    if (event.defaultPrevented) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** What Needs review lists: review items, merge suggestions, and the unread e-mails as one item. */
 export function reviewCount(
   snapshot: Pick<Snapshot, "review" | "merge_suggestions" | "unread_emails">,

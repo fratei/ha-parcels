@@ -500,6 +500,26 @@ def test_a_returned_parcel_on_its_way_gets_an_inferred_delivery() -> None:
     assert sum(event.inferred for event in parcel.events) == 1
 
 
+def test_the_returns_pass_reads_the_clock_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pass reads the clock once, not on each parcel's state it reads."""
+    data = ParcelsData()
+    parcel_id = _shipped(data, "msg:s1#0", eta=(5, 6))
+    _apply(data, "m1", _nov(10))
+    calls = 0
+    utcnow = dt_util.utcnow
+
+    def counted() -> datetime:
+        nonlocal calls
+        calls += 1
+        return utcnow()
+
+    monkeypatch.setattr(dt_util, "utcnow", counted)
+    assert infer_return_deliveries(data, _nov(10, 13)) == {parcel_id}
+    assert calls <= 1
+
+
 @pytest.mark.parametrize(
     ("eta", "shipped", "delivered"),
     [

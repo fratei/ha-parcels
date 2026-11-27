@@ -7,7 +7,7 @@ Alex's mailbox holds shipping e-mails of one week. The clock is frozen at
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from datetime import timedelta
+from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
 import json
 from typing import Any
@@ -39,16 +39,19 @@ from custom_components.parcels.const import (
     CONF_INTERVAL_MINUTES,
     DOMAIN,
     PERSISTENT_NOTIFICATION_ID,
+    MailKind,
     ParcelStatus,
 )
+from custom_components.parcels.dedup import apply_contribution
 from custom_components.parcels.engine import ParcelsEngine, get_engine
 from custom_components.parcels.mail.errors import (
     MailAuthError,
     MailError,
     MailServerError,
 )
-from custom_components.parcels.models import Parcel
+from custom_components.parcels.models import Parcel, ParcelsData
 from custom_components.parcels.notifier import DEBOUNCE_COOLDOWN
+from custom_components.parcels.parsers.base import Eta
 
 from .common import (
     ADDRESS,
@@ -58,6 +61,7 @@ from .common import (
     async_setup_parcels,
     patch_mail_clients,
 )
+from .factories import contribution
 
 FIXTURES = (
     "carriers/dpd_predict_pt.eml",
@@ -318,6 +322,63 @@ async def test_midnight(
     assert calendar.attributes["message"] == "CTT"
     assert calendar.attributes["start_time"] == "2026-11-17 00:00:00"
     assert calendar.attributes["end_time"] == "2026-11-19 00:00:00"
+
+
+async def test_midnight_brings_the_shops_later_date(
+    hass: HomeAssistant, hass_storage: dict[str, Any], freezer: FrozenDateTimeFactory
+) -> None:
+    """At midnight a shop's later date takes over from the carrier's past one.
+
+    CTT expects the parcel on Tuesday; the shop's newer e-mail says
+    Wednesday. No e-mail comes at midnight: the expected date is worked out
+    again for the new day.
+    """
+    freezer.move_to("2026-11-17 23:59:00+00:00")
+    tuesday, wednesday = date(2026, 11, 17), date(2026, 11, 18)
+    data = ParcelsData()
+    for mail in (
+        contribution(
+            "msg:ctt#0",
+            kind=MailKind.IN_TRANSIT,
+            time=datetime(2026, 11, 15, 9, tzinfo=UTC),
+            carrier="ctt",
+            number=WORTEN,
+            label="ctt.pt",
+            eta=Eta(tuesday, tuesday),
+        ),
+        contribution(
+            "msg:shop#0",
+            kind=MailKind.IN_TRANSIT,
+            time=datetime(2026, 11, 15, 18, tzinfo=UTC),
+            carrier="ctt",
+            number=WORTEN,
+            merchant="Loja Exemplo",
+            label="loja-exemplo.example",
+            eta=Eta(wednesday, wednesday),
+        ),
+    ):
+        apply_contribution(data, mail, mail.origin.time)
+    hass_storage["parcels"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "parcels",
+        "data": data.as_dict(),
+    }
+    add_hub(hass)
+    await async_setup_parcels(hass)
+
+    def eta_start() -> str:
+        [parcel] = get(hass, "sensor.parcels_in_transit").attributes["parcels"]
+        return parcel["eta_start"]
+
+    assert listed(hass)["arriving_today"] == [WORTEN]
+    assert eta_start() == "2026-11-17"
+
+    await async_move_to(hass, freezer, "2026-11-18 00:00:10+00:00")
+
+    assert listed(hass)["arriving_today"] == [WORTEN]
+    assert eta_start() == "2026-11-18"
+    assert get(hass, "binary_sensor.parcels_delivery_today").state == STATE_ON
 
 
 async def test_private_parcel(hass: HomeAssistant, engine: ParcelsEngine) -> None:

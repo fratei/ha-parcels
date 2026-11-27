@@ -35,14 +35,26 @@ requests for feedback and surveys (``FEEDBACK_TOPICS``), invoices
 (``INVOICE_TOPICS``), service notices such as opening hours, fraud
 warnings and terms (``NOTICE_TOPICS``), and the sender's app or offers to
 send parcels (``PROMOTION_TOPICS``), even when they name an order. A
-status in the same subject ("foi entregue: avalie a entrega") wins, and a
-product's name in quotes ('Ordered: "Customer Feedback Board"') is no
-topic.
+status in the same subject wins: a strong keyword, or a kind the parsers'
+own wording finds there (``generic.detect_kind``), as in "Entrega
+concluída: avalie a entrega". That wording also counts like a weak
+keyword. A product's name in quotes ('Ordered: "Customer Feedback
+Board"') is neither a topic nor a status.
 
 The parser dispatcher gates what a parser read with ``feedback_topic``,
 ``sent_receipt`` (a carrier's receipt for a parcel handed in,
-``SENT_RECEIPT_TOPICS``) and ``invoice_topic``: those e-mails name a
-parcel and its last status, but bring no news about it. An invoice can
+``SENT_RECEIPT_TOPICS``), ``message_topic`` (a marketplace's notice of a
+seller's message, or a prompt to complain, ``MESSAGE_TOPICS``; anyone
+but a carrier) and ``invoice_topic``: those e-mails name a parcel and its
+last status, but bring no news about it. ``survey_request`` finds a
+survey by its body when the subject has neither a status nor a request
+for feedback ("A sua entrega de 4 de novembro"): an invitation to answer
+questions or a survey (``SURVEY_ACTIONS``), not a request for a rating,
+which delivery e-mails may have in their footers. A survey's opening
+question counts as its topic only at the subject's end ("Tem um minuto?",
+not "Tem um minuto? Levante a sua encomenda"). A message from whoever
+brings the parcel ("Nova mensagem do seu estafeta") isn't a seller's,
+and a status in the same subject wins there too. An invoice can
 still bring news ("Your package is out for delivery today"):
 ``has_news_words`` is ``has_shipping_words`` without the words any
 invoice has, such as tracking-number labels, links to follow the parcel,
@@ -54,6 +66,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 import re
 
+from .generic import detect_kind
 from .lang import fold
 from .senders import lookup, organizational_domain
 
@@ -232,6 +245,7 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"(?:has|have) been delivered",
         r"(?:was|were) delivered",
         r"(?:package|parcel|order|shipment) delivered",
+        r"(?:parcel|package|order|delivery|shipment) (?:is here|has arrived)",
         r"(?:attempted|missed|failed) delivery",
         r"delivery (?:attempt|was attempted)",
         r"we missed you",
@@ -276,6 +290,8 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"sera entregue",
         r"entrega prevista",
         r"entregue com sucesso",
+        r"entregamos (?:o|a|os|as) (?:seu|sua|teu|tua|seus|suas) (?:objeto|objecto|encomenda|pedido|envio|volume)s?",
+        r"(?:encomenda|objeto|objecto|pedido|envio) chegou",
         r"tentativa de entrega",
         r"nao (?:foi possivel|conseguimos) entregar",
         r"entrega (?:falhada|sem sucesso)",
@@ -313,6 +329,7 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"en (?:transito|reparto)",
         r"(?:sale|saldra|ha salido) (?:a|para) reparto",
         r"entregado con exito",
+        r"(?:paquete|pedido|envio) (?:ha llegado|llego)",
         r"intento de entrega",
         r"entrega fallida",
         r"no (?:hemos podido|se ha podido|pudimos) entregar",
@@ -348,6 +365,7 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"(?:wird|werden) (?:heute )?zugestellt",
         r"zustellung (?:heute|verzogert)",
         "zugestellt",
+        r"(?:paket|sendung|bestellung) ist (?:da|angekommen)",
         r"zustellversuch",
         r"nicht (?:zugestellt|angetroffen)",
         "benachrichtigungskarte",
@@ -381,6 +399,7 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"n\.? ?[o\u00b0]\.? ?(?:de )?commande",
         r"(?:a|ont) ete (?:expedie|livre)e?s?",
         r"colis (?:expedie|livre|retarde)",
+        r"(?:colis|commande) est arrivee?",
         r"(?:est|sont) en route",
         r"en cours (?:d'acheminement|de livraison)",
         "en livraison",
@@ -417,6 +436,7 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"n\. ordine",
         r"(?:e|sono) (?:stat[oaie] )?(?:spedit[oaie]|consegnat[oaie])",
         r"pacco (?:spedito|consegnato)",
+        r"(?:pacco|ordine|spedizione) e arrivat[oa]",
         r"(?:conferma di )?spedizione confermata",
         "conferma di spedizione",
         "in viaggio",
@@ -458,6 +478,7 @@ STRONG_KEYWORDS: dict[str, tuple[str, ...]] = {
         r"verwachte (?:bezorging|levering)",
         r"bezorg(?:moment|venster|poging)",
         r"pakket (?:verzonden|bezorgd)",
+        r"(?:pakket|pakketje|bestelling|zending) is (?:er|aangekomen)(?! nog niet)",
         r"succesvol bezorgd",
         "niet thuis",
         r"kon niet (?:worden )?bezorgd",
@@ -650,80 +671,135 @@ CARRIER_KEYWORDS: tuple[str, ...] = (
     "vinted go",
 )
 
+# A survey's opening question ends the subject, maybe after a name ("Tem
+# um minuto, Alex?"): "Tem um minuto? Levante a sua encomenda" and "Got a
+# minute? Your parcel is waiting" are pickup reminders.
+_ENDS_QUESTION = r"(?=(?:, ?[^\W\d_]+)? ?\? ?$)"
+
 # Subjects of a known sender's e-mails about something else than a parcel,
 # though they name an order or a delivery: requests for feedback, surveys,
 # invoices and service notices (opening hours, fraud warnings, terms).
 FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
     "pt": (
-        r"avali(?:e|a|ar)",
+        r"avali(?:e|a|ar|aria|arias)",
         r"avaliac(?:ao|oes)",
+        # Not "classificação": customs' "classificação pautal".
+        r"classifi(?:que|car|caria|carias)",
         r"opinia(?:o|oes)",
         "inquerito",
         "questionario",
         "como correu",
+        r"como foi (?:a (?:sua|tua) )?(?:experiencia|entrega|compra)",
         "gostou",
         r"o que (?:achou|achaste)",
         r"(?:conte|diga)-nos (?:o que (?:achou|achaste|acha|pensa)|como correu|a (?:sua|tua) experiencia)",
+        r"ajud(?:e|a)-nos a melhorar",
+        r"(?:sua|tua) experiencia com",
         "satisfacao",
+        r"(?:tem|tens|dispoe de) (?:um )?(?:minuto|minutinho|momento|instante)"
+        + _ENDS_QUESTION,
+        r"(?:queremos|gostariamos de|adorariamos) (?:ouvi-lo|ouvi-la|ouvir-te|ouvir-vos)",
     ),
     "es": (
-        r"valora(?:nos|r)?",
+        r"valora(?:nos|r|rias|ria)?",
         "valoracion",
         r"opinion(?:es)?",
         "encuesta",
         r"que tal (?:fue|ha ido)",
         r"que te (?:ha parecido|parecio)",
         r"cuentanos (?:que|como|tu opinion|tu experiencia)",
+        r"como (?:fue|ha sido) (?:tu|su) (?:experiencia|entrega|compra)",
+        "ayudanos a mejorar",
+        r"(?:tu|su) experiencia con",
         r"resenas?",
-        r"califica(?:nos|r)?",
+        r"califica(?:nos|r|rias|ria)?",
         "satisfaccion",
+        r"(?:tienes|tiene|dispones de|dispone de) un (?:minuto|minutito|momento)"
+        + _ENDS_QUESTION,
+        r"(?:queremos|nos encantaria|nos gustaria) (?:escucharte|escucharle|saber de (?:ti|usted))",
     ),
     "en": (
         # "Review your delivery options" asks for a choice, not for feedback.
         r"(?<!under\s)reviews?(?! (?:and confirm )?(?:your |the )?(?:delivery|shipping|address))",
         r"rate (?:us|your|our|the|this|it|how|my)",
         "please rate",
+        "would you rate",
         r"ratings?",
         "survey",
         "feedback",
         "how did we do",
+        "how did it go",
         r"how was (?:your|the)",
         "your opinion",
         "tell us what you think",
+        "tell us about",
+        # Not "Tell us how you'd like your parcel delivered".
+        r"tell us how (?:we did|it went|we're doing)",
+        "help us improve",
+        "your experience with",
         "questionnaire",
         "satisfaction",
         r"share your (?:thoughts|experience)",
         "meet your expectations",
+        r"(?:got|have you got|do you have|have you) a (?:minute|moment|sec|second)"
+        + _ENDS_QUESTION,
+        r"(?:we'd|we would) (?:love|like) to hear (?:from you|your)",
+        r"we want to hear (?:from you|your)",
     ),
     "de": (
         r"bewertung\w*",
         r"bewerten?",
+        r"rezension\w*",
         "umfrage",
         "wie zufrieden",
         r"(?:ihre|deine) meinung",
         "wie gefallt",
+        # Not "Helfen Sie uns bei der Zustellung".
+        r"(?:helfen sie|hilf) uns,? (?:besser zu werden|(?:uns|unseren service) zu verbessern)",
+        r"wie war (?:ihre|deine|die) (?:zustellung|lieferung|erfahrung)",
         "kundenzufriedenheit",
+        r"(?:haben sie|hast du) (?:kurz )?(?:eine minute|einen moment|zeit)"
+        + _ENDS_QUESTION,
+        r"wir (?:mochten|wurden) (?:gerne? )?von (?:ihnen|dir) horen",
     ),
     "fr": (
         r"donnez(?:[- ]nous)? votre avis",
-        r"votre avis (?:sur|compte|nous interesse)",
+        # Not "avis de passage" nor "avis d'expédition", delivery notices.
+        r"votre avis(?! d)",
         r"(?:laissez|deposez|partagez) (?:un|votre) avis",
         r"avis clients?",
         r"enquete (?:de satisfaction|client|qualite)",
         r"notez (?:votre|vos|nous|notre)",
-        "evaluez",
+        r"evalue(?:z|riez|r)",
+        r"aidez-nous a (?:nous )?ameliorer",
         "votre opinion",
         "qu'en pensez-vous",
+        "qu'avez-vous pense",
+        r"comment s'est passee?",
+        r"(?:avez-vous|as-tu|vous avez) (?:une minute|un instant|un moment|quelques minutes)"
+        + _ENDS_QUESTION,
+        # Not "Nous aimerions connaître votre disponibilité".
+        r"nous (?:aimerions|voudrions) (?:connaitre|savoir|avoir) "
+        r"(?:votre (?:experience|ressenti)|ce que vous (?:en )?pensez|de vos nouvelles)",
     ),
     "it": (
         r"recension\w*",
         "sondaggio",
         "questionario",
         r"valuta (?:il tuo|la tua)",
+        # Not "valuta" alone: a currency.
+        r"valuter(?:esti|ebbe|ai)",
+        "valutaci",
+        "aiutaci a migliorare",
         "opinione",
         "cosa ne pensi",
         "soddisfazione",
         "com'e andata",
+        "come e andata",
+        r"(?:hai|ha|avete) (?:un minuto|un momento|qualche minuto|due minuti)"
+        + _ENDS_QUESTION,
+        r"(?:tuo|suo|vostro) parere",
+        r"(?:ci piacerebbe|vorremmo) (?:sentirti|sentirla|sentirvi)",
     ),
     "nl": (
         "beoordeel",
@@ -732,8 +808,74 @@ FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
         r"(?:vul|doe mee aan) (?:de |onze |deze )?enquete",
         r"(?:je|uw) mening",
         "hoe was",
+        r"hoe vond (?:je|u)",
         "tevredenheid",
-        "wat vond je",
+        r"wat (?:vond|vind) (?:je|u)",
+        r"help ons (?:te )?verbeteren",
+        r"(?:heb|hebt|heeft) (?:je|jij|u) (?:even )?(?:een minuut|een minuutje|een momentje|tijd)"
+        + _ENDS_QUESTION,
+        r"(?:we|wij) horen graag van (?:je|jou|u)",
+    ),
+}
+
+# A body's invitation to answer a survey: questions to answer, or a survey
+# or questionnaire to fill in. Not a request for a rating ("Avalie a
+# entrega", "Rate your delivery", "How did we do?"): a carrier's delivery
+# e-mail may have one in its footer.
+SURVEY_ACTIONS: dict[str, tuple[str, ...]] = {
+    "pt": (
+        r"respond(?:a|e|er) (?:a|as|aos) (?:\d+|uma|duas|tres|quatro|cinco|algumas|umas"
+        r"|poucas|estas|seguintes) (?:(?:breves|curtas|rapidas|pequenas|simples) )?perguntas?",
+        r"(?:respond|particip|preench|complet)(?:a|e|er|ar)\b.{0,30}?"
+        r"(?:inqueritos?|questionarios?|pesquisa de satisfacao|sondagem)",
+    ),
+    "es": (
+        r"(?:responde|responda|contesta|conteste|responder|contestar) (?:a )?(?:\d+|unas"
+        r"|algunas|pocas|dos|tres|cuatro|cinco|estas) "
+        r"(?:(?:breves|cortas|rapidas|sencillas) )?preguntas",
+        r"(?:participa|participe|participar|completa|complete|completar|rellena|rellene"
+        r"|rellenar|responde|responda|contesta|conteste) (?:en |a )?(?:nuestra |la |esta "
+        r"|una )?(?:breve |corta |rapida |pequena )?(?:encuesta|cuestionario)",
+        r"(?:cuentanos|dinos) como lo (?:hemos hecho|hicimos)",
+    ),
+    "en": (
+        r"(?:answer|take|complete|fill (?:in|out)|respond to|participate in|take part in) "
+        r"(?:a |our |this |the |my )?(?:(?:short|quick|brief|\d+-minute|one-minute"
+        r"|two-minute|customer|satisfaction) )*(?:survey|questionnaire)",
+        r"answer (?:\d+|one|two|three|four|five|a few|some|these|a couple of) "
+        r"(?:(?:short|quick|brief|simple) )?questions?",
+        r"(?:tell|let) us (?:know )?how we did",
+        r"(?:tell|let) us (?:know )?how we(?:'re| are) doing",
+    ),
+    "de": (
+        r"an (?:unserer|der|einer|dieser) (?:kurzen |kleinen )?(?:kunden)?"
+        r"(?:umfrage|befragung) teil(?:nehmen|zunehmen)?",
+        r"(?:fur|zu) (?:unsere|unserer|die|eine|diese) (?:kurze |kleine )?(?:kunden)?"
+        r"(?:umfrage|befragung)",
+        r"zur (?:kurzen )?(?:kunden)?umfrage",
+        r"beantworten sie (?:\d+|ein paar|einige|wenige|zwei|drei|vier|funf) "
+        r"(?:(?:kurze|kurzen) )?fragen",
+        r"(?:fullen sie|beantworten sie) (?:unseren|den|einen) (?:kurzen )?fragebogen",
+    ),
+    "fr": (
+        r"repondez a (?:\d+|quelques|deux|trois|quatre|cinq|ces) "
+        r"(?:(?:courtes|breves|petites) )?questions?",
+        r"(?:participez|repondez|repondre|participer|remplissez|remplir|completez|completer) "
+        r"(?:a |au )?(?:notre |cette |une |l')?(?:courte |breve |petite )?"
+        r"(?:enquete|questionnaire|sondage)",
+    ),
+    "it": (
+        r"rispond(?:i|a|ere) a (?:\d+|alcune|poche|due|tre|quattro|cinque|queste) "
+        r"(?:(?:brevi|semplici|veloci) )?domande",
+        r"(?:partecipa|partecipare|compila|compilare|rispondi|rispondere) (?:al nostro "
+        r"|il nostro |al |a |il |questo |un )?(?:breve )?(?:sondaggio|questionario)",
+    ),
+    "nl": (
+        r"beantwoord (?:\d+|een paar|enkele|twee|drie|vier|vijf|deze) "
+        r"(?:(?:korte|snelle|eenvoudige) )?vragen",
+        r"(?:vul|doe mee aan|neem deel aan) (?:de |onze |deze |een )?(?:korte )?"
+        r"(?:enquete|vragenlijst)",
+        r"laat (?:ons|het ons) weten hoe we het (?:deden|hebben gedaan)",
     ),
 }
 
@@ -755,14 +897,16 @@ INVOICE_TOPICS: tuple[str, ...] = (
 # Subjects of a carrier's receipt for a parcel handed in at its counter:
 # the parcel's number and its first status, but no news.
 SENT_RECEIPT_TOPICS: tuple[str, ...] = (
-    r"comprovativo d[eo] (?:seu |teu )?envio",
+    r"(?:comprovativo|recibo) d[eo] (?:seu |teu |su |tu )?envio",
+    r"(?:seu|teu) envio (?:[a-z0-9]+ )?foi aceite",
     r"talao de (?:envio|aceitacao)",
     r"justificante de (?:envio|admision)",
     "proof of postage",
     "postage receipt",
-    "einlieferungsbeleg",
-    "einlieferungsquittung",
+    r"(?:shipment|shipping) receipt",
+    r"einlieferungs(?:beleg|quittung|bestatigung)",
     "preuve de depot",
+    r"recu (?:de depot|d'envoi)",
     r"ricevuta di (?:spedizione|accettazione)",
     "verzendbewijs",
 )
@@ -808,6 +952,97 @@ NOTICE_TOPICS: tuple[str, ...] = (
     r"informativa (?:sulla )?privacy",
     "algemene voorwaarden",
     r"privacy(?:beleid|verklaring)",
+)
+
+# Subjects of a marketplace's notice that a seller wrote, or of a prompt to
+# complain about an order: they name an order, but what the seller says is
+# not the carrier's news. A carrier's own message may be news: the parser
+# dispatcher leaves carriers' e-mails to their parsers.
+MESSAGE_TOPICS: dict[str, tuple[str, ...]] = {
+    "pt": (
+        r"recebe(?:u|ste) (?:uma |\d+ )?(?:nova |novas )?mensage(?:m|ns)(?: novas?)?",
+        r"(?:tem|tens) (?:uma |\d+ )?(?:nova |novas )?mensage(?:m|ns)",
+        r"nova mensagem d(?:e|o|a)",
+        r"mensage(?:m|ns) d[oa] (?:vendedor|comprador)",
+        r"(?:abrir|abra|abre|apresentar|apresente|fazer|faca) (?:uma )?(?:reclamacao|disputa)",
+    ),
+    "es": (
+        r"(?:ha|has) recibido (?:un |\d+ )?(?:nuevo |nuevos )?mensajes?",
+        r"(?:tiene|tienes) (?:un |\d+ )?(?:nuevo |nuevos )?mensajes?",
+        "nuevo mensaje de",
+        r"mensajes? del (?:vendedor|comprador)",
+        r"(?:abrir|abre|abra|presentar|presenta|presente) (?:una )?(?:reclamacion|disputa)",
+    ),
+    "en": (
+        r"you(?:'ve| have) (?:received |got )?(?:a |\d+ )?(?:new )?messages?",
+        "new message from",
+        r"messages? from (?:the |your )?(?:seller|buyer)",
+        r"(?:open|file|submit|raise) (?:a )?(?:claim|complaint|dispute)",
+    ),
+    "de": (
+        r"(?:sie haben|du hast) (?:eine |\d+ )?(?:neue )?nachricht(?:en)?",
+        r"neue nachricht (?:von|vom)",
+        r"nachricht (?:vom|des) (?:verkaufer|handler|kaufer)s?",
+        r"(?:eine )?reklamation (?:eroffnen|einreichen)",
+        r"(?:eine )?beschwerde einreichen",
+        r"(?:einen )?(?:streitfall|konflikt) eroffnen",
+    ),
+    "fr": (
+        r"vous avez (?:recu )?(?:un |\d+ )?(?:nouveaux? )?messages?",
+        r"tu as (?:recu )?(?:un )?(?:nouveau )?message",
+        "nouveau message de",
+        r"message (?:du vendeur|de l'acheteur)",
+        r"(?:ouvrir|ouvrez|deposer|deposez) (?:une reclamation|un litige)",
+    ),
+    "it": (
+        r"(?:hai|ha) ricevuto (?:un |\d+ )?(?:nuovo |nuovi )?messaggi(?:o)?",
+        r"(?:hai|ha) (?:un |\d+ )?(?:nuovo |nuovi )messaggi(?:o)?",
+        "nuovo messaggio da",
+        r"messaggio (?:dal|del) venditore",
+        r"(?:aprire|apri|presentare|presenta) (?:un |una )?(?:reclamo|contestazione|controversia)",
+    ),
+    "nl": (
+        r"(?:u heeft|u hebt|je hebt) (?:een |\d+ )?(?:nieuw |nieuwe )?bericht(?:en)?",
+        "nieuw bericht van",
+        r"bericht van (?:de |je |uw )?verkoper",
+        r"(?:een )?klacht (?:indienen|openen)",
+        r"(?:dien|open) (?:een )?klacht",
+        r"(?:een )?geschil (?:openen|starten)",
+    ),
+}
+
+# Whoever brings the parcel: a message from them may be news.
+_COURIERS: tuple[str, ...] = (
+    "estafeta",
+    "motorista",
+    "condutor",
+    "carteiro",
+    "entregador",
+    "transportadora",
+    "repartidor",
+    "transportista",
+    "conductor",
+    "mensajero",
+    "cartero",
+    "driver",
+    "courier",
+    "carrier",
+    "postman",
+    r"(?:paket|post)?(?:zusteller|bote)",
+    "fahrer",
+    "kurier",
+    "livreur",
+    "chauffeur",
+    "transporteur",
+    "facteur",
+    "coursier",
+    "corriere",
+    "autista",
+    "fattorino",
+    "postino",
+    "bezorger",
+    "koerier",
+    "postbode",
 )
 
 # Subjects promoting the sender's app or its offers to send parcels: not
@@ -969,6 +1204,9 @@ _TOPIC_RE = _compile(
     [*FEEDBACK_TOPICS.values(), INVOICE_TOPICS, NOTICE_TOPICS, PROMOTION_TOPICS]
 )
 _FEEDBACK_RE = _compile(FEEDBACK_TOPICS.values())
+_SURVEY_ACTION_RE = _compile(SURVEY_ACTIONS.values())
+_MESSAGE_RE = _compile(MESSAGE_TOPICS.values())
+_COURIER_RE = _compile([_COURIERS])
 _SENT_RECEIPT_RE = _compile([SENT_RECEIPT_TOPICS])
 _INVOICE_RE = _compile([INVOICE_TOPICS])
 _NEWS_LABEL_RE = _compile(
@@ -1022,14 +1260,30 @@ def _subject_text(subject: str) -> str:
     return _ORDER_LABEL_RE.sub(" | ", _prepare(subject, ""))
 
 
+def _unquoted(subject: str) -> str:
+    """Return a subject without the names in quotes."""
+    return _QUOTED_RE.sub(" | ", subject[:MAX_CHARS].translate(_QUOTES))
+
+
 def _topic_text(subject: str) -> str:
     """Fold a subject without order-number labels and quoted names."""
-    return _subject_text(_QUOTED_RE.sub(" | ", subject[:MAX_CHARS].translate(_QUOTES)))
+    return _subject_text(_unquoted(subject))
+
+
+def _kind_in_subject(subject: str) -> bool:
+    """Return True when the parsers' own wording finds a kind in a subject.
+
+    "Entrega concluída" or "Delivery complete" is a status for the parsers,
+    so it is for the gate too; a product's name in quotes doesn't count.
+    """
+    return detect_kind(_unquoted(subject))[1] == "subject"
 
 
 def _no_status(subject: str) -> bool:
     """Return True when a subject has no status or other strong keyword."""
-    return _STRONG_RE.search(_subject_text(subject)) is None
+    return _STRONG_RE.search(_topic_text(subject)) is None and not _kind_in_subject(
+        subject
+    )
 
 
 def not_shipping_topic(subject: str) -> bool:
@@ -1045,6 +1299,35 @@ def not_shipping_topic(subject: str) -> bool:
 def feedback_topic(subject: str) -> bool:
     """Return True when a subject asks for feedback or a review, no status."""
     return _FEEDBACK_RE.search(_topic_text(subject)) is not None and _no_status(subject)
+
+
+def survey_request(subject: str, text: str) -> bool:
+    """Return True when a body invites to answer a survey, under no status.
+
+    "Responda a 3 perguntas sobre a entrega" or "Take our short survey",
+    under a subject such as "A sua entrega de 4 de novembro". A request for
+    a rating ("Avalie a entrega", "How did we do?") isn't one: a carrier's
+    delivery e-mail may have it in its footer. The first ``BODY_CHARS`` are
+    read, without links, addresses and advertising phrases.
+    """
+    return _no_status(subject) and (
+        _SURVEY_ACTION_RE.search(_clean(text[:BODY_CHARS])) is not None
+    )
+
+
+def message_topic(subject: str) -> bool:
+    """Return True for a seller's message or a prompt to complain, no status.
+
+    "Recebeu uma mensagem referente à encomenda nº ..." names an order, but
+    a message from the one who brings the parcel ("Nova mensagem do seu
+    estafeta") may be news, and so is a status in the same subject.
+    """
+    text = _topic_text(subject)
+    return (
+        _MESSAGE_RE.search(text) is not None
+        and _COURIER_RE.search(text) is None
+        and _no_status(subject)
+    )
 
 
 def sent_receipt(subject: str) -> bool:
@@ -1070,6 +1353,7 @@ def known_sender_subject(subject: str) -> bool:
     Like ``is_candidate`` for other senders, but carrier names don't count
     (a carrier names itself in all its e-mails), and neither do subjects
     about something else (``not_shipping_topic``), even naming an order.
+    The parsers' own wording for a status counts like a weak keyword.
     """
     if not_shipping_topic(subject):
         return False
@@ -1077,7 +1361,9 @@ def known_sender_subject(subject: str) -> bool:
     if _STRONG_RE.search(text) or _ORDER_NUMBER_RE.search(text):
         return True
     advertising = _MARKETING_PHRASE_RE.search(fold(subject[:MAX_CHARS]))
-    if advertising or not _WEAK_NO_CARRIER_RE.search(text):
+    if advertising or not (
+        _WEAK_NO_CARRIER_RE.search(text) or _kind_in_subject(subject)
+    ):
         return False
     return "%" not in text and not _MARKETING_RE.search(text)
 

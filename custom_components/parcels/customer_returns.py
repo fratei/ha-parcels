@@ -39,6 +39,7 @@ from .models import (
     local_date,
     merchant_key,
     new_id,
+    one_day,
     order_key,
 )
 from .parsers.base import ParseResult
@@ -263,6 +264,7 @@ def _delivery_time(parcel: Parcel, started: datetime) -> datetime:
     return when
 
 
+@one_day()
 def infer_return_deliveries(data: ParcelsData, now: datetime) -> set[str]:
     """Mark the parcels that were sent back as delivered.
 

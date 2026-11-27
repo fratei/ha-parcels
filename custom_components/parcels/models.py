@@ -14,10 +14,12 @@ for items in the "Needs review" and "Filtered" lists, which expire.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time
 from enum import StrEnum
+from functools import lru_cache
 import logging
 import re
 import secrets
@@ -246,6 +248,32 @@ def local_date(value: datetime) -> date:
     return dt_util.as_local(value).date()
 
 
+# The day every parcel's state is read for during a pass, see one_day().
+_pass_day: date | None = None
+
+
+@contextmanager
+def one_day() -> Iterator[None]:
+    """Read every parcel's state for the day this started, until it ends.
+
+    A state checks the day on each read (a new day can change the expected
+    date), and a pass over thousands of parcels reads them so often that
+    reading the clock each time took longer than the rest of it. Midnight
+    within the block counts after it; a block within it keeps its day. Only
+    for code that doesn't await, so that no other task reads with that day.
+    Also a decorator.
+    """
+    global _pass_day
+    if _pass_day is not None:
+        yield
+        return
+    _pass_day = local_date(dt_util.utcnow())
+    try:
+        yield
+    finally:
+        _pass_day = None
+
+
 def _tuple(value: Any) -> tuple[str, ...]:
     if not value:
         return ()
@@ -361,6 +389,7 @@ def _merchant_tokens(name: str) -> list[str]:
     return tokens
 
 
+@lru_cache(maxsize=4096)
 def merchant_key(name: str | None) -> str:
     """Normalise a merchant name for comparisons: ``Amazon.es`` -> ``amazon``.
 
@@ -973,13 +1002,23 @@ class Parcel:
     def state(self) -> ParcelState:
         """Return the derived state, computed on first use after a change.
 
-        And again on a new day, which can change the expected date.
+        And again on a new day, which can change the expected date. During a
+        pass, the pass's day (see one_day()).
         """
-        today = local_date(dt_util.utcnow())
+        today = _pass_day or local_date(dt_util.utcnow())
         if self._state is None or self._state_day != today:
             self._state = derive_state(self, today)
             self._state_day = today
         return self._state
+
+    def snapshot(self) -> Parcel:
+        """Return a copy that keeps the derived state and privacy of now.
+
+        Changes to the parcel then leave the copy as it was. It shares the
+        parcel's origins and events, so on a new day it derives its state
+        again from them as they are then.
+        """
+        return replace(self, _state=self.state)
 
     def touch(self, now: datetime) -> None:
         """Record a change: forget the derived state and set ``updated``."""

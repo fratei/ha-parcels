@@ -68,6 +68,7 @@ from .const import (
     SIGNAL_AI_UPDATED,
     SIGNAL_DATA_UPDATED,
     UNTRACKED_GRACE,
+    VERSION,
     AIMode,
     MailKind,
     ParcelStatus,
@@ -156,6 +157,7 @@ from .models import (
     dt_to_str,
     is_carrier_mail,
     new_id,
+    one_day,
 )
 from .parcelapp.sync import DATES_REPAIR_KEY, repair_parcel_dates
 from .parsers import NOTE_KNOWN_SENDER_UNPARSED, is_refund, parse_message
@@ -338,6 +340,24 @@ UNPARSED_RULE_KEY = "unparsed_rule"
 TOPIC_CHECK_KEY = "topic_check"
 # The check reads at most this many e-mails, newest first.
 TOPIC_CHECK_MAX = 50
+# Set when the store of 0.1.27 is loaded, once its own check above read the
+# e-mails waiting in review: it knew surveys by a fixed list of phrases. Once
+# the mailboxes were read, those e-mails are read again, as by that check.
+# Then it holds what the check found.
+TOPIC_RECHECK_KEY = "topic_recheck"
+# Set when the store of 0.1.27 is loaded, with when it started. Once the
+# mailboxes were read, the e-mails it took for no parcel since then are read
+# again by the parsers: it took deliveries whose subject also asked for a
+# review for surveys. Then it holds what the check found.
+SURVEY_CHECK_KEY = "survey_check"
+# The check reads the e-mails of this many recent days, as a mailbox's first
+# read does...
+SURVEY_CHECK_WINDOW = timedelta(days=30)
+# ... at most this many, newest first.
+SURVEY_CHECK_MAX = 50
+# The release that last started, and how many parcels reconciling changed as
+# it first started: what a new release's rules change then isn't news.
+RELEASE_KEY = "release"
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -649,6 +669,8 @@ class ParcelsEngine:
         if not (data.parcels or data.review):
             # Nothing stored by an earlier release to check after the update.
             data.engine.setdefault(FILL_CHECK_KEY, True)
+        # What 0.1.27 stored of its own check, before it's planned below.
+        topic_check = data.engine.get(TOPIC_CHECK_KEY)
         for key in (
             RETURNS_CHECK_KEY,
             PAACK_SHOP_CHECK_KEY,
@@ -663,6 +685,10 @@ class ParcelsEngine:
                 if data.messages
                 else {"done": dt_to_str(now)},
             )
+        if not {TOPIC_RECHECK_KEY, SURVEY_CHECK_KEY} <= data.engine.keys():
+            self._plan_topic_recheck(topic_check, now)
+            self.store.async_schedule_save()
+        self._reconcile_new_release(now)
         self._statuses = {pid: p.state.news_status for pid, p in data.parcels.items()}
         self._started = True
         self._run_retention(now)
@@ -723,6 +749,27 @@ class ParcelsEngine:
             _LOGGER.info("Parcels updated %d stored parcels", len(changed))
         self.async_schedule_save()
 
+    @callback
+    def _reconcile_new_release(self, now: datetime) -> None:
+        """Reconcile once as a release first starts, before statuses are noted.
+
+        Its rules may put e-mails in other parcels than an earlier release
+        did: that isn't news, so it fires no events. A new store has nothing
+        to reconcile.
+        """
+        data = self.data
+        release = data.engine.get(RELEASE_KEY)
+        if isinstance(release, dict) and release.get("version") == VERSION:
+            return
+        changed = 0
+        if data.parcels:
+            result = reconcile(data, now)
+            changed = len(result.changed | result.removed)
+            if changed:
+                _LOGGER.info("Parcels placed again the e-mails of %d parcels", changed)
+        data.engine[RELEASE_KEY] = {"version": VERSION, "changed": changed}
+        self.store.async_schedule_save()
+
     # -- Reconciling ------------------------------------------------------
 
     @callback
@@ -750,6 +797,33 @@ class ParcelsEngine:
         if ok and self._started and not (self._syncing or self._more):
             self._reread_unignored()
             self._start_checks()
+
+    def _plan_topic_recheck(self, topic_check: Any, now: datetime) -> None:
+        """Plan the checks of what 0.1.27 read, once after the update.
+
+        ``topic_check`` is what 0.1.27 stored of its own check. Once that
+        check read the e-mails waiting in review, they're read again; until
+        then, it reads those waiting now. The e-mails it took for no parcel
+        since it started are read again too. A store of an earlier release
+        has nothing of 0.1.27 to check: its own check reads every e-mail in
+        review.
+        """
+        engine = self.data.engine
+        done = {"done": dt_to_str(now)}
+        if not isinstance(topic_check, dict) or not self.data.messages:
+            engine.setdefault(TOPIC_RECHECK_KEY, done)
+            engine.setdefault(SURVEY_CHECK_KEY, dict(done))
+            return
+        since = topic_check.get("before") or topic_check.get("done")
+        engine.setdefault(
+            SURVEY_CHECK_KEY,
+            {"before": dt_to_str(now), "since": since} if since else dict(done),
+        )
+        if {"started", "done"} & topic_check.keys():
+            engine.setdefault(TOPIC_RECHECK_KEY, {"before": dt_to_str(now)})
+        else:
+            topic_check["before"] = dt_to_str(now)
+            engine.setdefault(TOPIC_RECHECK_KEY, done)
 
     @callback
     def _start_checks(self) -> None:
@@ -795,6 +869,25 @@ class ParcelsEngine:
             and not {"started", "done"} & topic_check.keys()
         ):
             topics = dt_from_str(topic_check.get("before"))
+        recheck_check = engine.get(TOPIC_RECHECK_KEY)
+        recheck = None
+        if (
+            isinstance(recheck_check, dict)
+            and not {"started", "done"} & recheck_check.keys()
+        ):
+            recheck = dt_from_str(recheck_check.get("before"))
+        survey_check = engine.get(SURVEY_CHECK_KEY)
+        survey = None
+        if (
+            isinstance(survey_check, dict)
+            and not {"started", "done"} & survey_check.keys()
+            and (survey_before := dt_from_str(survey_check.get("before")))
+        ):
+            # Without a start it can read, the check reads nothing.
+            survey = (
+                dt_from_str(survey_check.get("since")) or survey_before,
+                survey_before,
+            )
         fill = not engine.get(FILL_CHECK_KEY)
         paack = not engine.get(PAACK_CHECK_KEY)
         leroymerlin = not engine.get(LEROYMERLIN_CHECK_KEY)
@@ -805,6 +898,8 @@ class ParcelsEngine:
             and accepted is None
             and mailing is None
             and topics is None
+            and recheck is None
+            and survey is None
             and not (fill or paack or leroymerlin)
         ):
             return
@@ -821,6 +916,10 @@ class ParcelsEngine:
             mailing_check["started"] = dt_to_str(dt_util.utcnow())
         if topics is not None:
             topic_check["started"] = dt_to_str(dt_util.utcnow())
+        if recheck is not None:
+            recheck_check["started"] = dt_to_str(dt_util.utcnow())
+        if survey is not None:
+            survey_check["started"] = dt_to_str(dt_util.utcnow())
         engine[FILL_CHECK_KEY] = True
         engine[PAACK_CHECK_KEY] = True
         engine[LEROYMERLIN_CHECK_KEY] = True
@@ -836,6 +935,8 @@ class ParcelsEngine:
                 leroymerlin=leroymerlin,
                 leroymerlin_mailing=mailing,
                 topics=topics,
+                topic_recheck=recheck,
+                survey=survey,
             ),
             "parcels checks",
         )
@@ -934,15 +1035,16 @@ class ParcelsEngine:
 
         Parcels are reconciled first, unless the caller just did.
         """
-        if self._started:
-            now = dt_util.utcnow()
-            if reconcile:
-                self._reconcile(now)
-            self._fire_events(now)
-        self.async_schedule_save()
-        async_dispatcher_send(self.hass, SIGNAL_DATA_UPDATED)
-        if self.notifier is not None:
-            self.notifier.async_parcels_changed()
+        with one_day():
+            if self._started:
+                now = dt_util.utcnow()
+                if reconcile:
+                    self._reconcile(now)
+                self._fire_events(now)
+            self.async_schedule_save()
+            async_dispatcher_send(self.hass, SIGNAL_DATA_UPDATED)
+            if self.notifier is not None:
+                self.notifier.async_parcels_changed()
 
     @callback
     def _fire_events(self, now: datetime) -> None:
@@ -3133,17 +3235,20 @@ class ParcelsEngine:
         leroymerlin: bool,
         leroymerlin_mailing: datetime | None = None,
         topics: datetime | None = None,
+        topic_recheck: datetime | None = None,
+        survey: tuple[datetime, datetime] | None = None,
     ) -> None:
         """Run the one-time checks in turn.
 
         Returns first, as they can remove parcels. Paack's, Leroy Merlin's
-        (both checks) and then Amazon's e-mails last, so that what the
-        parsers read then isn't filled in by the local AI: first those only
-        the AI read, then those whose AI answer the user accepted, so that
-        Amazon's cancellations are judged on the parsers' reading. Then the
-        other e-mails waiting in review: those the checks before sent there
-        are new, so each e-mail is read once. The shops of Paack's parcels at
-        the very end, once the e-mails under review were read.
+        (both checks), the e-mails 0.1.27 took for surveys, and then Amazon's
+        e-mails last, so that what the parsers read then isn't filled in by
+        the local AI: first those only the AI read, then those whose AI
+        answer the user accepted, so that Amazon's cancellations are judged
+        on the parsers' reading. Then the other e-mails waiting in review:
+        those the checks before sent there are new, so each e-mail is read
+        once. The shops of Paack's parcels at the very end, once the e-mails
+        under review were read.
         """
         if before is not None:
             await self._async_returns_check(before)
@@ -3155,12 +3260,16 @@ class ParcelsEngine:
             await self._async_rejected_check(_leroymerlin_rejected, "Leroy Merlin")
         if leroymerlin_mailing is not None:
             await self._async_leroymerlin_mailing_check(leroymerlin_mailing)
+        if survey is not None:
+            await self._async_survey_check(*survey)
         if amazon_ai is not None:
             await self._async_amazon_ai_check(amazon_ai)
         if accepted is not None:
             await self._async_amazon_accepted_check(accepted)
         if topics is not None:
             await self._async_topic_check(topics)
+        if topic_recheck is not None:
+            await self._async_topic_check(topic_recheck, TOPIC_RECHECK_KEY)
         if shops is not None:
             await self._async_paack_shop_check(shops)
 
@@ -3289,25 +3398,77 @@ class ParcelsEngine:
         """Read Leroy Merlin's e-mails taken for no parcel again, once.
 
         Releases before 0.1.25 took every e-mail from mailing.leroymerlin.pt
-        for a newsletter, orders and deliveries too. Each e-mail is
-        downloaded and read again by the parsers, never the AI: what they
-        can't read goes to review. Current news adds its parcel and older
-        news only joins the parcel it's about, without reopening a parcel
-        that was put away. Nothing changes when the e-mail changed state
-        while it was read.
+        for a newsletter, orders and deliveries too.
+        """
+        keys = self._leroymerlin_mailing_keys(before, dt_util.utcnow())
+        counts = await self._async_reread_not_parcel(
+            keys, LEROYMERLIN_MAILING_CHECK_MAX, LEROYMERLIN_MAILING_CHECK_KEY
+        )
+        _LOGGER.debug("Leroy Merlin's e-mails read again: %s", counts)
+
+    def _survey_check_keys(
+        self, since: datetime, before: datetime, now: datetime
+    ) -> list[str]:
+        """Return the e-mails 0.1.27 took for no parcel, newest first.
+
+        Those of the last 30 days that it first read, from ``since``, when it
+        started, until ``before``, when it was updated. Senders the user
+        ignores never count.
         """
         data = self.data
-        keys = self._leroymerlin_mailing_keys(before, dt_util.utcnow())
+        window = now - SURVEY_CHECK_WINDOW
+
+        def received(key: str) -> tuple[datetime, str]:
+            record = data.messages[key]
+            return record.received or record.seen, key
+
+        keys = [
+            key
+            for key, record in data.messages.items()
+            if record.state is MessageState.NOT_PARCEL
+            and since <= record.seen < before
+            and (record.received or record.seen) >= window
+            and not is_unread_key(key)
+            and not self.is_ignored(record.sender_domain)
+        ]
+        return sorted(keys, key=received, reverse=True)
+
+    async def _async_survey_check(self, since: datetime, before: datetime) -> None:
+        """Read the e-mails 0.1.27 took for no parcel again, once.
+
+        It knew surveys and review requests by a fixed list of subject
+        phrases, so it also dropped deliveries whose subject asks for a
+        review.
+        """
+        keys = self._survey_check_keys(since, before, dt_util.utcnow())
+        counts = await self._async_reread_not_parcel(
+            keys, SURVEY_CHECK_MAX, SURVEY_CHECK_KEY
+        )
+        _LOGGER.debug("E-mails taken for surveys read again: %s", counts)
+
+    async def _async_reread_not_parcel(
+        self, keys: list[str], limit: int, check_key: str
+    ) -> dict[str, int]:
+        """Read e-mails taken for no parcel again; record what was found.
+
+        At most ``limit`` of ``keys``, newest first. Each e-mail is downloaded
+        and read again by the parsers, never the AI: what they can't read
+        goes to review. Current news adds its parcel and older news only
+        joins the parcel it's about, without reopening a parcel that was put
+        away. Nothing changes when the e-mail changed state while it was
+        read. The counts are stored under ``check_key``, and returned.
+        """
+        data = self.data
         counts = dict.fromkeys(
             ("read", "applied", "review", "old", "kept", "gone", "failed"), 0
         )
-        counts["skipped"] = max(0, len(keys) - LEROYMERLIN_MAILING_CHECK_MAX)
+        counts["skipped"] = max(0, len(keys) - limit)
         readings: list[
             tuple[
                 MessageRecord, MailMessage, MailboxRuntime, SenderVerdict, ParseResult
             ]
         ] = []
-        for key in keys[:LEROYMERLIN_MAILING_CHECK_MAX]:
+        for key in keys[:limit]:
             if (record := data.messages.get(key)) is None:
                 continue
             fetched = await self.async_refetch(record)
@@ -3370,14 +3531,14 @@ class ParcelsEngine:
                 counts["review"] += 1
             else:
                 counts["kept"] += 1
-        check = data.engine.setdefault(LEROYMERLIN_MAILING_CHECK_KEY, {})
+        check = data.engine.setdefault(check_key, {})
         check["done"] = dt_to_str(dt_util.utcnow())
         check["counts"] = counts
         if counts["applied"] or counts["review"] or counts["old"]:
             self.async_changed()
         else:
             self.async_schedule_save()
-        _LOGGER.debug("Leroy Merlin's e-mails read again: %s", counts)
+        return counts
 
     def _topic_check_keys(self, before: datetime) -> list[str]:
         """Return the e-mails waiting in review since before ``before``.
@@ -3401,11 +3562,15 @@ class ParcelsEngine:
 
         return sorted(keys, key=received, reverse=True)
 
-    async def _async_topic_check(self, before: datetime) -> None:
+    async def _async_topic_check(
+        self, before: datetime, check_key: str = TOPIC_CHECK_KEY
+    ) -> None:
         """Read the e-mails waiting in review again, once.
 
         Releases before 0.1.27 took surveys, review requests, carriers'
-        receipts and invoices for shipping news. Each e-mail is downloaded and
+        receipts and invoices for shipping news, and 0.1.27 knew surveys by a
+        fixed list of subject phrases: once its own check read them, they're
+        read again under ``TOPIC_RECHECK_KEY``. Each e-mail is downloaded and
         read again by the parsers, never the AI: those they now know as no
         parcel news leave the list. The others wait there as they were, and
         nothing changes when the e-mail changed state while it was read. A
@@ -3455,14 +3620,14 @@ class ParcelsEngine:
                 use_ai=False,
             )
             counts["settled"] += 1
-        check = data.engine.setdefault(TOPIC_CHECK_KEY, {})
+        check = data.engine.setdefault(check_key, {})
         check["done"] = dt_to_str(dt_util.utcnow())
         check["counts"] = counts
         if counts["settled"] or marked:
             self.async_changed()
         else:
             self.async_schedule_save()
-        _LOGGER.debug("E-mails in review read again: %s", counts)
+        _LOGGER.debug("E-mails in review read again (%s): %s", check_key, counts)
 
     def _amazon_check_messages(self, before: datetime, now: datetime) -> list[str]:
         """Return Amazon's e-mails of the last 30 days read before ``before``.
@@ -4232,12 +4397,15 @@ class ParcelsEngine:
             "amazon_accepted_check": data.engine.get(AMAZON_ACCEPTED_CHECK_KEY),
             "leroymerlin_mailing_check": data.engine.get(LEROYMERLIN_MAILING_CHECK_KEY),
             "topic_check": data.engine.get(TOPIC_CHECK_KEY),
+            "topic_recheck": data.engine.get(TOPIC_RECHECK_KEY),
+            "survey_check": data.engine.get(SURVEY_CHECK_KEY),
             "recent_emails": self._recent_emails(dt_util.utcnow()),
             "working_days": self.workdays.source,
             "amazon_shipment_ids": amazon_shipment_id_counts(data, dt_util.utcnow()),
             "amazon_links": data.engine.get(AMAZON_LINKS_KEY),
             "order_fold": data.engine.get(ORDER_FOLD_KEY),
             "typed_join": data.engine.get(TYPED_JOIN_KEY),
+            "release": data.engine.get(RELEASE_KEY),
             "repair": data.engine.get(REPAIR_KEY),
             "amazon_carrier_repaired": data.engine.get(AMAZON_REPAIR_KEY),
             "placeholder_items_repaired": data.engine.get(PLACEHOLDER_REPAIR_KEY),

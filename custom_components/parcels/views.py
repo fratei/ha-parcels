@@ -57,6 +57,7 @@ from .models import (
     dt_to_str,
     inference_reason,
     merchant_key,
+    one_day,
     time_to_str,
 )
 from .parsers.senders import is_free_mail, lookup, organizational_domain
@@ -623,6 +624,7 @@ def _newest_first[T: (ReviewItem, FilteredItem)](items: list[T]) -> list[T]:
     )
 
 
+@one_day()
 def snapshot(engine: ParcelsEngine, viewer: Viewer) -> dict[str, Any]:
     """Return everything the page shows."""
     data = engine.data

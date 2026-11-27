@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import dataclasses
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from custom_components.parcels.const import CONFIDENCE_APPLY, MailKind
+from custom_components.parcels.const import CONFIDENCE_APPLY, MailKind, ParcelStatus
+from custom_components.parcels.convert import result_contributions
+from custom_components.parcels.dedup import apply_contribution, reconcile
+from custom_components.parcels.models import ParcelsData, Source
 from custom_components.parcels.parsers import tracking
 from custom_components.parcels.parsers.amazon import parse_amazon
 from custom_components.parcels.parsers.base import (
@@ -21,6 +24,7 @@ from custom_components.parcels.parsers.base import (
     SenderVerdict,
     shipment_base,
 )
+from custom_components.parcels.parsers.items import same_item
 
 type Parse = Callable[..., ParseResult]
 
@@ -957,6 +961,66 @@ def test_cancelled_and_refunded(parse: Parse, name: str, item: str) -> None:
     assert shipment.tracking_number is None
     assert shipment.amazon_shipment_id is None
     assert shipment.eta is None
+
+
+_US_ORDER = "112-4839201-5938472"
+
+
+@pytest.mark.parametrize(
+    ("subject", "text"),
+    [
+        (
+            f"Your Amazon.com order {_US_ORDER} has been canceled",
+            f"Hello Alex,\nYour order {_US_ORDER} has been canceled.\n"
+            "Stainless Steel Insulated Water Bottle, 32 oz, Ma...\nQuantity: 1\n"
+            "Silicone Straw Lid Replacement, 2...\nQuantity: 1\n",
+        ),
+        (
+            'Canceled: "Stainless Steel Insulated Water Bottle..." and 1 more item',
+            f"Hello Alex,\nYour order {_US_ORDER} has been canceled.\n",
+        ),
+    ],
+    ids=["body", "subject"],
+)
+def test_a_cancellation_with_titles_cut_short_cancels_the_order(
+    parse: Parse,
+    load_eml: Callable[..., MailMessage],
+    verdict_for: Callable[..., SenderVerdict],
+    tz: ZoneInfo,
+    subject: str,
+    text: str,
+) -> None:
+    """Amazon cuts titles short in other places than the order e-mail did;
+    the cancellation is about the same items, so it cancels the order's
+    parcel instead of becoming a parcel of its own."""
+    ordered = load_eml("amazon/order_en_us.eml")
+    message = dataclasses.replace(
+        ordered,
+        subject=subject,
+        text=text,
+        links=(),
+        date=ordered.date + timedelta(hours=3),
+    )
+    cancelled = parse_amazon(message, verdict_for(message), tz)
+    assert cancelled is not None
+    assert cancelled.kind is MailKind.CANCELLED
+    order = parse("order_en_us")
+    assert cancelled.items
+    for item in cancelled.items:
+        assert any(same_item(item, full) for full in order.items), item
+
+    data = ParcelsData()
+    for name, result, sent in (
+        ("order", order, ordered.date),
+        ("cancel", cancelled, message.date),
+    ):
+        [contrib] = result_contributions(
+            result, message_hash=name, time=sent, source=Source.PARSER
+        )
+        apply_contribution(data, contrib, sent)
+    reconcile(data, message.date)
+    [parcel] = data.parcels.values()
+    assert parcel.state.status is ParcelStatus.CANCELLED
 
 
 @pytest.mark.parametrize("name", ["marketing_es", "changed_layout_pt"])

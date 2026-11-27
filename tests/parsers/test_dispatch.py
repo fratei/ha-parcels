@@ -23,6 +23,7 @@ from custom_components.parcels.parsers.base import (
     Eta,
     Link,
     MailMessage,
+    ParsedShipment,
     ParseResult,
     SenderVerdict,
 )
@@ -329,6 +330,130 @@ def test_feedback_about_a_delivered_order(
     )
 
 
+SELLER_MESSAGE_TEXT = (
+    "Olá Alex,\nRecebeu uma mensagem do vendedor Loja Exemplo referente à "
+    "encomenda nº ABC123-A.\nMensagem: a sua encomenda foi enviada hoje, com o "
+    "número de seguimento RR123456785PT.\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("sender", "parser"),
+    [
+        ("ship-confirm@amazon.es", "amazon"),
+        ("marketplace@mailing.leroymerlin.pt", "leroymerlin"),
+        ("mailer@shopify.com", "shopify"),
+    ],
+)
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Recebeu uma mensagem referente à encomenda nº ABC123-A",
+        "Abrir reclamação sobre o pedido 1234567890123-A",
+        "You have a new message from the seller about order #1001",
+    ],
+)
+def test_unreadable_seller_message(
+    calls: Calls, tz: ZoneInfo, sender: str, parser: str, subject: str
+) -> None:
+    """A seller's message or a prompt to complain asks for no parser update."""
+    message = _message(sender, subject, text=SELLER_MESSAGE_TEXT)
+    assert parse_message(message, _verdict(message), tz) == ParseResult(
+        parser=parser, kind=MailKind.NOT_PARCEL, confidence=0.9
+    )
+
+
+@pytest.mark.parametrize(
+    ("subject", "kind"),
+    [
+        ("Tens uma nova mensagem de alex123", MailKind.NOT_PARCEL),
+        ("Nuevo mensaje de Tienda Ejemplo", MailKind.NOT_PARCEL),
+        ("Tens uma nova mensagem do teu estafeta", MailKind.SHIPPED),
+        ("Recebeu uma mensagem: a sua encomenda foi enviada", MailKind.SHIPPED),
+    ],
+)
+def test_seller_message_from_an_unknown_sender(
+    monkeypatch: pytest.MonkeyPatch,
+    calls: Calls,
+    tz: ZoneInfo,
+    subject: str,
+    kind: MailKind,
+) -> None:
+    """A marketplace's message is no news; a courier's or a status still is."""
+    read = ParseResult(
+        parser="generic",
+        kind=MailKind.SHIPPED,
+        shipments=[ParsedShipment(carrier="ctt", tracking_number="RR123456785PT")],
+        confidence=0.6,
+    )
+    monkeypatch.setattr(parsers.generic, "parse_generic", _stub("generic", calls, read))
+    message = _message("noreply@marketplace.example", subject, text=SELLER_MESSAGE_TEXT)
+    verdict = replace(_verdict(message), known=False)
+    assert parse_message(message, verdict, tz).kind is kind
+
+
+def test_carrier_message_may_be_news(calls: Calls, tz: ZoneInfo) -> None:
+    """A carrier's own message about a parcel still asks for a parser update."""
+    message = _message(
+        "info@ctt.pt",
+        "Tem uma nova mensagem",
+        text=(
+            "Olá Alex,\nO objeto RR123456785PT está em distribuição. Indique "
+            "onde o podemos deixar.\n"
+        ),
+    )
+    assert parse_message(message, _verdict(message), tz) == ParseResult(
+        parser="ctt", kind=MailKind.UNKNOWN, confidence=0.0, notes=UNPARSED_NOTES
+    )
+    assert calls == ["carrier"]
+
+
+@pytest.mark.parametrize(
+    ("sender", "subject", "known", "kind"),
+    [
+        pytest.param(
+            "loja@store.example",
+            "Como correu a sua entrega?",
+            False,
+            MailKind.NOT_PARCEL,
+            id="survey",
+        ),
+        pytest.param(
+            "noreply@marketplace.example",
+            "Tem uma nova mensagem do vendedor",
+            False,
+            MailKind.NOT_PARCEL,
+            id="seller-message",
+        ),
+        pytest.param(
+            "info@correos.es",
+            "Tienes un nuevo mensaje",
+            True,
+            MailKind.UNKNOWN,
+            id="carrier-message",
+        ),
+        pytest.param(
+            "loja@store.example",
+            "Atualização da sua encomenda",
+            False,
+            MailKind.UNKNOWN,
+            id="other",
+        ),
+    ],
+)
+def test_nothing_read_from_a_survey_or_a_seller_message(
+    calls: Calls, tz: ZoneInfo, sender: str, subject: str, known: bool, kind: MailKind
+) -> None:
+    """The local AI isn't asked about a survey or a seller's message either."""
+    message = _message(
+        sender, subject, text="Olá Alex,\n\nA sua encomenda foi entregue.\n"
+    )
+    verdict = replace(_verdict(message), known=known)
+    result = parse_message(message, verdict, tz)
+    assert (result.parser, result.kind) == ("none", kind)
+    assert calls == ["generic"]
+
+
 def test_account_mail_naming_an_order(calls: Calls, tz: ZoneInfo) -> None:
     """An order added to the shop's account, to follow there, isn't news."""
     message = _message(
@@ -453,7 +578,8 @@ def test_body_check_error_is_not_a_silent_skip(
 
 
 # E-mails the parsers read as news, though they're about something else:
-# surveys, review requests, a carrier's posting receipt, invoices.
+# surveys, review requests, a carrier's posting receipt, invoices, and a
+# seller's messages and prompts to complain.
 GATED = [
     pytest.param(
         "inqueritos@ctt.pt",
@@ -513,6 +639,38 @@ GATED = [
         id="ctt-receipt",
     ),
     pytest.param(
+        "naoresponder@ctt.pt",
+        "ctt",
+        "Recibo do seu envio",
+        "Olá Alex,\n\nO seu envio RR123456785PT foi aceite na Loja CTT Exemplo "
+        "a 25/11/2026. Obrigado.\n",
+        id="ctt-receipt-recibo",
+    ),
+    pytest.param(
+        "naoresponder@ctt.pt",
+        "ctt",
+        "O seu envio foi aceite",
+        "Olá Alex,\n\nO seu envio RR123456785PT foi aceite na Loja CTT Exemplo "
+        "a 25/11/2026. Obrigado.\n",
+        id="ctt-receipt-aceite",
+    ),
+    pytest.param(
+        "noreply@dhl.de",
+        "dhl",
+        "Ihre Einlieferungsbestätigung",
+        "Hallo Alex,\n\nIhre Sendung 00340434618273591202 wurde am 25.11.2026 "
+        "in der Filiale eingeliefert.\n",
+        id="dhl-receipt",
+    ),
+    pytest.param(
+        "billing@ups.com",
+        "ups",
+        "Your UPS shipment receipt",
+        "Hello Alex,\n\nYour shipment 1Z999AA10123456784 was dropped off at a "
+        "UPS Access Point on 25 November.\n",
+        id="ups-receipt",
+    ),
+    pytest.param(
         "faturacao@ctt.pt",
         "ctt",
         "Fatura eletrónica FT 2026A/100001",
@@ -536,6 +694,234 @@ GATED = [
         "Hello Alex,\n\nInvoice 0000A12B34 for shipment 1Z999AA10123456784. "
         "Amount due: 12.40 EUR by 10 January.\n",
         id="ups-invoice",
+    ),
+    *(
+        pytest.param(
+            "inqueritos@ctt.pt",
+            "ctt",
+            subject,
+            "Olá Alex,\n\nO objeto RR123456785PT foi entregue a 4 de novembro. "
+            "Responda a 3 perguntas sobre a entrega.\n",
+            id=f"ctt-survey-{index}",
+        )
+        for index, subject in enumerate(
+            (
+                "Ajude-nos a melhorar",
+                "Classifique a entrega do seu objeto",
+                "A sua experiência com os CTT",
+                "Já recebeu o seu objeto? Avalie a entrega",
+            )
+        )
+    ),
+    # Surveys whose subject has neither a status nor a request for feedback:
+    # the body asks to answer questions about the delivery it names.
+    *(
+        pytest.param(sender, parser, subject, text, id=f"survey-body-{name}")
+        for name, sender, parser, subject, text in (
+            (
+                "ctt-date",
+                "inqueritos@ctt.pt",
+                "ctt",
+                "A sua entrega de 4 de novembro",
+                "Olá Alex,\n\nO objeto RR123456785PT foi entregue a 4 de novembro. "
+                "Responda a 3 perguntas sobre a entrega.\n",
+            ),
+            (
+                "ctt-minute",
+                "inqueritos@ctt.pt",
+                "ctt",
+                "Tem um minuto?",
+                "Olá Alex,\n\nO objeto RR123456785PT foi entregue a 4 de novembro. "
+                "Responda a 3 perguntas sobre a entrega.\n",
+            ),
+            (
+                "ups-hear",
+                "survey@ups.com",
+                "ups",
+                "We'd love to hear from you",
+                "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered on "
+                "Friday. Tell us how we did in 2 minutes.\n",
+            ),
+            (
+                "ups-question",
+                "survey@ups.com",
+                "ups",
+                "A quick question about your delivery",
+                "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered on "
+                "Friday. Tell us how we did in 2 minutes.\n",
+            ),
+            (
+                "dhl",
+                "kundenservice@dhl.de",
+                "dhl",
+                "Ihre Sendung vom 4. November",
+                "Hallo Alex,\n\nIhre Sendung 00340434618273591202 wurde am 4. "
+                "November zugestellt. Bitte nehmen Sie an unserer Umfrage teil.\n",
+            ),
+            (
+                "es",
+                "survey@ups.com",
+                "ups",
+                "Tu entrega del 4 de noviembre",
+                "Hola Alex,\n\nTu paquete 1Z999AA10123456784 fue entregado el "
+                "viernes. Responde a 3 preguntas sobre la entrega.\n",
+            ),
+            (
+                "fr",
+                "survey@ups.com",
+                "ups",
+                "Votre livraison du 4 novembre",
+                "Bonjour Alex,\n\nVotre colis 1Z999AA10123456784 a été livré "
+                "vendredi. Répondez à notre enquête en 2 minutes.\n",
+            ),
+            (
+                "it",
+                "survey@ups.com",
+                "ups",
+                "La tua consegna del 4 novembre",
+                "Ciao Alex,\n\nIl tuo pacco 1Z999AA10123456784 è stato consegnato "
+                "venerdì. Rispondi a 3 domande sulla consegna.\n",
+            ),
+            (
+                "nl",
+                "survey@ups.com",
+                "ups",
+                "Je bezorging van 4 november",
+                "Hallo Alex,\n\nJe pakket 1Z999AA10123456784 is vrijdag bezorgd. "
+                "Vul onze korte enquête in.\n",
+            ),
+            (
+                "locker",
+                "inquerito@inpost.pt",
+                "inpost",
+                "A sua recolha de 4 de novembro",
+                "Olá Alex,\n\nA sua encomenda 620417393912 foi entregue no Locker "
+                "PT-LIS-02. Responda a 3 perguntas.\n",
+            ),
+        )
+    ),
+    # A survey's subject alone, over a body that only asks for a rating.
+    pytest.param(
+        "inqueritos@ctt.pt",
+        "ctt",
+        "Tem um minuto?",
+        "Olá Alex,\n\nO objeto RR123456785PT foi entregue a 4 de novembro. "
+        "Avalie a entrega.\n",
+        id="survey-subject-minute",
+    ),
+    pytest.param(
+        "survey@ups.com",
+        "ups",
+        "We'd love to hear from you",
+        "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered on Friday. "
+        "Rate your delivery.\n",
+        id="survey-subject-hear",
+    ),
+    *(
+        pytest.param(sender, "amazon", subject, text, id=f"amazon-review-{lang}")
+        for lang, sender, subject, text in (
+            (
+                "pt",
+                "avaliacoes@amazon.es",
+                "Alex, como classificaria o Tapete Exemplo?",
+                "Olá Alex,\n\nA sua encomenda 406-1234567-1234567 foi entregue. "
+                "Como classificaria o Tapete Exemplo?\n",
+            ),
+            (
+                "pt-2",
+                "avaliacoes@amazon.es",
+                "Alex, como avaliaria o Tapete Exemplo?",
+                "Olá Alex,\n\nA sua encomenda 406-1234567-1234567 foi entregue. "
+                "Escreva uma avaliação.\n",
+            ),
+            (
+                "es",
+                "opiniones@amazon.es",
+                "Alex, ¿cómo valorarías Alfombra Ejemplo?",
+                "Hola Alex,\n\nTu pedido 406-1234567-1234567 ha sido entregado. "
+                "¿Cómo valorarías Alfombra Ejemplo?\n",
+            ),
+            (
+                "en",
+                "reviews@amazon.com",
+                "Alex, how would you rate Ceramic Mug Example?",
+                "Hello Alex,\n\nYour package for order 112-1234567-1234567 was "
+                "delivered. How would you rate Ceramic Mug Example?\n",
+            ),
+            (
+                "fr",
+                "avis@amazon.fr",
+                "Alex, comment évalueriez-vous Tasse Exemple ?",
+                "Bonjour Alex,\n\nVotre colis pour la commande 405-1234567-1234567 "
+                "a été livré. Donnez votre avis.\n",
+            ),
+            (
+                "it",
+                "recensioni@amazon.it",
+                "Alex, come valuteresti Tazza Esempio?",
+                "Ciao Alex,\n\nIl tuo ordine 405-1234567-1234567 è stato "
+                "consegnato. Scrivi una recensione.\n",
+            ),
+            (
+                "nl",
+                "review@amazon.nl",
+                "Alex, wat vind je van Mok Voorbeeld?",
+                "Hallo Alex,\n\nJe bestelling 405-1234567-1234567 is bezorgd. "
+                "Schrijf een review.\n",
+            ),
+        )
+    ),
+    *(
+        pytest.param(sender, parser, subject, text, id=f"seller-message-{name}")
+        for name, sender, parser, subject, text in (
+            (
+                "lm-shipped",
+                "marketplace@mailing.leroymerlin.pt",
+                "leroymerlin",
+                "Recebeu uma mensagem referente à encomenda nº 1234567890123-A",
+                "Olá Alex,\nRecebeu uma mensagem do vendedor Loja Exemplo "
+                "referente à encomenda nº 1234567890123-A.\nMensagem: Olá, a sua "
+                "encomenda foi enviada hoje pela transportadora.\nPara responder, "
+                "aceda à sua área de cliente.\n",
+            ),
+            (
+                "lm-delivered",
+                "marketplace@mailing.leroymerlin.pt",
+                "leroymerlin",
+                "Recebeu uma mensagem referente à encomenda nº 1234567890123-A",
+                "Olá Alex,\nRecebeu uma mensagem do vendedor Loja Exemplo "
+                "referente à encomenda nº 1234567890123-A.\nMensagem: A encomenda "
+                "foi entregue no dia 3. Obrigado.\nPara responder, aceda à sua "
+                "área de cliente.\n",
+            ),
+            (
+                "lm-complaint",
+                "marketplace@mailing.leroymerlin.pt",
+                "leroymerlin",
+                "Leroy Merlin Marketplace - Abrir reclamação sobre o pedido "
+                "1234567890123-A",
+                "Olá Alex,\nPode abrir uma reclamação sobre o pedido "
+                "1234567890123-A se a sua encomenda não foi entregue ou chegou "
+                "danificada.\n",
+            ),
+            (
+                "amazon",
+                "vendedor@marketplace.amazon.es",
+                "amazon",
+                "Tem uma nova mensagem do vendedor",
+                "Olá Alex,\nO vendedor Loja Exemplo enviou-lhe uma mensagem sobre "
+                "a encomenda 406-1234567-1234567.\nMensagem: A sua encomenda foi "
+                "enviada hoje.\n",
+            ),
+            (
+                "vinted",
+                "no-reply@vinted.pt",
+                "vinted_go",
+                "Tens uma nova mensagem de alex123",
+                "Olá Alex,\nalex123 enviou-te uma mensagem: Já enviei a "
+                "encomenda, o número de seguimento é RR123456785PT.\n",
+            ),
+        )
     ),
 ]
 
@@ -584,6 +970,102 @@ def test_shop_survey_from_an_unknown_sender(tz: ZoneInfo) -> None:
             "Olá Alex,\n\nO objeto RR123456785PT foi entregue.\n",
             MailKind.DELIVERED,
             id="status-and-feedback",
+        ),
+        pytest.param(
+            "info@ctt.pt",
+            "Entregue: tem um minuto para avaliar?",
+            "Olá Alex,\n\nO objeto RR123456785PT foi entregue. Responda a 3 "
+            "perguntas sobre a entrega.\n",
+            MailKind.DELIVERED,
+            id="status-and-survey",
+        ),
+        # Only a request for a rating under the news: no survey.
+        pytest.param(
+            "info@ctt.pt",
+            "Informação sobre o seu objeto",
+            "Olá Alex,\n\nO objeto RR123456785PT foi entregue. Avalie a entrega.\n",
+            MailKind.DELIVERED,
+            id="rating-footer",
+        ),
+        pytest.param(
+            "mcinfo@ups.com",
+            "UPS Update",
+            "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered. How "
+            "did we do? Rate your delivery.\n",
+            MailKind.DELIVERED,
+            id="rating-footer-en",
+        ),
+        # A survey under news that doesn't close a delivery.
+        pytest.param(
+            "info@ctt.pt",
+            "Informação sobre o seu envio",
+            "Olá Alex,\n\nO objeto RR123456785PT está a caminho. Responda a 3 "
+            "perguntas sobre o nosso serviço.\n",
+            MailKind.IN_TRANSIT,
+            id="news-and-survey",
+        ),
+        *(
+            pytest.param(
+                sender, subject, text, MailKind.DELIVERED, id=f"arrived-{lang}"
+            )
+            for lang, sender, subject, text in (
+                (
+                    "pt",
+                    "info@ctt.pt",
+                    "Entrega concluída: avalie o nosso serviço",
+                    "Olá Alex,\n\nO objeto RR123456785PT foi entregue.\n",
+                ),
+                (
+                    "pt-2",
+                    "info@ctt.pt",
+                    "Entregámos o seu objeto. Como correu?",
+                    "Olá Alex,\n\nO objeto RR123456785PT foi entregue.\n",
+                ),
+                (
+                    "en",
+                    "mcinfo@ups.com",
+                    "Delivery complete \u2013 how did we do?",
+                    "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered.\n",
+                ),
+                (
+                    "en-2",
+                    "mcinfo@ups.com",
+                    "Your parcel is here! Rate your delivery",
+                    "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered.\n",
+                ),
+                (
+                    "es",
+                    "mcinfo@ups.com",
+                    "Tu paquete ha llegado: valora la entrega",
+                    "Hola Alex,\n\nTu paquete 1Z999AA10123456784 ha sido entregado.\n",
+                ),
+                (
+                    "de",
+                    "noreply@dhl.de",
+                    "Ihr Paket ist da: wie zufrieden waren Sie?",
+                    "Hallo Alex,\n\nIhre Sendung 00340434618273591202 wurde "
+                    "zugestellt.\n",
+                ),
+                (
+                    "fr",
+                    "mcinfo@ups.com",
+                    "Votre colis est arrivé : donnez votre avis",
+                    "Bonjour Alex,\n\nVotre colis 1Z999AA10123456784 a été livré.\n",
+                ),
+                (
+                    "it",
+                    "mcinfo@ups.com",
+                    "Il tuo pacco è arrivato: com'è andata?",
+                    "Ciao Alex,\n\nIl tuo pacco 1Z999AA10123456784 è stato "
+                    "consegnato.\n",
+                ),
+                (
+                    "nl",
+                    "mcinfo@ups.com",
+                    "Je pakket is er: hoe was je bezorging?",
+                    "Hallo Alex,\n\nJe pakket 1Z999AA10123456784 is bezorgd.\n",
+                ),
+            )
         ),
         pytest.param(
             "auto-confirm@amazon.com",
@@ -733,6 +1215,23 @@ def test_unread_posting_receipt_is_skipped(calls: Calls, tz: ZoneInfo) -> None:
     assert parse_message(message, _verdict(message), tz) == ParseResult(
         parser="ctt", kind=MailKind.NOT_PARCEL, confidence=0.9
     )
+
+
+def test_customs_receipt_is_news(tz: ZoneInfo) -> None:
+    """A receipt for customs charges paid isn't one for a parcel handed in."""
+    message = _message(
+        "notificacoes@ctt.pt",
+        "Recibo do pagamento de encargos",
+        text=(
+            "Olá Alex,\n\nRecebemos o pagamento dos encargos do objeto "
+            "LZ731940285CN. O objeto segue para entrega.\n"
+        ),
+    )
+    result = parse_message(message, _verdict(message), tz)
+    assert result.kind is MailKind.IN_TRANSIT
+    assert [shipment.tracking_number for shipment in result.shipments] == [
+        "LZ731940285CN"
+    ]
 
 
 def test_gate_error_keeps_the_reading(
