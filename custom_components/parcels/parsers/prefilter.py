@@ -35,27 +35,34 @@ requests for feedback and surveys (``FEEDBACK_TOPICS``), invoices
 (``INVOICE_TOPICS``), service notices such as opening hours, fraud
 warnings and terms (``NOTICE_TOPICS``), and the sender's app or offers to
 send parcels (``PROMOTION_TOPICS``), even when they name an order. A
-status in the same subject wins: a strong keyword, or a kind the parsers'
+status in the same subject wins: a strong keyword, a kind the parsers'
 own wording finds there (``generic.detect_kind``), as in "Entrega
-concluída: avalie a entrega". That wording also counts like a weak
-keyword. A product's name in quotes ('Ordered: "Customer Feedback
-Board"') is neither a topic nor a status.
+concluída: avalie a entrega", or a parcel collected, delivered or
+waiting that their wording may not read (``SUBJECT_STATUSES``: "Encomenda
+levantada", "Zustellung abgeschlossen"). The parsers' wording also
+counts like a weak keyword. A product's name in quotes ('Ordered:
+"Customer Feedback Board"') is neither a topic nor a status.
 
-The parser dispatcher gates what a parser read with ``feedback_topic``,
-``sent_receipt`` (a carrier's receipt for a parcel handed in,
+The parser dispatcher gates what a parser read with ``feedback_topic``
+(a request for feedback or a rating, "How likely are you to recommend
+us?" too), ``sent_receipt`` (a carrier's receipt for a parcel handed in,
 ``SENT_RECEIPT_TOPICS``), ``message_topic`` (a marketplace's notice of a
 seller's message, or a prompt to complain, ``MESSAGE_TOPICS``; anyone
 but a carrier) and ``invoice_topic``: those e-mails name a parcel and its
-last status, but bring no news about it. ``survey_request`` finds a
-survey by its body when the subject has neither a status nor a request
-for feedback ("A sua entrega de 4 de novembro"): an invitation to answer
-questions or a survey (``SURVEY_ACTIONS``), not a request for a rating,
-which delivery e-mails may have in their footers. A survey's opening
+last status, but may bring no news about it. In each, a status in the
+same subject wins. ``survey_request`` finds a survey by its body when the
+subject has neither a status nor a request for feedback ("A sua entrega
+de 4 de novembro"): an invitation to answer questions or a survey, a
+rating scale, a question whether you'd recommend the sender or a request
+for feedback that says how long it takes (``SURVEY_ACTIONS``), not a
+bare request for a rating, which delivery e-mails may have in their
+footers. ``survey_sentence`` tells a body's
+sentences that ask for feedback or to answer a survey, so the dates in
+them count as the survey's, not the parcel's. A survey's opening
 question counts as its topic only at the subject's end ("Tem um minuto?",
 not "Tem um minuto? Levante a sua encomenda"). A message from whoever
-brings the parcel ("Nova mensagem do seu estafeta") isn't a seller's,
-and a status in the same subject wins there too. An invoice can
-still bring news ("Your package is out for delivery today"):
+brings the parcel ("Nova mensagem do seu estafeta") isn't a seller's.
+An invoice can still bring news ("Your package is out for delivery today"):
 ``has_news_words`` is ``has_shipping_words`` without the words any
 invoice has, such as tracking-number labels, links to follow the parcel,
 thanks for the order and refunds.
@@ -694,11 +701,14 @@ FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
         r"o que (?:achou|achaste)",
         r"(?:conte|diga)-nos (?:o que (?:achou|achaste|acha|pensa)|como correu|a (?:sua|tua) experiencia)",
         r"ajud(?:e|a)-nos a melhorar",
+        r"(?:pode|podes|podera|poderas|poderia|poderias) ajudar-nos a melhorar",
         r"(?:sua|tua) experiencia com",
         "satisfacao",
         r"(?:tem|tens|dispoe de) (?:um )?(?:minuto|minutinho|momento|instante)"
         + _ENDS_QUESTION,
         r"(?:queremos|gostariamos de|adorariamos) (?:ouvi-lo|ouvi-la|ouvir-te|ouvir-vos)",
+        r"recomendari(?:a|as)",
+        r"(?:qual (?:e )?a )?probabilidade de (?:nos )?recomendar",
     ),
     "es": (
         r"valora(?:nos|r|rias|ria)?",
@@ -709,7 +719,7 @@ FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
         r"que te (?:ha parecido|parecio)",
         r"cuentanos (?:que|como|tu opinion|tu experiencia)",
         r"como (?:fue|ha sido) (?:tu|su) (?:experiencia|entrega|compra)",
-        "ayudanos a mejorar",
+        r"(?:ayudanos|ayudenos|nos ayudas|nos ayuda|nos (?:puedes|puede) ayudar) a mejorar",
         r"(?:tu|su) experiencia con",
         r"resenas?",
         r"califica(?:nos|r|rias|ria)?",
@@ -717,6 +727,8 @@ FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
         r"(?:tienes|tiene|dispones de|dispone de) un (?:minuto|minutito|momento)"
         + _ENDS_QUESTION,
         r"(?:queremos|nos encantaria|nos gustaria) (?:escucharte|escucharle|saber de (?:ti|usted))",
+        r"recomendari(?:a|as)",
+        r"probabilidad (?:hay )?de que (?:nos )?recomiend(?:e|es|en)",
     ),
     "en": (
         # "Review your delivery options" asks for a choice, not for feedback.
@@ -732,9 +744,12 @@ FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
         r"how was (?:your|the)",
         "your opinion",
         "tell us what you think",
-        "tell us about",
+        # Not "Tell us about your delivery preferences": a carrier asks.
+        r"tell us about(?! (?:your |the )?(?:delivery |shipping )?(?:preferences?|options?"
+        r"|address|availability|instructions?|safe place|neighbou?r))",
         # Not "Tell us how you'd like your parcel delivered".
         r"tell us how (?:we did|it went|we're doing)",
+        r"let us know how (?:we did|it went|we're doing|we are doing)",
         "help us improve",
         "your experience with",
         "questionnaire",
@@ -745,6 +760,9 @@ FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
         + _ENDS_QUESTION,
         r"(?:we'd|we would) (?:love|like) to hear (?:from you|your)",
         r"we want to hear (?:from you|your)",
+        r"how likely (?:are you|is it)",
+        "would you recommend",
+        "recommend us",
     ),
     "de": (
         r"bewertung\w*",
@@ -761,6 +779,9 @@ FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
         r"(?:haben sie|hast du) (?:kurz )?(?:eine minute|einen moment|zeit)"
         + _ENDS_QUESTION,
         r"wir (?:mochten|wurden) (?:gerne? )?von (?:ihnen|dir) horen",
+        "wie wahrscheinlich",
+        "weiterempfehlen",
+        r"(?:wurden sie|wurdest du) .{0,40}?empfehlen",
     ),
     "fr": (
         r"donnez(?:[- ]nous)? votre avis",
@@ -781,6 +802,9 @@ FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
         # Not "Nous aimerions connaître votre disponibilité".
         r"nous (?:aimerions|voudrions) (?:connaitre|savoir|avoir) "
         r"(?:votre (?:experience|ressenti)|ce que vous (?:en )?pensez|de vos nouvelles)",
+        r"nous aider a (?:nous )?ameliorer",
+        r"recommander(?:iez|ais|ait)",
+        r"probabilite (?:que vous|de) recommand\w*",
     ),
     "it": (
         r"recension\w*",
@@ -800,6 +824,10 @@ FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
         + _ENDS_QUESTION,
         r"(?:tuo|suo|vostro) parere",
         r"(?:ci piacerebbe|vorremmo) (?:sentirti|sentirla|sentirvi)",
+        r"(?:ci aiuti|ci aiuta|aiutateci) a migliorare",
+        r"consiglier(?:esti|este|ebbe)",
+        r"raccomander(?:esti|este|ebbe)",
+        "quanto e probabile",
     ),
     "nl": (
         "beoordeel",
@@ -811,23 +839,39 @@ FEEDBACK_TOPICS: dict[str, tuple[str, ...]] = {
         r"hoe vond (?:je|u)",
         "tevredenheid",
         r"wat (?:vond|vind) (?:je|u)",
-        r"help ons (?:te )?verbeteren",
+        r"help(?:t|en)? (?:u |je |jij )?ons (?:te )?verbeteren",
         r"(?:heb|hebt|heeft) (?:je|jij|u) (?:even )?(?:een minuut|een minuutje|een momentje|tijd)"
         + _ENDS_QUESTION,
         r"(?:we|wij) horen graag van (?:je|jou|u)",
+        # Not "Laat ons weten hoe u uw pakket wilt ontvangen".
+        r"laat (?:het )?ons weten hoe (?:we|wij) (?:het )?(?:deden|doen|hebben gedaan)",
+        r"laat (?:het )?ons weten hoe het (?:ging|is gegaan|was)",
+        "hoe waarschijnlijk",
+        "aanbevelen",
+        "aanraden",
     ),
 }
 
-# A body's invitation to answer a survey: questions to answer, or a survey
-# or questionnaire to fill in. Not a request for a rating ("Avalie a
-# entrega", "Rate your delivery", "How did we do?"): a carrier's delivery
-# e-mail may have one in its footer.
+# A body's invitation to answer a survey: questions to answer, a survey or
+# questionnaire to fill in, a rating scale ("Escolha de 1 a 5 estrelas",
+# "On a scale of 0 to 10"), a question how likely you are to recommend the
+# sender, or a request for feedback that says how long it takes ("Tell us
+# how we did in 2 minutes"). Not a bare request for a rating ("Avalie a
+# entrega", "Rate your delivery", "Tell us how we did"): a carrier's delivery
+# e-mail may have one in its footer. A scale needs its stars or its "scale"
+# word: "de 1 a 5 dias úteis" is a delivery time.
 SURVEY_ACTIONS: dict[str, tuple[str, ...]] = {
     "pt": (
         r"respond(?:a|e|er) (?:a|as|aos) (?:\d+|uma|duas|tres|quatro|cinco|algumas|umas"
         r"|poucas|estas|seguintes) (?:(?:breves|curtas|rapidas|pequenas|simples) )?perguntas?",
         r"(?:respond|particip|preench|complet)(?:a|e|er|ar)\b.{0,30}?"
         r"(?:inqueritos?|questionarios?|pesquisa de satisfacao|sondagem)",
+        r"[01] a (?:5|10) estrelas",
+        r"(?:numa )?escala de [01] a (?:5|10)",
+        r"probabilidade de (?:nos )?recomendar",
+        r"(?:diga-nos|conte-nos|de-nos|partilhe|avalie|classifique)[^.!?\n]{0,60}? "
+        r"(?:em|demora|leva) (?:apenas |so |menos de )?(?:\d+|um|uma|dois|duas|tres) "
+        r"(?:minutos?|segundos)",
     ),
     "es": (
         r"(?:responde|responda|contesta|conteste|responder|contestar) (?:a )?(?:\d+|unas"
@@ -836,7 +880,12 @@ SURVEY_ACTIONS: dict[str, tuple[str, ...]] = {
         r"(?:participa|participe|participar|completa|complete|completar|rellena|rellene"
         r"|rellenar|responde|responda|contesta|conteste) (?:en |a )?(?:nuestra |la |esta "
         r"|una )?(?:breve |corta |rapida |pequena )?(?:encuesta|cuestionario)",
-        r"(?:cuentanos|dinos) como lo (?:hemos hecho|hicimos)",
+        r"[01] a (?:5|10) estrellas",
+        r"(?:en )?una escala (?:del?|de) [01] al? (?:5|10)",
+        r"probabilidad (?:hay )?de que (?:nos )?recomiend(?:e|es|en)",
+        r"(?:cuentanos|dinos|danos|comparte|valora|valore|califica)[^.!?\n]{0,60}? "
+        r"(?:en|lleva|llevara) (?:solo |apenas |menos de )?(?:\d+|un|una|dos|tres) "
+        r"(?:minutos?|segundos)",
     ),
     "en": (
         r"(?:answer|take|complete|fill (?:in|out)|respond to|participate in|take part in) "
@@ -844,8 +893,12 @@ SURVEY_ACTIONS: dict[str, tuple[str, ...]] = {
         r"|two-minute|customer|satisfaction) )*(?:survey|questionnaire)",
         r"answer (?:\d+|one|two|three|four|five|a few|some|these|a couple of) "
         r"(?:(?:short|quick|brief|simple) )?questions?",
-        r"(?:tell|let) us (?:know )?how we did",
-        r"(?:tell|let) us (?:know )?how we(?:'re| are) doing",
+        r"(?:[01]|one|zero) to (?:5|10|five|ten) stars?",
+        r"(?:on )?a scale (?:of|from) [01] to (?:5|10)",
+        r"how likely are you to recommend",
+        r"(?:tell us|let us know|share|rate|review)[^.!?\n]{0,60}? "
+        r"(?:in|takes?) (?:just |only |under |less than )?(?:\d+|one|two|three|a) "
+        r"(?:minutes?|mins?|seconds)",
     ),
     "de": (
         r"an (?:unserer|der|einer|dieser) (?:kurzen |kleinen )?(?:kunden)?"
@@ -856,6 +909,12 @@ SURVEY_ACTIONS: dict[str, tuple[str, ...]] = {
         r"beantworten sie (?:\d+|ein paar|einige|wenige|zwei|drei|vier|funf) "
         r"(?:(?:kurze|kurzen) )?fragen",
         r"(?:fullen sie|beantworten sie) (?:unseren|den|einen) (?:kurzen )?fragebogen",
+        r"[01] bis (?:5|10) sternen?",
+        r"(?:auf )?einer skala (?:von )?[01] bis (?:5|10)",
+        r"wie wahrscheinlich (?:ist es, dass )?(?:sie|du) .{0,40}?empfehlen",
+        r"(?:bewerten sie|bewerte|sagen sie uns|sag uns|teilen sie uns|teile uns)"
+        r"[^.!?\n]{0,60}? (?:in|dauert) (?:nur |weniger als |knapp )?"
+        r"(?:\d+|einer|eine|zwei|drei) (?:minuten?|sekunden)",
     ),
     "fr": (
         r"repondez a (?:\d+|quelques|deux|trois|quatre|cinq|ces) "
@@ -863,19 +922,88 @@ SURVEY_ACTIONS: dict[str, tuple[str, ...]] = {
         r"(?:participez|repondez|repondre|participer|remplissez|remplir|completez|completer) "
         r"(?:a |au )?(?:notre |cette |une |l')?(?:courte |breve |petite )?"
         r"(?:enquete|questionnaire|sondage)",
+        r"[01] a (?:5|10) etoiles",
+        r"(?:sur )?une echelle de [01] a (?:5|10)",
+        r"probabilite (?:que vous|de) recommand\w*",
+        r"(?:donnez|dites-nous|evaluez|notez|partagez)[^.!?\n]{0,60}? (?:en|prend) "
+        r"(?:seulement |moins de |a peine |juste )?(?:\d+|une|deux|trois) "
+        r"(?:minutes?|secondes)",
     ),
     "it": (
         r"rispond(?:i|a|ere) a (?:\d+|alcune|poche|due|tre|quattro|cinque|queste) "
         r"(?:(?:brevi|semplici|veloci) )?domande",
         r"(?:partecipa|partecipare|compila|compilare|rispondi|rispondere) (?:al nostro "
         r"|il nostro |al |a |il |questo |un )?(?:breve )?(?:sondaggio|questionario)",
+        r"[01] a (?:5|10) stelle",
+        r"(?:su )?una scala da [01] a (?:5|10)",
+        r"quanto e probabile che",
+        r"(?:dicci|raccontaci|valuta|condividi)[^.!?\n]{0,60}? (?:in|richiede) "
+        r"(?:solo |meno di |appena )?(?:\d+|un|uno|una|due|tre) (?:minut[oi]|secondi)",
     ),
     "nl": (
         r"beantwoord (?:\d+|een paar|enkele|twee|drie|vier|vijf|deze) "
         r"(?:(?:korte|snelle|eenvoudige) )?vragen",
         r"(?:vul|doe mee aan|neem deel aan) (?:de |onze |deze |een )?(?:korte )?"
         r"(?:enquete|vragenlijst)",
-        r"laat (?:ons|het ons) weten hoe we het (?:deden|hebben gedaan)",
+        r"[01] tot (?:5|10) sterren",
+        r"(?:op )?een schaal (?:van )?[01] tot (?:5|10)",
+        r"hoe waarschijnlijk is het dat",
+        r"(?:laat ons weten|vertel ons|beoordeel|deel)[^.!?\n]{0,60}? (?:in|duurt|kost) "
+        r"(?:maar |slechts |minder dan )?(?:\d+|een|twee|drie) (?:minuten|minuut|seconden)",
+    ),
+}
+
+# Statuses in a subject that the parsers' wording may not read: a parcel
+# collected or delivered ("Encomenda levantada", "Zustellung
+# abgeschlossen"), or waiting for its owner ("Your parcel is waiting"). A
+# subject with one is news, whatever else it asks ("Paket abgeholt:
+# bewerten Sie uns").
+SUBJECT_STATUSES: dict[str, tuple[str, ...]] = {
+    "pt": (
+        r"levantad[oa]s?",
+        r"recolhid[oa]s?",
+        r"entrega (?:concluida|realizada|efetuada|efectuada|completa|feita)",
+        r"aguarda(?:m)? (?:o (?:seu |teu )?)?levantamento",
+        r"(?:encomenda|objeto|envio|pacote|artigo)s? (?:ja )?(?:aguarda|aguardam|espera"
+        r"|esperam)",
+        r"(?:esta|estao) a (?:sua|tua) espera",
+    ),
+    "es": (
+        r"recogid[oa]s?",
+        r"retirad[oa]s?",
+        r"entrega (?:completada|realizada|efectuada|completa|finalizada)",
+        r"(?:paquete|pedido|envio|encomienda)s? (?:ya )?(?:te|le|les) esperan?",
+        r"(?:esta|estan) esperandote",
+    ),
+    "en": (
+        "picked up",
+        "collected",
+        r"delivery (?:complete|completed|done|successful)",
+        r"(?:parcel|package|order|item|shipment)s? (?:is|are) (?:still )?waiting",
+        "waiting for you",
+    ),
+    "de": (
+        "abgeholt",
+        r"(?:zustellung|lieferung) (?:abgeschlossen|erfolgt|erfolgreich)",
+        r"(?:paket|packchen|sendung|bestellung)e? (?:wartet|warten)",
+        r"wartet auf (?:sie|dich)",
+    ),
+    "fr": (
+        r"(?:colis|commande|envoi|paquet)s? (?:a ete |ont ete )?(?:recupere|retire)e?s?",
+        r"livraison (?:effectuee|terminee|reussie)",
+        r"(?:colis|commande|envoi|paquet)s? (?:vous attend|t'attend)(?:ent)?",
+    ),
+    "it": (
+        r"ritirat[oaie]",
+        r"consegna (?:completata|effettuata|avvenuta)",
+        r"(?:pacco|ordine|spedizione|pacchi|ordini) (?:ti|la|vi) (?:aspetta|attende)(?:no)?",
+    ),
+    "nl": (
+        "opgehaald",
+        r"(?:bezorging|levering) (?:voltooid|afgerond|geslaagd)",
+        r"(?:pakket|pakketje|bestelling|zending) (?:ligt|staat) (?:voor (?:je|u) )?klaar",
+        r"(?:pakket|pakketje|bestelling|zending) wacht",
+        r"wacht op (?:je|jou|u)",
     ),
 }
 
@@ -1205,6 +1333,7 @@ _TOPIC_RE = _compile(
 )
 _FEEDBACK_RE = _compile(FEEDBACK_TOPICS.values())
 _SURVEY_ACTION_RE = _compile(SURVEY_ACTIONS.values())
+_SUBJECT_STATUS_RE = _compile(SUBJECT_STATUSES.values())
 _MESSAGE_RE = _compile(MESSAGE_TOPICS.values())
 _COURIER_RE = _compile([_COURIERS])
 _SENT_RECEIPT_RE = _compile([SENT_RECEIPT_TOPICS])
@@ -1280,9 +1409,16 @@ def _kind_in_subject(subject: str) -> bool:
 
 
 def _no_status(subject: str) -> bool:
-    """Return True when a subject has no status or other strong keyword."""
-    return _STRONG_RE.search(_topic_text(subject)) is None and not _kind_in_subject(
-        subject
+    """Return True when a subject has no status or other strong keyword.
+
+    A status is a strong keyword, a kind the parsers' wording finds, or one
+    of ``SUBJECT_STATUSES`` ("Encomenda levantada", "Paket abgeholt").
+    """
+    text = _topic_text(subject)
+    return (
+        _STRONG_RE.search(text) is None
+        and _SUBJECT_STATUS_RE.search(text) is None
+        and not _kind_in_subject(subject)
     )
 
 
@@ -1304,15 +1440,31 @@ def feedback_topic(subject: str) -> bool:
 def survey_request(subject: str, text: str) -> bool:
     """Return True when a body invites to answer a survey, under no status.
 
-    "Responda a 3 perguntas sobre a entrega" or "Take our short survey",
-    under a subject such as "A sua entrega de 4 de novembro". A request for
-    a rating ("Avalie a entrega", "How did we do?") isn't one: a carrier's
-    delivery e-mail may have it in its footer. The first ``BODY_CHARS`` are
-    read, without links, addresses and advertising phrases.
+    "Responda a 3 perguntas sobre a entrega", "Take our short survey", a
+    rating scale ("Escolha de 1 a 5 estrelas", "On a scale of 0 to 10") or
+    a request for feedback that says how long it takes ("Tell us how we did
+    in 2 minutes"), under a subject such as "A sua entrega de 4 de
+    novembro". A bare request for a rating ("Avalie a entrega", "Tell us
+    how we did") isn't one: a carrier's delivery e-mail may have it in its
+    footer. The first
+    ``BODY_CHARS`` are read, without links, addresses and advertising
+    phrases.
     """
     return _no_status(subject) and (
         _SURVEY_ACTION_RE.search(_clean(text[:BODY_CHARS])) is not None
     )
+
+
+def survey_sentence(text: str) -> bool:
+    """Return True when a sentence asks for feedback or to answer a survey.
+
+    "Como avalia a entrega?", "Take our 2-minute survey", "On a scale of 0
+    to 10, how likely are you to recommend us?": the dates in it are the
+    survey's, not the parcel's. Read without links, addresses and
+    advertising phrases.
+    """
+    folded = _clean(text[:MAX_CHARS])
+    return bool(_FEEDBACK_RE.search(folded) or _SURVEY_ACTION_RE.search(folded))
 
 
 def message_topic(subject: str) -> bool:

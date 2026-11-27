@@ -162,6 +162,34 @@ def test_weekdays(text: str, expected: date, tz: ZoneInfo) -> None:
 
 
 @pytest.mark.parametrize(
+    ("text", "lang", "day", "named", "weekday"),
+    [
+        ("Delivered on Friday.", "en", _day(20), False, True),
+        ("Entregue na sexta-feira.", "pt", _day(20), False, True),
+        ("Entregado el viernes.", "es", _day(20), False, True),
+        ("Am Freitag zugestellt.", "de", _day(20), False, True),
+        ("Livré vendredi.", "fr", _day(20), False, True),
+        ("Consegnato venerdì.", "it", _day(20), False, True),
+        ("Bezorgd op vrijdag.", "nl", _day(20), False, True),
+        ("Delivered on Tuesday.", "en", _day(17), False, True),
+        ("Delivered on Friday 20 November.", "en", _day(20), True, False),
+        ("Entregue na sexta-feira, 20/11.", "pt", _day(20), True, False),
+        ("Entregue a 20/11.", "pt", _day(20), True, False),
+        ("Delivered today.", "en", _day(17), False, False),
+        ("Wird morgen zugestellt.", "de", _day(18), False, False),
+    ],
+)
+def test_named_and_weekday_dates(
+    text: str, lang: str, day: date, named: bool, weekday: bool, tz: ZoneInfo
+) -> None:
+    """A date says whether it was written with its day of the month, or as a
+    weekday alone."""
+    (found,) = date_expressions(text, REF, tz, lang)
+    assert (found.start, found.end) == (day, day)
+    assert (found.named, found.weekday) == (named, weekday)
+
+
+@pytest.mark.parametrize(
     ("text", "offset"),
     [
         ("today", 0),

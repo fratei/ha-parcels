@@ -508,6 +508,7 @@ function originInfo(raw: unknown): OriginInfo | null {
     tracking_number: id(raw.tracking_number),
     reference: id(raw.reference),
     merchant: id(raw.merchant),
+    sent_by: id(raw.sent_by),
     seller: id(raw.seller),
     order_numbers: strs(raw.order_numbers),
     items: strs(raw.items),

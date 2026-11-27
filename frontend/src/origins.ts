@@ -80,6 +80,7 @@ function combine(lead: OriginInfo, fills: OriginInfo[]): OriginInfo {
     tracking_number: first("tracking_number"),
     reference: first("reference"),
     merchant: first("merchant"),
+    sent_by: first("sent_by"),
     seller: first("seller"),
     pickup_point: first("pickup_point"),
     shipment: first("shipment"),
@@ -126,8 +127,12 @@ function saidText(origin: OriginInfo, locale: LocaleOptions): string {
 
 function facts(origin: OriginInfo): string[] {
   const result: string[] = [];
+  const sentBy = text(origin.sent_by);
   const merchant = text(origin.merchant);
-  if (merchant) {
+  if (sentBy) {
+    result.push(fmt(STRINGS.factSentBy, { name: sentBy }));
+  }
+  if (merchant && merchant !== sentBy) {
     result.push(fmt(STRINGS.factShop, { name: merchant }));
   }
   const seller = text(origin.seller);

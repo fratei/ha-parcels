@@ -15,6 +15,8 @@ from custom_components.parcels import parsers
 from custom_components.parcels.const import CONFIDENCE_APPLY, MailKind
 from custom_components.parcels.parsers import (
     NOTE_KNOWN_SENDER_UNPARSED,
+    NOTE_SURVEY,
+    SURVEY_CONFIDENCE,
     parse_message,
     senders,
 )
@@ -713,19 +715,11 @@ GATED = [
             )
         )
     ),
-    # Surveys whose subject has neither a status nor a request for feedback:
-    # the body asks to answer questions about the delivery it names.
+    # Surveys whose subject asks for feedback, over a body naming an old
+    # delivery.
     *(
         pytest.param(sender, parser, subject, text, id=f"survey-body-{name}")
         for name, sender, parser, subject, text in (
-            (
-                "ctt-date",
-                "inqueritos@ctt.pt",
-                "ctt",
-                "A sua entrega de 4 de novembro",
-                "Olá Alex,\n\nO objeto RR123456785PT foi entregue a 4 de novembro. "
-                "Responda a 3 perguntas sobre a entrega.\n",
-            ),
             (
                 "ctt-minute",
                 "inqueritos@ctt.pt",
@@ -741,62 +735,6 @@ GATED = [
                 "We'd love to hear from you",
                 "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered on "
                 "Friday. Tell us how we did in 2 minutes.\n",
-            ),
-            (
-                "ups-question",
-                "survey@ups.com",
-                "ups",
-                "A quick question about your delivery",
-                "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered on "
-                "Friday. Tell us how we did in 2 minutes.\n",
-            ),
-            (
-                "dhl",
-                "kundenservice@dhl.de",
-                "dhl",
-                "Ihre Sendung vom 4. November",
-                "Hallo Alex,\n\nIhre Sendung 00340434618273591202 wurde am 4. "
-                "November zugestellt. Bitte nehmen Sie an unserer Umfrage teil.\n",
-            ),
-            (
-                "es",
-                "survey@ups.com",
-                "ups",
-                "Tu entrega del 4 de noviembre",
-                "Hola Alex,\n\nTu paquete 1Z999AA10123456784 fue entregado el "
-                "viernes. Responde a 3 preguntas sobre la entrega.\n",
-            ),
-            (
-                "fr",
-                "survey@ups.com",
-                "ups",
-                "Votre livraison du 4 novembre",
-                "Bonjour Alex,\n\nVotre colis 1Z999AA10123456784 a été livré "
-                "vendredi. Répondez à notre enquête en 2 minutes.\n",
-            ),
-            (
-                "it",
-                "survey@ups.com",
-                "ups",
-                "La tua consegna del 4 novembre",
-                "Ciao Alex,\n\nIl tuo pacco 1Z999AA10123456784 è stato consegnato "
-                "venerdì. Rispondi a 3 domande sulla consegna.\n",
-            ),
-            (
-                "nl",
-                "survey@ups.com",
-                "ups",
-                "Je bezorging van 4 november",
-                "Hallo Alex,\n\nJe pakket 1Z999AA10123456784 is vrijdag bezorgd. "
-                "Vul onze korte enquête in.\n",
-            ),
-            (
-                "locker",
-                "inquerito@inpost.pt",
-                "inpost",
-                "A sua recolha de 4 de novembro",
-                "Olá Alex,\n\nA sua encomenda 620417393912 foi entregue no Locker "
-                "PT-LIS-02. Responda a 3 perguntas.\n",
             ),
         )
     ),
@@ -923,7 +861,420 @@ GATED = [
             ),
         )
     ),
+    # Asking whether you'd recommend the carrier, about a delivery it names.
+    pytest.param(
+        "survey@ups.com",
+        "ups",
+        "How likely are you to recommend UPS?",
+        "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered today.\n"
+        "On a scale of 0 to 10, how likely are you to recommend UPS to a friend?\n",
+        id="nps-en",
+    ),
+    pytest.param(
+        "inqueritos@ctt.pt",
+        "ctt",
+        "Recomendaria os CTT a um amigo?",
+        "Olá Alex,\n\nO objeto RR123456785PT foi entregue a 4 de novembro.\n"
+        "Numa escala de 0 a 10, qual a probabilidade de nos recomendar?\n",
+        id="nps-pt",
+    ),
 ]
+
+
+# Surveys whose subject has neither a status nor a request for feedback: the
+# body asks to answer questions about the old delivery it names. The parsers'
+# reading waits in Needs review, kept from the local AI, as the survey may
+# still be the only news of a delivery.
+OLD_DELIVERY_SURVEYS = [
+    pytest.param(sender, parser, subject, text, kind, id=name)
+    for name, sender, parser, subject, text, kind in (
+        (
+            "ctt-date",
+            "inqueritos@ctt.pt",
+            "ctt",
+            "A sua entrega de 4 de novembro",
+            "Olá Alex,\n\nO objeto RR123456785PT foi entregue a 4 de novembro. "
+            "Responda a 3 perguntas sobre a entrega.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "ups-question",
+            "survey@ups.com",
+            "ups",
+            "A quick question about your delivery",
+            "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered on "
+            "Friday. Tell us how we did in 2 minutes.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "dhl",
+            "kundenservice@dhl.de",
+            "dhl",
+            "Ihre Sendung vom 4. November",
+            "Hallo Alex,\n\nIhre Sendung 00340434618273591202 wurde am 4. "
+            "November zugestellt. Bitte nehmen Sie an unserer Umfrage teil.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "es",
+            "survey@ups.com",
+            "ups",
+            "Tu entrega del 4 de noviembre",
+            "Hola Alex,\n\nTu paquete 1Z999AA10123456784 fue entregado el "
+            "viernes. Responde a 3 preguntas sobre la entrega.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "fr",
+            "survey@ups.com",
+            "ups",
+            "Votre livraison du 4 novembre",
+            "Bonjour Alex,\n\nVotre colis 1Z999AA10123456784 a été livré "
+            "vendredi. Répondez à notre enquête en 2 minutes.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "it",
+            "survey@ups.com",
+            "ups",
+            "La tua consegna del 4 novembre",
+            "Ciao Alex,\n\nIl tuo pacco 1Z999AA10123456784 è stato consegnato "
+            "venerdì. Rispondi a 3 domande sulla consegna.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "nl",
+            "survey@ups.com",
+            "ups",
+            "Je bezorging van 4 november",
+            "Hallo Alex,\n\nJe pakket 1Z999AA10123456784 is vrijdag bezorgd. "
+            "Vul onze korte enquête in.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "locker",
+            "inquerito@inpost.pt",
+            "inpost",
+            "A sua recolha de 4 de novembro",
+            "Olá Alex,\n\nA sua encomenda 620417393912 foi entregue no Locker "
+            "PT-LIS-02. Responda a 3 perguntas.\n",
+            MailKind.READY_FOR_PICKUP,
+        ),
+    )
+]
+
+
+@pytest.mark.parametrize(
+    ("sender", "parser", "subject", "text", "kind"), OLD_DELIVERY_SURVEYS
+)
+def test_old_delivery_survey_goes_to_review(
+    tz: ZoneInfo, sender: str, parser: str, subject: str, text: str, kind: MailKind
+) -> None:
+    """A survey about an old delivery is neither news nor thrown away."""
+    message = _message(sender, subject, text=text)
+    result = parse_message(message, _verdict(message), tz)
+    assert result.parser == parser
+    assert result.kind is kind
+    assert result.confidence == SURVEY_CONFIDENCE < CONFIDENCE_APPLY
+    assert result.notes[-1] == NOTE_SURVEY
+    assert all(shipment.event_time is None for shipment in result.shipments)
+
+
+# A carrier's delivery e-mail under a subject without a status, and the
+# request for a rating some put in their closing lines.
+RATING_FOOTERS = [
+    pytest.param(sender, parser, subject, text, footer, id=f"{lang}-{index}")
+    for lang, sender, parser, subject, text, footers in (
+        (
+            "pt",
+            "notificacoes@ctt.pt",
+            "ctt",
+            "Objeto RR123456785PT",
+            "Olá Alex,\n\nO objeto RR123456785PT foi entregue hoje às 08:12.\n",
+            (
+                "Diga-nos como correu.",
+                "Avalie a nossa entrega.",
+                "Conte-nos a sua opinião.",
+                "Dê-nos a sua opinião.",
+            ),
+        ),
+        (
+            "es",
+            "notificaciones@seur.com",
+            "seur",
+            "Envío 12345678901234",
+            "Hola Alex,\n\nTu envío 12345678901234 ha sido entregado.\n",
+            ("Cuéntanos cómo lo hemos hecho.",),
+        ),
+        (
+            "en",
+            "noreply@dpd.co.uk",
+            "dpd",
+            "Your parcel 15501234567890",
+            "Hi Alex,\n\nYour parcel 15501234567890 has been delivered.\n",
+            (
+                "Let us know how we did.",
+                "Tell us how we're doing.",
+                "Take our short survey.",
+            ),
+        ),
+        (
+            "de",
+            "noreply@dhl.de",
+            "dhl",
+            "Ihre Sendung 00340434618273591202",
+            "Hallo Alex,\n\nIhre Sendung 00340434618273591202 wurde heute um 08:12 "
+            "Uhr zugestellt.\n",
+            ("Bewerten Sie uns.",),
+        ),
+        (
+            "fr",
+            "noreply@gls-group.com",
+            "gls",
+            "Votre colis 12345678901",
+            "Bonjour Alex,\n\nVotre colis 12345678901 a été livré aujourd'hui à "
+            "08h12.\n",
+            ("Donnez-nous votre avis.",),
+        ),
+        (
+            "it",
+            "noreply@gls-group.com",
+            "gls",
+            "Il tuo pacco 12345678901",
+            "Ciao Alex,\n\nIl tuo pacco 12345678901 è stato consegnato oggi alle "
+            "08:12.\n",
+            ("Dicci com'è andata.",),
+        ),
+        (
+            "nl",
+            "noreply@dpd.nl",
+            "dpd",
+            "Zending 15501234567890",
+            "Hallo Alex,\n\nJe pakket 15501234567890 is bezorgd.\n",
+            ("Laat ons weten hoe we het deden.",),
+        ),
+    )
+    for index, footer in enumerate(footers)
+]
+
+
+@pytest.mark.parametrize(
+    ("sender", "parser", "subject", "text", "footer"), RATING_FOOTERS
+)
+def test_rating_footer_keeps_the_delivery(
+    tz: ZoneInfo, sender: str, parser: str, subject: str, text: str, footer: str
+) -> None:
+    """A request for a rating in the closing lines changes nothing."""
+    plain = _message(sender, subject, text=text)
+    expected = parse_message(plain, _verdict(plain), tz)
+    assert (expected.parser, expected.kind) == (parser, MailKind.DELIVERED)
+    assert expected.confidence >= CONFIDENCE_APPLY
+    message = _message(sender, subject, text=f"{text}{footer}\n")
+    assert parse_message(message, _verdict(message), tz) == expected
+
+
+# News that invites to a survey, or that a subject asking for feedback or
+# naming a completed status heads: the news stands.
+NEWS_WITH_SURVEYS = [
+    pytest.param(sender, parser, subject, text, kind, id=name)
+    for name, sender, parser, subject, text, kind in (
+        (
+            "ctt-inquerito",
+            "notificacoes@ctt.pt",
+            "ctt",
+            "Objeto RR123456785PT",
+            "Olá Alex,\n\nO objeto RR123456785PT foi entregue hoje às 08:12.\n"
+            "Participe no nosso inquérito de satisfação.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "ups-survey",
+            "mcinfo@ups.com",
+            "ups",
+            "UPS Update",
+            "Hello Alex,\n\nYour package 1Z999AA10123456784 was delivered today at "
+            "08:12.\nTake our 2-minute survey.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "dpd-minutes",
+            "noreply@dpd.co.uk",
+            "dpd",
+            "Your DPD parcel",
+            "Hi Alex,\n\nYour parcel 15501234567890 has been delivered.\n"
+            "Tell us how we did in 2 minutes.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "seur-encuesta",
+            "notificaciones@seur.com",
+            "seur",
+            "Información sobre su envío",
+            "Hola Alex,\n\nSu envío 12345678901234 ha sido entregado hoy a las "
+            "08:12.\nResponda a nuestra encuesta.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "inpost-perguntas",
+            "notificacoes@inpost.pt",
+            "inpost",
+            "InPost: a tua encomenda",
+            "Olá Alex,\n\nA tua encomenda 620417393912 está pronta para levantamento "
+            "no Locker PT-LIS-02 até 19/11. Código: 482913.\nResponde a 2 perguntas "
+            "sobre a tua experiência.\n",
+            MailKind.READY_FOR_PICKUP,
+        ),
+        (
+            "ups-preferences",
+            "mcinfo@ups.com",
+            "ups",
+            "Tell us about your delivery preferences",
+            "Hello Alex,\n\nYour package 1Z999AA10123456784 is scheduled for "
+            "delivery tomorrow, 18/11/2026, between 10:00 and 14:00.\n",
+            MailKind.IN_TRANSIT,
+        ),
+        (
+            "ups-waiting",
+            "mcinfo@ups.com",
+            "ups",
+            "Your parcel is waiting \u2013 got a minute?",
+            "Hello Alex,\n\nYour package 1Z999AA10123456784 is ready for pickup at "
+            "the UPS Access Point Papelaria Exemplo until 24/11/2026.\n",
+            MailKind.READY_FOR_PICKUP,
+        ),
+        (
+            "ctt-levantada",
+            "notificacoes@ctt.pt",
+            "ctt",
+            "Encomenda levantada: avalie a sua experiência",
+            "Olá Alex,\n\nO objeto RR123456785PT foi levantado hoje às 08:12.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "dhl-abgeschlossen",
+            "noreply@dhl.de",
+            "dhl",
+            "Zustellung abgeschlossen: bewerten Sie uns",
+            "Hallo Alex,\n\nIhre Sendung 00340434618273591202 wurde heute um 08:12 "
+            "Uhr zugestellt.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "dhl-abgeholt",
+            "noreply@dhl.de",
+            "dhl",
+            "Paket abgeholt: bewerten Sie uns",
+            "Hallo Alex,\n\nIhre Sendung 00340434618273591202 wurde heute um 08:12 "
+            "Uhr in der Packstation 123 abgeholt.\n",
+            MailKind.DELIVERED,
+        ),
+        (
+            "feedback-out-for-delivery",
+            "notificacoes@ctt.pt",
+            "ctt",
+            "Avalie a sua experiência",
+            "Olá Alex,\n\nO objeto RR123456785PT está em distribuição e será "
+            "entregue hoje entre as 14:00 e as 16:00.\n",
+            MailKind.OUT_FOR_DELIVERY,
+        ),
+        (
+            "feedback-code",
+            "notificacoes@inpost.pt",
+            "inpost",
+            "Ajude-nos a melhorar",
+            "Olá Alex,\n\nA tua encomenda 620417393912 está pronta para levantamento "
+            "no Locker PT-LIS-02. Código: 482913.\n",
+            MailKind.READY_FOR_PICKUP,
+        ),
+        (
+            "feedback-collect-by",
+            "mcinfo@ups.com",
+            "ups",
+            "Help us improve",
+            "Hello Alex,\n\nYour package 1Z999AA10123456784 is ready for pickup at "
+            "the UPS Access Point Papelaria Exemplo until 24/11/2026.\n",
+            MailKind.READY_FOR_PICKUP,
+        ),
+    )
+]
+
+
+@pytest.mark.parametrize(
+    ("sender", "parser", "subject", "text", "kind"), NEWS_WITH_SURVEYS
+)
+def test_news_with_a_survey_stands(
+    tz: ZoneInfo, sender: str, parser: str, subject: str, text: str, kind: MailKind
+) -> None:
+    """News wins over an invitation to a survey or a request for feedback."""
+    message = _message(sender, subject, text=text)
+    result = parse_message(message, _verdict(message), tz)
+    assert (result.parser, result.kind) == (parser, kind)
+    assert result.confidence >= CONFIDENCE_APPLY
+    assert NOTE_SURVEY not in result.notes
+    assert [shipment.kind for shipment in result.shipments] == [kind]
+
+
+def test_survey_keeps_the_locker_and_its_code(tz: ZoneInfo) -> None:
+    """A pickup notice inviting to a survey keeps its point, code and deadline."""
+    message = _message(
+        "notificacoes@inpost.pt",
+        "InPost: a tua encomenda",
+        text=(
+            "Olá Alex,\n\nA tua encomenda 620417393912 está pronta para "
+            "levantamento no Locker PT-LIS-02 até 19/11. Código: 482913.\n"
+            "Responde a 2 perguntas sobre a tua experiência.\n"
+        ),
+    )
+    (shipment,) = parse_message(message, _verdict(message), tz).shipments
+    assert (shipment.pickup_point, shipment.pickup_code, shipment.collect_by) == (
+        "Locker PT-LIS-02",
+        "482913",
+        date(2026, 11, 19),
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "survey"),
+    [
+        # The e-mail is dated Tuesday: "on Tuesday" is a week ago.
+        (
+            "Your package 1Z999AA10123456784 was delivered on Tuesday.\nHow would "
+            "you rate it? Choose 1 to 5 stars.\n",
+            True,
+        ),
+        (
+            "Your package 1Z999AA10123456784 was delivered today at 08:12.\nHow "
+            "would you rate it? Choose 1 to 5 stars.\n",
+            False,
+        ),
+        ("Your package 1Z999AA10123456784 was delivered on Tuesday.\n", False),
+    ],
+)
+def test_survey_of_a_delivery_on_the_same_weekday(
+    tz: ZoneInfo, text: str, survey: bool
+) -> None:
+    """A survey's weekday alone names an old delivery, not today's."""
+    message = _message("survey@ups.com", "Your delivery", text=f"Hello Alex,\n\n{text}")
+    result = parse_message(message, _verdict(message), tz)
+    assert (result.parser, result.kind) == ("ups", MailKind.DELIVERED)
+    assert (NOTE_SURVEY in result.notes) is survey
+    assert (result.confidence < CONFIDENCE_APPLY) is survey
+
+
+def test_shopify_store_review_request(tz: ZoneInfo) -> None:
+    """A store's request to review what it delivered is no parcel."""
+    message = _message(
+        "loja@store.example",
+        "Deixe a sua avaliação",
+        auth=AuthResult(dkim_pass_domains=("store.example", "shopifyemail.com")),
+        text=(
+            "Olá Alex,\n\nA sua encomenda #1001 foi entregue. Diga-nos o que "
+            "achou: avalie os artigos que comprou.\n"
+        ),
+    )
+    assert parse_message(message, _verdict(message, shopify=True), tz) == (
+        ParseResult(parser="shopify", kind=MailKind.NOT_PARCEL, confidence=0.9)
+    )
 
 
 @pytest.mark.parametrize(("sender", "parser", "subject", "text"), GATED)

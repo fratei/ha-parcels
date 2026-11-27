@@ -81,6 +81,12 @@ describe("the e-mails of a parcel", () => {
     assert.equal(row.splitBlocked, null);
   });
 
+  test("a carrier's e-mail names who sent the package, not the parcel's shop", () => {
+    const row = one(email({ merchant: "Example Agent", sent_by: "Example Agent", carrier: "dpd", carrier_name: "DPD" }));
+    assert.deepEqual(row.facts, ["Sent by Example Agent", "DPD"]);
+    assert.deepEqual(one(email({ merchant: "Example Shop" })).facts, ["Shop: Example Shop"]);
+  });
+
   test("never show an Amazon shipment ID, only which shipment it is", () => {
     const row = one(email({ shipment: [2, 3] }));
     assert.deepEqual(row.facts, ["Shipment 2/3"]);

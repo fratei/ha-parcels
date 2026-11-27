@@ -7,7 +7,9 @@ parcel news leave the list, and what they added goes.
 
 0.1.27 knew surveys by a fixed list of subject phrases, which failed both
 ways. Once after an update from it, the e-mails waiting in review are read
-again, and so are those it took for no parcel.
+again, and so are those it took for no parcel. 0.1.28 took deliveries whose
+text also asked for a rating for surveys: once after an update from it, what
+it took for no parcel is read again.
 """
 
 from __future__ import annotations
@@ -26,7 +28,9 @@ from pytest_homeassistant.common import async_capture_events
 
 from custom_components.parcels.const import EVENT_DELIVERED, MailKind, ParcelStatus
 from custom_components.parcels.engine import (
+    RELEASE_KEY,
     SURVEY_CHECK_KEY,
+    SURVEY_RECHECK_KEY,
     TOPIC_CHECK_KEY,
     TOPIC_RECHECK_KEY,
     ParcelsEngine,
@@ -67,6 +71,8 @@ SURVEY = (
 )
 NEWS = f"Olá Alex,\n\nO seu objeto {TRACKING} já está em trânsito na rede CTT.\n"
 DELIVERY = f"Olá Alex,\n\nO objeto {TRACKING} foi entregue hoje.\n"
+# A delivery whose closing line asks how it went: 0.1.28 took it for a survey.
+RATED_DELIVERY = f"{DELIVERY}\nDiga-nos como correu.\n"
 NO_COUNTS = dict.fromkeys(("read", "settled", "kept", "gone", "failed", "skipped"), 0)
 NO_READS = dict.fromkeys(
     ("read", "applied", "review", "old", "kept", "gone", "failed", "skipped"), 0
@@ -81,6 +87,9 @@ REVIEW_READ = ParseResult(
 # When 0.1.27 started, and when its check read the e-mails waiting in review.
 STARTED = "2026-11-10T09:00:00+00:00"
 CHECKED = "2026-11-10T09:05:00+00:00"
+# When 0.1.28 started, and when its check read what 0.1.27 took for no parcel.
+UPDATED = "2026-11-12T09:00:00+00:00"
+REREAD = "2026-11-12T09:05:00+00:00"
 MARKETPLACE_HEADER = (
     "mx.google.com; dkim=pass header.i=@mailing.leroymerlin.pt header.s=sel1"
     " header.b=abc; dmarc=pass (p=REJECT) header.from=mailing.leroymerlin.pt"
@@ -681,3 +690,123 @@ async def test_checks_are_due_once_after_an_update_from_0127(
         "nothing": [earlier, done, done],
         "planned": [earlier, planned, planned],
     }[stored]
+
+
+async def test_survey_recheck_reads_a_delivery_0128_took_for_a_survey(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """A delivery 0.1.28 dropped for asking how it went is read again, once.
+
+    Its subject names no status, and only its closing line asks for a rating.
+    It's today's news, so it's told as usual.
+    """
+    client = FakeMailClient()
+    client.add(ctt("news-1", "O seu objeto está em trânsito", NEWS))
+    add_hub(hass)
+    add_mailbox(hass)
+
+    with patch_mail_clients(client):
+        engine = await async_setup_parcels(hass)
+        (parcel,) = engine.data.parcels.values()
+        started = dt_util.utcnow()
+        freezer.tick(timedelta(hours=1))
+        client.add(later(ctt("done-1", f"Objeto {TRACKING}", RATED_DELIVERY), 2))
+        with parsed_as({"done-1": DROPPED}):
+            await async_sync(hass, engine)
+        assert parcel.state.status is ParcelStatus.IN_TRANSIT
+        client.fetches.clear()
+        delivered = async_capture_events(hass, EVENT_DELIVERED)
+        check = await async_check(
+            hass, engine, freezer, SURVEY_RECHECK_KEY, since=started
+        )
+        await async_sync(hass, engine)
+
+    assert check["counts"] == {**NO_READS, "read": 1, "applied": 1}
+    assert client.fetches == ["done-1"]
+    assert list(engine.data.parcels) == [parcel.id]
+    assert engine.data.parcels[parcel.id].state.status is ParcelStatus.DELIVERED
+    assert record_of(engine, "done-1").state is MessageState.APPLIED
+    assert [event.data["parcel_id"] for event in delivered] == [parcel.id]
+
+
+# What 0.1.28 stored of its check of what 0.1.27 took for no parcel.
+SURVEY_CHECKS: dict[str, dict[str, Any] | None] = {
+    # 0.1.28 read again what 0.1.27 took for no parcel, from when it started.
+    "checked": {
+        "before": UPDATED,
+        "since": STARTED,
+        "started": UPDATED,
+        "done": REREAD,
+        "counts": NO_READS,
+    },
+    # 0.1.28 was installed afresh, or over a release before 0.1.27.
+    "fresh": {"done": UPDATED},
+    # 0.1.28 never read the mailboxes: its check now reads, then this one.
+    "unchecked": {"before": UPDATED, "since": STARTED},
+    # A store without that check: it's planned from 0.1.27's own check, and
+    # it reads what 0.1.28 took for no parcel too.
+    "unplanned": None,
+    # 0.1.28 read nothing.
+    "nothing": {"done": UPDATED},
+    # 0.1.27 or an earlier release.
+    "0.1.27": None,
+    # The check is already due, or done.
+    "planned": {"done": UPDATED},
+}
+
+
+@pytest.mark.parametrize("stored", list(SURVEY_CHECKS))
+async def test_survey_recheck_is_due_once_after_an_update_from_0128(
+    hass: HomeAssistant, hass_storage: dict[str, Any], stored: str
+) -> None:
+    """After an update from 0.1.28, what it took for no parcel is read again, once.
+
+    From when it started, or from when 0.1.27 started once its own check read
+    what 0.1.27 took for no parcel.
+    """
+    now = dt_to_str(dt_util.utcnow())
+    data = ParcelsData()
+    if stored != "nothing":
+        data.messages["hash"] = MessageRecord(
+            hash="hash",
+            seen=dt_util.utcnow() - timedelta(days=2),
+            state=MessageState.NOT_PARCEL,
+            sender_domain="ctt.pt",
+        )
+    if stored != "0.1.27":
+        data.engine[RELEASE_KEY] = {"version": "0.1.28", "changed": 0}
+    data.engine[TOPIC_CHECK_KEY] = {"done": STARTED}
+    data.engine[TOPIC_RECHECK_KEY] = {"done": UPDATED}
+    if (earlier := SURVEY_CHECKS[stored]) is not None:
+        data.engine[SURVEY_CHECK_KEY] = deepcopy(earlier)
+    elif stored == "0.1.27":
+        del data.engine[TOPIC_RECHECK_KEY]
+    planned = {"done": REREAD}
+    if stored == "planned":
+        data.engine[SURVEY_RECHECK_KEY] = deepcopy(planned)
+    hass_storage["parcels"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "parcels",
+        "data": data.as_dict(),
+    }
+    add_hub(hass)
+
+    engine = await async_setup_parcels(hass)
+
+    assert (
+        engine.data.engine[SURVEY_RECHECK_KEY]
+        == {
+            "checked": {"before": now, "since": STARTED},
+            "fresh": {"before": now, "since": UPDATED},
+            "unchecked": {"before": now, "since": UPDATED},
+            "unplanned": {"before": now, "since": now},
+            "nothing": {"done": now},
+            "0.1.27": {"done": now},
+            "planned": planned,
+        }[stored]
+    )
+    if stored == "unchecked":
+        assert engine.data.engine[SURVEY_CHECK_KEY] == earlier
+    if stored == "unplanned":
+        assert engine.data.engine[SURVEY_CHECK_KEY] == {"before": now, "since": STARTED}

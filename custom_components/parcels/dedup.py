@@ -55,7 +55,13 @@ arrive in any order and a shop's e-mail rarely names the carrier's number:
 * a parcel without a tracking number joins the tracked parcel of the same
   merchant delivered on its date, when they are the only two that fit. When
   more fit, the user gets merge suggestions instead. A package whose
-  delivery time Amazon's tracking contradicts never fits.
+  delivery time Amazon's tracking contradicts never fits;
+* a shop's parcel without a tracking number, known only from the shop's
+  e-mails, joins the carrier's package without a shop when the shop relays
+  its news: out for delivery and delivered, up to 4 hours after the
+  carrier's own, on the same day. Two relays that lag alike join them,
+  flagged, when each is the only one of its kind for the other that day;
+  one relay, or more parcels that could be them, gives merge suggestions.
 
 Item titles never link different orders, and titles that unrelated orders
 share (a shop's recommendations read as items) don't count at all, nor do
@@ -128,6 +134,7 @@ from .models import (
     dt_from_str,
     is_carrier_mail,
     is_carrier_name,
+    known_merchant_name,
     local_date,
     merchant_key,
     new_id,
@@ -167,6 +174,7 @@ REASON_SAME_ORDER = "same_order"
 REASON_SAME_REFERENCE = "same_reference"
 REASON_AMAZON_TRACKING = "amazon_tracking"
 REASON_PARCEL_SWITCH = "parcel_switch"
+REASON_RELAY = "relay"
 
 # How far back reconcile() looks, and how soon after a shop's order e-mails
 # its tracked shipments must follow to absorb the order's parcel.
@@ -204,6 +212,11 @@ CONTRADICTION_GAP = timedelta(hours=2)
 # not delivered when the Parcel app had shown news this long after a package
 # came wasn't in that package: see boxes_of_day().
 AMAZON_CATCH_UP = timedelta(hours=1)
+# A shop that relays its carrier's news sends it up to this long after the
+# carrier's own, on the same day, and its relays lag by about the same time:
+# within this of each other. See _pair_by_relay().
+RELAY_LAG_MAX = timedelta(hours=4)
+RELAY_LAG_AGREE = timedelta(minutes=20)
 # What doesn't come to the door on a day, and the orders that need the user.
 _NOT_COMING = frozenset(
     {ParcelStatus.READY_FOR_PICKUP, ParcelStatus.RETURNED, ParcelStatus.CANCELLED}
@@ -215,8 +228,10 @@ _PROBLEMS = frozenset({ParcelStatus.ATTEMPTED, ParcelStatus.EXCEPTION})
 # Amazon shipments were linked to carriers' packages (counts only), how
 # many parcels of orders' late e-mails were folded into their order's parcel
 # once (see fold_known_orders()), how many parcels typed under an order's
-# number were joined to the order's once (see join_typed_parcels()), and the
-# guesses not made because a parcel was private (see hold_guess()).
+# number were joined to the order's once (see join_typed_parcels()), the
+# guesses not made because a parcel was private (see hold_guess()), and how
+# many shops' relayed news joined the carrier's package (counts only, see
+# _pair_by_relay()).
 KEPT_APART = "kept_apart"
 HELD_GUESSES = "held_guesses"
 REPAIR_KEY = "repair"
@@ -226,6 +241,7 @@ PLACEHOLDER_REPAIR_KEY = "placeholder_items_repaired"
 AMAZON_LINKS_KEY = "amazon_links"
 ORDER_FOLD_KEY = "order_fold"
 TYPED_JOIN_KEY = "typed_join"
+RELAY_LINKS_KEY = "relay_links"
 # Where a carrier is read from the parcel's or someone else's say-so: the
 # local AI, the Parcel app and 17TRACK. Amazon is their carrier only with
 # one of its numbers.
@@ -1105,18 +1121,23 @@ def _fitting(
     if not items:
         return dict(parcels)
     noise = _noise_items(data.parcels.values())
-    same = [
-        pid
-        for pid, parcel in parcels.items()
-        if _same_items(items, _item_keys(parcel.state.items), noise)
-    ]
+    held = {pid: _item_keys(parcel.state.items) for pid, parcel in parcels.items()}
+    return {pid: parcels[pid] for pid in _fit(items, held, noise)}
+
+
+def _fit(
+    items: set[str], held: Mapping[str, set[str]], noise: Collection[str]
+) -> list[str]:
+    """Return the parcels, by the items each ``held``, that fit ``items``.
+
+    See :func:`_fitting`.
+    """
+    same = [pid for pid, keys in held.items() if _same_items(items, keys, noise)]
     if len(same) == 1:
-        return {same[0]: parcels[same[0]]}
-    return {
-        pid: parcel
-        for pid, parcel in parcels.items()
-        if not _different_items(items, _item_keys(parcel.state.items), noise)
-    }
+        return same
+    return [
+        pid for pid, keys in held.items() if not _different_items(items, keys, noise)
+    ]
 
 
 def _order_pick(
@@ -1141,11 +1162,11 @@ _CLOSED = frozenset(
 )
 
 
-def _names_only_order(origin: Origin) -> bool:
+def _names_only_order(origin: Origin, *, items: bool = False) -> bool:
     """Return True for an e-mail that names no package of its order.
 
-    No number, reference or items: only its order, and when it was sent,
-    tell which of the order's parcels it's about.
+    No number or reference, nor items unless ``items``: only its order, and
+    when it was sent, tell which of the order's parcels it's about.
     """
     return (
         origin.message is not None
@@ -1156,7 +1177,7 @@ def _names_only_order(origin: Origin) -> bool:
         and not origin.tracking_number
         and not origin.amazon_shipment_id
         and not origin.reference
-        and not _item_keys(origin.items)
+        and (items or not _item_keys(origin.items))
     )
 
 
@@ -1172,10 +1193,14 @@ def _order_mail(origin: Origin, events: Iterable[ParcelEvent]) -> bool:
 
 def _order_closing(origin: Origin, events: Iterable[ParcelEvent]) -> bool:
     """Return True for news that a package of an order, which it doesn't
-    name, was delivered or returned."""
+    name by a number or reference, was delivered or returned.
+
+    The items it lists, if any, tell the package only when they fit one of
+    the order's parcels alone (see :func:`_fitting`).
+    """
     events = list(events)
     return (
-        _names_only_order(origin)
+        _names_only_order(origin, items=True)
         and bool(events)
         and all(
             event.status in (ParcelStatus.DELIVERED, ParcelStatus.RETURNED)
@@ -1202,8 +1227,9 @@ def _movable(parcel: Parcel, oid: str, *, closing: bool = False) -> bool:
 
     See :attr:`Origin.by_order`. With ``closing``, news that a package of
     the order was delivered or returned instead (see :func:`_order_closing`).
-    Not when the local AI's fill of it names items or a number: that's
-    about a package.
+    Not when the local AI's fill of it names a number, or an order's e-mail
+    whose fill names items: that's about a package. A closing's items fit
+    packages (see :func:`_named_items`).
     """
     origin = parcel.origins[oid]
     names = _order_closing if closing else _order_mail
@@ -1211,12 +1237,47 @@ def _movable(parcel: Parcel, oid: str, *, closing: bool = False) -> bool:
         origin, (event for event in parcel.events if event.origin == oid)
     ):
         return False
-    fill = (
-        parcel.origins.get(_fill_id(origin.message))
-        if origin.message is not None
-        else None
+    fill = _fill_of(parcel, origin)
+    return fill is None or (
+        not fill.tracking_number and (closing or not _item_keys(fill.items))
     )
-    return fill is None or (not _item_keys(fill.items) and not fill.tracking_number)
+
+
+def _fill_of(parcel: Parcel, origin: Origin) -> Origin | None:
+    """Return the local AI's fill of an e-mail in a parcel, if it's there."""
+    if origin.message is None:
+        return None
+    return parcel.origins.get(_fill_id(origin.message))
+
+
+def _named_items(parcel: Parcel, origin: Origin) -> set[str]:
+    """Return the items an e-mail in a parcel names.
+
+    What the parser found, else what the local AI's fill of it read.
+    """
+    if items := _item_keys(origin.items):
+        return items
+    fill = _fill_of(parcel, origin)
+    return _item_keys(fill.items) if fill is not None else set()
+
+
+def _fixed_items(fixed: Iterable[Origin]) -> set[str]:
+    """Return the items that ``fixed`` (see :func:`_fixed`) say a parcel holds.
+
+    As the parcel's state tells them (see derive_state): a shipment's
+    e-mails list what its package holds, and what a parser or the user
+    found replaces what the AI read.
+    """
+    with_items = [origin for origin in fixed if origin.items]
+    listed = [
+        origin for origin in with_items if origin.source is not Source.AI
+    ] or with_items
+    shipped = [
+        origin
+        for origin in listed
+        if origin.tracking_number or origin.amazon_shipment_id
+    ]
+    return _item_keys(item for origin in shipped or listed for item in origin.items)
 
 
 def _fixed(parcel: Parcel, origin: Origin) -> list[Origin]:
@@ -1926,11 +1987,21 @@ def apply_contribution(
             target is None
             and not ambiguous
             and _order_closing(origin, events)
-            and len(_open_when_sent(_order_candidates(data, origin, events), origin))
+            and len(
+                _open_when_sent(
+                    _fitting(
+                        data,
+                        _order_candidates(data, origin, events),
+                        _item_keys(origin.items),
+                    ),
+                    origin,
+                )
+            )
             > 1
         ):
-            # Of several packages on their way, which one was delivered or
-            # returned: the user says (see _merge_by_order()).
+            # Of several packages on their way that its items, if any, fit,
+            # which one was delivered or returned: the user says (see
+            # _merge_by_order()).
             ambiguous = True
         if target is None and not ambiguous:
             target = _order_only_target(data, origin, events)
@@ -2001,8 +2072,14 @@ def apply_contribution(
         origin.confirmed = origin.confirmed or existing.confirmed
         marked = marked or existing.by_reference
     origin.by_reference = marked
+    # A delivery naming only its order, guessed onto the shop's only parcel
+    # due then, is weighed again like one its order placed, once the order's
+    # packages are known (see _place_order_mail()).
+    guessed = reason == REASON_SAME_MERCHANT_ETA and _order_closing(origin, events)
     origin.by_order = (
-        existing.by_order if existing is not None else placed_by_order or created
+        existing.by_order
+        if existing is not None
+        else placed_by_order or created or guessed
     ) and (_order_mail(origin, events) or _order_closing(origin, events))
     parcel.origins[origin.id] = origin
     # News about the parcel replaces a delivery Parcels only inferred.
@@ -3482,6 +3559,26 @@ def _auto_merge(
     result.removed.add(other.id)
 
 
+def _guessed(
+    parcel: Parcel, guessed: Collection[str], reason: str, now: datetime
+) -> AutoMerge:
+    """Return a parcel's guess flag once ``guessed``, origins it holds, joined
+    it by a guess: its own flag grown, or a new one, as :func:`_auto_merge`
+    does."""
+    if parcel.auto_merged is not None:
+        return _grown(parcel.auto_merged, parcel, set(guessed))
+    ordered = sorted(
+        (parcel.origins[oid] for oid in guessed), key=lambda o: (o.time, o.id)
+    )
+    first = next((o for o in ordered if o.source is not Source.MANUAL), ordered[0])
+    return AutoMerge(
+        origin=first.id,
+        at=now,
+        reason=reason,
+        origins=tuple(origin.id for origin in ordered if origin.id != first.id),
+    )
+
+
 def _grown(flag: AutoMerge, parcel: Parcel, guessed: set[str]) -> AutoMerge:
     """Return a parcel's guess flag grown to cover more guessed origins.
 
@@ -3593,12 +3690,14 @@ def _merge_by_order(
     "delivered" or "returned" e-mail without a number belongs to the order's
     only other parcel, open or not, when Parcels heard of that one first and
     their items don't differ; with several, to the only one still open when
-    it was sent, of those Parcels heard of before it. With several open
-    then, the user gets a suggestion for each. An open parcel known only
-    from its order belongs to the order's only other open parcel when that
-    one has a tracking number or shipment and their items don't differ:
-    read in time order, its e-mails would have joined it. Orders without
-    news since ``since`` are left alone; None looks at every order.
+    it was sent, of those Parcels heard of before it, or of those the only
+    one with its items. With several open then that it may be about, the
+    user gets a suggestion for each, and it joins none by its items, also
+    once kept apart from some of them. An open parcel known only from its
+    order belongs to the order's only other open parcel when that one has a
+    tracking number or shipment and their items don't differ: read in time
+    order, its e-mails would have joined it. Orders without news since
+    ``since`` are left alone; None looks at every order.
     """
     noise = _noise_items(data.parcels.values())
     several: list[tuple[Parcel, list[Parcel]]] = []
@@ -3646,6 +3745,9 @@ def _merge_one_by_order(
     def mergeable(first: Parcel, second: Parcel) -> bool:
         return not _parcels_conflict(first, second) and not apart(first, second)
 
+    # News left to the user here doesn't join a package by its items below
+    # either, also once kept apart from some of the packages (as F32).
+    undecided: set[str] = set()
     for parcel in sorted(data.parcels.values(), key=lambda p: p.id):
         state = parcel.state
         if (
@@ -3682,9 +3784,20 @@ def _merge_one_by_order(
             and mergeable(parcel, other)
         ]
         if len(others) > 1:
-            if fitting:
-                several.append((parcel, fitting))
-            continue
+            # Of several open then, the only one with its items, when it names
+            # any (see _fit()); else the user says which.
+            items = _item_keys(state.items)
+            same = [
+                other
+                for other in others.values()
+                if _same_items(items, _item_keys(other.state.items), noise)
+            ]
+            if len(same) != 1 or not any(other is same[0] for other in fitting):
+                undecided.add(parcel.id)
+                if fitting:
+                    several.append((parcel, fitting))
+                continue
+            fitting = same
         if fitting:
             other = fitting[0]
             if not _may_share_parcels(other, parcel):
@@ -3709,10 +3822,10 @@ def _merge_one_by_order(
                 partners[first.id].add(second.id)
                 partners[second.id].add(first.id)
     for pid in sorted(partners):
-        if len(partners[pid]) != 1:
+        if len(partners[pid]) != 1 or pid in undecided:
             continue
         other_id = next(iter(partners[pid]))
-        if partners[other_id] != {pid}:
+        if partners[other_id] != {pid} or other_id in undecided:
             continue
         target, other = sorted(
             (data.parcels[pid], data.parcels[other_id]),
@@ -4564,6 +4677,12 @@ def _pair_by_day(
     When a shipment's tracking repeats times of some packages, see
     :func:`_pointed`, it pairs only with those. Leaving the others out
     never makes a merge of what was a suggestion.
+
+    News without a number that an order's package was delivered or
+    returned never pairs by the day with a package of its order: the
+    order's rules, see :func:`_merge_by_order`, decide which it's about,
+    and leave it apart when several could be. Such a package still counts
+    as one that could be the parcel, so no guess picks another.
     """
     untracked: list[tuple[Parcel, set[str], date, date, datetime, date | None]] = []
     tracked: list[tuple[Parcel, set[str], date]] = []
@@ -4593,12 +4712,19 @@ def _pair_by_day(
     edges: dict[str, set[str]] = defaultdict(set)
     days: dict[str, date] = {}
     fits: set[frozenset[str]] = set()
+    of_one_order: set[frozenset[str]] = set()
     narrowed: set[str] = set()
     boxes = _boxes(data)
     for parcel, keys, start, end, first, sent in untracked:
         # A parcel may arrive late or early, unless news closed it (a
         # "probably delivered" guess doesn't); only a fit is sure.
         waiting = not _finished(parcel)
+        closing = (
+            parcel_order_keys(parcel)
+            if not waiting
+            and parcel.state.status in (ParcelStatus.DELIVERED, ParcelStatus.RETURNED)
+            else set()
+        )
         points = _pointed(parcel, boxes, apart)
         for other, other_keys, day in tracked:
             delivered = _real_delivery(other)
@@ -4622,8 +4748,11 @@ def _pair_by_day(
                 edges[parcel.id].add(other.id)
                 edges[other.id].add(parcel.id)
                 days[other.id] = day
-                if fit:
-                    fits.add(frozenset((parcel.id, other.id)))
+                pair = frozenset((parcel.id, other.id))
+                if closing & parcel_order_keys(other):
+                    of_one_order.add(pair)
+                elif fit:
+                    fits.add(pair)
 
     for component in _components(edges):
         targets = sorted(pid for pid in component if pid in days)
@@ -4647,6 +4776,7 @@ def _pair_by_day(
                 data.parcels[pid]
                 for pid in sorted(edges[target_id])
                 if data.parcels[pid].archived is None
+                and frozenset((target_id, pid)) not in of_one_order
             ]
             if candidates:
                 result.suggestions.append(
@@ -4654,6 +4784,420 @@ def _pair_by_day(
                         target, candidates, days[target_id], REASON_SAME_MERCHANT_DAY
                     )
                 )
+
+
+def _order_news_keys(side: Parcel) -> set[str]:
+    """Return the orders a side tells delivered or returned without naming a
+    package, or an empty set when it doesn't."""
+    state = side.state
+    if (
+        _tracked(side)
+        or not _finished(side)
+        or state.status not in (ParcelStatus.DELIVERED, ParcelStatus.RETURNED)
+    ):
+        return set()
+    return parcel_order_keys(side)
+
+
+def _unguess_order_news(
+    data: ParcelsData, pool: list[Parcel], now: datetime, result: Reconciled
+) -> int:
+    """Take back the guesses earlier releases made of an order's news.
+
+    Before 0.1.29, an e-mail that an order was delivered or returned, naming
+    no package, could join one of the order's packages as a guess by the
+    shop and the day or the expected date, though another package of the
+    order was on its way when it was sent: :func:`_pair_by_day` no longer
+    does. Such news leaves the package, as Undo would but without keeping
+    them apart, so that the order's rules (see :func:`_merge_by_order`)
+    place it: with several packages that could be the one, it stays apart,
+    suggested for each. The package keeps the parcel and the user's edits.
+    A guess those rules make too stays: news naming the items of the package,
+    open then, and of no other. Returns how many guesses were taken back.
+    """
+    undone = 0
+    noise: frozenset[str] | None = None
+    for parcel in pool:
+        flag = parcel.auto_merged
+        if (
+            flag is None
+            or flag.reason not in (REASON_SAME_MERCHANT_ETA, REASON_SAME_MERCHANT_DAY)
+            or parcel.id in result.removed
+            or parcel.archived is not None
+        ):
+            continue
+        parts = _undo_parts(flag, parcel)
+        if len(parts) != 1 or split_problem(parcel, parts[0]) is not None:
+            continue
+        guessed = parts[0]
+        kept = parcel.origins.keys() - guessed
+        # The guess may have put the package's e-mails on the news, or the news
+        # on the package.
+        for news_ids, package_ids in ((guessed, kept), (kept, guessed)):
+            news = _side(parcel, news_ids)
+            keys = _order_news_keys(news)
+            if (
+                keys
+                and _tracked(package := _side(parcel, package_ids))
+                and parcel_order_keys(package) & keys
+            ):
+                break
+        else:
+            continue
+        when = news.state.delivered_at or news.state.status_time
+        if when is None:
+            continue
+        others = [
+            other
+            for other in data.parcels.values()
+            if other.id != parcel.id
+            and other.state.status is not ParcelStatus.CANCELLED
+            and _tracked(other)
+            and parcel_order_keys(other) & keys
+            and not _heard_after(other, when)
+            and _open_then(other, other.origins.keys(), when)
+        ]
+        if not others:
+            continue
+        if noise is None:
+            noise = _noise_items(data.parcels.values())
+        items = _item_keys(news.state.items)
+        same = [
+            side
+            for side in (package, *others)
+            if _same_items(items, _item_keys(side.state.items), noise)
+        ]
+        if (
+            len(same) == 1
+            and same[0] is package
+            and not _heard_after(package, when)
+            and _open_then(package, package_ids, when)
+        ):
+            continue
+        moving = news_ids - {manual_origin_id(parcel.id)}
+        if split_problem(parcel, moving) is not None:
+            continue
+        new = _split(data, parcel, moving, now)
+        parcel.auto_merged = None
+        result.changed.update((parcel.id, new.id))
+        undone += 1
+        noise = None
+    return undone
+
+
+# --- A shop's relay of its carrier's news ---------------------------------------
+
+# The carrier's news some shops tell again in their own e-mails.
+_RELAYED = (ParcelStatus.OUT_FOR_DELIVERY, ParcelStatus.DELIVERED)
+
+# When a parcel's news said it was out for delivery, and delivered.
+type _RelayMarks = dict[ParcelStatus, list[datetime]]
+# Per status, the day a shop told it, and how long after each time the
+# carrier told it that day.
+type _RelayLags = dict[ParcelStatus, tuple[date, tuple[timedelta, ...]]]
+
+
+def _relay_marks(parcel: Parcel) -> _RelayMarks:
+    """Return when a parcel's news said it was out for delivery, and delivered.
+
+    Only news seen at a time counts, earliest first.
+    """
+    marks: _RelayMarks = defaultdict(list)
+    for event in parcel.events:
+        if event.status in _RELAYED and _exact(event):
+            marks[event.status].append(event.time)
+    return {status: sorted(times) for status, times in marks.items()}
+
+
+def _relay_days(marks: _RelayMarks) -> set[date]:
+    return {local_date(time) for times in marks.values() for time in times}
+
+
+def _relay_people(parcel: Parcel) -> frozenset[str]:
+    """Return the people whose e-mails tell of a parcel, or else its owners.
+
+    The Parcel app's person follows every parcel there, whoever's it is:
+    the e-mails tell whose it is.
+    """
+    people = frozenset(
+        owner
+        for origin in parcel.origins.values()
+        if origin.message is not None
+        for owner in origin.owners
+    )
+    return people or frozenset(parcel.state.owners)
+
+
+def _told_by_shop(parcel: Parcel) -> bool:
+    """Return whether only a shop's own e-mails tell of a parcel, with no number."""
+    state = parcel.state
+    if state.tracking_number or state.amazon_shipment_ids:
+        return False
+    told = [o for o in parcel.origins.values() if o.source is not Source.MANUAL]
+    return bool(told) and all(
+        origin.message is not None
+        and not is_carrier_mail(origin)
+        and is_shop_sender(origin.label)
+        for origin in told
+    )
+
+
+def _told_by_carrier(parcel: Parcel) -> bool:
+    """Return whether only the carrier, 17TRACK and the Parcel app tell of a package."""
+    state = parcel.state
+    if not state.tracking_number or state.amazon_shipment_ids or _carries(parcel):
+        return False
+    told = [o for o in parcel.origins.values() if o.source is not Source.MANUAL]
+    return bool(told) and all(
+        origin.source in (Source.SEVENTEENTRACK, Source.PARCELAPP)
+        or is_carrier_mail(origin)
+        for origin in told
+    )
+
+
+def _shopless(parcel: Parcel, shops: Collection[str]) -> bool:
+    """Return whether a package names no shop.
+
+    The carrier's e-mail may name who sent it: a shop's agent, which is no
+    known merchant, nor a name a shop's own e-mails give (``shops``).
+    """
+    merchant = parcel.state.merchant
+    return not merchant or (
+        known_merchant_name(merchant) is None and merchant_key(merchant) not in shops
+    )
+
+
+def _relay_lags(shop: _RelayMarks, carrier: _RelayMarks) -> _RelayLags | None:
+    """Return how long after the carrier a shop told the same news, per status.
+
+    The shop's first news of a status follows the carrier's of that day by
+    up to RELAY_LAG_MAX. The carrier may have told it more than once, e.g.
+    by e-mail and in its tracking: each of those times is kept. A status
+    only one of them told is left out. None when the shop told a status the
+    carrier told only at other times: then it's about another package.
+    """
+    lags: _RelayLags = {}
+    for status, times in shop.items():
+        if not (theirs := carrier.get(status)):
+            continue
+        told = times[0]
+        day = local_date(told)
+        fitting = tuple(
+            told - time
+            for time in theirs
+            if local_date(time) == day and timedelta(0) <= told - time <= RELAY_LAG_MAX
+        )
+        if not fitting:
+            return None
+        lags[status] = (day, fitting)
+    return lags
+
+
+def _relay_day(lags: _RelayLags) -> date:
+    """Return the day a shop relayed the delivery, or else the van leaving."""
+    day, _lag = lags.get(ParcelStatus.DELIVERED) or lags[ParcelStatus.OUT_FOR_DELIVERY]
+    return day
+
+
+def _relay_agrees(lags: _RelayLags) -> bool:
+    """Return whether a shop relayed both news, as long after the carrier."""
+    if len(lags) != len(_RELAYED):
+        return False
+    (_day, vans), (_other_day, deliveries) = (lags[status] for status in _RELAYED)
+    return any(
+        abs(van - delivery) <= RELAY_LAG_AGREE
+        for van in vans
+        for delivery in deliveries
+    )
+
+
+def _pair_by_relay(
+    data: ParcelsData,
+    pool: list[Parcel],
+    apart: Callable[[Parcel, Parcel], bool],
+    now: datetime,
+    result: Reconciled,
+    *,
+    skip: Collection[str] = frozenset(),
+) -> None:
+    """Pair a shop's parcel with the carrier's package whose news it relays.
+
+    Some shops tell their carrier's news in their own e-mails, without the
+    carrier's number, a while after the carrier did. The carrier's e-mails,
+    17TRACK and the Parcel app name neither the order nor the shop, at most
+    the shop's agent, who sent it. So the package shows twice, with only
+    the times to join them.
+
+    A shop's parcel may be a package of its people when their carriers may
+    be the same and the shop told the van leaving, or the delivery, up to
+    RELAY_LAG_MAX after the carrier did, the same day. When it told both,
+    as long after the carrier, and no other parcel could be either of them
+    that day, the package takes the shop's parcel, undoably. Otherwise the
+    package gets a suggestion: so does a private parcel and someone else's
+    (see :func:`_may_share`), which only people who may see both get.
+    The day's rule (see :func:`_pair_by_day`) goes first, and a parcel
+    another rule suggested is only suggested.
+    """
+    previous = data.engine.get(RELAY_LINKS_KEY)
+    shops: dict[str, _RelayMarks] = {}
+    for parcel in pool:
+        if (
+            parcel.id not in skip
+            and parcel.id not in result.removed
+            and _told_by_shop(parcel)
+            and (marks := _relay_marks(parcel))
+        ):
+            shops[parcel.id] = marks
+    # The packages with a number, which may be what a shop's parcel is.
+    packages: dict[str, _RelayMarks] = {}
+    if shops:
+        for parcel in pool:
+            if (
+                parcel.state.tracking_number
+                and parcel.id not in skip
+                and parcel.id not in result.removed
+                and (marks := _relay_marks(parcel))
+            ):
+                packages[parcel.id] = marks
+    carriers: set[str] = set()
+    if packages:
+        names = {
+            merchant_key(name)
+            for label, name in _merchant_names(_all_origins(data)).items()
+            if is_shop_sender(label)
+        }
+        carriers = {
+            pid
+            for pid in packages
+            if _told_by_carrier(data.parcels[pid])
+            and _shopless(data.parcels[pid], names)
+        }
+    if not carriers and not isinstance(previous, Mapping):
+        return
+
+    people: dict[str, frozenset[str]] = {}
+    keys: dict[str, set[str]] = {}
+
+    def whose(parcel: Parcel) -> frozenset[str]:
+        if (found := people.get(parcel.id)) is None:
+            found = people[parcel.id] = _relay_people(parcel)
+        return found
+
+    def shop_keys(parcel: Parcel) -> set[str]:
+        if (found := keys.get(parcel.id)) is None:
+            found = keys[parcel.id] = _shop_keys(parcel)
+        return found
+
+    def may_be(shop: Parcel, package: Parcel) -> bool:
+        """Return True when a package may be the one a shop's parcel is."""
+        one, two = whose(shop), whose(package)
+        return (
+            (not one or not two or bool(one & two) or shop.private or package.private)
+            and _same_carrier(shop.state.carrier, package.state.carrier)
+            and not _parcels_conflict(shop, package)
+            and not apart(shop, package)
+        )
+
+    shop_days: dict[date, list[str]] = defaultdict(list)
+    for pid, marks in shops.items():
+        for day in _relay_days(marks):
+            shop_days[day].append(pid)
+    package_days: dict[date, list[str]] = defaultdict(list)
+    for pid, marks in packages.items():
+        for day in _relay_days(marks):
+            package_days[day].append(pid)
+    suggested_before = {
+        pid
+        for suggestion in result.suggestions
+        for pid in (suggestion.parcel_id, *suggestion.candidates)
+    }
+
+    def contested(shop: Parcel, package: Parcel, lags: _RelayLags) -> bool:
+        """Return True when another parcel could be either of two that day.
+
+        A package with a number could be the shop's parcel unless it names
+        another shop; a shop's parcel without one could be the package.
+        """
+        if {shop.id, package.id} & suggested_before:
+            return True
+        for day in {day for day, _lag in lags.values()}:
+            for pid in package_days.get(day, ()):
+                other = data.parcels[pid]
+                if (
+                    pid != package.id
+                    and (pid in carriers or shop_keys(shop) & shop_keys(other))
+                    and may_be(shop, other)
+                ):
+                    return True
+            for pid in shop_days.get(day, ()):
+                if pid != shop.id and may_be(data.parcels[pid], package):
+                    return True
+        return False
+
+    edges: dict[str, set[str]] = defaultdict(set)
+    found: dict[frozenset[str], _RelayLags] = {}
+    for shop_id, marks in shops.items():
+        shop = data.parcels[shop_id]
+        firsts = {local_date(times[0]) for times in marks.values()}
+        near = {pid for day in firsts for pid in package_days.get(day, ())}
+        for package_id in sorted(near & carriers):
+            package = data.parcels[package_id]
+            if may_be(shop, package) and (
+                lags := _relay_lags(marks, packages[package_id])
+            ):
+                edges[shop_id].add(package_id)
+                edges[package_id].add(shop_id)
+                found[frozenset((shop_id, package_id))] = lags
+
+    seen = {
+        frozenset((suggestion.parcel_id, candidate))
+        for suggestion in result.suggestions
+        for candidate in suggestion.candidates
+    }
+    made = suggested = 0
+    for component in _components(edges):
+        targets = sorted(component & carriers)
+        sources = sorted(component - carriers)
+        if len(targets) == 1 and len(sources) == 1:
+            target, other = data.parcels[targets[0]], data.parcels[sources[0]]
+            lags = found[frozenset(component)]
+            if (
+                _relay_agrees(lags)
+                and whose(target) == whose(other)
+                and not contested(other, target, lags)
+                and _may_auto_merge(target, other)
+                and _may_share_parcels(target, other)
+            ):
+                _auto_merge(data, target, other, REASON_RELAY, now, result)
+                made += 1
+                continue
+        for target_id in targets:
+            target = data.parcels[target_id]
+            if target.archived is not None:
+                continue
+            candidates = [
+                data.parcels[pid]
+                for pid in sorted(edges[target_id])
+                if data.parcels[pid].archived is None
+                and frozenset((target_id, pid)) not in seen
+            ]
+            if candidates:
+                day = max(
+                    _relay_day(found[frozenset((target_id, candidate.id))])
+                    for candidate in candidates
+                )
+                result.suggestions.append(
+                    _suggestion(target, candidates, day, REASON_RELAY)
+                )
+                suggested += 1
+
+    earlier = previous.get("made") if isinstance(previous, Mapping) else None
+    counts = {
+        "made": (earlier if isinstance(earlier, int) else 0) + made,
+        "suggested": suggested,
+    }
+    if counts != previous:
+        data.engine[RELAY_LINKS_KEY] = counts
 
 
 # --- Packages of the day ---------------------------------------------------------
@@ -5054,7 +5598,9 @@ def _place_order_mail(
     from a parcel its own news had closed by then: to the order's only
     other parcel still open then or, when several packages were open then,
     to a parcel of its own, suggested for each (see :func:`_closing_target`).
-    Returns how many e-mails moved.
+    Joining that package, read after the news, is a guess, as when the news
+    had a parcel of its own (see :func:`_merge_by_order`): it's flagged, so
+    the user can undo it. Returns how many e-mails moved.
     """
     pending = sorted(
         (parcel.origins[oid].time, oid, parcel.id)
@@ -5074,6 +5620,13 @@ def _place_order_mail(
 
     for parcel in data.parcels.values():
         add(parcel)
+    noise: list[frozenset[str]] = []
+
+    def noisy() -> frozenset[str]:
+        if not noise:
+            noise.append(_noise_items(data.parcels.values()))
+        return noise[0]
+
     moves = 0
     for _time, oid, pid in pending:
         if (parcel := data.parcels.get(pid)) is None or oid not in parcel.origins:
@@ -5098,8 +5651,9 @@ def _place_order_mail(
                     and keys & _fixed_keys(other, _fixed(other, origin))
                 ):
                     candidates[other_id] = other
-        if _movable(parcel, oid, closing=True):
-            target_id = _closing_target(candidates, origin, parcel.id)
+        closing = _movable(parcel, oid, closing=True)
+        if closing:
+            target_id = _closing_target(candidates, origin, parcel.id, noisy)
         else:
             target_id = _pick_by_time(candidates, origin)
         if target_id == _TAKE_OUT:
@@ -5122,6 +5676,8 @@ def _place_order_mail(
         parcel.events = [e for e in parcel.events if e.origin not in moving]
         target.private = target.private or parcel.private
         parcel.auto_merged = _shrunk(parcel.auto_merged, parcel)
+        if closing:
+            target.auto_merged = _guessed(target, moving, REASON_SAME_ORDER, now)
         moves += 1
         for changed in (parcel, target):
             changed.touch(now)
@@ -5164,17 +5720,31 @@ _TAKE_OUT = ""
 
 
 def _closing_target(
-    candidates: Mapping[str, Parcel], origin: Origin, home: str
+    candidates: Mapping[str, Parcel],
+    origin: Origin,
+    home: str,
+    noise: Callable[[], Collection[str]],
 ) -> str | None:
     """Return the parcel that news without a package, that it was delivered
     or returned, is about, when it isn't the parcel ``home`` it's in.
 
     That's the order's only parcel that Parcels knew of and that was still
-    open when the news was sent. With several, the user says which, so it
-    leaves (:data:`_TAKE_OUT`), unless ``home`` is one of them and only the
-    order's: then it stays, so the order's e-mails don't stay behind alone,
-    never shipping. With none, it stays.
+    open when the news was sent, of those its items fit when it names any
+    (see :func:`_fit`; ``noise`` returns the titles that don't count). With
+    several, the user says which, so it leaves (:data:`_TAKE_OUT`), unless
+    ``home`` is one of them and only the order's: then it stays, so the
+    order's e-mails don't stay behind alone, never shipping. With none, it
+    stays.
+
+    A parcel's items are those its e-mails besides the news had told (see
+    :func:`_fixed`), so the answer doesn't depend on where the news is.
     """
+    if items := _named_items(candidates[home], origin):
+        held = {
+            pid: _fixed_items(_fixed(parcel, origin))
+            for pid, parcel in candidates.items()
+        }
+        candidates = {pid: candidates[pid] for pid in _fit(items, held, noise())}
     found = _open_when_sent(candidates, origin)
     if home in found:
         if len(found) > 1 and _a_package(
@@ -5298,13 +5868,19 @@ def _shrunk(flag: AutoMerge | None, parcel: Parcel) -> AutoMerge | None:
 
 @one_day()
 def reconcile(
-    data: ParcelsData, now: datetime, *, since: datetime | None = None
+    data: ParcelsData,
+    now: datetime,
+    *,
+    since: datetime | None = None,
+    release: bool = False,
 ) -> Reconciled:
     """Look at whole parcels again after a sync and merge the same ones.
 
     Only parcels with news since ``since`` (default: the last 30 days) are
     looked at. Merges are flagged "auto-merged" so the user can undo them;
-    pairs the user kept apart are left alone.
+    pairs the user kept apart are left alone. With ``release``, as a release
+    first starts, earlier releases' guesses its rules don't make are taken
+    back first (see :func:`_unguess_order_news`).
     """
     result = Reconciled()
     prune_kept_apart(data)
@@ -5322,6 +5898,8 @@ def reconcile(
             _record_orders(data, parcel, now)
             result.changed.add(parcel.id)
 
+    if release:
+        _unguess_order_news(data, _reconcile_pool(data, start), now, result)
     moved_out = _settle(data, start, apart, now, result, revisit=True)
     merged = len(result.removed)
     _join_typed(data, apart, now, result)
@@ -5336,6 +5914,7 @@ def reconcile(
         data, _reconcile_pool(data, start), apart, now, result, undone=undone
     )
     _pair_by_day(data, _reconcile_pool(data, start), apart, now, result, skip=handled)
+    _pair_by_relay(data, _reconcile_pool(data, start), apart, now, result, skip=handled)
     if len(result.removed) > merged:
         # An order with fewer parcels now may leave its e-mail one to join.
         _settle(data, start, apart, now, result, revisit=False)

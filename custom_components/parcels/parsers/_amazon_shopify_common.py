@@ -987,6 +987,27 @@ def _clock(match: re.Match[str]) -> time | None:
     return time(hour, minute)
 
 
+def event_words(kind: MailKind) -> re.Pattern[str] | None:
+    """Return the regex of the words saying an event of ``kind`` happened.
+
+    Delivered ("entregue", "zugestellt") and ready for pickup ("pronta",
+    "abholbereit"), and attempted, in the 7 languages, over folded text;
+    None for other kinds.
+    """
+    return _EVENT_RES.get(kind)
+
+
+def says_yesterday(folded: str, lang: str | None) -> bool:
+    """Return True when folded text says "yesterday" in one of the 7 languages.
+
+    "hier" counts in French only: in Dutch and German it means "here".
+    """
+    return any(
+        match.group(0) != "hier" or lang == "fr"
+        for match in _YESTERDAY_RE.finditer(folded)
+    )
+
+
 def event_time(
     folded: str,
     kind: MailKind,

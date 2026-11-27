@@ -74,8 +74,10 @@ from ._phrases import (
     PICKUP_NAME_LABELS,
     PICKUP_POINT_LABELS,
     POINT_ABBREVIATIONS,
+    POINT_UNIT_WORDS,
     SENDER_SIDE_WORDS,
     STATUS_LABELS,
+    SURVEY_WORDS,
     TIME_LABELS,
     WINDOW_LABELS,
 )
@@ -105,6 +107,8 @@ CONFIDENCE_NO_NUMBER = 0.7
 CONFIDENCE_PARTIAL = 0.6
 CONFIDENCE_PARTIAL_BODY = 0.55
 CONFIDENCE_UNCLEAR = 0.6
+# A number was found, but no wording for its status: in transit, by default.
+NOTE_KIND_UNCLEAR = "kind_unclear"
 NO_BRAND_PENALTY = 0.05
 MAX_CONFIDENCE = 0.95
 
@@ -1127,16 +1131,18 @@ _POINT_PREP_RE = re.compile(
 _ROW_GAP_RE = re.compile(r"[ ]*(?:[:\-][ ]*)?")
 _NAME_ABBREVIATIONS = frozenset(POINT_ABBREVIATIONS)
 _COMPANY_SUFFIXES = frozenset(COMPANY_INITIALS)
+_UNIT_WORDS = frozenset(POINT_UNIT_WORDS)
 _INITIALS_RE = re.compile(r"(?:[^\W\d_]\.)*[^\W\d_]")
 
 
-def _ends_sentence(word: str) -> bool:
+def _ends_sentence(word: str, previous: str = "") -> bool:
     """Tell whether a point's word ends its sentence with a full stop.
 
     A number or a word before a full stop ends it, as in "Cacifo CTT Sol." A
     name goes on after an initial, as in "J. Silva" or "C.C. Colombo", and
     after an abbreviation such as "Av." or "Sta.", but a company's "S.A."
-    ends it.
+    ends it, and so does a letter after the ``previous`` word naming a part
+    of a building, as in "Bloco B."
     """
     word = word.strip()
     if not word.endswith("."):
@@ -1145,7 +1151,9 @@ def _ends_sentence(word: str) -> bool:
     if stem[-1:].isdigit():
         return True
     if _INITIALS_RE.fullmatch(stem):
-        return stem in _COMPANY_SUFFIXES
+        return stem in _COMPANY_SUFFIXES or (
+            len(stem) == 1 and fold_text(previous.strip(" ,")) in _UNIT_WORDS
+        )
     return stem not in _NAME_ABBREVIATIONS
 
 
@@ -1191,13 +1199,15 @@ def _with_address(doc: _Doc, index: int, value: str | None) -> str | None:
 
 def _point_words(doc: _Doc, start: int, end: int) -> str:
     pos = start
+    previous = ""
     while pos < end:
         word = _POINT_WORD_RE.match(doc.text, pos, end)
         if not word or word.end() == pos:
             break
         pos = word.end()
-        if _ends_sentence(word.group()):
+        if _ends_sentence(word.group(), previous):
             break
+        previous = word.group()
     return doc.text[start:pos]
 
 
@@ -1532,9 +1542,12 @@ def parse_with_spec(
     only_code = decision.kind is None and bool(
         pickup_code and (numbers or orders or reference)
     )
-    marketing = phrase_regex(MARKETING_WORDS).search(whole) is not None
+    # Survey wording, often a footer's, only counts when no status was read.
+    blocked = phrase_regex(MARKETING_WORDS).search(whole) is not None or (
+        decision.kind is None and phrase_regex(SURVEY_WORDS).search(whole) is not None
+    )
     if (
-        marketing
+        blocked
         and not only_code
         and (not (numbers or reference) or decision.kind is None)
     ):
@@ -1547,7 +1560,7 @@ def parse_with_spec(
         if not numbers:
             return None
         kind = MailKind.IN_TRANSIT
-        notes.append("kind_unclear")
+        notes.append(NOTE_KIND_UNCLEAR)
     eta: Eta | None = None
     event_time: datetime | None = None
     pickup_point: str | None = None
@@ -1571,7 +1584,7 @@ def parse_with_spec(
         )
     if confidence is None:
         return None
-    if "kind_unclear" in notes:
+    if NOTE_KIND_UNCLEAR in notes:
         confidence = min(confidence, CONFIDENCE_UNCLEAR)
     brands = phrase_regex(spec.brands)
     if not (brands.search(whole) or brands.search(fold_text(message.sender_name))):

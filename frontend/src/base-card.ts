@@ -162,8 +162,24 @@ export abstract class ParcelsCardBase extends LitElement {
     this._actionError = message;
   }
 
+  /** Where focus goes when it went with a dismissed message's button. */
+  protected abstract messageFocusTarget(): HTMLElement | null;
+
+  /**
+   * Once rendered, focuses `target()` if focus was lost meanwhile, e.g. with
+   * the button that had it; focus that moved on is left where it is.
+   */
+  protected keepFocus(target: () => HTMLElement | null): void {
+    void this.updateComplete.then(() => {
+      if (!this.shadowRoot?.activeElement && focusIsLost()) {
+        target()?.focus();
+      }
+    });
+  }
+
   private _dismissActionError(): void {
     this._actionError = null;
+    this.keepFocus(() => this.messageFocusTarget());
   }
 }
 
@@ -354,6 +370,11 @@ export abstract class ParcelsChipCard extends ParcelsCardBase {
   /** Where focus goes when the parcel of a closed dialog is gone. */
   protected focusFallback(): HTMLElement | null {
     return this.renderRoot.querySelector<HTMLElement>("[data-focus-fallback], button.chip-main");
+  }
+
+  /** After a dismissed message: the card's heading, else where a closed dialog's focus goes. */
+  protected override messageFocusTarget(): HTMLElement | null {
+    return this.renderRoot.querySelector<HTMLElement>("h2.title") ?? this.focusFallback();
   }
 
   /**

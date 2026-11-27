@@ -52,11 +52,17 @@ api.parcel.app, which Parcels contacts itself with your API key.
   its sender, updates the order's only parcel open when it was sent, but not
   a parcel first heard of after it. When Parcels reads that parcel's e-mails
   after the delivery, also after another package's, the delivery joins it
-  marked as a guess you can undo. When several were open, in whatever order
-  Parcels reads the e-mails, the delivery marks none of them delivered: it
-  gets a parcel of its own, or stays with the order e-mail's parcel when
-  Parcels read it before the packages' e-mails, and Parcels suggests it for
-  each package in **Needs review**. Once you put it with one, it stays there.
+  marked as a guess you can undo. A delivery whose items several open
+  packages hold, as when two packages hold the same item, counts as one
+  without items. When several were open, in whatever order Parcels reads the
+  e-mails, the delivery marks none of them delivered: it gets a parcel of
+  its own, and Parcels suggests it for each package in **Needs review**.
+  When Parcels read the delivery and the order's e-mail before the packages'
+  shipping e-mails, the delivery stays with the order e-mail's parcel
+  instead, also when its items fit only one package, and Parcels suggests it
+  for each. Once you put it with one, it stays there. Once you keep it apart
+  from one, with **Keep apart** or by moving it to a new parcel, it stays
+  apart, and Parcels suggests it for the others.
   Placeholders such as "item 1" aren't items. As the local AI may misread
   items, its reading of a delivery with other items updates the order's
   package that the order's own news sent out for delivery, when only one fits
@@ -109,17 +115,41 @@ api.parcel.app, which Parcels contacts itself with your API key.
   other items than the rest of its e-mails, as when the local AI misread
   them. A guess counts only when no other open parcel of that shop could be
   the one, late parcels and those due in the next days included, and when the
-  carriers named by the shop and the delivery agree. A delivery made on a day
+  carriers named by the shop and the delivery agree. A delivery that names
+  only its order is never guessed onto one of the order's packages, even when
+  that package's carrier says it's out for delivery that day: the order's
+  rules above decide. One guessed onto the shop's only parcel due that day,
+  before Parcels knew of the order's packages, leaves it again once it does,
+  when several were open. A delivery made on a day
   before the shop's package was shipped is another package, and isn't
   suggested either, nor is one that Amazon's tracking says came at another
   time, or that it points away from because other packages repeat its times.
   With the [Parcel app](#parcel-app), Parcels undoes a guess about an Amazon
   shipment that Amazon's tracking proves wrong later (see [How the day is
-  counted](#how-the-day-is-counted)). When several parcels could match,
-  Parcels asks in **Needs review** instead, and so it does when a guess would
-  show a private parcel to someone else (see [The Parcels
-  page](#the-parcels-page)). Parcels with different tracking numbers are never
-  merged.
+  counted](#how-the-day-is-counted)). Some shops tell their carrier's news
+  again in their own e-mails, a while later and without the tracking number,
+  while the carrier's e-mails, 17TRACK and the Parcel app name neither the
+  order nor the shop, at most the agent who sent the parcel for it. Parcels
+  then joins the two by their times. When the shop told both that the
+  parcel went out for delivery and that it was delivered, each 0 to 4 hours
+  after the carrier did on the same day and both about equally late (within
+  20 minutes), the carrier's package takes the shop's parcel, marked as a
+  guess you can undo, and `parcels_delivered` fires once for the delivery,
+  whichever of the two Parcels reads first. When the shop told only one of
+  the two, Parcels suggests the merge in **Needs review**, as "the shop
+  relayed the carrier's news". Only news with its time counts, and of the
+  shop's e-mails, only the first of each status. The guess needs the same
+  people on both, and their carriers must fit: a carrier's brands count as
+  one, such as CTT and CTT Expresso, and a shop's parcel that names no
+  carrier fits any. A package that names a shop or another order isn't such
+  a package, and e-mails from a free-mail address, such as gmail.com, don't
+  count as a shop's. Archived parcels aren't suggested, and a parcel heard
+  of later that could also fit doesn't undo the join. The joined parcel
+  keeps the shop's name, and the carrier, tracking number and delivery time
+  from the carrier's news. When several parcels could match, Parcels asks in
+  **Needs review** instead, and so it does when a guess would show a private
+  parcel to someone else (see [The Parcels page](#the-parcels-page)).
+  Parcels with different tracking numbers are never merged.
 - **Statuses**: a parcel shows the status of its newest news, by the time of
   the event, whether an e-mail, 17TRACK or the Parcel app brought it. News
   that arrives late never moves a parcel back; newer news can. A parcel out
@@ -689,7 +719,9 @@ add a resource.
   the Parcel app or your edits) and when, what it said, such as a status
   with its date or time window, and what it added: items, order numbers,
   carrier and tracking number, shop, seller, pickup point, and Amazon's
-  shipments, or the packages of one, as "Shipment 1/2". E-mails from one
+  shipments, or the packages of one, as "Shipment 1/2". A carrier's e-mail
+  that names someone other than the parcel's shop, such as the shop's
+  agent, says "Sent by" them. E-mails from one
   sender that add nothing new share a line, such as "3 more from FedEx". It
   shows only what Parcels keeps, never subjects or bodies. **Move to a new
   parcel** splits one row off, or says why it can't, for example when it
@@ -746,7 +778,10 @@ add a resource.
   hides, and keyboard focus moves to that parcel in the week or list card, or
   to the card's title when the parcel isn't on it; screen readers hear what
   was done. When no week or list card can take focus, the review card stays
-  and says it. Option: `title`.
+  and says it, with focus on it. Once that message is dismissed, it says
+  there's nothing to review until there's something to decide again.
+  Dismissing a message on any card keeps keyboard focus in that card.
+  Option: `title`.
 
 Delivery notifications open `/dashboard-parcels/week`. A parcel's Live
 Activity or notification adds `?parcel=` and the parcel's ID, and the week
@@ -831,14 +866,16 @@ mail, or whose text names an order or a parcel number in shipping words,
 such as "A sua encomenda 123456789 foi expedida", goes to the local AI or
 waits in **Needs review**; it's never taken for an e-mail about no parcel.
 That is, unless its subject asks for a review, a rating, your opinion, how
-it went, help to improve or a survey, as in "Ajude-nos a melhorar", "Como
-classificaria …?", "We'd love to hear from you" or "How did we do?", ends
+it went, help to improve, a survey or whether you'd recommend the sender,
+as in "Ajude-nos a melhorar", "Como classificaria …?", "We'd love to hear
+from you", "How did we do?" or "How likely are you to recommend us?", ends
 with a survey's question, as in "Tem um minuto?", or is about an invoice, a
 service notice such as opening hours, a fraud warning or new terms, or the
 sender's app or offers: such an e-mail isn't about a parcel, even when it
-names an order, unless its subject also gives the parcel's status in words
-Parcels reads as one, as in "Foi entregue: avalie a entrega" or "Entrega
-concluída: avalie a sua experiência". An
+names an order, unless its subject also gives the parcel's status, as in
+"Foi entregue: avalie a entrega", "Entrega concluída: avalie a sua
+experiência", "Encomenda levantada", "Paket abgeholt" or "Your parcel is
+waiting – got a minute?". An
 invoice whose text names an order or a parcel number and gives news of it
 or a customs charge, as in "A sua encomenda n.º 123456 foi enviada. Segue a
 fatura em anexo.", still goes to the local AI or waits in **Needs review**.
@@ -851,14 +888,21 @@ aren't understood" (see [Troubleshooting](#troubleshooting)). Those that
 the AI or you found weren't about a parcel, or that you dismissed, don't
 count.
 With the same exception for a status in the subject, what Parcels reads in
-such an e-mail doesn't count either. A survey or a review request ("Avalie
-a entrega", "How did we do?"), or a carrier's receipt for a parcel you
-handed in ("Recibo do seu envio", "O seu envio foi aceite", "Ihre
-Einlieferungsbestätigung", "Your shipment receipt"), names a parcel and its
-last status but brings no news about it: Parcels takes it for no parcel, so
-it never marks a parcel delivered, adds one or shows one ready for pickup.
-So does a marketplace's notice that a
-seller sent you a message, or a prompt to open a complaint or a dispute,
+such an e-mail counts only when it brings news. A survey or a review
+request, known by such a subject, names a delivery, its number and its last
+status, as in "O objeto … foi entregue. Ajude-nos a melhorar". That's no
+news: Parcels takes it for no parcel, so it never marks a parcel delivered,
+adds one or shows one ready for pickup. When its text also gives news, the
+news wins: a status other than delivered or waiting at its point, such as
+out for delivery or a missed attempt, a pickup code or a last day to
+collect count as in any shipping e-mail, and a day to come for the
+delivery alone, as in "will be delivered on Monday 30 November", sends it
+to **Needs review**. A carrier's receipt for
+a parcel you handed in ("Recibo do seu envio", "O seu envio foi aceite",
+"Ihre Einlieferungsbestätigung", "Your shipment receipt") names a parcel
+and its last status but brings no news about it either: Parcels takes it
+for no parcel, and so it does with a marketplace's notice that a seller
+sent you a message, or a prompt to open a complaint or a dispute,
 as in "Recebeu uma mensagem referente à encomenda nº …" or "Abrir
 reclamação sobre o pedido …", from any sender but a carrier: what a seller
 writes isn't the carrier's news, and a tracking number given only there
@@ -869,20 +913,22 @@ still marks that shipment delivered (see **Leroy Merlin** in
 shipping news, as in "Confirmação de envio", is read as news, since
 carriers and shops tell whoever waits for a parcel the same way: it goes
 to the local AI or waits in **Needs review**, where **Dismiss** removes
-it. A survey whose subject gives neither a
-status nor a request, as in "A sua entrega de 4 de novembro", is known by
-its text: when what Parcels reads in it is a delivery, or a parcel waiting
-at its point, and the text asks you to answer a few questions or a survey,
-as in "Responda a 3 perguntas sobre a entrega" or "Take our short survey",
-it's no parcel either. A delivery e-mail whose text only asks for a
-rating, as in "Avalie a entrega", still counts, but one with no status in
-its subject and an invitation to a survey in its text is taken for a
-survey. An invoice is no parcel either, unless its
-text gives a status or a customs charge, as in "Your package is out for
-delivery today": then what Parcels read waits for the local AI or in
-**Needs review**. In both cases, a product's name in quotes, as in
-'Ordered: "Customer Feedback Board"', is no topic. An e-mail waiting for
-the local AI that Parcels now reads as no parcel is settled without the
+it. Under any other subject, as in "Your delivery", a delivery e-mail
+counts, even when its text asks for a rating or invites you to a survey:
+rating requests in footers and closing lines, as in "Let us know how we
+did", "Diga-nos como correu", "Avalie a nossa entrega" or "Conte-nos a sua
+opinião", change nothing. Only when its text asks you to answer a few
+questions or a survey, or to rate the delivery on a scale, as in "Responda
+a 3 perguntas sobre a entrega", "Take our short survey" or "Choose 1 to 5
+stars", and the delivery is an old one, as its subject or
+text names an earlier day, as in "A sua entrega de 4 de novembro", or says
+"yesterday", does it wait in **Needs review**, so a survey weeks after a
+delivery can't mark a parcel delivered unchecked. An invoice is no parcel
+either, unless its text gives a status or a customs charge, as in "Your
+package is out for delivery today": then what Parcels read waits for the
+local AI or in **Needs review**. In both cases, a product's name in quotes,
+as in 'Ordered: "Customer Feedback Board"', is no topic. An e-mail waiting
+for the local AI that Parcels now reads as no parcel is settled without the
 AI, unless you asked for the AI. Nor does a survey from anyone, or a
 seller's message from anyone but a carrier, go to the local AI or under
 **Filtered** when the parsers can't read it: it's no parcel either.
@@ -1100,9 +1146,12 @@ How they behave:
   that brings back a status the parcel left less than 15 minutes before,
   such as out for delivery again after a step back to in transit when the
   carrier's e-mails and 17TRACK disagree, changes its activity silently
-  until its status changes again. Its notifications come as passive ones on
-  iPads and iPhones, and Android phones replace theirs without a sound while
-  it still shows. A shared activity changes silently when that's all that
+  until its status changes again. Here a status counts together with whether
+  the parcel is expected today or on a later day: a step back to in transit
+  that also moves the parcel to a later day alerts, though it was in transit
+  for today a moment before. Its notifications come as passive ones on iPads
+  and iPhones, and Android phones replace theirs without a sound while it
+  still shows. A shared activity changes silently when that's all that
   changed. An activity's start, a delivery and undoing a delivery marked by
   hand alert as usual (see below for notifications). So does the first news
   a device gets of a parcel that day, as on a device of someone just added
@@ -1716,7 +1765,16 @@ known, its event waits until dated news, such as an e-mail, gives it a time,
 and fires only if that time is less than a day old. 17TRACK's news without
 a time, or timed after Parcels read it, goes on when Parcels read it, so it
 fires when it's read. News with its day but no time Parcels can read fires
-until a day after that day ends. For example:
+until a day after that day ends.
+`parcels_delivered` fires once per delivery, restarts included. Parcels may
+place a delivery's e-mail again: a release's new rules, a join, a split, an
+accepted suggestion or an undone guess. The parcels whose status that
+changes fire `parcels_parcel_added` or `parcels_status_changed`, but the
+delivery doesn't fire `parcels_delivered` again. To announce deliveries,
+trigger on `parcels_delivered`, as below. Marking a parcel delivered again
+after taking the mark back is a new delivery. A parcel placed again may get a
+new ID, so a notification sent before then opens the page without its
+details. For example:
 
 ```yaml
 triggers:
@@ -1886,18 +1944,71 @@ actions:
   such e-mails for no parcel, and the second check in the item above
   (`topic_recheck`) takes those waiting in **Needs review** out. It doesn't
   undo what one already changed.
+- **A delivery e-mail that asked for a rating or invited you to a survey
+  was missed, or a survey asking whether you'd recommend the carrier marked
+  a parcel delivered.** In 0.1.28, Parcels took a delivery or pickup e-mail
+  whose subject gave no status for a survey when its text asked for a
+  rating in its footer or closing line, as in "Let us know how we did" or
+  "Diga-nos como correu", or invited you to a survey, as in "Take our short
+  survey". It did the same when the subject gave a pickup or a completed
+  delivery and asked for a review, as in "Encomenda levantada: avalie a sua
+  experiência" or "Zustellung abgeschlossen: bewerten Sie uns", and with
+  "Tell us about your delivery preferences" or "Your parcel is waiting –
+  got a minute?". The parcel stayed on its way, and nothing
+  showed in **Needs review** or under **Filtered**. It also read a survey
+  asking whether you'd recommend the carrier, as in "How likely are you to
+  recommend us?", as a delivery. After the update, when its first mail
+  check ends, Parcels downloads once more the e-mails of the last 30 days
+  that 0.1.28 first read and took for no parcel, at most 50 and newest
+  first, and reads them with its parsers, never the local AI, by the rules
+  in [Trusted and ignored senders](#trusted-and-ignored-senders). Current
+  news, whose expected day hasn't passed or, without one, from the last 7
+  days, adds its parcel or updates it. Older news only joins the parcel
+  it's about, and never reopens a parcel that was delivered or archived.
+  News more than a day old fires no events. An e-mail the parsers can't
+  read waits in **Needs review** when it looks like shipping news. It
+  doesn't undo what a survey already changed: open **E-mails** in the
+  parcel's details and select **Remove from Parcels** on one that isn't
+  about it. E-mails from ignored senders are skipped. After an update from
+  0.1.27, the first check in **A delivery that asked for a review was
+  missed** above reads 0.1.27's e-mails by these rules instead. The hub's
+  diagnostics count the e-mails as for Leroy Merlin's (`survey_recheck`).
 - **A delivery e-mail naming only the order marked the wrong package
   delivered, or showed apart.** Before 0.1.28, when two of the order's
   packages were on their way, a delivery e-mail that named only the order,
   such as a shop's, marked one of them delivered, which one depending on
-  the order Parcels read the e-mails in. When Parcels read a later
-  package's e-mails first, a delivery of the order's only package open when
-  it was sent showed as a parcel of its own. After the update, as Parcels
-  starts, it places such e-mails again by the rules in **Each parcel once**
-  in [What it does](#what-it-does): the first gets a parcel of its own,
-  suggested for each package in **Needs review**, and the second joins its
-  package as a guess you can undo. That fires no events. The hub's
-  diagnostics count the parcels changed (`release`).
+  the order Parcels read the e-mails in. 0.1.28 still did so once one
+  package's carrier said that day that it was out for delivery. When
+  Parcels read a later package's e-mails first, a delivery of the order's
+  only package open when it was sent showed as a parcel of its own. After
+  the update, as Parcels starts, it places such e-mails again by the rules
+  in **Each parcel once** in [What it does](#what-it-does): the first gets
+  a parcel of its own, suggested for each package in **Needs review**, and
+  the second joins its package as a guess you can undo. That fires no
+  events. The hub's diagnostics count the parcels changed (`release`).
+- **A delivery e-mail naming the order and an item marked the wrong package
+  delivered.** Before 0.1.29, when two of the order's packages on their way
+  held the same item, a delivery e-mail that named only the order and that
+  item, such as a shop's, marked the package last heard of delivered and
+  told every device; the other package stayed on its way. After the update,
+  Parcels reads such an e-mail as one naming no item, by the rules in
+  **Each parcel once** in [What it does](#what-it-does): it gets a parcel of
+  its own, suggested for each package in **Needs review**, and nothing is
+  sent. A delivery whose items only one package holds still joins that one.
+  Parcels doesn't move such e-mails read before the update: in the package's
+  **E-mails**, select **Move to a new parcel** on the delivery's row. The
+  package shows its own news again, and the delivery stays apart, suggested
+  for the order's other packages in **Needs review**.
+- **A shop's news and the carrier's showed as two parcels.** Before 0.1.29,
+  when a shop told its carrier's news in its own e-mails without the
+  tracking number, and the carrier's e-mails, 17TRACK and the Parcel app
+  named no shop, the package showed twice: once with the shop's name and
+  once with the carrier's number. After the update, as Parcels starts, it
+  joins such parcels with news from the last 30 days, or suggests them in
+  **Needs review**, by the rules in **Each parcel once** in
+  [What it does](#what-it-does). That fires no events. Parcels you merged
+  by hand stay as they are. The hub's diagnostics count the joins made
+  since and the suggestions at the last check (`relay_links`).
 - **A code you typed for a pickup point showed as the delivery PIN, or
   disappeared.** Before 0.1.27, a code or a pickup point you typed while
   Parcels showed the parcel ready for pickup showed as its delivery PIN when
@@ -2225,7 +2336,8 @@ actions:
   delivery and in transit when the carrier's e-mails and 17TRACK disagreed,
   alerted every iPhone, iPad and Android phone at each change. After the
   update, only its first change alerts: a status the parcel left less than
-  15 minutes before comes back silently (see
+  15 minutes before comes back silently. The status counts together with
+  whether the parcel is expected today or on a later day (see
   [Live Activities](#live-activities)).
 - **17TRACK's news without a time took a parcel back on its delivery day.**
   In 0.1.21, 17TRACK's news without a time counted as news from when
@@ -2313,7 +2425,8 @@ actions:
   waiting in review after updating to 0.1.27 (`topic_check`), the ones
   that read again, after updating to 0.1.28, the e-mails 0.1.27 took for no
   parcel (`survey_check`) and those waiting in review (`topic_recheck`), the
-  shapes of
+  one that read again, after updating to 0.1.29, the e-mails 0.1.28 took
+  for no parcel (`survey_recheck`), the shapes of
   Amazon's shipment IDs (`amazon_shipment_ids`), the Amazon shipments that
   Amazon's tracking linked to a carrier's package since 0.1.13 (`made`) and
   the guesses it undid since 0.1.16 (`undone`), and at the last
@@ -2335,7 +2448,11 @@ actions:
   that the update to 0.1.16 folded into their order's parcel
   (`order_fold`), the parcels typed under an order's number that Parcels
   joined to the order's parcel as it first started after the update to
-  0.1.27 (`typed_join`) and the release that last started, with the
+  0.1.27 (`typed_join`), the shops' parcels joined to the carrier's package
+  whose news they relayed since 0.1.29 (`made`) and those suggested at the
+  last check (`suggested`, in `relay_links`, absent until Parcels first
+  finds a shop's parcel and a carrier's package to compare) and the release
+  that last started, with the
   parcels whose e-mails it placed again as it first started (`release`);
   its
   notifications part says whether delivery PINs show on the lock screen

@@ -1463,6 +1463,46 @@ COMPANY_INITIALS: Final[tuple[str, ...]] = (
     "s.p.a",
     "s.r.l",
 )
+# Parts of a building that a letter names, as in "Bloco B." or "Edificio A.":
+# that letter ends the point's name, unlike an initial in "J. M. Silva".
+POINT_UNIT_WORDS: Final[tuple[str, ...]] = (
+    "bloco",
+    "edificio",
+    "lote",
+    "loja",
+    "piso",
+    "torre",
+    "porta",
+    "entrada",
+    "fracao",
+    "block",
+    "building",
+    "unit",
+    "tower",
+    "gate",
+    "wing",
+    "hall",
+    "level",
+    "bloque",
+    "portal",
+    "escalera",
+    "nave",
+    "haus",
+    "gebaude",
+    "halle",
+    "eingang",
+    "batiment",
+    "bat",
+    "tour",
+    "aile",
+    "palazzina",
+    "scala",
+    "ingresso",
+    "gebouw",
+    "blok",
+    "toren",
+    "ingang",
+)
 # Row labels before the street address of a pickup point.
 ADDRESS_LABELS: Final[tuple[str, ...]] = (
     "morada",
@@ -1606,6 +1646,10 @@ MARKETING_WORDS: Final[tuple[str, ...]] = (
     "concorso",
     "winactie",
     "giveaway",
+)
+
+# A survey's invitation: it hides no status, often only in a footer.
+SURVEY_WORDS: Final[tuple[str, ...]] = (
     "survey",
     "inquerito",
     "encuesta",

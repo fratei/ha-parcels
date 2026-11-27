@@ -416,6 +416,8 @@ export interface OriginInfo {
   tracking_number: string | null;
   reference: string | null;
   merchant: string | null;
+  /** A carrier's e-mail: who sent the package, when that isn't the parcel's shop (the shop's agent). */
+  sent_by: string | null;
   seller: string | null;
   order_numbers: string[];
   items: string[];

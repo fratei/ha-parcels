@@ -1070,6 +1070,33 @@ async def test_email_now_known_as_no_parcel_skips_the_ai(
     assert engine.data.review == {}
 
 
+async def test_survey_of_an_old_delivery_waits_in_review_not_for_the_ai(
+    hass: HomeAssistant, client: FakeMailClient, generate: AsyncMock
+) -> None:
+    """A survey whose body names an old delivery is held back for review.
+
+    The subject says no status; the body asks to answer questions about a
+    delivery a week ago. The parsers' reading waits under "Needs review",
+    and the local AI isn't asked: it would read the same delivery.
+    """
+    message = ctt_message(
+        f"Olá Alex,\nO objeto {TRACKING} foi entregue a 10 de novembro. "
+        "Responda a 3 perguntas sobre a entrega.\n",
+        subject=f"Objeto {TRACKING}",
+    )
+    engine = await async_setup(hass, client, message)
+
+    assert engine.ai.queue_size == 0
+    generate.assert_not_awaited()
+    assert engine.data.messages[message.hash].state is MessageState.REVIEW
+    (item,) = engine.data.review.values()
+    assert item.source is Source.PARSER
+    assert item.suggestion is not None
+    assert item.suggestion.kind is MailKind.DELIVERED
+    assert item.suggestion.tracking_numbers == (TRACKING,)
+    assert engine.data.parcels == {}
+
+
 async def test_email_kept_for_a_retry_over_an_update_skips_the_ai(
     hass: HomeAssistant,
     client: FakeMailClient,

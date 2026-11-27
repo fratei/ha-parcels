@@ -389,6 +389,7 @@ export const STRINGS = {
   originEdits: "Changed by hand",
   factShop: "Shop: {name}",
   factSeller: "Sold by {name}",
+  factSentBy: "Sent by {name}",
   factShipment: "Shipment {n}/{total}",
   factCarrierNumber: "{carrier} No. {tail}",
   factReference: "Reference {tail}",
@@ -617,6 +618,7 @@ export const MERGE_REASON_LABELS: Readonly<Record<string, string>> = {
   same_reference: "same shipment reference",
   amazon_tracking: "Amazon's tracking matches the carrier's times",
   parcel_switch: "the Parcel app switched Amazon's tracking to the carrier's number",
+  relay: "the shop relayed the carrier's news",
 };
 
 /** Fills `{name}` placeholders; unknown placeholders are left as they are. */

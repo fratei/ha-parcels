@@ -165,6 +165,7 @@ describe("labels", () => {
       mergeReasonLabel("parcel_switch"),
       "the Parcel app switched Amazon's tracking to the carrier's number",
     );
+    assert.equal(mergeReasonLabel("relay"), "the shop relayed the carrier's news");
     assert.equal(humanize("low-confidence"), "Low confidence");
   });
 

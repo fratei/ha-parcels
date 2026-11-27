@@ -1183,6 +1183,12 @@ class DateExpression:
     deadline: bool = False
     # An order, shipping, offer or superseded delivery date.
     other: bool = False
+    # Written with its day of the month ("30 de novembro", "30/11"), not
+    # only as a weekday or a day counted from the e-mail ("on Thursday",
+    # "today"), which are read as days to come, whatever the tense.
+    named: bool = False
+    # Written as a weekday alone ("on Friday"), with no day of the month.
+    weekday: bool = False
 
 
 # What a deadline is about. Stems match the start of a word; a stem only
@@ -1935,6 +1941,9 @@ def _located_expressions(
                 deadline=_is_deadline(found.before, found.after, found.atom),
                 other=found.order_heading
                 or _is_other(found.before, found.after, found.atom),
+                named=found.atom.kind == "date",
+                weekday=found.atom.kind == "weekday"
+                and found.span_end == found.atom.end,
             ),
             found.span_start,
             found.span_end,
@@ -1956,6 +1965,17 @@ def date_expressions(
     date comes between them.
     """
     return [found for found, _, _ in _located_expressions(text, reference, tz, lang)]
+
+
+def located_date_expressions(
+    text: str, reference: datetime, tz: tzinfo, lang: str | None = None
+) -> list[tuple[DateExpression, int, int]]:
+    """Return ``date_expressions`` with the start and end offset of each.
+
+    The offsets are those of ``text``: folding keeps one character per
+    character.
+    """
+    return _located_expressions(text, reference, tz, lang)
 
 
 # A sentence saying the customer receives the parcel on a day ("You'll

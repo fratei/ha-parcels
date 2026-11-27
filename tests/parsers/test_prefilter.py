@@ -12,6 +12,7 @@ from custom_components.parcels.parsers.prefilter import (
     MARKETING_PHRASES,
     MESSAGE_TOPICS,
     STRONG_KEYWORDS,
+    SUBJECT_STATUSES,
     SURVEY_ACTIONS,
     WEAK_KEYWORDS,
     feedback_topic,
@@ -24,6 +25,7 @@ from custom_components.parcels.parsers.prefilter import (
     not_shipping_topic,
     sent_receipt,
     survey_request,
+    survey_sentence,
 )
 
 UNKNOWN = "news@store.example"
@@ -584,6 +586,19 @@ def test_delivery_notices_are_no_feedback(subject: str) -> None:
         "Dicci il tuo parere",
         "Heb je even een minuutje?",
         "We horen graag van je",
+        "Let us know how we did",
+        "Alex, let us know how we're doing",
+        "Laat ons weten hoe we het deden",
+        "Laat ons weten hoe het ging",
+        # Whether you'd recommend the sender.
+        "Qual a probabilidade de nos recomendar?",
+        "Recomendaria os CTT a um amigo?",
+        "¿Recomendarías SEUR a un amigo?",
+        "How likely are you to recommend UPS?",
+        "Würden Sie DHL weiterempfehlen?",
+        "Recommanderiez-vous GLS à un ami ?",
+        "Consiglieresti GLS a un amico?",
+        "Zou je DPD aanbevelen aan een vriend?",
     ],
 )
 def test_feedback_topic(subject: str) -> None:
@@ -607,6 +622,21 @@ def test_feedback_topic(subject: str) -> None:
         "Votre colis est arrivé : donnez votre avis",
         "Il tuo pacco è arrivato: com'è andata?",
         "Je pakket is er: hoe was je bezorging?",
+        # A parcel collected, delivered or waiting is a status too.
+        "Encomenda levantada: avalie a sua experiência",
+        "Entrega completada: valora tu experiencia",
+        "Your parcel has been collected: rate your experience",
+        "Your parcel is waiting \u2013 got a minute?",
+        "Zustellung abgeschlossen: bewerten Sie uns",
+        "Paket abgeholt: bewerten Sie uns",
+        "Livraison effectuée : donnez votre avis",
+        "Consegna completata: valuta la tua esperienza",
+        "Bezorging voltooid: beoordeel ons",
+        # Asking about the parcel's delivery isn't asking for feedback.
+        "Tell us about your delivery preferences",
+        "Let us know how you'd like your parcel delivered",
+        "Laat ons weten hoe u uw pakket wilt ontvangen",
+        "Laat ons weten hoe het pakket bezorgd moet worden",
         # A product's name in quotes isn't the e-mail's topic.
         'Ordered: "Customer Feedback Board" and 1 more item',
         'Ordered: "Customer Feedback Board Deluxe Edition wit...',
@@ -642,13 +672,35 @@ def test_no_feedback_topic(subject: str) -> None:
         ("Informação", "Participe no nosso inquérito de satisfação."),
         ("Tu entrega", "Responde a 3 preguntas sobre la entrega."),
         ("Tu entrega", "Participa en nuestra breve encuesta."),
-        ("A quick question about your delivery", "Tell us how we did in 2 minutes."),
+        (
+            "A quick question about your delivery",
+            "On a scale of 0 to 10, how likely are you to recommend us?",
+        ),
+        ("Your delivery", "How would you rate it? Choose 1 to 5 stars."),
         ("Your delivery", "Take our short survey."),
         ("Ihre Sendung", "Bitte nehmen Sie an unserer Umfrage teil."),
         ("Ihre Sendung", "Beantworten Sie 3 kurze Fragen."),
         ("Votre livraison", "Répondez à notre enquête en 2 minutes."),
         ("La tua consegna", "Rispondi a 3 domande sulla consegna."),
         ("Je bezorging", "Vul onze korte enquête in."),
+        # A request for a rating that says how long it takes.
+        ("A sua entrega", "Diga-nos como correu em 2 minutos."),
+        ("Tu entrega", "Cuéntanos cómo lo hicimos en 1 minuto."),
+        ("Your delivery", "Tell us how we did in 2 minutes."),
+        ("Ihre Sendung", "Bewerten Sie uns in 2 Minuten."),
+        ("Votre livraison", "Donnez votre avis en 2 minutes."),
+        ("La tua consegna", "Dicci com'è andata in 2 minuti."),
+        ("Je bezorging", "Laat ons weten hoe we het deden in 2 minuten."),
+        # How likely you are to recommend the sender.
+        ("A sua entrega", "Qual a probabilidade de nos recomendar a um amigo?"),
+        ("Tu entrega", "¿Qué probabilidad hay de que nos recomiendes?"),
+        ("Ihre Sendung", "Wie wahrscheinlich ist es, dass Sie uns weiterempfehlen?"),
+        (
+            "Votre livraison",
+            "Quelle est la probabilité que vous recommandiez notre service ?",
+        ),
+        ("La tua consegna", "Quanto è probabile che ci consigli a un amico?"),
+        ("Je bezorging", "Hoe waarschijnlijk is het dat je ons aanbeveelt?"),
     ],
 )
 def test_survey_request(subject: str, text: str) -> None:
@@ -673,11 +725,34 @@ def test_survey_request(subject: str, text: str) -> None:
         ("Votre livraison", "Donnez votre avis."),
         ("La tua consegna", "Com'è andata? Lascia una recensione."),
         ("Je bezorging", "Hoe was je bezorging? Beoordeel ons."),
+        ("A sua entrega", "Avalie a nossa entrega. Conte-nos a sua opinião."),
+        ("Tu entrega", "Cuéntanos cómo lo hemos hecho."),
+        ("Your delivery", "Let us know how we did. Tell us how we're doing."),
+        ("Ihre Sendung", "Bewerten Sie uns."),
+        ("Votre livraison", "Donnez-nous votre avis."),
+        ("La tua consegna", "Dicci com'è andata."),
+        ("Je bezorging", "Laat ons weten hoe we het deden."),
     ],
 )
 def test_no_survey_request(subject: str, text: str) -> None:
     """A status in the subject, or only a request for a rating, isn't a survey."""
     assert not survey_request(subject, text)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Como avalia a entrega?", True),
+        ("Take our 2-minute survey.", True),
+        ("Escolha de 1 a 5 estrelas.", True),
+        ("O objeto foi entregue a 4 de novembro.", False),
+        ("Your package will arrive on Friday.", False),
+        ("Levante-o até 24 de novembro.", False),
+    ],
+)
+def test_survey_sentence(text: str, expected: bool) -> None:
+    """A sentence asking for feedback holds the survey's dates, not the parcel's."""
+    assert survey_sentence(text) is expected
 
 
 @pytest.mark.parametrize(
@@ -954,5 +1029,6 @@ def test_keyword_tables_cover_all_languages() -> None:
         FEEDBACK_TOPICS,
         MESSAGE_TOPICS,
         SURVEY_ACTIONS,
+        SUBJECT_STATUSES,
     ):
         assert set(table) == {"pt", "es", "en", "de", "fr", "it", "nl"}

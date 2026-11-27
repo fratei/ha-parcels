@@ -332,3 +332,46 @@ describe("after the last review decision hides the review card", () => {
     assert.deepEqual(announced, []);
   });
 });
+
+describe("dismissing the card's error message", () => {
+  /** Dismisses it while focus is lost or elsewhere on the page; where focus is in the card then. */
+  async function dismissed(lost: boolean): Promise<{ focused: string | null; html: string }> {
+    const card = weekCard([]);
+    const root: { activeElement: { name: string } | null } = { activeElement: null };
+    const heading = {
+      name: "h2.title",
+      focus: () => {
+        root.activeElement = heading;
+      },
+    };
+    card.renderRoot = { querySelector: (selector: string) => (selector === "h2.title" ? heading : null) };
+    Object.defineProperty(card, "shadowRoot", { value: root });
+    // Never connected, it never updates: what waits for its next render runs at once instead.
+    Object.defineProperty(card, "updateComplete", { value: Promise.resolve(true) });
+    card.showActionError("Couldn't add the parcel");
+    const dismiss = listener(card.render(), STRINGS.dismissMessage);
+    assert.equal(typeof dismiss, "function");
+
+    const host = globalThis as { document?: unknown };
+    const body = { name: "body" };
+    // Focus went with the message's button, or the user had moved it on.
+    host.document = { body, activeElement: lost ? body : { name: "elsewhere" } };
+    try {
+      (dismiss as () => void).call(card);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      delete host.document;
+    }
+    return { focused: root.activeElement?.name ?? null, html: renderText(card.render()) };
+  }
+
+  test("moves focus that went with it to the card's heading", async () => {
+    const { focused, html } = await dismissed(true);
+    assert.equal(focused, "h2.title");
+    assert.doesNotMatch(html, /Couldn't add the parcel/);
+  });
+
+  test("leaves focus that moved on where it is", async () => {
+    assert.equal((await dismissed(false)).focused, null);
+  });
+});

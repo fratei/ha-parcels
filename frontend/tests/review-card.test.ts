@@ -214,9 +214,11 @@ describe("the card of a user who isn't an administrator", () => {
       _hass: unknown;
       _status: { icon: string; text: string; tab: string } | null;
       _handingOff: boolean;
-      _letGo: boolean;
+      _staying: boolean;
       _decision: { suggestionId: string; done: Promise<ReviewDone | null> } | null;
       hidden: boolean;
+      renderRoot: unknown;
+      willUpdate(changed: Map<string, unknown>): void;
       _renderMergeSuggestion(suggestion: MergeSuggestion, index: number): unknown;
       _settleDecision(): void;
       _startsHandOff(): boolean;
@@ -275,6 +277,37 @@ describe("the card of a user who isn't an administrator", () => {
       } finally {
         delete host.document;
       }
+    }
+
+    /** Lets what was queued so far run, e.g. what waits for the next render. */
+    function settled(): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    interface Rendered {
+      readonly host: HandOffHost;
+      readonly root: { activeElement: { name: string } | null };
+      focused(): string | null;
+    }
+
+    /** A connected card, rendered at once, whose panel can take focus; nothing in it has focus. */
+    function rendered(): Rendered {
+      const host = card(false) as unknown as HandOffHost;
+      const root: Rendered["root"] = { activeElement: null };
+      const panel = {
+        name: "panel-review",
+        focus: () => {
+          root.activeElement = panel;
+        },
+      };
+      host.renderRoot = {
+        querySelector: (selector: string) => (selector === "#panel-review" ? panel : null),
+      };
+      Object.defineProperty(host, "isConnected", { value: true });
+      Object.defineProperty(host, "shadowRoot", { value: root });
+      // Not really connected, it never updates: what waits for its next render runs at once instead.
+      Object.defineProperty(host, "updateComplete", { value: Promise.resolve(true) });
+      return { host, root, focused: () => root.activeElement?.name ?? null };
     }
 
     test("stays while it says what their decision did, and while it hands focus on", () => {
@@ -355,9 +388,9 @@ describe("the card of a user who isn't an administrator", () => {
       const handing = connected();
       handing._handingOff = true;
       assert.equal(handing._startsHandOff(), false);
-      const letGo = connected();
-      letGo._letGo = true;
-      assert.equal(letGo._startsHandOff(), false);
+      const staying = connected();
+      staying._staying = true;
+      assert.equal(staying._startsHandOff(), false);
       const failed = connected();
       failed.showActionError("Couldn't merge");
       assert.equal(failed._startsHandOff(), false);
@@ -383,7 +416,7 @@ describe("the card of a user who isn't an administrator", () => {
       assert.equal(host._handingOff, false);
       assert.equal(host._decision, null);
       assert.equal(host._status, null);
-      assert.equal(host._letGo, false);
+      assert.equal(host._staying, false);
       assert.equal(renderText(host.render()), "");
     });
 
@@ -402,21 +435,66 @@ describe("the card of a user who isn't an administrator", () => {
       assert.match(renderText(host.render()), /Kept apart\. Nothing else to review\./);
     });
 
-    test("without a decision here, it says only that nothing is left, or lets focus go", async () => {
+    test("without a decision here, another card says only that nothing is left, or it stays", async () => {
       const host = connected();
       host._handingOff = true;
       const asked = await onPage(() => true, () => host._handOff());
       assert.deepEqual(asked, [{ parcels: [], message: STRINGS.reviewDoneNothing }]);
       assert.equal(host._handingOff, false);
-      assert.equal(host._letGo, false);
+      assert.equal(host._staying, false);
 
       const alone = connected();
       alone._handingOff = true;
       await onPage(() => false, () => alone._handOff());
       assert.equal(alone._handingOff, false);
-      assert.equal(alone._letGo, true);
+      assert.equal(alone._staying, true);
       assert.equal(alone._status, null);
-      assert.equal(renderText(alone.render()), "");
+      assert.match(renderText(alone.render()), /<p class="empty">Nothing to review\.<\/p>/);
+    });
+
+    test("when no card takes focus, it keeps focus and stays, also once its message is dismissed", async () => {
+      // The decided suggestion's buttons are gone, and focus with them.
+      const { host, root, focused } = rendered();
+      host._handingOff = true;
+      host._decision = decided(MERGED);
+      await withDocument(true, async () => {
+        await onPage(() => false, () => host._handOff());
+        await settled();
+        assert.equal(focused(), "panel-review");
+        assert.equal(host._staying, true);
+
+        const dismiss = listener(host.render(), STRINGS.dismissMessage);
+        assert.equal(typeof dismiss, "function");
+        root.activeElement = { name: "dismiss" };
+        (dismiss as () => void).call(host);
+        // Rendered without the message, its button is gone.
+        root.activeElement = null;
+        await settled();
+      });
+      assert.equal(host._status, null);
+      assert.equal(focused(), "panel-review");
+      assert.equal(host._startsHandOff(), false);
+      assert.match(renderText(host.render()), /<p class="empty">Nothing to review\.<\/p>/);
+      assert.ok(host.getCardSize() > 0);
+    });
+
+    test("stays until there's something to decide again", () => {
+      // Node has no HTMLElement, which willUpdate checks the focused element with.
+      const host = globalThis as { HTMLElement?: unknown };
+      host.HTMLElement = class {};
+      try {
+        const still = connected();
+        still._staying = true;
+        still.willUpdate(new Map());
+        assert.equal(still._staying, true);
+
+        const again = connected([SAME_ORDER]);
+        again._staying = true;
+        again.willUpdate(new Map());
+        assert.equal(again._staying, false);
+      } finally {
+        delete host.HTMLElement;
+      }
     });
 
     test("keeps focus when there's something to decide again, and leaves focus that moved on", async () => {

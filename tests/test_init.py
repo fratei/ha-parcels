@@ -11,7 +11,7 @@ from unittest.mock import patch
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -35,6 +35,7 @@ from custom_components.parcels.const import (
 )
 from custom_components.parcels.dedup import (
     ORDER_FOLD_KEY,
+    REASON_RELAY,
     REASON_SAME_ORDER,
     REPAIR_KEY,
     REPAIR_VERSION,
@@ -55,6 +56,7 @@ from custom_components.parcels.models import (
     MessageRecord,
     MessageState,
     Origin,
+    Parcel,
     ParcelEvent,
     ParcelsData,
     ReviewItem,
@@ -1193,10 +1195,9 @@ async def test_start_joins_an_old_delivery_to_the_package_open_then(
     ("release", "events"),
     [
         (None, set()),
-        (
-            {"version": VERSION},
-            {EVENT_STATUS_CHANGED, EVENT_PARCEL_ADDED, EVENT_DELIVERED},
-        ),
+        # The delivery was told of before the restart: its parcel is new, and
+        # the package goes back, but the delivery isn't news again.
+        ({"version": VERSION}, {EVENT_STATUS_CHANGED, EVENT_PARCEL_ADDED}),
     ],
     ids=["after-an-update", "same-release"],
 )
@@ -1275,6 +1276,339 @@ async def test_start_reconciles_quietly_once_after_an_update(
     assert set(fired) == events
     assert engine.data.engine[RELEASE_KEY]["version"] == VERSION
     assert engine.diagnostics()["release"]["version"] == VERSION
+
+
+# What automations hear: an event's type, parcel and status.
+Fired = list[tuple[str, str, str]]
+
+
+def _listen(hass: HomeAssistant) -> Fired:
+    """Record the events Parcels fires, in order."""
+    fired: Fired = []
+
+    @callback
+    def record(event: Event) -> None:
+        fired.append((event.event_type, event.data["parcel_id"], event.data["status"]))
+
+    for event_type in (EVENT_PARCEL_ADDED, EVENT_STATUS_CHANGED, EVENT_DELIVERED):
+        hass.bus.async_listen(event_type, record)
+    return fired
+
+
+def _read(
+    engine: ParcelsEngine,
+    origin_id: str,
+    hours: float,
+    kind: MailKind = MailKind.SHIPPED,
+    **details: Any,
+) -> None:
+    """Read an e-mail about Loja Exemplo's order, sent ``hours`` ago."""
+    now = datetime.fromisoformat(NOW)
+    details.setdefault("merchant", "Loja Exemplo")
+    details.setdefault("orders", ["001234567890"])
+    apply_contribution(
+        engine.data,
+        contribution(
+            origin_id, kind=kind, time=now - timedelta(hours=hours), **details
+        ),
+        now,
+    )
+    engine.async_changed()
+
+
+def _holder(engine: ParcelsEngine, origin_id: str) -> Parcel:
+    """Return the parcel an e-mail is in."""
+    return next(p for p in engine.data.parcels.values() if origin_id in p.origins)
+
+
+async def test_a_delivery_placed_again_is_told_once(hass: HomeAssistant) -> None:
+    """parcels_delivered fires once per delivery, however often Parcels
+    places its e-mail again.
+
+    The shop's "delivered" e-mail, which names only the order, delivers its
+    only package on its way. The order's other package, read later, was on
+    its way too: the delivery gets a parcel of its own, and the first package
+    goes back. Automations hear of both, but not of the delivery again. The
+    other package's own delivery is news.
+    """
+    add_hub(hass)
+    engine = await async_setup_parcels(hass)
+    fired = _listen(hass)
+
+    _read(engine, "msg:one#0", 5, carrier="ctt", number="RR482915732PT")
+    _read(engine, "msg:done#0", 1, MailKind.DELIVERED)
+    first = _holder(engine, "msg:one#0").id
+    assert _holder(engine, "msg:done#0").id == first
+    _read(engine, "msg:two#0", 4, carrier="ctt", number="RR123456785PT")
+    second = _holder(engine, "msg:two#0").id
+    delivery = _holder(engine, "msg:done#0").id
+    assert delivery not in (first, second)
+    _read(
+        engine,
+        "msg:arrived#0",
+        0.5,
+        MailKind.DELIVERED,
+        carrier="ctt",
+        number="RR123456785PT",
+        merchant=None,
+        orders=[],
+    )
+    await hass.async_block_till_done()
+
+    assert _holder(engine, "msg:arrived#0").id == second
+    assert sorted(fired) == sorted(
+        [
+            (EVENT_PARCEL_ADDED, first, "shipped"),
+            (EVENT_STATUS_CHANGED, first, "delivered"),
+            (EVENT_DELIVERED, first, "delivered"),
+            (EVENT_STATUS_CHANGED, first, "shipped"),
+            (EVENT_PARCEL_ADDED, second, "shipped"),
+            (EVENT_PARCEL_ADDED, delivery, "delivered"),
+            (EVENT_STATUS_CHANGED, second, "delivered"),
+            (EVENT_DELIVERED, second, "delivered"),
+        ]
+    )
+
+
+async def test_a_delivery_joined_and_taken_apart_is_told_once(
+    hass: HomeAssistant,
+) -> None:
+    """The shop's delivery, read before the e-mail of the package on its way
+    when it was sent, gets a parcel of its own, then joins the package as a
+    guess. Undoing the guess takes it apart again. Each time the parcels'
+    statuses are news, but the delivery was only once.
+    """
+    add_hub(hass)
+    engine = await async_setup_parcels(hass)
+    fired = _listen(hass)
+
+    # Sent after the delivery: not the package it's about.
+    _read(engine, "msg:two#0", 2, carrier="ctt", number="RR123456785PT")
+    later = _holder(engine, "msg:two#0").id
+    _read(engine, "msg:done#0", 3, MailKind.DELIVERED)
+    alone = _holder(engine, "msg:done#0").id
+    _read(engine, "msg:one#0", 5, carrier="ctt", number="RR482915732PT")
+    package = _holder(engine, "msg:one#0")
+    assert "msg:done#0" in package.origins
+    assert package.auto_merged is not None
+    engine.undo_merge(package.id)
+    await hass.async_block_till_done()
+
+    delivery = _holder(engine, "msg:done#0")
+    assert package.state.status is ParcelStatus.SHIPPED
+    assert fired == [
+        (EVENT_PARCEL_ADDED, later, "shipped"),
+        (EVENT_PARCEL_ADDED, alone, "delivered"),
+        (EVENT_DELIVERED, alone, "delivered"),
+        (EVENT_PARCEL_ADDED, package.id, "delivered"),
+        (EVENT_STATUS_CHANGED, package.id, "shipped"),
+        (EVENT_PARCEL_ADDED, delivery.id, "delivered"),
+    ]
+
+
+async def test_a_delivery_beside_two_packages_is_told_once(
+    hass: HomeAssistant,
+) -> None:
+    """The shop's delivery stays apart from the order's two packages on
+    their way when one of them goes out for delivery, and its news is told
+    once."""
+    add_hub(hass)
+    engine = await async_setup_parcels(hass)
+    fired = _listen(hass)
+
+    _read(engine, "msg:order#0", 5, MailKind.ORDER)
+    _read(engine, "msg:one#0", 4.6, carrier="ctt", number="RR482915732PT")
+    _read(engine, "msg:two#0", 4.5, carrier="ctt", number="RR123456785PT")
+    _read(engine, "msg:done#0", 1, MailKind.DELIVERED)
+    _read(
+        engine,
+        "msg:out#0",
+        0.1,
+        MailKind.OUT_FOR_DELIVERY,
+        carrier="ctt",
+        number="RR482915732PT",
+        orders=[],
+    )
+    _read(engine, "msg:other#0", 0, carrier="ctt", number="RR000000017PT", orders=[])
+    await hass.async_block_till_done()
+
+    package = _holder(engine, "msg:one#0")
+    delivery = _holder(engine, "msg:done#0")
+    assert package.state.status is ParcelStatus.OUT_FOR_DELIVERY
+    assert delivery.id != package.id
+    assert _holder(engine, "msg:two#0").id not in (package.id, delivery.id)
+    assert [event for event in fired if event[0] == EVENT_DELIVERED] == [
+        (EVENT_DELIVERED, delivery.id, "delivered")
+    ]
+
+
+async def test_a_suggested_delivery_accepted_is_told_once(
+    hass: HomeAssistant,
+) -> None:
+    """Putting the shop's delivery with one of two packages tells that the
+    package was delivered, but not of the delivery again."""
+    add_hub(hass)
+    engine = await async_setup_parcels(hass)
+    _read(engine, "msg:one#0", 5, carrier="ctt", number="RR482915732PT")
+    _read(engine, "msg:two#0", 4, carrier="ctt", number="RR123456785PT")
+    _read(engine, "msg:done#0", 1, MailKind.DELIVERED)
+    second = _holder(engine, "msg:two#0").id
+    delivery = _holder(engine, "msg:done#0").id
+    assert delivery != second
+    suggestion = next(s for s in engine.suggestions if s.parcel_id == second)
+    fired = _listen(hass)
+
+    engine.accept_suggestion(suggestion.id, delivery)
+    await hass.async_block_till_done()
+
+    assert _holder(engine, "msg:done#0").id == second
+    assert fired == [(EVENT_STATUS_CHANGED, second, "delivered")]
+
+
+async def test_marking_again_after_an_undo_is_news(hass: HomeAssistant) -> None:
+    """Each mark by hand is a delivery of its own."""
+    add_hub(hass)
+    engine = await async_setup_parcels(hass)
+    _read(engine, "msg:one#0", 5, carrier="ctt", number="RR482915732PT")
+    parcel = _holder(engine, "msg:one#0").id
+    fired = _listen(hass)
+
+    engine.mark_delivered(parcel)
+    engine.undo_delivery(parcel)
+    engine.mark_delivered(parcel)
+    await hass.async_block_till_done()
+
+    told = [
+        (EVENT_STATUS_CHANGED, parcel, "delivered"),
+        (EVENT_DELIVERED, parcel, "delivered"),
+    ]
+    assert fired == [*told, (EVENT_STATUS_CHANGED, parcel, "shipped"), *told]
+
+
+# The shop's own e-mails tell its carrier's news two hours after the carrier,
+# without its number; the carrier's name only the shop's agent. By the hours
+# ago each was sent.
+RELAY_MAILS = {
+    "msg:s1#0": (20, MailKind.SHIPPED),
+    "msg:c1#0": (6, MailKind.OUT_FOR_DELIVERY),
+    "msg:s2#0": (4, MailKind.OUT_FOR_DELIVERY),
+    "msg:c2#0": (3, MailKind.DELIVERED),
+    "msg:s3#0": (1, MailKind.DELIVERED),
+}
+
+
+def _relay_details(origin_id: str) -> dict[str, Any]:
+    """Return what the shop's or the carrier's e-mail says besides its news."""
+    if origin_id.startswith("msg:s"):
+        return {"label": "lojaexemplo.example", "source": Source.AI, "carrier": "ctt"}
+    return {
+        "carrier": "ctt_expresso",
+        "number": "DS314159268PT",
+        "merchant": "Envios Exemplo",
+        "label": "cttexpress.com",
+        "orders": (),
+    }
+
+
+@pytest.mark.parametrize(
+    ("order", "expected"),
+    [
+        pytest.param(
+            ["msg:s1#0", "msg:c1#0", "msg:s2#0", "msg:c2#0", "msg:s3#0"],
+            [
+                (EVENT_PARCEL_ADDED, "shop", "shipped"),
+                (EVENT_PARCEL_ADDED, "package", "out_for_delivery"),
+                (EVENT_STATUS_CHANGED, "shop", "out_for_delivery"),
+                (EVENT_STATUS_CHANGED, "package", "delivered"),
+                (EVENT_DELIVERED, "package", "delivered"),
+            ],
+            id="as-sent",
+        ),
+        pytest.param(
+            ["msg:s1#0", "msg:s2#0", "msg:s3#0", "msg:c1#0", "msg:c2#0"],
+            [
+                (EVENT_PARCEL_ADDED, "shop", "shipped"),
+                (EVENT_STATUS_CHANGED, "shop", "out_for_delivery"),
+                (EVENT_STATUS_CHANGED, "shop", "delivered"),
+                (EVENT_DELIVERED, "shop", "delivered"),
+                (EVENT_PARCEL_ADDED, "package", "out_for_delivery"),
+                (EVENT_STATUS_CHANGED, "package", "delivered"),
+            ],
+            id="shop-first",
+        ),
+    ],
+)
+async def test_a_relayed_delivery_is_told_once(
+    hass: HomeAssistant, order: list[str], expected: Fired
+) -> None:
+    """The shop's parcel joins the carrier's package whose news it told
+    again, and automations hear of the delivery once, whichever mailbox is
+    read first. The package keeps the carrier's number and delivery time,
+    with the shop's name."""
+    now = datetime.fromisoformat(NOW)
+    add_hub(hass)
+    engine = await async_setup_parcels(hass)
+    fired = _listen(hass)
+    ids: dict[str, str] = {}
+
+    for origin_id in order:
+        hours, kind = RELAY_MAILS[origin_id]
+        _read(engine, origin_id, hours, kind, **_relay_details(origin_id))
+        side = "shop" if origin_id.startswith("msg:s") else "package"
+        ids.setdefault(side, _holder(engine, origin_id).id)
+    await hass.async_block_till_done()
+
+    [parcel] = engine.data.parcels.values()
+    assert parcel.id == ids["package"]
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_RELAY
+    state = parcel.state
+    assert (state.merchant, state.carrier, state.tracking_number) == (
+        "Loja Exemplo",
+        "ctt_expresso",
+        "DS314159268PT",
+    )
+    assert state.status is ParcelStatus.DELIVERED
+    assert state.status_time == now - timedelta(hours=3)
+    names = {pid: side for side, pid in ids.items()}
+    assert [(event, names[pid], status) for event, pid, status in fired] == expected
+
+
+async def test_start_joins_a_relayed_parcel_quietly(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    """The first start after the update joins a shop's parcel to the
+    carrier's package whose news it told again, which no earlier release
+    did. It fires no events, and diagnostics count it."""
+    now = datetime.fromisoformat(NOW)
+    data = ParcelsData()
+    data.engine[REPAIR_KEY] = REPAIR_VERSION
+    data.engine[RELEASE_KEY] = {"version": "0.1.28", "changed": 0}
+    for origin_id, (hours, kind) in RELAY_MAILS.items():
+        details = {"merchant": "Loja Exemplo", "orders": ["001234567890"]}
+        details |= _relay_details(origin_id)
+        when = now - timedelta(hours=hours)
+        apply_contribution(
+            data, contribution(origin_id, kind=kind, time=when, **details), when
+        )
+    assert len(data.parcels) == 2
+    hass_storage["parcels"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "parcels",
+        "data": data.as_dict(),
+    }
+    add_hub(hass)
+    fired = _listen(hass)
+
+    engine = await async_setup_parcels(hass)
+    await hass.async_block_till_done()
+
+    [parcel] = engine.data.parcels.values()
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_RELAY
+    assert fired == []
+    assert engine.diagnostics()["relay_links"] == {"made": 1, "suggested": 0}
 
 
 async def test_stop_ignoring_survives_a_restart(hass: HomeAssistant) -> None:

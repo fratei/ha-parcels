@@ -56,6 +56,7 @@ from .models import (
     TimelineEntry,
     dt_to_str,
     inference_reason,
+    is_carrier_mail,
     merchant_key,
     one_day,
     time_to_str,
@@ -870,11 +871,14 @@ def origin_rows(
     tells whether it can be moved to a new parcel ("split_blocked" says why
     not) and whether it's an e-mail, which can be removed from Parcels.
     What the local AI filled in for an e-mail is "part_of" that e-mail's
-    row: the two move together.
+    row: the two move together. A carrier's e-mail naming who sent the
+    package, when that isn't the parcel's shop (the shop's agent), says
+    it's "sent_by" them.
     """
     edits = manual_origin_id(parcel.id)
     shipments = _shipment_numbers(engine, parcel, viewer)
     parts = _email_parts(parcel)
+    shop = merchant_key(parcel.state.merchant)
     groups: dict[str, set[str]] = defaultdict(set)
     for origin_id in parcel.origins:
         lead = parts.get(origin_id, origin_id)
@@ -911,6 +915,11 @@ def origin_rows(
                 "tracking_number": origin.tracking_number or None,
                 "reference": origin.reference or None,
                 "merchant": origin.merchant or None,
+                "sent_by": origin.merchant
+                if origin.merchant
+                and is_carrier_mail(origin)
+                and merchant_key(origin.merchant) != shop
+                else None,
                 "seller": origin.seller or None,
                 "order_numbers": list(origin.order_numbers),
                 "items": list(origin.items),

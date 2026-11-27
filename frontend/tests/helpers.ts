@@ -79,6 +79,7 @@ export function makeOrigin(overrides: Partial<OriginInfo> = {}): OriginInfo {
     tracking_number: null,
     reference: null,
     merchant: null,
+    sent_by: null,
     seller: null,
     order_numbers: [],
     items: [],

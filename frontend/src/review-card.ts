@@ -181,6 +181,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     _confirmIgnore: { state: true },
     _status: { state: true },
     _handingOff: { state: true },
+    _staying: { state: true },
   };
 
   static override styles: CSSResultGroup = [
@@ -397,6 +398,12 @@ export class ParcelsReviewCard extends ParcelsCardBase {
    * card has taken focus from it.
    */
   declare private _handingOff: boolean;
+  /**
+   * True once no other card could take focus from it: the card then keeps
+   * focus and stays, also when there's nothing left to say, until there's
+   * something to decide again.
+   */
+  declare private _staying: boolean;
 
   /** The focused item before the current render, to move focus on when it's gone. */
   private _focusedItem: { id: string; index: number } | null = null;
@@ -408,8 +415,6 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   private _decision: { suggestionId: string; done: Promise<ReviewDone | null> } | null = null;
   /** Set when an update started handing focus on; `updated` does it. */
   private _handOffPending = false;
-  /** Set when no card took focus; the card then hides without trying again. */
-  private _letGo = false;
 
   constructor() {
     super();
@@ -426,6 +431,7 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     this._confirmIgnore = null;
     this._status = null;
     this._handingOff = false;
+    this._staying = false;
   }
 
   static getStubConfig(): Record<string, unknown> {
@@ -508,9 +514,12 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     );
   }
 
-  /** Also shown while it hands focus on, so that focus isn't lost when it hides. */
+  /**
+   * Also shown while it hands focus on, so that focus isn't lost when it
+   * hides, and once no other card could take focus from it.
+   */
   private _visible(): boolean {
-    return this._handingOff || this._hasContent();
+    return this._handingOff || this._staying || this._hasContent();
   }
 
   /** The list on show: anyone but an administrator has only Needs review. */
@@ -653,12 +662,15 @@ export class ParcelsReviewCard extends ParcelsCardBase {
         }
       }
     }
+    if (this._staying && this.snapshot?.merge_suggestions.length) {
+      // Something to decide again: once it's decided, focus is handed on as before.
+      this._staying = false;
+    }
     this._settleDecision();
     if (this._startsHandOff()) {
       this._handingOff = true;
       this._handOffPending = true;
     }
-    this._letGo = false;
   }
 
   protected override updated(changed: PropertyValues): void {
@@ -1776,6 +1788,12 @@ export class ParcelsReviewCard extends ParcelsCardBase {
 
   private _dismissStatus(): void {
     this._status = null;
+    this.keepFocus(() => this.messageFocusTarget());
+  }
+
+  /** After a dismissed message: the list on show, which can take focus. */
+  protected override messageFocusTarget(): HTMLElement | null {
+    return this.renderRoot.querySelector<HTMLElement>(`#panel-${this._shownTab()}`);
   }
 
   /**
@@ -1822,9 +1840,9 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   private _startsHandOff(): boolean {
     return (
       !this._handingOff &&
+      !this._staying &&
       !this.hidden &&
       !this._hasContent() &&
-      !this._letGo &&
       Boolean(this.shadowRoot?.activeElement || (this._decision !== null && focusIsLost()))
     );
   }
@@ -1832,7 +1850,8 @@ export class ParcelsReviewCard extends ParcelsCardBase {
   /**
    * Once the decision is done and the other cards show the new snapshot,
    * focus goes to the decided parcel's chip, else to another card, which says
-   * what happened. Without such a card, this one says it and stays.
+   * what happened. Without such a card, this one says it, keeps focus and
+   * stays.
    */
   private async _handOff(): Promise<void> {
     const decision = this._decision;
@@ -1853,9 +1872,9 @@ export class ParcelsReviewCard extends ParcelsCardBase {
     if (!handOffReview({ parcels: done?.parcels ?? [], message })) {
       if (done) {
         this._status = { icon: "mdi:check", text: done.message, tab: "review" };
-      } else {
-        this._letGo = true;
       }
+      this._staying = true;
+      this.keepFocus(() => this.messageFocusTarget());
     }
     this._handingOff = false;
   }

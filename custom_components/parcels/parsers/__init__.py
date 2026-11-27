@@ -29,18 +29,26 @@ becomes ``NOT_PARCEL`` with the ``refund`` note (the engine drops it), and
 a customer return becomes ``CUSTOMER_RETURN``, apart from parcels going
 back to their sender.
 
-Then ``_gate`` checks the topic of what a parser read: surveys and review
-requests, a carrier's receipt for a parcel handed in, invoices, and a
-marketplace's notices of a seller's message or prompts to complain name a
-parcel and its last status, but bring no news, so they become
-``NOT_PARCEL``. A survey whose subject has no status and doesn't ask for
-feedback ("A sua entrega de 4 de novembro") is found by its body, when
-what it names is done or waiting at its point and the body asks to
-answer questions or a survey (``prefilter.survey_request``). Carriers'
-own messages are left to their parsers. An
-invoice whose body brings news keeps its reading, at a confidence too low
-to apply unchecked. A survey or a seller's message that no parser could
-read becomes ``NOT_PARCEL`` too, so the local AI isn't asked about it.
+Then ``_gate`` checks the topic of what a parser read. A survey or a
+review request is known by its subject, which asks for feedback or a
+rating ("How likely are you to recommend us?" too). It becomes
+``NOT_PARCEL`` only when its body brings no news beyond naming the
+delivery it rates (``survey.news``): a status still to come, a pickup
+code or a last day to collect keep the reading, and a day to come only
+sends it to Needs review. A subject with a status of its own ("Encomenda
+levantada", "Zustellung abgeschlossen") is no survey. Under any other
+subject, a delivery whose body asks to answer a survey
+(``prefilter.survey_request``) keeps its reading, unless it is an old
+one (``survey.old_delivery``), which goes to Needs review. Rating
+requests in footers and closing lines change nothing. A reading held for
+review carries the ``survey`` note (``NOTE_SURVEY``), so the local AI
+isn't asked about it. A carrier's receipt for a parcel handed in and a
+marketplace's notices of a seller's message or prompts to complain bring
+no news, so they become ``NOT_PARCEL``; carriers' own messages are left
+to their parsers. An invoice whose body brings news keeps its reading,
+at a confidence too low to apply unchecked. A survey or a seller's
+message that no parser could read becomes ``NOT_PARCEL`` too, so the
+local AI isn't asked about it.
 
 Last, ``add_details`` (``parsers.details``) adds what the e-mail says
 besides the status: the last day to collect a parcel at its pickup point,
@@ -67,6 +75,7 @@ from . import (
     returns,
     senders,
     shopify,
+    survey,
     tracking,
 )
 from .base import MailMessage, ParseResult, SenderVerdict
@@ -76,9 +85,14 @@ from .lang import fold
 _LOGGER = logging.getLogger(__name__)
 
 NOTE_KNOWN_SENDER_UNPARSED = "known_sender_unparsed"
+# A survey's reading held for Needs review; the local AI isn't asked about it.
+NOTE_SURVEY = "survey"
 NOT_PARCEL_CONFIDENCE = 0.9
 # Below CONFIDENCE_APPLY: an invoice's news goes to the AI or Needs review.
 INVOICE_CONFIDENCE = 0.6
+# Below CONFIDENCE_APPLY too: a survey that may bring news, or an old
+# delivery whose body asks to answer a survey, waits in Needs review.
+SURVEY_CONFIDENCE = 0.6
 # What a survey's body names: a delivery done, or a parcel at its point.
 _CLOSING_KINDS = frozenset({MailKind.DELIVERED, MailKind.READY_FOR_PICKUP})
 
@@ -121,7 +135,9 @@ def parse_message(
     except Exception as exc:
         _LOGGER.debug("Parser dispatch failed: %s", type(exc).__name__)
         return ParseResult(parser=PARSER_NONE, kind=MailKind.UNKNOWN, confidence=0.0)
-    return add_details(_gate(sort_returns(result, message, tz), message), message, tz)
+    return add_details(
+        _gate(sort_returns(result, message, tz), message, tz), message, tz
+    )
 
 
 def sort_returns(
@@ -155,46 +171,64 @@ def is_refund(result: ParseResult) -> bool:
     return result.kind is MailKind.NOT_PARCEL and returns.NOTE_REFUND in result.notes
 
 
-def _gate(result: ParseResult, message: MailMessage) -> ParseResult:
+def _gate(result: ParseResult, message: MailMessage, tz: tzinfo) -> ParseResult:
     """Keep surveys, a carrier's posting receipts and invoices from counting.
 
-    They name a parcel and its last status ("O objeto ... foi entregue.
-    Avalie a entrega"), but bring no news about it. So do a marketplace's
-    notices of a seller's message and prompts to complain ("Recebeu uma
-    mensagem referente à encomenda nº ..."), except a carrier's: what a
-    seller writes isn't the carrier's news. A subject with a status of its
-    own ("Entrega concluída: avalie a entrega") is news, and counts. A
-    survey whose subject says neither ("A sua entrega de 4 de novembro") is
-    found by its body (``_survey``). An
+    A survey names a delivery and its last status ("O objeto ... foi
+    entregue. Ajude-nos a melhorar"), but brings no news about it. It is
+    known by its subject, which asks for feedback or a rating
+    (``prefilter.feedback_topic``, "How likely are you to recommend us?"
+    too), and becomes ``NOT_PARCEL`` when its body only names the delivery
+    (``survey.news``). Parcel news in it wins: a status still to come, a
+    pickup code or a last day to collect keep the reading; a day to come
+    only ("will be delivered on 30 November") sends it to Needs review
+    (``_to_review``). A subject with a status of its own ("Entrega
+    concluída: avalie a entrega", "Paket abgeholt") is no survey. Under any
+    other subject, a delivery whose body asks to answer a survey
+    (``_survey``) keeps its reading; only an old one (``survey.old_delivery``)
+    goes to Needs review, so it can't mark a parcel delivered unchecked. A
+    rating request in a footer changes nothing.
+
+    A carrier's receipt for a parcel handed in, and a marketplace's notices
+    of a seller's message or prompts to complain ("Recebeu uma mensagem
+    referente à encomenda nº ..."), except a carrier's, become
+    ``NOT_PARCEL``: what a seller writes isn't the carrier's news. An
     invoice whose body brings news keeps its reading, capped below
     ``CONFIDENCE_APPLY``. A parser's undated, attach-only confirmation, such
     as Leroy Merlin's survey after a delivery, stands. When nothing was
-    read, a survey or a seller's message becomes ``NOT_PARCEL`` too, so the
-    local AI isn't asked about it. Never raises: when the check fails, the
-    reading stands.
+    read, a seller's message, or a survey without news, becomes
+    ``NOT_PARCEL`` too, so the local AI isn't asked about it. Never raises:
+    when the check fails, the reading stands.
     """
     if result.kind is MailKind.NOT_PARCEL:
         return result
     try:
+        subject = message.subject
         if not (result.is_parcel or result.shipments or result.order_numbers):
-            if prefilter.feedback_topic(message.subject) or _seller_message(message):
+            if _seller_message(message) or (
+                prefilter.feedback_topic(subject)
+                and survey.news(result, message, tz) is None
+            ):
                 return _not_parcel(result.parser)
             return result
         if result.shipments and all(
             shipment.attach_only and shipment.undated for shipment in result.shipments
         ):
             return result
-        subject = message.subject
         if (
-            prefilter.feedback_topic(subject)
-            or (
-                result.parser in carriers.CARRIER_PARSERS
-                and prefilter.sent_receipt(subject)
-            )
-            or _seller_message(message)
-            or _survey(result, message)
-        ):
+            result.parser in carriers.CARRIER_PARSERS
+            and prefilter.sent_receipt(subject)
+        ) or _seller_message(message):
             return _not_parcel(result.parser)
+        if prefilter.feedback_topic(subject):
+            found = survey.news(result, message, tz)
+            if found is None:
+                return _not_parcel(result.parser)
+            if found == survey.NEWS_DATE:
+                return _to_review(result)
+            return result
+        if _survey(result, message) and survey.old_delivery(result, message, tz):
+            return _to_review(result)
         if prefilter.invoice_topic(subject):
             if not prefilter.has_news_words(message.text[: generic.SCAN_CHARS]):
                 return _not_parcel(result.parser)
@@ -207,18 +241,32 @@ def _gate(result: ParseResult, message: MailMessage) -> ParseResult:
 
 
 def _survey(result: ParseResult, message: MailMessage) -> bool:
-    """Return True for a survey about a delivery, found by its body.
+    """Return True for a delivery whose body asks to answer a survey.
 
     The subject has no status ("A sua entrega de 4 de novembro", "We'd
     love to hear from you"), every shipment read is delivered or waiting
     at its point ("foi entregue no Locker ..."), and the body asks to
-    answer questions or a survey about it ("Responda a 3 perguntas sobre a
-    entrega"). Other news, and a delivery whose footer only asks for a
-    rating ("Avalie a entrega"), keep their reading.
+    answer questions or a survey about it, or to rate it on a scale
+    ("Responda a 3 perguntas sobre a entrega", "Tell us how we did in 2
+    minutes", "Choose 1 to 5 stars"). A request for a rating alone
+    ("Avalie a entrega", "Tell us how we did") isn't one.
     """
     kinds = {s.kind or result.kind for s in result.shipments} or {result.kind}
     return kinds <= _CLOSING_KINDS and prefilter.survey_request(
         message.subject, message.text[: generic.SCAN_CHARS]
+    )
+
+
+def _to_review(result: ParseResult) -> ParseResult:
+    """Hold a survey's reading for Needs review, below ``CONFIDENCE_APPLY``.
+
+    ``NOTE_SURVEY`` keeps the local AI out: the parsers read all there is,
+    and the AI would take the delivery the survey names for news.
+    """
+    return replace(
+        result,
+        confidence=min(result.confidence, SURVEY_CONFIDENCE),
+        notes=(*result.notes, NOTE_SURVEY),
     )
 
 

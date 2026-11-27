@@ -29,18 +29,22 @@ from custom_components.parcels.dedup import (
     KEPT_APART,
     PLACEHOLDER_REPAIR_KEY,
     REASON_AMAZON_TRACKING,
+    REASON_RELAY,
     REASON_SAME_MERCHANT_DAY,
     REASON_SAME_MERCHANT_DOMAIN,
     REASON_SAME_MERCHANT_ETA,
     REASON_SAME_NUMBER,
     REASON_SAME_ORDER,
     REASON_SAME_REFERENCE,
+    RELAY_LINKS_KEY,
     REPAIR_VERSION,
     AmazonEvidence,
     Applied,
     Contribution,
     DedupError,
+    MergeSuggestion,
     Reconciled,
+    _pair_by_relay,
     accept_suggestion,
     amazon_contradicts,
     amazon_disagree,
@@ -60,11 +64,13 @@ from custom_components.parcels.dedup import (
     reconcile,
     remove_message,
     repair_store,
+    split_parcel,
     undo_auto_merge,
     undo_delivery,
     update_parcel,
 )
 from custom_components.parcels.models import (
+    AutoMerge,
     Origin,
     Parcel,
     ParcelEvent,
@@ -3199,6 +3205,458 @@ def test_a_delivery_without_a_number_skips_a_package_heard_of_after_it() -> None
         assert not again.suggestions, order
 
 
+def test_a_delivery_read_before_its_package_joins_it_as_a_guess() -> None:
+    """A shop's "delivered" e-mail naming only the order joins the package
+    on its way when it was sent as a guess the user can undo when that
+    package's e-mail is read after it, also when it went first to a package
+    its own news had closed by then; read in time order, it's no guess."""
+    mails: list[Mail] = [
+        *_two_packages(11, 12)[:3],
+        (MailKind.DELIVERED, 11, {"carrier": "ctt", "number": S10}),
+        SHOP_DELIVERED,
+    ]
+    for order in _in_any_order(mails):
+        data = _read_into(mails, order)
+        package = _holder(data, "msg:t2#0")
+        flag = package.auto_merged
+        assert _holder(data, "msg:t4#0") is package, order
+        assert package.state.status is ParcelStatus.DELIVERED, order
+        assert _holder(data, "msg:t3#0").state.status is ParcelStatus.DELIVERED, order
+        if order.index(2) > order.index(4):
+            assert flag is not None, order
+            assert flag.reason == REASON_SAME_ORDER, order
+            assert "msg:t4#0" in flag.all_origins, order
+    in_time = _read_into(mails, (0, 1, 2, 3, 4))
+    assert _holder(in_time, "msg:t4#0").auto_merged is None
+
+    data = _read_into(mails, (0, 1, 3, 4, 2))
+    package = _holder(data, "msg:t2#0")
+    delivery = undo_auto_merge(data, package.id, _nov(13, 11))
+    again = reconcile(data, _nov(13, 12))
+    assert delivery is not None
+    assert _holder(data, "msg:t4#0") is delivery
+    assert delivery.state.status is ParcelStatus.DELIVERED
+    assert package.state.status is ParcelStatus.SHIPPED
+    assert package.auto_merged is None
+    assert not again.changed
+    assert not again.suggestions
+
+
+# The carrier's news of the lamp's package, naming no order, that afternoon.
+LAMP_OUT: Mail = (MailKind.OUT_FOR_DELIVERY, 14, {"carrier": "ctt", "number": S10})
+
+
+def _of_the_shop(mails: list[Mail]) -> list[Mail]:
+    """Return the e-mails naming the shop, as its own and its carrier's do."""
+    return [
+        (kind, hour, {**details, "merchant": SELLER_NAME})
+        for kind, hour, details in mails
+    ]
+
+
+def _order_suggestions(
+    result: Reconciled, delivery: Parcel, packages: list[Parcel]
+) -> None:
+    assert {
+        (suggestion.parcel_id, suggestion.candidates, suggestion.reason)
+        for suggestion in result.suggestions
+    } == {(package.id, (delivery.id,), REASON_SAME_ORDER) for package in packages}
+
+
+def test_a_delivery_left_apart_stays_apart_when_a_package_is_out_that_day() -> None:
+    """A shop's "delivered" e-mail naming only the order, left apart because
+    both packages were on their way, isn't put on the one its carrier says
+    is out for delivery that day: no guess by the day picks one of an
+    order's packages, in any reading order or on looking again."""
+    mails = _of_the_shop([*_two_packages(11, 12)[:3], SHOP_DELIVERED, LAMP_OUT])
+    for order in _in_any_order(mails):
+        data = _read_into(mails, order)
+        again = reconcile(data, _nov(13, 11))
+        delivery = _holder(data, "msg:t3#0")
+        lamp, pot = (_holder(data, f"msg:t{index}#0") for index in (1, 2))
+        assert not again.changed, order
+        assert len({delivery.id, lamp.id, pot.id}) == 3, order
+        assert lamp.origins.keys() >= {"msg:t1#0", "msg:t4#0"}, order
+        assert delivery.auto_merged is None, order
+        assert delivery.state.status is ParcelStatus.DELIVERED, order
+        assert lamp.state.status is ParcelStatus.OUT_FOR_DELIVERY, order
+        assert pot.state.status is ParcelStatus.SHIPPED, order
+        _order_suggestions(again, delivery, [lamp, pot])
+
+
+def test_a_delivery_placed_by_an_earlier_release_stays_apart() -> None:
+    """Looking again at a delivery an earlier release put on one of two
+    packages on their way, as the first start after an update does, leaves
+    it apart, not on the other package out for delivery that day."""
+    mails = _of_the_shop([*_two_packages(11, 12)[:3], SHOP_DELIVERED, LAMP_OUT])
+    data = _read_into(mails, (0, 1, 2, 3, 4))
+    delivery = _holder(data, "msg:t3#0")
+    pot = _holder(data, "msg:t2#0")
+    merge_parcels(data, pot.id, (delivery.id,), _nov(13, 11))
+    assert pot.origins["msg:t3#0"].by_order
+
+    result = reconcile(data, _nov(13, 12))
+    again = reconcile(data, _nov(13, 13))
+
+    delivery = _holder(data, "msg:t3#0")
+    lamp = _holder(data, "msg:t1#0")
+    assert len({delivery.id, lamp.id, pot.id}) == 3
+    assert lamp.state.status is ParcelStatus.OUT_FOR_DELIVERY
+    assert pot.state.status is ParcelStatus.SHIPPED
+    assert not again.changed
+    _order_suggestions(result, delivery, [lamp, pot])
+
+
+def test_a_delivery_kept_apart_skips_a_package_heard_of_after_it() -> None:
+    """After the user undoes a delivery's join with the package on its way
+    when it was sent, the order's next package, first heard of after it,
+    doesn't get it when its carrier says it's out for delivery that day."""
+    mails = _of_the_shop(
+        [
+            (
+                MailKind.SHIPPED,
+                8,
+                {"carrier": "ctt", "number": S10, "orders": (ORDER_1,)},
+            ),
+            (MailKind.DELIVERED, 9, {"orders": (ORDER_1,)}),
+            (
+                MailKind.SHIPPED,
+                10,
+                {"carrier": "ctt", "number": S10_OTHER, "orders": (ORDER_1,)},
+            ),
+            (MailKind.OUT_FOR_DELIVERY, 14, {"carrier": "ctt", "number": S10_OTHER}),
+        ]
+    )
+    data = _read_into(mails[:3], (2, 1, 0))
+    package = _holder(data, "msg:t1#0")
+    assert package.auto_merged is not None
+    assert package.auto_merged.reason == REASON_SAME_ORDER
+    delivery = undo_auto_merge(data, package.id, _nov(13, 11))
+    assert delivery is not None
+
+    kind, hour, details = mails[3]
+    apply_contribution(
+        data,
+        contribution(
+            "msg:t3#0", kind=kind, time=_nov(10, hour), label=SELLER_SHOP, **details
+        ),
+        _nov(13, 12),
+    )
+    again = reconcile(data, _nov(13, 12, 1))
+
+    later = _holder(data, "msg:t2#0")
+    assert _holder(data, "msg:t1#0") is delivery
+    assert later is not delivery
+    assert later.state.status is ParcelStatus.OUT_FOR_DELIVERY
+    assert delivery.state.status is ParcelStatus.DELIVERED
+    assert delivery.auto_merged is None
+    assert not any(delivery.id in s.candidates for s in again.suggestions)
+
+
+def test_an_orders_package_out_that_day_keeps_another_from_being_guessed() -> None:
+    """An order's package its carrier says is out for delivery on the day the
+    shop said the order was delivered could be the one, so the delivery
+    isn't guessed onto another parcel of the shop delivered that day: the
+    user gets a suggestion for that one, and the order's own suggestions."""
+    mails = _of_the_shop(
+        [
+            *_two_packages(11, 12)[:3],
+            SHOP_DELIVERED,
+            LAMP_OUT,
+            (MailKind.DELIVERED, 15, {"carrier": "ctt", "number": CTT_1}),
+        ]
+    )
+    data = _read_into(mails, (0, 1, 2, 3, 4, 5))
+    again = reconcile(data, _nov(13, 11))
+    delivery = _holder(data, "msg:t3#0")
+    other = _holder(data, "msg:t5#0")
+    lamp, pot = (_holder(data, f"msg:t{index}#0") for index in (1, 2))
+    assert len({delivery.id, other.id, lamp.id, pot.id}) == 4
+    assert {
+        (suggestion.parcel_id, suggestion.candidates, suggestion.reason)
+        for suggestion in again.suggestions
+    } == {
+        (lamp.id, (delivery.id,), REASON_SAME_ORDER),
+        (pot.id, (delivery.id,), REASON_SAME_ORDER),
+        (other.id, (delivery.id,), REASON_SAME_MERCHANT_DAY),
+    }
+
+
+def test_a_shops_delivery_still_joins_its_only_parcel_of_the_day() -> None:
+    """With no package of the order that could be it, the shop's delivery
+    still joins the carrier's only delivery of the shop that day."""
+    mails = _of_the_shop(
+        [
+            (MailKind.ORDER, 8, {"orders": (ORDER_1,), "items": (LAMP,)}),
+            (MailKind.DELIVERED, 12, {"carrier": "ctt", "number": CTT_1}),
+            (MailKind.DELIVERED, 13, {"orders": (ORDER_1,)}),
+        ]
+    )
+    for order in _in_any_order(mails):
+        data = _read_into(mails, order)
+        carrier = _holder(data, "msg:t1#0")
+        assert carrier.origins.keys() == {"msg:t0#0", "msg:t1#0", "msg:t2#0"}, order
+        assert carrier.auto_merged is not None, order
+        assert carrier.auto_merged.reason == REASON_SAME_MERCHANT_DAY, order
+
+
+def _packages_of(first: str, second: str) -> list[Mail]:
+    """Return an order's e-mails: its two packages, holding ``first`` and
+    ``second``, are both out for delivery when the shop says the lamp was
+    delivered, naming only the order and the item."""
+    return [
+        (MailKind.ORDER, 8, {"orders": (ORDER_1,), "items": (LAMP, POT)}),
+        (
+            MailKind.SHIPPED,
+            9,
+            {"carrier": "ctt", "number": S10, "orders": (ORDER_1,), "items": (first,)},
+        ),
+        (
+            MailKind.SHIPPED,
+            10,
+            {
+                "carrier": "ctt",
+                "number": S10_OTHER,
+                "orders": (ORDER_1,),
+                "items": (second,),
+            },
+        ),
+        (MailKind.OUT_FOR_DELIVERY, 11, {"carrier": "ctt", "number": S10}),
+        (MailKind.OUT_FOR_DELIVERY, 12, {"carrier": "ctt", "number": S10_OTHER}),
+        (MailKind.DELIVERED, 13, {"orders": (ORDER_1,), "items": (LAMP,)}),
+    ]
+
+
+@pytest.mark.parametrize("named", [False, True], ids=["plain", "shop-named"])
+def test_a_delivery_naming_an_item_two_packages_hold_closes_neither(
+    named: bool,
+) -> None:
+    """A shop's "delivered" e-mail naming the order and an item that both
+    packages on their way hold is suggested for each, as one naming no item:
+    it closes neither, in any reading order, and no guess by the day picks
+    one when the e-mails name the shop."""
+    mails = _packages_of(LAMP, LAMP)
+    if named:
+        mails = _of_the_shop(mails)
+    for order in _in_any_order(mails):
+        data = _read_into(mails, order)
+        again = reconcile(data, _nov(13, 11))
+        delivery = _holder(data, "msg:t5#0")
+        packages = [_holder(data, f"msg:t{index}#0") for index in (1, 2)]
+        assert not again.changed, order
+        assert len({delivery.id, *(package.id for package in packages)}) == 3, order
+        assert delivery.state.status is ParcelStatus.DELIVERED, order
+        assert delivery.auto_merged is None, order
+        assert {package.state.status for package in packages} == {
+            ParcelStatus.OUT_FOR_DELIVERY
+        }, order
+        _order_suggestions(again, delivery, packages)
+
+
+def test_a_delivery_naming_an_item_one_package_holds_joins_it() -> None:
+    """A shop's "delivered" e-mail naming the order and an item that only one
+    of the packages on their way holds closes that one: read before that
+    package's e-mail, as a guess the user can undo. Read with the order's
+    e-mail before either package's, it stays with the order and is suggested
+    for each package, as before, and closes neither."""
+    mails = _packages_of(LAMP, POT)
+    for order in _in_any_order(mails):
+        data = _read_into(mails, order)
+        again = reconcile(data, _nov(13, 11))
+        delivery = _holder(data, "msg:t5#0")
+        lamp, pot = (_holder(data, f"msg:t{index}#0") for index in (1, 2))
+        assert not again.changed, order
+        assert pot.state.status is ParcelStatus.OUT_FOR_DELIVERY, order
+        if max(order.index(0), order.index(5)) < min(order.index(1), order.index(2)):
+            assert delivery is _holder(data, "msg:t0#0"), order
+            assert delivery.state.status is ParcelStatus.DELIVERED, order
+            assert lamp.state.status is ParcelStatus.OUT_FOR_DELIVERY, order
+            _order_suggestions(again, delivery, [lamp, pot])
+            continue
+        assert not again.suggestions, order
+        assert delivery is lamp, order
+        assert lamp.state.status is ParcelStatus.DELIVERED, order
+        if order.index(1) < order.index(5):
+            assert lamp.auto_merged is None, order
+            continue
+        assert lamp.auto_merged is not None, order
+        assert lamp.auto_merged.reason == REASON_SAME_ORDER, order
+        assert "msg:t5#0" in lamp.auto_merged.all_origins, order
+
+
+@pytest.mark.parametrize("way", ["dismissed", "moved"])
+def test_a_delivery_two_packages_may_hold_kept_apart_from_one_stays_apart(
+    way: str,
+) -> None:
+    """A delivery naming an item both packages on their way hold, kept apart
+    from one of them, isn't put on the other: it stays apart and is
+    suggested for the other, as one naming no item. That's so when the user
+    turns down its suggestion for one package, and when the user moves it to
+    a new parcel out of the package it closed before 0.1.29."""
+    mails = _packages_of(LAMP, LAMP)
+    for order in _in_any_order(mails):
+        for index in (1, 2):
+            data = _read_into(mails, order)
+            reconcile(data, _nov(13, 11))
+            delivery = _holder(data, "msg:t5#0")
+            package = _holder(data, f"msg:t{index}#0")
+            if way == "dismissed":
+                dismiss_suggestion(data, package.id, [delivery.id])
+            else:
+                accept_suggestion(data, package.id, delivery.id, _nov(13, 11))
+                split_parcel(data, package.id, ["msg:t5#0"], _nov(13, 12))
+            again = reconcile(data, _nov(13, 12))
+            delivery = _holder(data, "msg:t5#0")
+            packages = [_holder(data, f"msg:t{one}#0") for one in (1, 2)]
+            other = packages[2 - index]
+            assert delivery not in packages, (order, index)
+            assert delivery.auto_merged is None, (order, index)
+            assert delivery.state.status is ParcelStatus.DELIVERED, (order, index)
+            assert {package.state.status for package in packages} == {
+                ParcelStatus.OUT_FOR_DELIVERY
+            }, (order, index)
+            _order_suggestions(again, delivery, [other])
+
+
+def _guess(data: ParcelsData, target: Parcel, other: Parcel, reason: str) -> None:
+    """Put ``other`` on ``target`` as an earlier release's guess did."""
+    moving = sorted(other.origins)
+    merge_parcels(data, target.id, (other.id,), _nov(13, 11))
+    target.auto_merged = AutoMerge(
+        origin=moving[0], at=_nov(13, 11), reason=reason, origins=tuple(moving[1:])
+    )
+
+
+@pytest.mark.parametrize(
+    "reason", [REASON_SAME_MERCHANT_DAY, REASON_SAME_MERCHANT_ETA], ids=["day", "eta"]
+)
+@pytest.mark.parametrize("onto", ["package", "delivery"])
+def test_the_first_start_takes_back_a_guess_of_an_orders_delivery(
+    onto: str, reason: str
+) -> None:
+    """0.1.28 could guess a shop's "delivered" e-mail naming only the order
+    onto the package its carrier said was out for delivery that day, though
+    another package of the order was on its way. The first start after the
+    update takes the guess back, whichever side it put on the other: the
+    parcels end as this release reads the e-mails, the package keeps its
+    parcel, and the user gets a suggestion for each package."""
+    mails = _of_the_shop([*_two_packages(11, 12)[:3], SHOP_DELIVERED, LAMP_OUT])
+    for order in _in_any_order(mails):
+        data = _read_into(mails, order)
+        fresh = _partition(data)
+        lamp, delivery = _holder(data, "msg:t1#0"), _holder(data, "msg:t3#0")
+        target, other = (lamp, delivery) if onto == "package" else (delivery, lamp)
+        _guess(data, target, other, reason)
+
+        result = reconcile(data, _nov(13, 12), release=True)
+        again = reconcile(data, _nov(13, 13))
+
+        delivery, pot = _holder(data, "msg:t3#0"), _holder(data, "msg:t2#0")
+        assert _partition(data) == fresh, order
+        assert _holder(data, "msg:t1#0") is target, order
+        assert target.auto_merged is None, order
+        assert target.state.status is ParcelStatus.OUT_FOR_DELIVERY, order
+        assert delivery.state.status is ParcelStatus.DELIVERED, order
+        assert pot.state.status is ParcelStatus.SHIPPED, order
+        assert not again.changed, order
+        _order_suggestions(result, delivery, [target, pot])
+
+
+def test_the_first_start_leaves_an_archived_guess_alone() -> None:
+    """The first start doesn't take back a guess on an archived parcel:
+    its package would come back to the page as old news."""
+    mails = _of_the_shop([*_two_packages(11, 12)[:3], SHOP_DELIVERED, LAMP_OUT])
+    data = _read_into(mails, tuple(range(len(mails))))
+    lamp, delivery = _holder(data, "msg:t1#0"), _holder(data, "msg:t3#0")
+    _guess(data, lamp, delivery, REASON_SAME_MERCHANT_DAY)
+    lamp.archived = _nov(13, 11)
+    before = _partition(data)
+
+    reconcile(data, _nov(13, 12), release=True)
+
+    assert _partition(data) == before
+    assert _holder(data, "msg:t3#0") is lamp
+    assert lamp.auto_merged is not None
+
+
+ONLY_PACKAGE: list[Mail] = _of_the_shop(
+    [
+        (MailKind.ORDER, 8, {"orders": (ORDER_1,), "items": (LAMP,)}),
+        (
+            MailKind.SHIPPED,
+            9,
+            {"carrier": "ctt", "number": S10, "orders": (ORDER_1,), "items": (LAMP,)},
+        ),
+        SHOP_DELIVERED,
+    ]
+)
+LATER_PACKAGE: list[Mail] = _of_the_shop(
+    [
+        (MailKind.SHIPPED, 8, {"carrier": "ctt", "number": S10, "orders": (ORDER_1,)}),
+        (MailKind.DELIVERED, 9, {"orders": (ORDER_1,)}),
+        (
+            MailKind.SHIPPED,
+            10,
+            {"carrier": "ctt", "number": S10_OTHER, "orders": (ORDER_1,)},
+        ),
+        (MailKind.OUT_FOR_DELIVERY, 14, {"carrier": "ctt", "number": S10_OTHER}),
+    ]
+)
+OTHER_DELIVERED_BEFORE: list[Mail] = _of_the_shop(
+    [
+        *_two_packages(11, 12)[:3],
+        SHOP_DELIVERED,
+        LAMP_OUT,
+        (MailKind.DELIVERED, 11, {"carrier": "ctt", "number": S10_OTHER}),
+    ]
+)
+
+
+@pytest.mark.parametrize(
+    ("mails", "news", "package"),
+    [
+        (
+            _of_the_shop([*_two_packages(11, 12)[:3], SHOP_DELIVERED, LAMP_OUT]),
+            "msg:t0#0",
+            "msg:t1#0",
+        ),
+        (ONLY_PACKAGE, "msg:t2#0", "msg:t1#0"),
+        (LATER_PACKAGE, "msg:t1#0", "msg:t0#0"),
+        (OTHER_DELIVERED_BEFORE, "msg:t3#0", "msg:t1#0"),
+        (_of_the_shop(_packages_of(LAMP, POT)), "msg:t5#0", "msg:t1#0"),
+    ],
+    ids=["order-e-mail", "only-package", "later-package", "other-closed", "its-item"],
+)
+def test_the_first_start_keeps_an_earlier_guess_these_rules_make_too(
+    mails: list[Mail], news: str, package: str
+) -> None:
+    """The first start after an update keeps an earlier release's guess by
+    the shop and the day that tells nothing wrong, or that this release's
+    rules make too: the order's e-mail on a package, or the shop's delivery
+    on the order's only package, on the only one heard of before it, on the
+    only one still on its way when it was sent, or on the only one holding
+    the item it names."""
+    checked = 0
+    for order in _in_any_order(mails):
+        data = _read_into(mails, order)
+        holder = _holder(data, news)
+        if package not in holder.origins:
+            continue
+        holder.auto_merged = AutoMerge(
+            origin=news, at=_nov(13, 11), reason=REASON_SAME_MERCHANT_DAY
+        )
+        before = _partition(data)
+
+        reconcile(data, _nov(13, 12), release=True)
+
+        assert _partition(data) == before, order
+        assert _holder(data, news) is holder, order
+        assert holder.auto_merged is not None, order
+        assert holder.auto_merged.reason == REASON_SAME_MERCHANT_DAY, order
+        checked += 1
+    assert checked
+
+
 DAY_20 = date(2026, 11, 20)
 
 
@@ -5191,3 +5649,738 @@ def test_amazon_tracking_carries_no_private_shipment_of_someone_else(
     ]
     assert data.parcels[one].state.amazon_shipment_ids == ()
     assert data.parcels[two].state.amazon_shipment_ids == (SHIPMENT_2,)
+
+
+# --- A shop's relay of its carrier's news ----------------------------------------
+# Some shops tell their carrier's news again in their own e-mails, hours after
+# the carrier and without its number. The carrier's e-mails name only the
+# shop's agent, who sent the package.
+
+RELAY_SHOP = "Moda Exemplo"
+RELAY_AGENT = "Envios Exemplo"
+RELAY_ORDER = "ME1234567"
+RELAY_1 = "DS314159268PT"
+RELAY_2 = "DS271828189PT"
+UPS_1 = "1Z999AA10123456784"
+OFD = ParcelStatus.OUT_FOR_DELIVERY
+DONE = ParcelStatus.DELIVERED
+
+
+def _relayed(key: int, kind: MailKind, when: datetime, **fields: Any) -> Contribution:
+    """The shop's own e-mail telling its carrier's news, read by the AI."""
+    fields.setdefault("carrier", "ctt")
+    fields.setdefault("orders", [RELAY_ORDER])
+    return contribution(
+        f"msg:s{key}#0",
+        kind=kind,
+        time=when,
+        merchant=RELAY_SHOP,
+        label="modaexemplo.example",
+        source=Source.AI,
+        **fields,
+    )
+
+
+def _agent(
+    key: int, kind: MailKind, when: datetime, number: str = RELAY_1, **fields: Any
+) -> Contribution:
+    """The carrier's e-mail about the package, naming who sent it."""
+    fields.setdefault("merchant", RELAY_AGENT)
+    return contribution(
+        f"msg:c{key}#0",
+        kind=kind,
+        time=when,
+        carrier="ctt_expresso",
+        number=number,
+        label="cttexpress.com",
+        **fields,
+    )
+
+
+def _tracked(number: str, *news: tuple[datetime, ParcelStatus]) -> Contribution:
+    """17TRACK's news of a package, which names no order and no shop."""
+    return Contribution(
+        origin=Origin(
+            id=f"17t:{number}",
+            source=Source.SEVENTEENTRACK,
+            time=min(time for time, _status in news),
+            label="17TRACK",
+            carrier="ctt_expresso",
+            tracking_number=number,
+        ),
+        events=[
+            ParcelEvent(time=time, source=Source.SEVENTEENTRACK, status=status)
+            for time, status in news
+        ],
+    )
+
+
+def _relay_case_1() -> list[Contribution]:
+    """The van left at 09:30 and delivered at 12:20; the shop told both
+    1 h 45 and 1 h 50 on."""
+    return [
+        _relayed(1, MailKind.SHIPPED, _nov(11, 9)),
+        _agent(1, MailKind.IN_TRANSIT, _nov(12, 18)),
+        _agent(2, MailKind.OUT_FOR_DELIVERY, _nov(13, 9, 30)),
+        _relayed(2, MailKind.OUT_FOR_DELIVERY, _nov(13, 11, 15)),
+        _agent(3, MailKind.DELIVERED, _nov(13, 12, 20)),
+        _relayed(3, MailKind.DELIVERED, _nov(13, 14, 10)),
+    ]
+
+
+def _relay_case_2(told: datetime | None = None) -> list[Contribution]:
+    """The carrier delivered at 11:40; the shop told only that, at ``told``
+    (14:50 by default)."""
+    return [
+        _relayed(1, MailKind.SHIPPED, _nov(15, 9)),
+        _agent(1, MailKind.OUT_FOR_DELIVERY, _nov(18, 9, 10)),
+        _agent(2, MailKind.DELIVERED, _nov(18, 11, 40)),
+        _relayed(2, MailKind.DELIVERED, told or _nov(18, 14, 50)),
+    ]
+
+
+def _read_all(
+    data: ParcelsData, mails: Iterable[Contribution], now: datetime
+) -> Reconciled:
+    """Read e-mails one by one, reconciling after each; return the last pass."""
+    result = Reconciled()
+    for mail in mails:
+        apply_contribution(data, mail, now)
+        result = reconcile(data, now)
+    return result
+
+
+def _read_at_once(
+    data: ParcelsData, mails: Iterable[Contribution], now: datetime
+) -> Reconciled:
+    """Read e-mails and reconcile once, as the first start after an update."""
+    for mail in mails:
+        apply_contribution(data, mail, now)
+    return reconcile(data, now)
+
+
+def _by_time(mails: Iterable[Contribution]) -> list[Contribution]:
+    return sorted(mails, key=lambda mail: mail.origin.time)
+
+
+Reader = Callable[[ParcelsData, Iterable[Contribution], datetime], Reconciled]
+READERS = pytest.mark.parametrize(
+    "read", [_read_all, _read_at_once], ids=["one-by-one", "at-once"]
+)
+
+
+def _relay_offers(result: Reconciled) -> list[tuple[str, tuple[str, ...], str]]:
+    return sorted((s.parcel_id, s.candidates, s.reason) for s in result.suggestions)
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        pytest.param((0, 1, 2, 3, 4, 5), id="as-sent"),
+        pytest.param((5, 4, 3, 2, 1, 0), id="newest-first"),
+        pytest.param((0, 3, 5, 1, 2, 4), id="shop-first"),
+        pytest.param((1, 2, 4, 0, 3, 5), id="carrier-first"),
+    ],
+)
+def test_relay_joins_the_shop_parcel_to_the_carrier_package(
+    order: tuple[int, ...],
+) -> None:
+    """The shop told the van leaving and the delivery as long after the carrier."""
+    data = ParcelsData()
+    mails = _relay_case_1()
+
+    result = _read_all(data, [mails[i] for i in order], _nov(13, 15))
+
+    assert not result.suggestions
+    [parcel] = data.parcels.values()
+    assert set(parcel.origins) == {
+        f"msg:{key}#0" for key in ("s1", "s2", "s3", "c1", "c2", "c3")
+    }
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_RELAY
+    state = parcel.state
+    assert state.status is ParcelStatus.DELIVERED
+    assert (state.merchant, state.carrier, state.tracking_number) == (
+        RELAY_SHOP,
+        "ctt_expresso",
+        RELAY_1,
+    )
+    assert state.delivered_at == _nov(13, 12, 20)
+    assert data.engine[RELAY_LINKS_KEY] == {"made": 1, "suggested": 0}
+
+
+def test_relay_is_suggested_until_the_shop_tells_the_delivery() -> None:
+    """Read as they come: one relayed status is a suggestion, two the join."""
+    data = ParcelsData()
+
+    offered = []
+    for mail in _relay_case_1():
+        apply_contribution(data, mail, mail.origin.time)
+        offered.append(_relay_offers(reconcile(data, mail.origin.time)))
+
+    package = _holder(data, "msg:c1#0").id
+    assert [len(offers) for offers in offered] == [0, 0, 0, 1, 1, 0]
+    assert offered[3] == [(package, (offered[3][0][1][0],), REASON_RELAY)]
+    assert set(data.parcels) == {package}
+    assert data.engine[RELAY_LINKS_KEY] == {"made": 1, "suggested": 0}
+
+
+def test_relay_undone_stays_apart() -> None:
+    """Undo splits the shop's e-mails off, and nothing joins them again."""
+    data = ParcelsData()
+    _read_all(data, _relay_case_1(), _nov(13, 15))
+    [parcel] = data.parcels.values()
+
+    split = undo_auto_merge(data, parcel.id, _nov(13, 16))
+
+    assert split is not None
+    assert set(split.origins) == {"msg:s1#0", "msg:s2#0", "msg:s3#0"}
+    assert split.state.merchant == RELAY_SHOP
+    assert parcel.state.merchant == RELAY_AGENT
+    result = reconcile(data, _nov(13, 17))
+    assert not result.removed
+    assert not result.suggestions
+    assert set(data.parcels) == {parcel.id, split.id}
+    assert data.engine[RELAY_LINKS_KEY] == {"made": 1, "suggested": 0}
+
+
+@pytest.mark.parametrize("newest_first", [False, True], ids=["as-sent", "newest-first"])
+def test_relay_of_the_delivery_alone_is_suggested(newest_first: bool) -> None:
+    """The shop told only the delivery, 3 h 10 after the carrier: a suggestion."""
+    data = ParcelsData()
+    mails = _relay_case_2()
+    if newest_first:
+        mails.reverse()
+
+    result = _read_all(data, mails, _nov(18, 17))
+
+    package, shop = _holder(data, "msg:c1#0").id, _holder(data, "msg:s1#0").id
+    assert package != shop
+    assert not result.removed
+    assert [
+        (s.parcel_id, s.candidates, s.day, s.reason) for s in result.suggestions
+    ] == [(package, (shop,), date(2026, 11, 18), REASON_RELAY)]
+    assert data.engine[RELAY_LINKS_KEY] == {"made": 0, "suggested": 1}
+
+
+@pytest.mark.parametrize(
+    ("told", "offered"),
+    [
+        pytest.param(_nov(18, 11, 35), False, id="before-the-carrier"),
+        pytest.param(_nov(18, 11, 40), True, id="with-the-carrier"),
+        pytest.param(_nov(18, 15, 40), True, id="4-h-later"),
+        pytest.param(_nov(18, 15, 41), False, id="over-4-h-later"),
+        pytest.param(_nov(19, 10), False, id="the-next-day"),
+    ],
+)
+def test_relay_follows_the_carrier_by_up_to_four_hours(
+    told: datetime, offered: bool
+) -> None:
+    """The shop tells the carrier's news the same day, up to 4 h later."""
+    data = ParcelsData()
+
+    result = _read_all(data, _relay_case_2(told), _nov(19, 12))
+
+    assert not result.removed
+    assert bool(result.suggestions) is offered
+    assert data.engine[RELAY_LINKS_KEY] == {"made": 0, "suggested": int(offered)}
+
+
+@pytest.mark.parametrize(
+    ("van", "outcome"),
+    [
+        pytest.param(_nov(13, 11), "merged", id="20-min-sooner"),
+        pytest.param(_nov(13, 10, 59), "suggested", id="21-min-sooner"),
+        pytest.param(_nov(13, 11, 40), "merged", id="20-min-later"),
+        pytest.param(_nov(13, 11, 41), "suggested", id="21-min-later"),
+        pytest.param(_nov(13, 9), "apart", id="before-the-van"),
+    ],
+)
+def test_relay_joins_only_when_both_lags_agree(van: datetime, outcome: str) -> None:
+    """The van leaving and the delivery follow the carrier's within 20 min.
+
+    A shop telling of a van that left before the carrier's tells of another
+    package, whatever it says of the delivery.
+    """
+    data = ParcelsData()
+    mails = _relay_case_1()
+    mails[3] = _relayed(2, MailKind.OUT_FOR_DELIVERY, van)
+
+    result = _read_all(data, mails, _nov(13, 15))
+
+    package, shop = _holder(data, "msg:c1#0").id, _holder(data, "msg:s1#0").id
+    assert (package == shop) is (outcome == "merged")
+    if outcome == "suggested":
+        assert _relay_offers(result) == [(package, (shop,), REASON_RELAY)]
+    elif outcome == "apart":
+        assert not result.suggestions
+
+
+def test_relay_needs_the_same_day() -> None:
+    """A shop's news after midnight isn't the carrier's of the day before."""
+    data = ParcelsData()
+    mails = [
+        _relayed(1, MailKind.SHIPPED, _nov(11, 9)),
+        _agent(1, MailKind.IN_TRANSIT, _nov(12, 18)),
+        _agent(2, MailKind.OUT_FOR_DELIVERY, _nov(13, 19, 30)),
+        _relayed(2, MailKind.OUT_FOR_DELIVERY, _nov(13, 21, 15)),
+        _agent(3, MailKind.DELIVERED, _nov(13, 22, 20)),
+        _relayed(3, MailKind.DELIVERED, _nov(14, 0, 10)),
+    ]
+
+    result = _read_all(data, mails, _nov(14, 9))
+
+    assert not result.suggestions
+    assert len(data.parcels) == 2
+
+
+@pytest.mark.parametrize(
+    "tracked",
+    [
+        pytest.param(_nov(13, 8, 50), id="sooner"),
+        pytest.param(_nov(13, 10), id="later"),
+    ],
+)
+def test_relay_counts_each_time_the_carrier_told_it(tracked: datetime) -> None:
+    """17TRACK may tell of the van at another time than the carrier's e-mail."""
+    data = ParcelsData()
+    mails = _relay_case_1()
+    van = _tracked(RELAY_1, (tracked, OFD))
+
+    result = _read_all(data, [*mails[:3], van, *mails[3:]], _nov(13, 15))
+
+    assert not result.suggestions
+    [parcel] = data.parcels.values()
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_RELAY
+
+
+def test_relay_needs_news_told_at_a_time() -> None:
+    """News placed without a time of its own tells no lag: one is left."""
+    data = ParcelsData()
+    mails = _relay_case_1()
+    mails[5] = _relayed(3, MailKind.DELIVERED, _nov(13, 14, 10), undated=True)
+
+    result = _read_all(data, mails, _nov(13, 15))
+
+    package, shop = _holder(data, "msg:c1#0").id, _holder(data, "msg:s1#0").id
+    assert package != shop
+    assert _relay_offers(result) == [(package, (shop,), REASON_RELAY)]
+
+
+def test_relay_leaves_other_carriers_and_shops_alone() -> None:
+    """A GLS shop parcel, a UPS package and Amazon's two CTT packages that day."""
+    data = ParcelsData()
+
+    def market(key: int, kind: MailKind, when: datetime) -> Contribution:
+        return contribution(
+            f"msg:m{key}#0",
+            kind=kind,
+            time=when,
+            carrier="gls",
+            merchant="Mercado Exemplo",
+            orders=["MX-1001"],
+            label="mercadoexemplo.example",
+        )
+
+    def ups(key: int, kind: MailKind, when: datetime) -> Contribution:
+        return contribution(
+            f"msg:u{key}#0",
+            kind=kind,
+            time=when,
+            carrier="ups",
+            number=UPS_1,
+            label="ups.com",
+        )
+
+    mails = [
+        market(1, MailKind.SHIPPED, _nov(17, 9)),
+        market(2, MailKind.OUT_FOR_DELIVERY, _nov(19, 9, 35)),
+        market(3, MailKind.DELIVERED, _nov(19, 11, 5)),
+        ups(1, MailKind.OUT_FOR_DELIVERY, _nov(19, 9, 30)),
+        ups(2, MailKind.DELIVERED, _nov(19, 11)),
+        _ctt("msg:a1#0", CTT_1, MailKind.OUT_FOR_DELIVERY, _nov(19, 8)),
+        _ctt("msg:a2#0", CTT_1, MailKind.DELIVERED, _nov(19, 10, 30)),
+        _ctt("msg:a3#0", CTT_2, MailKind.OUT_FOR_DELIVERY, _nov(19, 8, 30)),
+        _ctt("msg:a4#0", CTT_2, MailKind.DELIVERED, _nov(19, 10, 45)),
+    ]
+
+    result = _read_all(data, mails, _nov(19, 12))
+
+    assert not result.removed
+    assert not result.suggestions
+    assert len(data.parcels) == 4
+    assert data.engine[RELAY_LINKS_KEY] == {"made": 0, "suggested": 0}
+
+
+@READERS
+def test_relay_with_two_packages_that_day_is_only_suggested(read: Reader) -> None:
+    """Either of the owner's two CTT packages could be what the shop told of."""
+    data = ParcelsData()
+    mails = _by_time(
+        [
+            *_relay_case_1(),
+            _agent(4, MailKind.OUT_FOR_DELIVERY, _nov(13, 10, 30), RELAY_2),
+            _agent(5, MailKind.DELIVERED, _nov(13, 13, 10), RELAY_2),
+        ]
+    )
+
+    result = read(data, mails, _nov(13, 15))
+
+    one, two, shop = (
+        _holder(data, origin_id).id
+        for origin_id in ("msg:c1#0", "msg:c4#0", "msg:s1#0")
+    )
+    assert len({one, two, shop}) == 3
+    assert not result.removed
+    assert _relay_offers(result) == sorted(
+        [(one, (shop,), REASON_RELAY), (two, (shop,), REASON_RELAY)]
+    )
+    assert data.engine[RELAY_LINKS_KEY] == {"made": 0, "suggested": 2}
+
+
+@READERS
+def test_relay_of_two_orders_that_day_is_only_suggested(read: Reader) -> None:
+    """The package could be either of two orders the shop told of that day."""
+    data = ParcelsData()
+    other = ["ME7654321"]
+    mails = _by_time(
+        [
+            *_relay_case_1(),
+            _relayed(4, MailKind.SHIPPED, _nov(11, 10), orders=other),
+            _relayed(5, MailKind.OUT_FOR_DELIVERY, _nov(13, 11, 20), orders=other),
+            _relayed(6, MailKind.DELIVERED, _nov(13, 14, 15), orders=other),
+        ]
+    )
+
+    result = read(data, mails, _nov(13, 16))
+
+    package, one, two = (
+        _holder(data, origin_id).id
+        for origin_id in ("msg:c1#0", "msg:s1#0", "msg:s4#0")
+    )
+    assert len({package, one, two}) == 3
+    assert not result.removed
+    assert _relay_offers(result) == [(package, (one, two), REASON_RELAY)]
+    assert data.engine[RELAY_LINKS_KEY] == {"made": 0, "suggested": 1}
+
+
+def test_relay_with_another_package_that_day_is_only_suggested() -> None:
+    """Another of the owner's CTT packages that day leaves a suggestion.
+
+    Even when its times don't fit: the shop may have told of it, not this one.
+    """
+    data = ParcelsData()
+    mails = _by_time(
+        [
+            *_relay_case_1(),
+            _agent(4, MailKind.OUT_FOR_DELIVERY, _nov(13, 13), RELAY_2),
+            _agent(5, MailKind.DELIVERED, _nov(13, 16), RELAY_2),
+        ]
+    )
+
+    result = _read_all(data, mails, _nov(13, 17))
+
+    one, two, shop = (
+        _holder(data, origin_id).id
+        for origin_id in ("msg:c1#0", "msg:c4#0", "msg:s1#0")
+    )
+    assert len({one, two, shop}) == 3
+    assert _relay_offers(result) == [(one, (shop,), REASON_RELAY)]
+
+
+def test_relay_with_another_order_that_day_is_only_suggested() -> None:
+    """Another order the shop told of that day leaves a suggestion.
+
+    Even when its times don't fit: the package may be that one.
+    """
+    data = ParcelsData()
+    other = ["ME7654321"]
+    mails = _by_time(
+        [
+            *_relay_case_1(),
+            _relayed(4, MailKind.SHIPPED, _nov(11, 10), orders=other),
+            _relayed(5, MailKind.OUT_FOR_DELIVERY, _nov(13, 8), orders=other),
+            _relayed(6, MailKind.DELIVERED, _nov(13, 9), orders=other),
+        ]
+    )
+
+    result = _read_all(data, mails, _nov(13, 17))
+
+    package, one, two = (
+        _holder(data, origin_id).id
+        for origin_id in ("msg:c1#0", "msg:s1#0", "msg:s4#0")
+    )
+    assert len({package, one, two}) == 3
+    assert _relay_offers(result) == [(package, (one,), REASON_RELAY)]
+
+
+@SHARING
+def test_relay_into_a_private_parcel_needs_its_owner(owner: str, merged: bool) -> None:
+    """A private shop parcel joins only its owner's package; others suggest."""
+    data = ParcelsData()
+    mails = [
+        _private(mail) if mail.origin.id.startswith("msg:s") else _of(owner, mail)
+        for mail in _relay_case_1()
+    ]
+
+    result = _read_all(data, mails, _nov(13, 15))
+
+    if merged:
+        [parcel] = data.parcels.values()
+        assert parcel.private
+        assert parcel.auto_merged is not None
+        assert parcel.auto_merged.reason == REASON_RELAY
+        return
+    package, shop = _holder(data, "msg:c1#0").id, _holder(data, "msg:s1#0").id
+    assert not result.removed
+    assert _relay_offers(result) == [(package, (shop,), REASON_RELAY)]
+
+
+def test_relay_needs_the_same_people() -> None:
+    """Someone else's package isn't what a shop told another person of."""
+    data = ParcelsData()
+    mails = [
+        _of("person.two", mail) if mail.origin.id.startswith("msg:c") else mail
+        for mail in _relay_case_1()
+    ]
+
+    result = _read_all(data, mails, _nov(13, 15))
+
+    assert not result.removed
+    assert not result.suggestions
+    assert len(data.parcels) == 2
+
+
+def test_relay_joins_the_package_17track_and_the_parcel_app_follow() -> None:
+    """The Parcel app's person follows the package too; the e-mails say whose."""
+    data = ParcelsData()
+    mails = _relay_case_1()
+    tracked = _tracked(RELAY_1, (_nov(13, 9, 24), OFD), (_nov(13, 12, 15), DONE))
+    app = _parcel_app(
+        "p1",
+        "msg:c1#0",
+        (
+            _scan(_nov(13, 9, 24), OFD, "Em distribuição"),
+            _scan(_nov(13, 12, 15), DONE, "Entregue"),
+        ),
+        carrier="ctt_expresso",
+        tracking_number=RELAY_1,
+        owners=("person.two",),
+    )
+
+    result = _read_all(data, [*mails[:3], tracked, app, *mails[3:]], _nov(13, 15))
+
+    assert not result.suggestions
+    [parcel] = data.parcels.values()
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_RELAY
+    assert parcel.state.merchant == RELAY_SHOP
+    assert parcel.state.delivered_at == _nov(13, 12, 15)
+
+
+def test_relay_to_a_package_nobody_owns_is_suggested() -> None:
+    """17TRACK alone doesn't say whose a package is."""
+    data = ParcelsData()
+    shop_mails = [m for m in _relay_case_1() if m.origin.id.startswith("msg:s")]
+    tracked = _tracked(RELAY_1, (_nov(13, 9, 30), OFD), (_nov(13, 12, 20), DONE))
+
+    result = _read_all(data, [tracked, *shop_mails], _nov(13, 15))
+
+    package, shop = _holder(data, "17t:" + RELAY_1).id, _holder(data, "msg:s1#0").id
+    assert not result.removed
+    assert _relay_offers(result) == [(package, (shop,), REASON_RELAY)]
+
+
+@pytest.mark.parametrize(
+    "merchant",
+    [pytest.param("Amazon.es", id="known"), pytest.param("Loja Exemplo", id="mailing")],
+)
+def test_relay_needs_a_package_naming_no_shop(merchant: str) -> None:
+    """A package of a shop Parcels knows, or one whose own e-mails it reads."""
+    data = ParcelsData()
+    shop = contribution(
+        "msg:l1#0",
+        time=_nov(5, 9),
+        merchant="Loja Exemplo",
+        orders=["LX-55"],
+        label="lojaexemplo.example",
+    )
+    mails = [
+        replace(mail, origin=replace(mail.origin, merchant=merchant))
+        if mail.origin.id.startswith("msg:c")
+        else mail
+        for mail in _relay_case_1()
+    ]
+
+    result = _read_all(data, [shop, *mails], _nov(13, 15))
+
+    assert not result.suggestions
+    assert len(data.parcels) == 3
+
+
+def test_relay_needs_the_shops_own_e_mails() -> None:
+    """E-mails from free mail don't speak for one shop."""
+    data = ParcelsData()
+    mails = [
+        replace(mail, origin=replace(mail.origin, label="gmail.com"))
+        if mail.origin.id.startswith("msg:s")
+        else mail
+        for mail in _relay_case_1()
+    ]
+
+    result = _read_all(data, mails, _nov(13, 15))
+
+    assert not result.suggestions
+    assert len(data.parcels) == 2
+
+
+def test_relay_needs_no_other_order() -> None:
+    """A package whose e-mails name another order isn't the shop's."""
+    data = ParcelsData()
+    mails = [
+        replace(mail, origin=replace(mail.origin, order_numbers=("ME7654321",)))
+        if mail.origin.id.startswith("msg:c")
+        else mail
+        for mail in _relay_case_1()
+    ]
+
+    result = _read_all(data, mails, _nov(13, 15))
+
+    assert not result.suggestions
+    assert len(data.parcels) == 2
+
+
+def test_relay_into_a_guess_is_only_suggested() -> None:
+    """A package an earlier guess made gets a suggestion: one Undo, one guess."""
+    data = ParcelsData()
+    mails = _relay_case_1()
+    _read_all(data, mails[:3], _nov(13, 11))
+    package = _holder(data, "msg:c1#0")
+    package.auto_merged = AutoMerge(
+        origin="msg:c2#0", at=_nov(13, 11), reason=REASON_SAME_MERCHANT_ETA
+    )
+
+    result = _read_all(data, mails[3:], _nov(13, 15))
+
+    shop = _holder(data, "msg:s1#0").id
+    assert shop != package.id
+    assert _relay_offers(result) == [(package.id, (shop,), REASON_RELAY)]
+
+
+def test_relay_keeps_a_private_parcel_from_the_parcel_app_person() -> None:
+    """The Parcel app's person would see the private parcel: a suggestion."""
+    data = ParcelsData()
+    mails = [
+        _private(mail) if mail.origin.id.startswith("msg:s") else mail
+        for mail in _relay_case_1()
+    ]
+    app = _parcel_app(
+        "p1",
+        "msg:c1#0",
+        (_scan(_nov(13, 9, 30), OFD, "Em distribuição"),),
+        carrier="ctt_expresso",
+        tracking_number=RELAY_1,
+        owners=("person.two",),
+    )
+
+    result = _read_all(data, [*mails[:3], app, *mails[3:]], _nov(13, 15))
+
+    package, shop = _holder(data, "msg:c1#0").id, _holder(data, "msg:s1#0").id
+    assert package != shop
+    assert _relay_offers(result) == [(package, (shop,), REASON_RELAY)]
+
+
+@pytest.mark.parametrize(
+    "put_away", ["msg:c1#0", "msg:s1#0"], ids=["the-package", "the-shops"]
+)
+def test_relay_suggests_nothing_put_away(put_away: str) -> None:
+    """Once either parcel is put away, neither is suggested."""
+    data = ParcelsData()
+    assert _relay_offers(_read_all(data, _relay_case_2(), _nov(18, 17)))
+    _holder(data, put_away).archived = _nov(18, 17)
+
+    result = reconcile(data, _nov(18, 17))
+
+    assert not result.suggestions
+    assert len(data.parcels) == 2
+
+
+@READERS
+def test_relay_reads_the_shops_first_news_of_each(read: Reader) -> None:
+    """A shop telling of the delivery again the next morning relays it once."""
+    data = ParcelsData()
+    again = _relayed(4, MailKind.DELIVERED, _nov(14, 9))
+
+    result = read(data, [*_relay_case_1(), again], _nov(14, 10))
+
+    assert not result.suggestions
+    [parcel] = data.parcels.values()
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_RELAY
+
+
+def test_relay_leaves_a_package_naming_the_shops_seller_to_the_day() -> None:
+    """The carrier may name the seller of a marketplace's order.
+
+    Then the day's rule joins them, and the relay adds no suggestion.
+    """
+    data = ParcelsData()
+    seller = "Loja Exemplo"
+    mails = [
+        _relayed(1, MailKind.SHIPPED, _nov(11, 9), seller=seller),
+        _agent(1, MailKind.IN_TRANSIT, _nov(12, 18), merchant=seller),
+        _agent(2, MailKind.OUT_FOR_DELIVERY, _nov(13, 9, 30), merchant=seller),
+        _relayed(2, MailKind.OUT_FOR_DELIVERY, _nov(13, 11, 15), seller=seller),
+    ]
+
+    result = _read_all(data, mails, _nov(13, 12, 30))
+
+    assert not result.suggestions
+    [parcel] = data.parcels.values()
+    assert parcel.auto_merged is not None
+    assert parcel.auto_merged.reason == REASON_SAME_MERCHANT_DAY
+
+
+def test_relay_leaves_a_pair_another_rule_suggested() -> None:
+    """A pair another rule suggested isn't joined, nor suggested again."""
+    data = ParcelsData()
+    for mail in _relay_case_1():
+        apply_contribution(data, mail, _nov(13, 15))
+    package, shop = _holder(data, "msg:c1#0"), _holder(data, "msg:s1#0")
+    earlier = MergeSuggestion(
+        id="m-earlier",
+        parcel_id=package.id,
+        candidates=(shop.id,),
+        merchant=None,
+        day=date(2026, 11, 13),
+        reason=REASON_SAME_MERCHANT_DAY,
+    )
+    result = Reconciled(suggestions=[earlier])
+
+    _pair_by_relay(
+        data, list(data.parcels.values()), lambda _a, _b: False, _nov(13, 15), result
+    )
+
+    assert set(data.parcels) == {package.id, shop.id}
+    assert result.suggestions == [earlier]
+
+
+def test_relay_shows_the_agent_as_who_sent_it() -> None:
+    """After the join, the shop is the merchant; the agent sent the package."""
+    data = ParcelsData()
+    _read_all(data, _relay_case_1(), _nov(13, 15))
+    [parcel] = data.parcels.values()
+    engine: Any = SimpleNamespace(data=data)
+
+    shown = details(engine, parcel, SYSTEM_VIEWER)
+
+    assert shown["parcel"]["merchant"] == RELAY_SHOP
+    assert {row["id"]: row["sent_by"] for row in shown["origins"]} == {
+        "msg:s1#0": None,
+        "msg:s2#0": None,
+        "msg:s3#0": None,
+        "msg:c1#0": RELAY_AGENT,
+        "msg:c2#0": RELAY_AGENT,
+        "msg:c3#0": RELAY_AGENT,
+    }

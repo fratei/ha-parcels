@@ -367,6 +367,8 @@ POINT_SENTENCES = {
     "ctt-street": _ctt_point("Loja CTT R. Augusta"),
     "ctt-saint": _ctt_point("Ponto CTT Quiosque Sta. Apolónia"),
     "ctt-number": _ctt_point("Cacifo CTT 1234"),
+    "ctt-block-letter": _ctt_point("Cacifo CTT Bloco B"),
+    "ctt-building-letter": _ctt_point("Ponto CTT Edifício A"),
 }
 
 
